@@ -62,7 +62,10 @@ $(abi_header): PRIVATE_PRINTER := shared-glapi
 mapi_abi_headers += $(abi_header)
 
 include $(MESA_COMMON_MK)
+# libglapi.so is built externally for cheets on x86.
+ifeq (,$(findstring cheets_x86,$(TARGET_PRODUCT)))
 include $(BUILD_SHARED_LIBRARY)
+endif
 
 
 mapi_abi_deps := \

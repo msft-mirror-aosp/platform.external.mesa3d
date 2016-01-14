@@ -53,4 +53,7 @@ LOCAL_SHARED_LIBRARIES := \
 	libdrm_intel
 
 include $(MESA_COMMON_MK)
+# i965_dri.so is built externally for cheets on x86.
+ifeq (,$(findstring cheets_x86,$(TARGET_PRODUCT)))
 include $(BUILD_SHARED_LIBRARY)
+endif
