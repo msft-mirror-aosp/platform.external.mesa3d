@@ -151,7 +151,4 @@ LOCAL_MODULE := libGLES_mesa
 LOCAL_MODULE_RELATIVE_PATH := egl
 
 include $(MESA_COMMON_MK)
-# libGLES_mesa.so is built externally for cheets on x86.
-ifeq (,$(findstring cheets_x86,$(TARGET_PRODUCT)))
 include $(BUILD_SHARED_LIBRARY)
-endif
