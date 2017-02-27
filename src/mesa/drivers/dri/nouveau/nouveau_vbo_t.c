@@ -222,7 +222,9 @@ TAG(vbo_render_prims)(struct gl_context *ctx,
 		      const struct _mesa_index_buffer *ib,
 		      GLboolean index_bounds_valid,
 		      GLuint min_index, GLuint max_index,
-		      struct gl_transform_feedback_object *tfb_vertcount);
+		      struct gl_transform_feedback_object *tfb_vertcount,
+                      unsigned stream,
+		      struct gl_buffer_object *indirect);
 
 static GLboolean
 vbo_maybe_split(struct gl_context *ctx, const struct gl_client_array **arrays,
@@ -453,7 +455,9 @@ TAG(vbo_render_prims)(struct gl_context *ctx,
 		      const struct _mesa_index_buffer *ib,
 		      GLboolean index_bounds_valid,
 		      GLuint min_index, GLuint max_index,
-		      struct gl_transform_feedback_object *tfb_vertcount)
+		      struct gl_transform_feedback_object *tfb_vertcount,
+                      unsigned stream,
+		      struct gl_buffer_object *indirect)
 {
 	struct nouveau_render_state *render = to_render_state(ctx);
 	const struct gl_client_array **arrays = ctx->Array._DrawArrays;
@@ -489,7 +493,9 @@ TAG(vbo_check_render_prims)(struct gl_context *ctx,
 			    const struct _mesa_index_buffer *ib,
 			    GLboolean index_bounds_valid,
 			    GLuint min_index, GLuint max_index,
-			    struct gl_transform_feedback_object *tfb_vertcount)
+			    struct gl_transform_feedback_object *tfb_vertcount,
+                            unsigned stream,
+			    struct gl_buffer_object *indirect)
 {
 	struct nouveau_context *nctx = to_nouveau_context(ctx);
 
@@ -498,12 +504,12 @@ TAG(vbo_check_render_prims)(struct gl_context *ctx,
 	if (nctx->fallback == HWTNL)
 		TAG(vbo_render_prims)(ctx, prims, nr_prims, ib,
 				      index_bounds_valid, min_index, max_index,
-				      tfb_vertcount);
+				      tfb_vertcount, stream, indirect);
 
 	if (nctx->fallback == SWTNL)
-		_tnl_vbo_draw_prims(ctx, prims, nr_prims, ib,
-				    index_bounds_valid, min_index, max_index,
-				    tfb_vertcount);
+		_tnl_draw_prims(ctx, prims, nr_prims, ib,
+				index_bounds_valid, min_index, max_index,
+				tfb_vertcount, stream, indirect);
 }
 
 void

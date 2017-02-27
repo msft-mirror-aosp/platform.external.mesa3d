@@ -1,7 +1,6 @@
 
 /*
  * Mesa 3-D graphics library
- * Version:  6.5
  *
  * Copyright (C) 1999-2006  Brian Paul   All Rights Reserved.
  *
@@ -18,12 +17,13 @@
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
  * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * BRIAN PAUL BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
- * AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
  *
  * Authors:
- *    Keith Whitwell <keith@tungstengraphics.com>
+ *    Keith Whitwell <keithw@vmware.com>
  */
 
 /* Helper for drivers which find themselves rendering a range of
@@ -46,6 +46,7 @@
  * of zero.
  */
 
+#include <stdio.h>
 #include "main/glheader.h"
 #include "main/imports.h"
 #include "main/mtypes.h"
@@ -58,9 +59,14 @@ static void *rebase_##TYPE( const void *ptr,			\
 			  GLuint count, 			\
 			  TYPE min_index )			\
 {								\
-   const TYPE *in = (TYPE *)ptr;				\
-   TYPE *tmp_indices = malloc(count * sizeof(TYPE));	\
    GLuint i;							\
+   const TYPE *in = (TYPE *)ptr;				\
+   TYPE *tmp_indices = malloc(count * sizeof(TYPE));		\
+								\
+   if (tmp_indices == NULL) {                                   \
+      _mesa_error_no_memory(__func__);                          \
+      return NULL;                                              \
+   }                                                            \
 								\
    for (i = 0; i < count; i++)  				\
       tmp_indices[i] = in[i] - min_index;			\
@@ -136,7 +142,7 @@ void vbo_rebase_prims( struct gl_context *ctx,
    assert(min_index != 0);
 
    if (0)
-      printf("%s %d..%d\n", __FUNCTION__, min_index, max_index);
+      printf("%s %d..%d\n", __func__, min_index, max_index);
 
 
    /* XXX this path is disabled for now.
@@ -146,7 +152,12 @@ void vbo_rebase_prims( struct gl_context *ctx,
       /* If we can just tell the hardware or the TNL to interpret our
        * indices with a different base, do so.
        */
-      tmp_prims = (struct _mesa_prim *)malloc(sizeof(*prim) * nr_prims);
+      tmp_prims = malloc(sizeof(*prim) * nr_prims);
+
+      if (tmp_prims == NULL) {
+         _mesa_error_no_memory(__func__);
+         return;
+      }
 
       for (i = 0; i < nr_prims; i++) {
 	 tmp_prims[i] = prim[i];
@@ -157,15 +168,16 @@ void vbo_rebase_prims( struct gl_context *ctx,
    } else if (ib) {
       /* Unfortunately need to adjust each index individually.
        */
-      GLboolean map_ib = ib->obj->Name && !ib->obj->Pointer;
+      GLboolean map_ib = ib->obj->Name &&
+                         !ib->obj->Mappings[MAP_INTERNAL].Pointer;
       void *ptr;
 
       if (map_ib) 
 	 ctx->Driver.MapBufferRange(ctx, 0, ib->obj->Size, GL_MAP_READ_BIT,
-				    ib->obj);
+				    ib->obj, MAP_INTERNAL);
 
 
-      ptr = ADD_POINTERS(ib->obj->Pointer, ib->ptr);
+      ptr = ADD_POINTERS(ib->obj->Mappings[MAP_INTERNAL].Pointer, ib->ptr);
 
       /* Some users might prefer it if we translated elements to
        * GLuints here.  Others wouldn't...
@@ -183,7 +195,11 @@ void vbo_rebase_prims( struct gl_context *ctx,
       }      
 
       if (map_ib) 
-	 ctx->Driver.UnmapBuffer(ctx, ib->obj);
+	 ctx->Driver.UnmapBuffer(ctx, ib->obj, MAP_INTERNAL);
+
+      if (tmp_indices == NULL) {
+         return;
+      }
 
       tmp_ib.obj = ctx->Shared->NullBufferObj;
       tmp_ib.ptr = tmp_indices;
@@ -195,7 +211,12 @@ void vbo_rebase_prims( struct gl_context *ctx,
    else {
       /* Otherwise the primitives need adjustment.
        */
-      tmp_prims = (struct _mesa_prim *)malloc(sizeof(*prim) * nr_prims);
+      tmp_prims = malloc(sizeof(*prim) * nr_prims);
+
+      if (tmp_prims == NULL) {
+         _mesa_error_no_memory(__func__);
+         return;
+      }
 
       for (i = 0; i < nr_prims; i++) {
 	 /* If this fails, it could indicate an application error:
@@ -237,16 +258,14 @@ void vbo_rebase_prims( struct gl_context *ctx,
 	 GL_TRUE,
 	 0, 
 	 max_index - min_index,
-	 NULL );
+	 NULL, 0, NULL );
 
    ctx->Array._DrawArrays = saved_arrays;
    ctx->NewDriverState |= ctx->DriverFlags.NewArray;
    
-   if (tmp_indices)
-      free(tmp_indices);
+   free(tmp_indices);
    
-   if (tmp_prims)
-      free(tmp_prims);
+   free(tmp_prims);
 }
 
 

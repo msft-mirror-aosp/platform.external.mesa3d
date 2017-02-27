@@ -1,6 +1,5 @@
 /*
  * Mesa 3-D graphics library
- * Version:  7.0.3
  *
  * Copyright (C) 1999-2007  Brian Paul   All Rights Reserved.
  *
@@ -17,14 +16,16 @@
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
  * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * BRIAN PAUL BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
- * AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
  */
 
 #include "main/glheader.h"
-#include "main/colormac.h"
+#include "main/macros.h"
 #include "main/samplerobj.h"
+#include "main/teximage.h"
 #include "program/prog_instruction.h"
 
 #include "s_context.h"
@@ -116,8 +117,7 @@ fetch_texel_deriv( struct gl_context *ctx, const GLfloat texcoord[4],
    const struct gl_texture_object *texObj = texUnit->_Current;
 
    if (texObj) {
-      const struct gl_texture_image *texImg =
-         texObj->Image[0][texObj->BaseLevel];
+      const struct gl_texture_image *texImg = _mesa_base_tex_image(texObj);
       const struct swrast_texture_image *swImg =
          swrast_texture_image_const(texImg);
       const struct gl_sampler_object *samp = _mesa_get_samplerobj(ctx, unit);
@@ -162,12 +162,7 @@ init_machine(struct gl_context *ctx, struct gl_program_machine *machine,
              const struct gl_fragment_program *program,
              const SWspan *span, GLuint col)
 {
-   GLfloat *wpos = span->array->attribs[FRAG_ATTRIB_WPOS][col];
-
-   if (program->Base.Target == GL_FRAGMENT_PROGRAM_NV) {
-      /* Clear temporary registers (undefined for ARB_f_p) */
-      memset(machine->Temporaries, 0, MAX_PROGRAM_TEMPS * 4 * sizeof(GLfloat));
-   }
+   GLfloat *wpos = span->array->attribs[VARYING_SLOT_POS][col];
 
    /* ARB_fragment_coord_conventions */
    if (program->OriginUpperLeft)
@@ -182,23 +177,17 @@ init_machine(struct gl_context *ctx, struct gl_program_machine *machine,
 
    machine->DerivX = (GLfloat (*)[4]) span->attrStepX;
    machine->DerivY = (GLfloat (*)[4]) span->attrStepY;
-   machine->NumDeriv = FRAG_ATTRIB_MAX;
+   machine->NumDeriv = VARYING_SLOT_MAX;
 
    machine->Samplers = program->Base.SamplerUnits;
 
    /* if running a GLSL program (not ARB_fragment_program) */
-   if (ctx->Shader.CurrentFragmentProgram) {
+   if (ctx->_Shader->CurrentProgram[MESA_SHADER_FRAGMENT]) {
       /* Store front/back facing value */
-      machine->Attribs[FRAG_ATTRIB_FACE][col][0] = 1.0F - span->facing;
+      machine->Attribs[VARYING_SLOT_FACE][col][0] = 1.0F - span->facing;
    }
 
    machine->CurElement = col;
-
-   /* init condition codes */
-   machine->CondCodes[0] = COND_EQ;
-   machine->CondCodes[1] = COND_EQ;
-   machine->CondCodes[2] = COND_EQ;
-   machine->CondCodes[3] = COND_EQ;
 
    /* init call stack */
    machine->StackDepth = 0;
@@ -228,7 +217,7 @@ run_program(struct gl_context *ctx, SWspan *span, GLuint start, GLuint end)
 
             /* Store result color */
 	    if (outputsWritten & BITFIELD64_BIT(FRAG_RESULT_COLOR)) {
-               COPY_4V(span->array->attribs[FRAG_ATTRIB_COL0][i],
+               COPY_4V(span->array->attribs[VARYING_SLOT_COL0][i],
                        machine->Outputs[FRAG_RESULT_COLOR]);
             }
             else {
@@ -239,7 +228,7 @@ run_program(struct gl_context *ctx, SWspan *span, GLuint start, GLuint end)
                GLuint buf;
                for (buf = 0; buf < ctx->DrawBuffer->_NumColorDrawBuffers; buf++) {
                   if (outputsWritten & BITFIELD64_BIT(FRAG_RESULT_DATA0 + buf)) {
-                     COPY_4V(span->array->attribs[FRAG_ATTRIB_COL0 + buf][i],
+                     COPY_4V(span->array->attribs[VARYING_SLOT_COL0 + buf][i],
                              machine->Outputs[FRAG_RESULT_DATA0 + buf]);
                   }
                }
@@ -248,9 +237,9 @@ run_program(struct gl_context *ctx, SWspan *span, GLuint start, GLuint end)
             /* Store result depth/z */
             if (outputsWritten & BITFIELD64_BIT(FRAG_RESULT_DEPTH)) {
                const GLfloat depth = machine->Outputs[FRAG_RESULT_DEPTH][2];
-               if (depth <= 0.0)
+               if (depth <= 0.0F)
                   span->array->z[i] = 0;
-               else if (depth >= 1.0)
+               else if (depth >= 1.0F)
                   span->array->z[i] = ctx->DrawBuffer->_DepthMax;
                else
                   span->array->z[i] =
@@ -277,8 +266,8 @@ _swrast_exec_fragment_program( struct gl_context *ctx, SWspan *span )
    const struct gl_fragment_program *program = ctx->FragmentProgram._Current;
 
    /* incoming colors should be floats */
-   if (program->Base.InputsRead & FRAG_BIT_COL0) {
-      ASSERT(span->array->ChanType == GL_FLOAT);
+   if (program->Base.InputsRead & VARYING_BIT_COL0) {
+      assert(span->array->ChanType == GL_FLOAT);
    }
 
    run_program(ctx, span, 0, span->end);

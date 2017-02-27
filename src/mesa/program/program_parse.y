@@ -21,6 +21,8 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
  */
+
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,7 +84,7 @@ static void asm_instruction_set_operands(struct asm_instruction *inst,
     const struct prog_dst_register *dst, const struct asm_src_register *src0,
     const struct asm_src_register *src1, const struct asm_src_register *src2);
 
-static struct asm_instruction *asm_instruction_ctor(gl_inst_opcode op,
+static struct asm_instruction *asm_instruction_ctor(enum prog_opcode op,
     const struct prog_dst_register *dst, const struct asm_src_register *src0,
     const struct asm_src_register *src1, const struct asm_src_register *src2);
 
@@ -98,7 +100,7 @@ static struct asm_instruction *asm_instruction_copy_ctor(
 
 #define YYLLOC_DEFAULT(Current, Rhs, N)					\
    do {									\
-      if (YYID(N)) {							\
+      if (N) {							\
 	 (Current).first_line = YYRHSLOC(Rhs, 1).first_line;		\
 	 (Current).first_column = YYRHSLOC(Rhs, 1).first_column;	\
 	 (Current).position = YYRHSLOC(Rhs, 1).position;		\
@@ -112,16 +114,14 @@ static struct asm_instruction *asm_instruction_copy_ctor(
 	 (Current).position = YYRHSLOC(Rhs, 0).position			\
 	    + (Current).first_column;					\
       }									\
-   } while(YYID(0))
-
-#define YYLEX_PARAM state->scanner
+   } while(0)
 %}
 
 %pure-parser
 %locations
+%lex-param   { struct asm_parser_state *state }
 %parse-param { struct asm_parser_state *state }
 %error-verbose
-%lex-param { void *scanner }
 
 %union {
    struct asm_instruction *inst;
@@ -139,7 +139,7 @@ static struct asm_instruction *asm_instruction_copy_ctor(
    gl_state_index state[STATE_LENGTH];
    int negate;
    struct asm_vector vector;
-   gl_inst_opcode opcode;
+   enum prog_opcode opcode;
 
    struct {
       unsigned swz;
@@ -212,8 +212,6 @@ static struct asm_instruction *asm_instruction_copy_ctor(
 %type <sym> addrReg
 %type <swiz_mask> addrComponent addrWriteMask
 
-%type <dst_reg> ccMaskRule ccTest ccMaskRule2 ccTest2 optionalCcMask
-
 %type <result> resultBinding resultColBinding
 %type <integer> optFaceType optColorType
 %type <integer> optResultFaceType optResultColorType
@@ -269,8 +267,16 @@ static struct asm_instruction *asm_instruction_copy_ctor(
 %type <negate> optionalSign
 
 %{
-extern int yylex(YYSTYPE *yylval_param, YYLTYPE *yylloc_param,
-    void *yyscanner);
+extern int
+_mesa_program_lexer_lex(YYSTYPE *yylval_param, YYLTYPE *yylloc_param,
+                        void *yyscanner);
+
+static int
+yylex(YYSTYPE *yylval_param, YYLTYPE *yylloc_param,
+      struct asm_parser_state *state)
+{
+   return _mesa_program_lexer_lex(yylval_param, yylloc_param, state->scanner);
+}
 %}
 
 %%
@@ -382,8 +388,6 @@ ARL_instruction: ARL maskedAddrReg ',' scalarSrcReg
 
 VECTORop_instruction: VECTOR_OP maskedDstReg ',' swizzleSrcReg
 	{
-	   if ($1.Opcode == OPCODE_DDY)
-	      state->fragment.UsesDFdy = 1;
 	   $$ = asm_instruction_copy_ctor(& $1, & $2, & $4, NULL, NULL);
 	}
 	;
@@ -461,14 +465,6 @@ SAMPLE_instruction: SAMPLE_OP maskedDstReg ',' swizzleSrcReg ',' texImageUnit ',
 KIL_instruction: KIL swizzleSrcReg
 	{
 	   $$ = asm_instruction_ctor(OPCODE_KIL, NULL, & $2, NULL, NULL);
-	   state->fragment.UsesKill = 1;
-	}
-	| KIL ccTest
-	{
-	   $$ = asm_instruction_ctor(OPCODE_KIL_NV, NULL, NULL, NULL, NULL);
-	   $$->Base.DstReg.CondMask = $2.CondMask;
-	   $$->Base.DstReg.CondSwizzle = $2.CondSwizzle;
-	   $$->Base.DstReg.CondSrc = $2.CondSrc;
 	   state->fragment.UsesKill = 1;
 	}
 	;
@@ -557,21 +553,6 @@ scalarSrcReg: optionalSign scalarUse
 	      $$.Base.Negate = ~$$.Base.Negate;
 	   }
 	}
-	| optionalSign '|' scalarUse '|'
-	{
-	   $$ = $3;
-
-	   if (!state->option.NV_fragment) {
-	      yyerror(& @2, state, "unexpected character '|'");
-	      YYERROR;
-	   }
-
-	   if ($1) {
-	      $$.Base.Negate = ~$$.Base.Negate;
-	   }
-
-	   $$.Base.Abs = 1;
-	}
 	;
 
 scalarUse:  srcReg scalarSuffix
@@ -580,23 +561,6 @@ scalarUse:  srcReg scalarSuffix
 
 	   $$.Base.Swizzle = _mesa_combine_swizzles($$.Base.Swizzle,
 						    $2.swizzle);
-	}
-	| paramConstScalarUse
-	{
-	   struct asm_symbol temp_sym;
-
-	   if (!state->option.NV_fragment) {
-	      yyerror(& @1, state, "expected scalar suffix");
-	      YYERROR;
-	   }
-
-	   memset(& temp_sym, 0, sizeof(temp_sym));
-	   temp_sym.param_binding_begin = ~0;
-	   initialize_symbol_from_const(state->prog, & temp_sym, & $1, GL_TRUE);
-
-	   set_src_reg_swz(& $$, PROGRAM_CONSTANT,
-                           temp_sym.param_binding_begin,
-                           temp_sym.param_binding_swizzle);
 	}
 	;
 
@@ -611,33 +575,12 @@ swizzleSrcReg: optionalSign srcReg swizzleSuffix
 	   $$.Base.Swizzle = _mesa_combine_swizzles($$.Base.Swizzle,
 						    $3.swizzle);
 	}
-	| optionalSign '|' srcReg swizzleSuffix '|'
-	{
-	   $$ = $3;
-
-	   if (!state->option.NV_fragment) {
-	      yyerror(& @2, state, "unexpected character '|'");
-	      YYERROR;
-	   }
-
-	   if ($1) {
-	      $$.Base.Negate = ~$$.Base.Negate;
-	   }
-
-	   $$.Base.Abs = 1;
-	   $$.Base.Swizzle = _mesa_combine_swizzles($$.Base.Swizzle,
-						    $4.swizzle);
-	}
-
 	;
 
-maskedDstReg: dstReg optionalMask optionalCcMask
+maskedDstReg: dstReg optionalMask
 	{
 	   $$ = $1;
 	   $$.WriteMask = $2.mask;
-	   $$.CondMask = $3.CondMask;
-	   $$.CondSwizzle = $3.CondSwizzle;
-	   $$.CondSrc = $3.CondSrc;
 
 	   if ($$.File == PROGRAM_OUTPUT) {
 	      /* Technically speaking, this should check that it is in
@@ -645,7 +588,7 @@ maskedDstReg: dstReg optionalMask optionalCcMask
 	       * set in fragment program mode, so it is somewhat irrelevant.
 	       */
 	      if (state->option.PositionInvariant
-	       && ($$.Index == VERT_RESULT_HPOS)) {
+	       && ($$.Index == VARYING_SLOT_POS)) {
 		 yyerror(& @1, state, "position-invariant programs cannot "
 			 "write position");
 		 YYERROR;
@@ -711,6 +654,7 @@ extSwizSel: INTEGER
 	   }
 
 	   $$.swz = ($1 == 0) ? SWIZZLE_ZERO : SWIZZLE_ONE;
+           $$.negate = 0;
 
 	   /* 0 and 1 are valid for both RGBA swizzle names and XYZW
 	    * swizzle names.
@@ -729,6 +673,10 @@ extSwizSel: INTEGER
 
 	   s = $1[0];
 	   free($1);
+
+           $$.rgba_valid = 0;
+           $$.xyzw_valid = 0;
+           $$.negate = 0;
 
 	   switch (s) {
 	   case 'x':
@@ -1018,82 +966,6 @@ optionalMask: MASK4 | MASK3 | MASK2 | MASK1
 	|              { $$.swizzle = SWIZZLE_NOOP; $$.mask = WRITEMASK_XYZW; }
 	;
 
-optionalCcMask: '(' ccTest ')'
-	{
-	   $$ = $2;
-	}
-	| '(' ccTest2 ')'
-	{
-	   $$ = $2;
-	}
-	|
-	{
-	   $$.CondMask = COND_TR;
-	   $$.CondSwizzle = SWIZZLE_NOOP;
-	   $$.CondSrc = 0;
-	}
-	;
-
-ccTest: ccMaskRule swizzleSuffix
-	{
-	   $$ = $1;
-	   $$.CondSwizzle = $2.swizzle;
-	}
-	;
-
-ccTest2: ccMaskRule2 swizzleSuffix
-	{
-	   $$ = $1;
-	   $$.CondSwizzle = $2.swizzle;
-	}
-	;
-
-ccMaskRule: IDENTIFIER
-	{
-	   const int cond = _mesa_parse_cc($1);
-	   if ((cond == 0) || ($1[2] != '\0')) {
-	      char *const err_str =
-		 make_error_string("invalid condition code \"%s\"", $1);
-
-	      yyerror(& @1, state, (err_str != NULL)
-		      ? err_str : "invalid condition code");
-
-	      if (err_str != NULL) {
-		 free(err_str);
-	      }
-
-	      YYERROR;
-	   }
-
-	   $$.CondMask = cond;
-	   $$.CondSwizzle = SWIZZLE_NOOP;
-	   $$.CondSrc = 0;
-	}
-	;
-
-ccMaskRule2: USED_IDENTIFIER
-	{
-	   const int cond = _mesa_parse_cc($1);
-	   if ((cond == 0) || ($1[2] != '\0')) {
-	      char *const err_str =
-		 make_error_string("invalid condition code \"%s\"", $1);
-
-	      yyerror(& @1, state, (err_str != NULL)
-		      ? err_str : "invalid condition code");
-
-	      if (err_str != NULL) {
-		 free(err_str);
-	      }
-
-	      YYERROR;
-	   }
-
-	   $$.CondMask = cond;
-	   $$.CondSwizzle = SWIZZLE_NOOP;
-	   $$.CondSrc = 0;
-	}
-	;
-
 namingStatement: ATTRIB_statement
 	| PARAM_statement
 	| TEMP_statement
@@ -1145,20 +1017,10 @@ vtxAttribItem: POSITION
 	}
 	| COLOR optColorType
 	{
-	   if (!state->ctx->Extensions.EXT_secondary_color) {
-	      yyerror(& @2, state, "GL_EXT_secondary_color not supported");
-	      YYERROR;
-	   }
-
 	   $$ = VERT_ATTRIB_COLOR0 + $2;
 	}
 	| FOGCOORD
 	{
-	   if (!state->ctx->Extensions.EXT_fog_coord) {
-	      yyerror(& @1, state, "GL_EXT_fog_coord not supported");
-	      YYERROR;
-	   }
-
 	   $$ = VERT_ATTRIB_FOG;
 	}
 	| TEXCOORD optTexCoordUnitNum
@@ -1192,19 +1054,19 @@ vtxWeightNum: INTEGER;
 
 fragAttribItem: POSITION
 	{
-	   $$ = FRAG_ATTRIB_WPOS;
+	   $$ = VARYING_SLOT_POS;
 	}
 	| COLOR optColorType
 	{
-	   $$ = FRAG_ATTRIB_COL0 + $2;
+	   $$ = VARYING_SLOT_COL0 + $2;
 	}
 	| FOGCOORD
 	{
-	   $$ = FRAG_ATTRIB_FOGC;
+	   $$ = VARYING_SLOT_FOGC;
 	}
 	| TEXCOORD optTexCoordUnitNum
 	{
-	   $$ = FRAG_ATTRIB_TEX0 + $2;
+	   $$ = VARYING_SLOT_TEX0 + $2;
 	}
 	;
 
@@ -1932,46 +1794,7 @@ optionalSign: '+'        { $$ = FALSE; }
 	|                { $$ = FALSE; }
 	;
 
-TEMP_statement: optVarSize TEMP { $<integer>$ = $2; } varNameList
-	;
-
-optVarSize: string
-	{
-	   /* NV_fragment_program_option defines the size qualifiers in a
-	    * fairly broken way.  "SHORT" or "LONG" can optionally be used
-	    * before TEMP or OUTPUT.  However, neither is a reserved word!
-	    * This means that we have to parse it as an identifier, then check
-	    * to make sure it's one of the valid values.  *sigh*
-	    *
-	    * In addition, the grammar in the extension spec does *not* allow
-	    * the size specifier to be optional, but all known implementations
-	    * do.
-	    */
-	   if (!state->option.NV_fragment) {
-	      yyerror(& @1, state, "unexpected IDENTIFIER");
-	      YYERROR;
-	   }
-
-	   if (strcmp("SHORT", $1) == 0) {
-	   } else if (strcmp("LONG", $1) == 0) {
-	   } else {
-	      char *const err_str =
-		 make_error_string("invalid storage size specifier \"%s\"",
-				   $1);
-
-	      yyerror(& @1, state, (err_str != NULL)
-		      ? err_str : "invalid storage size specifier");
-
-	      if (err_str != NULL) {
-		 free(err_str);
-	      }
-
-	      YYERROR;
-	   }
-	}
-	|
-	{
-	}
+TEMP_statement: TEMP { $<integer>$ = $1; } varNameList
 	;
 
 ADDRESS_statement: ADDRESS { $<integer>$ = $1; } varNameList
@@ -1993,16 +1816,16 @@ varNameList: varNameList ',' IDENTIFIER
 	}
 	;
 
-OUTPUT_statement: optVarSize OUTPUT IDENTIFIER '=' resultBinding
+OUTPUT_statement: OUTPUT IDENTIFIER '=' resultBinding
 	{
 	   struct asm_symbol *const s =
-	      declare_variable(state, $3, at_output, & @3);
+	      declare_variable(state, $2, at_output, & @2);
 
 	   if (s == NULL) {
-	      free($3);
+	      free($2);
 	      YYERROR;
 	   } else {
-	      s->output_binding = $5;
+	      s->output_binding = $4;
 	   }
 	}
 	;
@@ -2010,7 +1833,7 @@ OUTPUT_statement: optVarSize OUTPUT IDENTIFIER '=' resultBinding
 resultBinding: RESULT POSITION
 	{
 	   if (state->mode == ARB_vertex) {
-	      $$ = VERT_RESULT_HPOS;
+	      $$ = VARYING_SLOT_POS;
 	   } else {
 	      yyerror(& @2, state, "invalid program result name");
 	      YYERROR;
@@ -2019,7 +1842,7 @@ resultBinding: RESULT POSITION
 	| RESULT FOGCOORD
 	{
 	   if (state->mode == ARB_vertex) {
-	      $$ = VERT_RESULT_FOGC;
+	      $$ = VARYING_SLOT_FOGC;
 	   } else {
 	      yyerror(& @2, state, "invalid program result name");
 	      YYERROR;
@@ -2032,7 +1855,7 @@ resultBinding: RESULT POSITION
 	| RESULT POINTSIZE
 	{
 	   if (state->mode == ARB_vertex) {
-	      $$ = VERT_RESULT_PSIZ;
+	      $$ = VARYING_SLOT_PSIZ;
 	   } else {
 	      yyerror(& @2, state, "invalid program result name");
 	      YYERROR;
@@ -2041,7 +1864,7 @@ resultBinding: RESULT POSITION
 	| RESULT TEXCOORD optTexCoordUnitNum
 	{
 	   if (state->mode == ARB_vertex) {
-	      $$ = VERT_RESULT_TEX0 + $3;
+	      $$ = VARYING_SLOT_TEX0 + $3;
 	   } else {
 	      yyerror(& @2, state, "invalid program result name");
 	      YYERROR;
@@ -2067,7 +1890,7 @@ resultColBinding: COLOR optResultFaceType optResultColorType
 optResultFaceType:
 	{
 	   if (state->mode == ARB_vertex) {
-	      $$ = VERT_RESULT_COL0;
+	      $$ = VARYING_SLOT_COL0;
 	   } else {
 	      if (state->option.DrawBuffers)
 		 $$ = FRAG_RESULT_DATA0;
@@ -2106,7 +1929,7 @@ optResultFaceType:
 	| FRONT
 	{
 	   if (state->mode == ARB_vertex) {
-	      $$ = VERT_RESULT_COL0;
+	      $$ = VARYING_SLOT_COL0;
 	   } else {
 	      yyerror(& @1, state, "invalid program result name");
 	      YYERROR;
@@ -2115,7 +1938,7 @@ optResultFaceType:
 	| BACK
 	{
 	   if (state->mode == ARB_vertex) {
-	      $$ = VERT_RESULT_BFC0;
+	      $$ = VARYING_SLOT_BFC0;
 	   } else {
 	      yyerror(& @1, state, "invalid program result name");
 	      YYERROR;
@@ -2250,9 +2073,6 @@ asm_instruction_set_operands(struct asm_instruction *inst,
       inst->Base.DstReg = *dst;
    }
 
-   /* The only instruction that doesn't have any source registers is the
-    * condition-code based KIL instruction added by NV_fragment_program_option.
-    */
    if (src0 != NULL) {
       inst->Base.SrcReg[0] = src0->Base;
       inst->SrcReg[0] = *src0;
@@ -2277,7 +2097,7 @@ asm_instruction_set_operands(struct asm_instruction *inst,
 
 
 struct asm_instruction *
-asm_instruction_ctor(gl_inst_opcode op,
+asm_instruction_ctor(enum prog_opcode op,
 		     const struct prog_dst_register *dst,
 		     const struct asm_src_register *src0,
 		     const struct asm_src_register *src1,
@@ -2308,10 +2128,7 @@ asm_instruction_copy_ctor(const struct prog_instruction *base,
    if (inst) {
       _mesa_init_instructions(& inst->Base, 1);
       inst->Base.Opcode = base->Opcode;
-      inst->Base.CondUpdate = base->CondUpdate;
-      inst->Base.CondDst = base->CondDst;
-      inst->Base.SaturateMode = base->SaturateMode;
-      inst->Base.Precision = base->Precision;
+      inst->Base.Saturate = base->Saturate;
 
       asm_instruction_set_operands(inst, dst, src0, src1, src2);
    }
@@ -2326,8 +2143,6 @@ init_dst_reg(struct prog_dst_register *r)
    memset(r, 0, sizeof(*r));
    r->File = PROGRAM_UNDEFINED;
    r->WriteMask = WRITEMASK_XYZW;
-   r->CondMask = COND_TR;
-   r->CondSwizzle = SWIZZLE_NOOP;
 }
 
 
@@ -2337,19 +2152,17 @@ set_dst_reg(struct prog_dst_register *r, gl_register_file file, GLint index)
 {
    const GLint maxIndex = 1 << INST_INDEX_BITS;
    const GLint minIndex = 0;
-   ASSERT(index >= minIndex);
+   assert(index >= minIndex);
    (void) minIndex;
-   ASSERT(index <= maxIndex);
+   assert(index <= maxIndex);
    (void) maxIndex;
-   ASSERT(file == PROGRAM_TEMPORARY ||
+   assert(file == PROGRAM_TEMPORARY ||
 	  file == PROGRAM_ADDRESS ||
 	  file == PROGRAM_OUTPUT);
    memset(r, 0, sizeof(*r));
    r->File = file;
    r->Index = index;
    r->WriteMask = WRITEMASK_XYZW;
-   r->CondMask = COND_TR;
-   r->CondSwizzle = SWIZZLE_NOOP;
 }
 
 
@@ -2379,10 +2192,10 @@ set_src_reg_swz(struct asm_src_register *r, gl_register_file file, GLint index,
 {
    const GLint maxIndex = (1 << INST_INDEX_BITS) - 1;
    const GLint minIndex = -(1 << INST_INDEX_BITS);
-   ASSERT(file < PROGRAM_FILE_MAX);
-   ASSERT(index >= minIndex);
+   assert(file < PROGRAM_FILE_MAX);
+   assert(index >= minIndex);
    (void) minIndex;
-   ASSERT(index <= maxIndex);
+   assert(index <= maxIndex);
    (void) maxIndex;
    memset(r, 0, sizeof(*r));
    r->Base.File = file;
@@ -2478,7 +2291,7 @@ int add_state_reference(struct gl_program_parameter_list *param_list,
 
    name = _mesa_program_state_string(tokens);
    index = _mesa_add_parameter(param_list, PROGRAM_STATE_VAR, name,
-                               size, GL_NONE, NULL, tokens, 0x0);
+                               size, GL_NONE, NULL, tokens);
    param_list->StateFlags |= _mesa_program_state_flags(tokens);
 
    /* free name string here since we duplicated it in add_parameter() */
@@ -2711,10 +2524,10 @@ _mesa_parse_arb_program(struct gl_context *ctx, GLenum target, const GLubyte *st
    state->st = _mesa_symbol_table_ctor();
 
    state->limits = (target == GL_VERTEX_PROGRAM_ARB)
-      ? & ctx->Const.VertexProgram
-      : & ctx->Const.FragmentProgram;
+      ? & ctx->Const.Program[MESA_SHADER_VERTEX]
+      : & ctx->Const.Program[MESA_SHADER_FRAGMENT];
 
-   state->MaxTextureImageUnits = ctx->Const.MaxTextureImageUnits;
+   state->MaxTextureImageUnits = ctx->Const.Program[MESA_SHADER_FRAGMENT].MaxTextureImageUnits;
    state->MaxTextureCoordUnits = ctx->Const.MaxTextureCoordUnits;
    state->MaxTextureUnits = ctx->Const.MaxTextureUnits;
    state->MaxClipPlanes = ctx->Const.MaxClipPlanes;
@@ -2753,6 +2566,11 @@ _mesa_parse_arb_program(struct gl_context *ctx, GLenum target, const GLubyte *st
     */
    state->prog->Instructions =
       _mesa_alloc_instructions(state->prog->NumInstructions + 1);
+
+   if (state->prog->Instructions == NULL) {
+      goto error;
+   }
+
    inst = state->inst_head;
    for (i = 0; i < state->prog->NumInstructions; i++) {
       struct asm_instruction *const temp = inst->next;

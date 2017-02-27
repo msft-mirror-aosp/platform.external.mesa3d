@@ -1,6 +1,5 @@
 /*
  * Mesa 3-D graphics library
- * Version:  7.6
  *
  * Copyright (C) 1999-2008  Brian Paul   All Rights Reserved.
  * Copyright (C) 2009  VMware, Inc.  All Rights Reserved.
@@ -18,9 +17,10 @@
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
  * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * BRIAN PAUL BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
- * AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
  */
 
 
@@ -32,7 +32,6 @@
 
 
 #include "main/glheader.h"
-#include "main/colormac.h"
 #include "main/macros.h"
 #include "main/imports.h"
 #include "main/samplerobj.h"
@@ -41,6 +40,7 @@
 #include "program/prog_statevars.h"
 #include "program/prog_execute.h"
 #include "swrast/s_context.h"
+#include "util/bitscan.h"
 
 #include "tnl/tnl.h"
 #include "tnl/t_context.h"
@@ -63,7 +63,7 @@ check_float(float x)
  */
 struct vp_stage_data {
    /** The results of running the vertex program go into these arrays. */
-   GLvector4f results[VERT_RESULT_MAX];
+   GLvector4f results[VARYING_SLOT_MAX];
 
    GLvector4f ndcCoords;              /**< normalized device coords */
    GLubyte *clipmask;                 /**< clip flags */
@@ -85,40 +85,38 @@ userclip( struct gl_context *ctx,
           GLubyte *clipormask,
           GLubyte *clipandmask )
 {
-   GLuint p;
+   GLbitfield mask = ctx->Transform.ClipPlanesEnabled;
+   while (mask) {
+      const int p = u_bit_scan(&mask);
+      GLuint nr, i;
+      const GLfloat a = ctx->Transform._ClipUserPlane[p][0];
+      const GLfloat b = ctx->Transform._ClipUserPlane[p][1];
+      const GLfloat c = ctx->Transform._ClipUserPlane[p][2];
+      const GLfloat d = ctx->Transform._ClipUserPlane[p][3];
+      GLfloat *coord = (GLfloat *)clip->data;
+      GLuint stride = clip->stride;
+      GLuint count = clip->count;
 
-   for (p = 0; p < ctx->Const.MaxClipPlanes; p++) {
-      if (ctx->Transform.ClipPlanesEnabled & (1 << p)) {
-	 GLuint nr, i;
-	 const GLfloat a = ctx->Transform._ClipUserPlane[p][0];
-	 const GLfloat b = ctx->Transform._ClipUserPlane[p][1];
-	 const GLfloat c = ctx->Transform._ClipUserPlane[p][2];
-	 const GLfloat d = ctx->Transform._ClipUserPlane[p][3];
-         GLfloat *coord = (GLfloat *)clip->data;
-         GLuint stride = clip->stride;
-         GLuint count = clip->count;
+      for (nr = 0, i = 0 ; i < count ; i++) {
+         GLfloat dp = (coord[0] * a +
+                       coord[1] * b +
+                       coord[2] * c +
+                       coord[3] * d);
 
-	 for (nr = 0, i = 0 ; i < count ; i++) {
-	    GLfloat dp = (coord[0] * a + 
-			  coord[1] * b +
-			  coord[2] * c +
-			  coord[3] * d);
+         if (dp < 0) {
+            nr++;
+            clipmask[i] |= CLIP_USER_BIT;
+         }
 
-	    if (dp < 0) {
-	       nr++;
-	       clipmask[i] |= CLIP_USER_BIT;
-	    }
+         STRIDE_F(coord, stride);
+      }
 
-	    STRIDE_F(coord, stride);
-	 }
-
-	 if (nr > 0) {
-	    *clipormask |= CLIP_USER_BIT;
-	    if (nr == count) {
-	       *clipandmask |= CLIP_USER_BIT;
-	       return;
-	    }
-	 }
+      if (nr > 0) {
+         *clipormask |= CLIP_USER_BIT;
+         if (nr == count) {
+            *clipandmask |= CLIP_USER_BIT;
+            return;
+         }
       }
    }
 }
@@ -231,28 +229,7 @@ init_machine(struct gl_context *ctx, struct gl_program_machine *machine,
    memcpy(machine->VertAttribs, ctx->Current.Attrib,
           MAX_VERTEX_GENERIC_ATTRIBS * 4 * sizeof(GLfloat));
 
-   if (ctx->VertexProgram._Current->IsNVProgram) {
-      GLuint i;
-      /* Output/result regs are initialized to [0,0,0,1] */
-      for (i = 0; i < MAX_NV_VERTEX_PROGRAM_OUTPUTS; i++) {
-         ASSIGN_4V(machine->Outputs[i], 0.0F, 0.0F, 0.0F, 1.0F);
-      }
-      /* Temp regs are initialized to [0,0,0,0] */
-      for (i = 0; i < MAX_NV_VERTEX_PROGRAM_TEMPS; i++) {
-         ASSIGN_4V(machine->Temporaries[i], 0.0F, 0.0F, 0.0F, 0.0F);
-      }
-      for (i = 0; i < MAX_VERTEX_PROGRAM_ADDRESS_REGS; i++) {
-         ASSIGN_4V(machine->AddressReg[i], 0, 0, 0, 0);
-      }
-   }
-
    machine->NumDeriv = 0;
-
-   /* init condition codes */
-   machine->CondCodes[0] = COND_EQ;
-   machine->CondCodes[1] = COND_EQ;
-   machine->CondCodes[2] = COND_EQ;
-   machine->CondCodes[3] = COND_EQ;
 
    /* init call stack */
    machine->StackDepth = 0;
@@ -274,7 +251,7 @@ map_textures(struct gl_context *ctx, const struct gl_vertex_program *vp)
 {
    GLuint u;
 
-   for (u = 0; u < ctx->Const.MaxVertexTextureImageUnits; u++) {
+   for (u = 0; u < ctx->Const.Program[MESA_SHADER_VERTEX].MaxTextureImageUnits; u++) {
       if (vp->Base.TexturesUsed[u]) {
          /* Note: _Current *should* correspond to the target indicated
           * in TexturesUsed[u].
@@ -293,7 +270,7 @@ unmap_textures(struct gl_context *ctx, const struct gl_vertex_program *vp)
 {
    GLuint u;
 
-   for (u = 0; u < ctx->Const.MaxVertexTextureImageUnits; u++) {
+   for (u = 0; u < ctx->Const.Program[MESA_SHADER_VERTEX].MaxTextureImageUnits; u++) {
       if (vp->Base.TexturesUsed[u]) {
          /* Note: _Current *should* correspond to the target indicated
           * in TexturesUsed[u].
@@ -315,23 +292,18 @@ run_vp( struct gl_context *ctx, struct tnl_pipeline_stage *stage )
    struct vertex_buffer *VB = &tnl->vb;
    struct gl_vertex_program *program = ctx->VertexProgram._Current;
    struct gl_program_machine *machine = &store->machine;
-   GLuint outputs[VERT_RESULT_MAX], numOutputs;
+   GLuint outputs[VARYING_SLOT_MAX], numOutputs;
    GLuint i, j;
 
    if (!program)
       return GL_TRUE;
 
-   if (program->IsNVProgram) {
-      _mesa_load_tracked_matrices(ctx);
-   }
-   else {
-      /* ARB program or vertex shader */
-      _mesa_load_state_parameters(ctx, program->Base.Parameters);
-   }
+   /* ARB program or vertex shader */
+   _mesa_load_state_parameters(ctx, program->Base.Parameters);
 
    /* make list of outputs to save some time below */
    numOutputs = 0;
-   for (i = 0; i < VERT_RESULT_MAX; i++) {
+   for (i = 0; i < VARYING_SLOT_MAX; i++) {
       if (program->Base.OutputsWritten & BITFIELD64_BIT(i)) {
          outputs[numOutputs++] = i;
       }
@@ -341,7 +313,7 @@ run_vp( struct gl_context *ctx, struct tnl_pipeline_stage *stage )
     * memory that would never be used if we don't run the software tnl pipeline.
     */
    if (!store->results[0].storage) {
-      for (i = 0; i < VERT_RESULT_MAX; i++) {
+      for (i = 0; i < VARYING_SLOT_MAX; i++) {
          assert(!store->results[i].storage);
          _mesa_vector4f_alloc( &store->results[i], 0, VB->Size, 32 );
          store->results[i].size = 4;
@@ -406,13 +378,13 @@ run_vp( struct gl_context *ctx, struct tnl_pipeline_stage *stage )
       }
 
       /* FOGC is a special case.  Fragment shader expects (f,0,0,1) */
-      if (program->Base.OutputsWritten & BITFIELD64_BIT(VERT_RESULT_FOGC)) {
-         store->results[VERT_RESULT_FOGC].data[i][1] = 0.0;
-         store->results[VERT_RESULT_FOGC].data[i][2] = 0.0;
-         store->results[VERT_RESULT_FOGC].data[i][3] = 1.0;
+      if (program->Base.OutputsWritten & BITFIELD64_BIT(VARYING_SLOT_FOGC)) {
+         store->results[VARYING_SLOT_FOGC].data[i][1] = 0.0;
+         store->results[VARYING_SLOT_FOGC].data[i][2] = 0.0;
+         store->results[VARYING_SLOT_FOGC].data[i][3] = 1.0;
       }
 #ifdef NAN_CHECK
-      ASSERT(machine->Outputs[0][3] != 0.0F);
+      assert(machine->Outputs[0][3] != 0.0F);
 #endif
 #if 0
       printf("HPOS: %f %f %f %f\n",
@@ -424,23 +396,6 @@ run_vp( struct gl_context *ctx, struct tnl_pipeline_stage *stage )
    }
 
    unmap_textures(ctx, program);
-
-   /* Fixup fog and point size results if needed */
-   if (program->IsNVProgram) {
-      if (ctx->Fog.Enabled &&
-          (program->Base.OutputsWritten & BITFIELD64_BIT(VERT_RESULT_FOGC)) == 0) {
-         for (i = 0; i < VB->Count; i++) {
-            store->results[VERT_RESULT_FOGC].data[i][0] = 1.0;
-         }
-      }
-
-      if (ctx->VertexProgram.PointSizeEnabled &&
-          (program->Base.OutputsWritten & BITFIELD64_BIT(VERT_RESULT_PSIZ)) == 0) {
-         for (i = 0; i < VB->Count; i++) {
-            store->results[VERT_RESULT_PSIZ].data[i][0] = ctx->Point.Size;
-         }
-      }
-   }
 
    if (program->IsPositionInvariant) {
       /* We need the exact same transform as in the fixed function path here
@@ -470,28 +425,28 @@ run_vp( struct gl_context *ctx, struct tnl_pipeline_stage *stage )
       /* Setup the VB pointers so that the next pipeline stages get
        * their data from the right place (the program output arrays).
        */
-      VB->ClipPtr = &store->results[VERT_RESULT_HPOS];
+      VB->ClipPtr = &store->results[VARYING_SLOT_POS];
       VB->ClipPtr->size = 4;
       VB->ClipPtr->count = VB->Count;
    }
 
-   VB->AttribPtr[VERT_ATTRIB_COLOR0] = &store->results[VERT_RESULT_COL0];
-   VB->AttribPtr[VERT_ATTRIB_COLOR1] = &store->results[VERT_RESULT_COL1];
-   VB->AttribPtr[VERT_ATTRIB_FOG] = &store->results[VERT_RESULT_FOGC];
-   VB->AttribPtr[_TNL_ATTRIB_POINTSIZE] = &store->results[VERT_RESULT_PSIZ];
-   VB->BackfaceColorPtr = &store->results[VERT_RESULT_BFC0];
-   VB->BackfaceSecondaryColorPtr = &store->results[VERT_RESULT_BFC1];
+   VB->AttribPtr[VERT_ATTRIB_COLOR0] = &store->results[VARYING_SLOT_COL0];
+   VB->AttribPtr[VERT_ATTRIB_COLOR1] = &store->results[VARYING_SLOT_COL1];
+   VB->AttribPtr[VERT_ATTRIB_FOG] = &store->results[VARYING_SLOT_FOGC];
+   VB->AttribPtr[_TNL_ATTRIB_POINTSIZE] = &store->results[VARYING_SLOT_PSIZ];
+   VB->BackfaceColorPtr = &store->results[VARYING_SLOT_BFC0];
+   VB->BackfaceSecondaryColorPtr = &store->results[VARYING_SLOT_BFC1];
 
    for (i = 0; i < ctx->Const.MaxTextureCoordUnits; i++) {
       VB->AttribPtr[_TNL_ATTRIB_TEX0 + i]
-         = &store->results[VERT_RESULT_TEX0 + i];
+         = &store->results[VARYING_SLOT_TEX0 + i];
    }
 
    for (i = 0; i < ctx->Const.MaxVarying; i++) {
-      if (program->Base.OutputsWritten & BITFIELD64_BIT(VERT_RESULT_VAR0 + i)) {
+      if (program->Base.OutputsWritten & BITFIELD64_BIT(VARYING_SLOT_VAR0 + i)) {
          /* Note: varying results get put into the generic attributes */
 	 VB->AttribPtr[VERT_ATTRIB_GENERIC0+i]
-            = &store->results[VERT_RESULT_VAR0 + i];
+            = &store->results[VARYING_SLOT_VAR0 + i];
       }
    }
 
@@ -514,14 +469,14 @@ init_vp(struct gl_context *ctx, struct tnl_pipeline_stage *stage)
    struct vp_stage_data *store;
    const GLuint size = VB->Size;
 
-   stage->privatePtr = CALLOC(sizeof(*store));
+   stage->privatePtr = calloc(1, sizeof(*store));
    store = VP_STAGE_DATA(stage);
    if (!store)
       return GL_FALSE;
 
    /* a few other misc allocations */
    _mesa_vector4f_alloc( &store->ndcCoords, 0, size, 32 );
-   store->clipmask = (GLubyte *) _mesa_align_malloc(sizeof(GLubyte)*size, 32 );
+   store->clipmask = _mesa_align_malloc(sizeof(GLubyte)*size, 32 );
 
    return GL_TRUE;
 }
@@ -539,14 +494,14 @@ dtr(struct tnl_pipeline_stage *stage)
       GLuint i;
 
       /* free the vertex program result arrays */
-      for (i = 0; i < VERT_RESULT_MAX; i++)
+      for (i = 0; i < VARYING_SLOT_MAX; i++)
          _mesa_vector4f_free( &store->results[i] );
 
       /* free misc arrays */
       _mesa_vector4f_free( &store->ndcCoords );
       _mesa_align_free( store->clipmask );
 
-      FREE( store );
+      free( store );
       stage->privatePtr = NULL;
    }
 }

@@ -18,7 +18,7 @@
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
  * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
- * IN NO EVENT SHALL TUNGSTEN GRAPHICS AND/OR ITS SUPPLIERS BE LIABLE FOR
+ * IN NO EVENT SHALL VMWARE AND/OR ITS SUPPLIERS BE LIABLE FOR
  * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
  * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
@@ -62,7 +62,7 @@ vlVdpPresentationQueueCreate(VdpDevice device,
    if (!pq)
       return VDP_STATUS_RESOURCES;
 
-   pq->device = dev;
+   DeviceReference(&pq->device, dev);
    pq->drawable = pqt->drawable;
 
    pipe_mutex_lock(dev->mutex);
@@ -83,6 +83,7 @@ vlVdpPresentationQueueCreate(VdpDevice device,
 
 no_handle:
 no_compositor:
+   DeviceReference(&pq->device, NULL);
    FREE(pq);
    return ret;
 }
@@ -104,6 +105,7 @@ vlVdpPresentationQueueDestroy(VdpPresentationQueue presentation_queue)
    pipe_mutex_unlock(pq->device->mutex);
 
    vlRemoveDataHTAB(presentation_queue);
+   DeviceReference(&pq->device, NULL);
    FREE(pq);
 
    return VDP_STATUS_OK;
@@ -184,7 +186,8 @@ vlVdpPresentationQueueGetTime(VdpPresentationQueue presentation_queue,
       return VDP_STATUS_INVALID_HANDLE;
 
    pipe_mutex_lock(pq->device->mutex);
-   *current_time = vl_screen_get_timestamp(pq->device->vscreen, pq->drawable);
+   *current_time = pq->device->vscreen->get_timestamp(pq->device->vscreen,
+                                                      (void *)pq->drawable);
    pipe_mutex_unlock(pq->device->mutex);
 
    return VDP_STATUS_OK;
@@ -212,6 +215,7 @@ vlVdpPresentationQueueDisplay(VdpPresentationQueue presentation_queue,
 
    struct vl_compositor *compositor;
    struct vl_compositor_state *cstate;
+   struct vl_screen *vscreen;
 
    pq = vlGetDataHTAB(presentation_queue);
    if (!pq)
@@ -224,22 +228,20 @@ vlVdpPresentationQueueDisplay(VdpPresentationQueue presentation_queue,
    pipe = pq->device->context;
    compositor = &pq->device->compositor;
    cstate = &pq->cstate;
+   vscreen = pq->device->vscreen;
 
    pipe_mutex_lock(pq->device->mutex);
-   tex = vl_screen_texture_from_drawable(pq->device->vscreen, pq->drawable);
+   tex = vscreen->texture_from_drawable(vscreen, (void *)pq->drawable);
    if (!tex) {
       pipe_mutex_unlock(pq->device->mutex);
       return VDP_STATUS_INVALID_HANDLE;
    }
 
-   dirty_area = vl_screen_get_dirty_area(pq->device->vscreen);
+   dirty_area = vscreen->get_dirty_area(vscreen);
 
    memset(&surf_templ, 0, sizeof(surf_templ));
    surf_templ.format = tex->format;
-   surf_templ.usage = PIPE_BIND_RENDER_TARGET;
    surf_draw = pipe->create_surface(pipe, tex, &surf_templ);
-
-   surf->timestamp = (vlVdpTime)earliest_presentation_time;
 
    dst_clip.x0 = 0;
    dst_clip.y0 = 0;
@@ -265,18 +267,19 @@ vlVdpPresentationQueueDisplay(VdpPresentationQueue presentation_queue,
       vl_compositor_clear_layers(cstate);
       vl_compositor_set_rgba_layer(cstate, compositor, 0, surf->sampler_view, &src_rect, NULL, NULL);
       vl_compositor_set_dst_clip(cstate, &dst_clip);
-      vl_compositor_render(cstate, compositor, surf_draw, dirty_area);
+      vl_compositor_render(cstate, compositor, surf_draw, dirty_area, true);
    }
 
-   vl_screen_set_next_timestamp(pq->device->vscreen, earliest_presentation_time);
-   pipe->screen->flush_frontbuffer
-   (
-      pipe->screen, tex, 0, 0,
-      vl_screen_get_private(pq->device->vscreen)
-   );
+   vscreen->set_next_timestamp(vscreen, earliest_presentation_time);
 
+   // flush before calling flush_frontbuffer so that rendering is flushed
+   //  to back buffer so the texture can be copied in flush_frontbuffer
    pipe->screen->fence_reference(pipe->screen, &surf->fence, NULL);
-   pipe->flush(pipe, &surf->fence);
+   pipe->flush(pipe, &surf->fence, 0);
+   pipe->screen->flush_frontbuffer(pipe->screen, tex, 0, 0,
+                                   vscreen->get_private(vscreen), NULL);
+
+   pq->last_surf = surf;
 
    if (dump_window == -1) {
       dump_window = debug_get_num_option("VDPAU_DUMP", 0);
@@ -327,7 +330,8 @@ vlVdpPresentationQueueBlockUntilSurfaceIdle(VdpPresentationQueue presentation_qu
    pipe_mutex_lock(pq->device->mutex);
    if (surf->fence) {
       screen = pq->device->vscreen->pscreen;
-      screen->fence_finish(screen, surf->fence, 0);
+      screen->fence_finish(screen, NULL, surf->fence, PIPE_TIMEOUT_INFINITE);
+      screen->fence_reference(screen, &surf->fence, NULL);
    }
    pipe_mutex_unlock(pq->device->mutex);
 
@@ -361,11 +365,14 @@ vlVdpPresentationQueueQuerySurfaceStatus(VdpPresentationQueue presentation_queue
    *first_presentation_time = 0;
 
    if (!surf->fence) {
-      *status = VDP_PRESENTATION_QUEUE_STATUS_IDLE;
+      if (pq->last_surf == surf)
+         *status = VDP_PRESENTATION_QUEUE_STATUS_VISIBLE;
+      else
+         *status = VDP_PRESENTATION_QUEUE_STATUS_IDLE;
    } else {
       pipe_mutex_lock(pq->device->mutex);
       screen = pq->device->vscreen->pscreen;
-      if (screen->fence_signalled(screen, surf->fence)) {
+      if (screen->fence_finish(screen, NULL, surf->fence, 0)) {
          screen->fence_reference(screen, &surf->fence, NULL);
          *status = VDP_PRESENTATION_QUEUE_STATUS_VISIBLE;
          pipe_mutex_unlock(pq->device->mutex);
