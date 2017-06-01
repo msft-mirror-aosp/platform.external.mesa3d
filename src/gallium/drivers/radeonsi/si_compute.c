@@ -32,7 +32,7 @@
 #include "si_pipe.h"
 #include "sid.h"
 
-#define MAX_GLOBAL_BUFFERS 20
+#define MAX_GLOBAL_BUFFERS 22
 
 struct si_compute {
 	unsigned ir_type;
@@ -42,7 +42,8 @@ struct si_compute {
 	struct si_shader shader;
 
 	struct pipe_resource *global_buffers[MAX_GLOBAL_BUFFERS];
-	bool use_code_object_v2;
+	unsigned use_code_object_v2 : 1;
+	unsigned variable_group_size : 1;
 };
 
 struct dispatch_packet {
@@ -125,6 +126,7 @@ static void *si_create_compute_state(
 		p_atomic_inc(&sscreen->b.num_shaders_created);
 
 		program->shader.selector = &sel;
+		program->shader.is_monolithic = true;
 
 		if (si_shader_create(sscreen, sctx->tm, &program->shader,
 		                     &sctx->b.debug)) {
@@ -147,7 +149,11 @@ static void *si_create_compute_state(
 			   S_00B84C_TGID_Z_EN(1) | S_00B84C_TIDIG_COMP_CNT(2) |
 			   S_00B84C_LDS_SIZE(shader->config.lds_size);
 
+		program->variable_group_size =
+			sel.info.properties[TGSI_PROPERTY_CS_FIXED_BLOCK_WIDTH] == 0;
+
 		FREE(sel.tokens);
+		program->shader.selector = NULL;
 	} else {
 		const struct pipe_llvm_program_header *header;
 		const char *code;
@@ -164,8 +170,12 @@ static void *si_create_compute_state(
 				     &program->shader.config, 0);
 		}
 		si_shader_dump(sctx->screen, &program->shader, &sctx->b.debug,
-			       PIPE_SHADER_COMPUTE, stderr);
-		si_shader_binary_upload(sctx->screen, &program->shader);
+			       PIPE_SHADER_COMPUTE, stderr, true);
+		if (si_shader_binary_upload(sctx->screen, &program->shader) < 0) {
+			fprintf(stderr, "LLVM failed to upload shader\n");
+			FREE(program);
+			return NULL;
+		}
 	}
 
 	return program;
@@ -186,17 +196,19 @@ static void si_set_global_binding(
 	struct si_context *sctx = (struct si_context*)ctx;
 	struct si_compute *program = sctx->cs_shader_state.program;
 
+	assert(first + n <= MAX_GLOBAL_BUFFERS);
+
 	if (!resources) {
-		for (i = first; i < first + n; i++) {
-			pipe_resource_reference(&program->global_buffers[i], NULL);
+		for (i = 0; i < n; i++) {
+			pipe_resource_reference(&program->global_buffers[first + i], NULL);
 		}
 		return;
 	}
 
-	for (i = first; i < first + n; i++) {
+	for (i = 0; i < n; i++) {
 		uint64_t va;
 		uint32_t offset;
-		pipe_resource_reference(&program->global_buffers[i], resources[i]);
+		pipe_resource_reference(&program->global_buffers[first + i], resources[i]);
 		va = r600_resource(resources[i])->gpu_address;
 		offset = util_le32_to_cpu(*handles[i]);
 		va += offset;
@@ -276,9 +288,9 @@ static bool si_setup_compute_scratch_buffer(struct si_context *sctx,
 	if (scratch_bo_size < scratch_needed) {
 		r600_resource_reference(&sctx->compute_scratch_buffer, NULL);
 
-		sctx->compute_scratch_buffer =
-				si_resource_create_custom(&sctx->screen->b.b,
-                                PIPE_USAGE_DEFAULT, scratch_needed);
+		sctx->compute_scratch_buffer = (struct r600_resource*)
+			pipe_buffer_create(&sctx->screen->b.b, 0,
+					   PIPE_USAGE_DEFAULT, scratch_needed);
 
 		if (!sctx->compute_scratch_buffer)
 			return false;
@@ -338,6 +350,7 @@ static bool si_switch_compute_shader(struct si_context *sctx,
 			lds_blocks += align(program->local_size, 512) >> 9;
 		}
 
+		/* TODO: use si_multiwave_lds_size_workaround */
 		assert(lds_blocks <= 0xFF);
 
 		config->rsrc2 &= C_00B84C_LDS_SIZE;
@@ -607,14 +620,12 @@ static void si_setup_tgsi_grid(struct si_context *sctx,
 		}
 	} else {
 		struct si_compute *program = sctx->cs_shader_state.program;
-		bool variable_group_size =
-			program->shader.selector->info.properties[TGSI_PROPERTY_CS_FIXED_BLOCK_WIDTH] == 0;
 
-		radeon_set_sh_reg_seq(cs, grid_size_reg, variable_group_size ? 6 : 3);
+		radeon_set_sh_reg_seq(cs, grid_size_reg, program->variable_group_size ? 6 : 3);
 		radeon_emit(cs, info->grid[0]);
 		radeon_emit(cs, info->grid[1]);
 		radeon_emit(cs, info->grid[2]);
-		if (variable_group_size) {
+		if (program->variable_group_size) {
 			radeon_emit(cs, info->block[0]);
 			radeon_emit(cs, info->block[1]);
 			radeon_emit(cs, info->block[2]);

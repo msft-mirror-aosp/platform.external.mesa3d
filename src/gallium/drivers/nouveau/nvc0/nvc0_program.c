@@ -486,6 +486,11 @@ nvc0_fp_gen_header(struct nvc0_program *fp, struct nv50_ir_prog_info *info)
 
    fp->fp.early_z = info->prop.fp.earlyFragTests;
    fp->fp.sample_mask_in = info->prop.fp.usesSampleMaskIn;
+   fp->fp.reads_framebuffer = info->prop.fp.readsFramebuffer;
+
+   /* Mark position xy and layer as read */
+   if (fp->fp.reads_framebuffer)
+      fp->hdr[5] |= 0x32000000;
 
    return 0;
 }
@@ -509,11 +514,14 @@ nvc0_program_create_tfb_state(const struct nv50_ir_prog_info *info,
    for (i = 0; i < pso->num_outputs; ++i) {
       unsigned s = pso->output[i].start_component;
       unsigned p = pso->output[i].dst_offset;
+      const unsigned r = pso->output[i].register_index;
       b = pso->output[i].output_buffer;
 
+      if (r >= info->numOutputs)
+         continue;
+
       for (c = 0; c < pso->output[i].num_components; ++c)
-         tfb->varying_index[b][p++] =
-            info->out[pso->output[i].register_index].slot[s + c];
+         tfb->varying_index[b][p++] = info->out[r].slot[s + c];
 
       tfb->varying_count[b] = MAX2(tfb->varying_count[b], p);
       tfb->stream[b] = pso->output[i].stream;
@@ -580,6 +588,7 @@ nvc0_program_translate(struct nvc0_program *prog, uint16_t chipset,
    info->io.suInfoBase = NVC0_CB_AUX_SU_INFO(0);
    if (info->target >= NVISA_GK104_CHIPSET) {
       info->io.texBindBase = NVC0_CB_AUX_TEX_INFO(0);
+      info->io.fbtexBindBase = NVC0_CB_AUX_FB_TEX_INFO;
    }
 
    if (prog->type == PIPE_SHADER_COMPUTE) {
