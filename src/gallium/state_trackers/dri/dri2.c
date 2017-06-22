@@ -152,6 +152,9 @@ static enum pipe_format dri2_format_to_pipe_format (int format)
    case __DRI_IMAGE_FORMAT_XRGB8888:
       pf = PIPE_FORMAT_BGRX8888_UNORM;
       break;
+   case __DRI_IMAGE_FORMAT_XBGR8888:
+      pf = PIPE_FORMAT_XBGR8888_UNORM;
+      break;
    case __DRI_IMAGE_FORMAT_ARGB8888:
       pf = PIPE_FORMAT_BGRA8888_UNORM;
       break;
