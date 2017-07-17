@@ -39,14 +39,20 @@ extern "C" void
 _mesa_warning(struct gl_context *ctx, const char *fmtString, ... );
 
 extern "C" void
+_mesa_reference_shader_program_data(struct gl_context *ctx,
+                                    struct gl_shader_program_data **ptr,
+                                    struct gl_shader_program_data *data);
+
+extern "C" void
 _mesa_reference_shader(struct gl_context *ctx, struct gl_shader **ptr,
                        struct gl_shader *sh);
 
+extern "C" void
+_mesa_reference_program_(struct gl_context *ctx, struct gl_program **ptr,
+                         struct gl_program *prog);
+
 extern "C" struct gl_shader *
 _mesa_new_shader(GLuint name, gl_shader_stage stage);
-
-extern "C" struct gl_linked_shader *
-_mesa_new_linked_shader(gl_shader_stage stage);
 
 extern "C" void
 _mesa_delete_shader(struct gl_context *ctx, struct gl_shader *sh);
@@ -56,7 +62,8 @@ _mesa_delete_linked_shader(struct gl_context *ctx,
                            struct gl_linked_shader *sh);
 
 extern "C" void
-_mesa_clear_shader_program_data(struct gl_shader_program *);
+_mesa_clear_shader_program_data(struct gl_context *ctx,
+                                struct gl_shader_program *);
 
 extern "C" void
 _mesa_shader_debug(struct gl_context *ctx, GLenum type, GLuint *id,

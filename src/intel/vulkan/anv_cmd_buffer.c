@@ -118,7 +118,12 @@ anv_cmd_state_reset(struct anv_cmd_buffer *cmd_buffer)
    struct anv_cmd_state *state = &cmd_buffer->state;
 
    memset(&state->descriptors, 0, sizeof(state->descriptors));
-   memset(&state->push_constants, 0, sizeof(state->push_constants));
+   for (uint32_t i = 0; i < MESA_SHADER_STAGES; i++) {
+      if (state->push_constants[i] != NULL) {
+         vk_free(&cmd_buffer->pool->alloc, state->push_constants[i]);
+         state->push_constants[i] = NULL;
+      }
+   }
    memset(state->binding_tables, 0, sizeof(state->binding_tables));
    memset(state->samplers, 0, sizeof(state->samplers));
 
@@ -142,62 +147,6 @@ anv_cmd_state_reset(struct anv_cmd_buffer *cmd_buffer)
    }
 
    state->gen7.index_buffer = NULL;
-}
-
-/**
- * Setup anv_cmd_state::attachments for vkCmdBeginRenderPass.
- */
-void
-anv_cmd_state_setup_attachments(struct anv_cmd_buffer *cmd_buffer,
-                                const VkRenderPassBeginInfo *info)
-{
-   struct anv_cmd_state *state = &cmd_buffer->state;
-   ANV_FROM_HANDLE(anv_render_pass, pass, info->renderPass);
-
-   vk_free(&cmd_buffer->pool->alloc, state->attachments);
-
-   if (pass->attachment_count == 0) {
-      state->attachments = NULL;
-      return;
-   }
-
-   state->attachments = vk_alloc(&cmd_buffer->pool->alloc,
-                                  pass->attachment_count *
-                                       sizeof(state->attachments[0]),
-                                  8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
-   if (state->attachments == NULL) {
-      /* FIXME: Propagate VK_ERROR_OUT_OF_HOST_MEMORY to vkEndCommandBuffer */
-      abort();
-   }
-
-   for (uint32_t i = 0; i < pass->attachment_count; ++i) {
-      struct anv_render_pass_attachment *att = &pass->attachments[i];
-      VkImageAspectFlags att_aspects = vk_format_aspects(att->format);
-      VkImageAspectFlags clear_aspects = 0;
-
-      if (att_aspects == VK_IMAGE_ASPECT_COLOR_BIT) {
-         /* color attachment */
-         if (att->load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-            clear_aspects |= VK_IMAGE_ASPECT_COLOR_BIT;
-         }
-      } else {
-         /* depthstencil attachment */
-         if ((att_aspects & VK_IMAGE_ASPECT_DEPTH_BIT) &&
-             att->load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-            clear_aspects |= VK_IMAGE_ASPECT_DEPTH_BIT;
-         }
-         if ((att_aspects & VK_IMAGE_ASPECT_STENCIL_BIT) &&
-             att->stencil_load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-            clear_aspects |= VK_IMAGE_ASPECT_STENCIL_BIT;
-         }
-      }
-
-      state->attachments[i].pending_clear_aspects = clear_aspects;
-      if (clear_aspects) {
-         assert(info->clearValueCount > i);
-         state->attachments[i].clear_value = info->pClearValues[i];
-      }
-   }
 }
 
 VkResult
@@ -236,6 +185,9 @@ static VkResult anv_create_cmd_buffer(
    if (cmd_buffer == NULL)
       return vk_error(VK_ERROR_OUT_OF_HOST_MEMORY);
 
+   for (uint32_t i = 0; i < MESA_SHADER_STAGES; i++) {
+      cmd_buffer->state.push_constants[i] = NULL;
+   }
    cmd_buffer->_loader_data.loaderMagic = ICD_LOADER_MAGIC;
    cmd_buffer->device = device;
    cmd_buffer->pool = pool;
@@ -288,9 +240,12 @@ VkResult anv_AllocateCommandBuffers(
          break;
    }
 
-   if (result != VK_SUCCESS)
+   if (result != VK_SUCCESS) {
       anv_FreeCommandBuffers(_device, pAllocateInfo->commandPool,
                              i, pCommandBuffers);
+      for (i = 0; i < pAllocateInfo->commandBufferCount; i++)
+         pCommandBuffers[i] = VK_NULL_HANDLE;
+   }
 
    return result;
 }
@@ -317,6 +272,9 @@ void anv_FreeCommandBuffers(
 {
    for (uint32_t i = 0; i < commandBufferCount; i++) {
       ANV_FROM_HANDLE(anv_cmd_buffer, cmd_buffer, pCommandBuffers[i]);
+
+      if (!cmd_buffer)
+         continue;
 
       anv_cmd_buffer_destroy(cmd_buffer);
    }
@@ -346,6 +304,24 @@ VkResult anv_ResetCommandBuffer(
 {
    ANV_FROM_HANDLE(anv_cmd_buffer, cmd_buffer, commandBuffer);
    return anv_cmd_buffer_reset(cmd_buffer);
+}
+
+void
+anv_cmd_buffer_emit_state_base_address(struct anv_cmd_buffer *cmd_buffer)
+{
+   switch (cmd_buffer->device->info.gen) {
+   case 7:
+      if (cmd_buffer->device->info.is_haswell)
+         return gen75_cmd_buffer_emit_state_base_address(cmd_buffer);
+      else
+         return gen7_cmd_buffer_emit_state_base_address(cmd_buffer);
+   case 8:
+      return gen8_cmd_buffer_emit_state_base_address(cmd_buffer);
+   case 9:
+      return gen9_cmd_buffer_emit_state_base_address(cmd_buffer);
+   default:
+      unreachable("unsupported gen\n");
+   }
 }
 
 void anv_CmdBindPipeline(
@@ -658,7 +634,7 @@ anv_cmd_buffer_push_constants(struct anv_cmd_buffer *cmd_buffer,
    struct anv_push_constants *data =
       cmd_buffer->state.push_constants[stage];
    const struct brw_stage_prog_data *prog_data =
-      anv_shader_bin_get_prog_data(cmd_buffer->state.pipeline->shaders[stage]);
+      cmd_buffer->state.pipeline->shaders[stage]->prog_data;
 
    /* If we don't actually have any push constants, bail. */
    if (data == NULL || prog_data == NULL || prog_data->nr_params == 0)
@@ -795,6 +771,9 @@ void anv_DestroyCommandPool(
 {
    ANV_FROM_HANDLE(anv_device, device, _device);
    ANV_FROM_HANDLE(anv_cmd_pool, pool, commandPool);
+
+   if (!pool)
+      return;
 
    list_for_each_entry_safe(struct anv_cmd_buffer, cmd_buffer,
                             &pool->cmd_buffers, pool_link) {

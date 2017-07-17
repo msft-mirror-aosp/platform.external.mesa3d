@@ -31,6 +31,7 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <string.h>
 
 #if defined(_MSC_VER)
 #include <intrin.h>
@@ -223,6 +224,15 @@ u_bit_consecutive(unsigned start, unsigned count)
    if (count == 32)
       return ~0;
    return ((1u << count) - 1) << start;
+}
+
+static inline uint64_t
+u_bit_consecutive64(unsigned start, unsigned count)
+{
+   assert(start + count <= 64);
+   if (count == 64)
+      return ~(uint64_t)0;
+   return (((uint64_t)1 << count) - 1) << start;
 }
 
 

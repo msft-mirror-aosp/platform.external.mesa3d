@@ -38,6 +38,8 @@
 #include "nvc0/mme/com9097.mme.h"
 #include "nvc0/mme/com90c0.mme.h"
 
+#include "nv50/g80_texture.xml.h"
+
 static boolean
 nvc0_screen_is_format_supported(struct pipe_screen *pscreen,
                                 enum pipe_format format,
@@ -125,9 +127,7 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_MAX_TEXTURE_BUFFER_SIZE:
       return 128 * 1024 * 1024;
    case PIPE_CAP_GLSL_FEATURE_LEVEL:
-      if (class_3d <= NVF0_3D_CLASS)
-         return 430;
-      return 410;
+      return 430;
    case PIPE_CAP_MAX_RENDER_TARGETS:
       return 8;
    case PIPE_CAP_MAX_DUAL_SOURCE_RENDER_TARGETS:
@@ -147,7 +147,9 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
       return 256;
    case PIPE_CAP_TEXTURE_BUFFER_OFFSET_ALIGNMENT:
-      return 16; /* 256 for binding as RT, but that's not possible in GL */
+      if (class_3d < GM107_3D_CLASS)
+         return 256; /* IMAGE bindings require alignment to 256 */
+      return 16;
    case PIPE_CAP_SHADER_BUFFER_OFFSET_ALIGNMENT:
       return 16;
    case PIPE_CAP_MIN_MAP_BUFFER_ALIGNMENT:
@@ -189,6 +191,7 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_QUERY_TIME_ELAPSED:
    case PIPE_CAP_OCCLUSION_QUERY:
    case PIPE_CAP_STREAM_OUTPUT_PAUSE_RESUME:
+   case PIPE_CAP_STREAM_OUTPUT_INTERLEAVE_BUFFERS:
    case PIPE_CAP_QUERY_PIPELINE_STATISTICS:
    case PIPE_CAP_BLEND_EQUATION_SEPARATE:
    case PIPE_CAP_INDEP_BLEND_ENABLE:
@@ -248,6 +251,8 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return (class_3d >= NVE4_3D_CLASS) ? 1 : 0;
    case PIPE_CAP_PREFER_BLIT_BASED_TEXTURE_TRANSFER:
       return nouveau_screen(pscreen)->vram_domain & NOUVEAU_BO_VRAM ? 1 : 0;
+   case PIPE_CAP_TGSI_FS_FBFETCH:
+      return class_3d >= NVE4_3D_CLASS; /* needs testing on fermi */
 
    /* unsupported caps */
    case PIPE_CAP_TGSI_FS_COORD_ORIGIN_LOWER_LEFT:
@@ -273,6 +278,9 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_PCI_DEVICE:
    case PIPE_CAP_PCI_FUNCTION:
    case PIPE_CAP_VIEWPORT_SUBPIXEL_BITS:
+   case PIPE_CAP_TGSI_CAN_READ_OUTPUTS:
+   case PIPE_CAP_NATIVE_FENCE_FD:
+   case PIPE_CAP_GLSL_OPTIMIZE_CONSERVATIVELY:
       return 0;
 
    case PIPE_CAP_VENDOR_ID:
@@ -373,6 +381,7 @@ nvc0_screen_get_shader_param(struct pipe_screen *pscreen, unsigned shader,
       return 1;
    case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
    case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
+   case PIPE_SHADER_CAP_LOWER_IF_THRESHOLD:
       return 0;
    case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
       return NVC0_MAX_BUFFERS;
@@ -383,11 +392,10 @@ nvc0_screen_get_shader_param(struct pipe_screen *pscreen, unsigned shader,
    case PIPE_SHADER_CAP_MAX_UNROLL_ITERATIONS_HINT:
       return 32;
    case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
-      if (class_3d == NVE4_3D_CLASS || class_3d == NVF0_3D_CLASS)
+      if (class_3d >= NVE4_3D_CLASS)
          return NVC0_MAX_IMAGES;
-      if (class_3d < NVE4_3D_CLASS)
-         if (shader == PIPE_SHADER_FRAGMENT || shader == PIPE_SHADER_COMPUTE)
-            return NVC0_MAX_IMAGES;
+      if (shader == PIPE_SHADER_FRAGMENT || shader == PIPE_SHADER_COMPUTE)
+         return NVC0_MAX_IMAGES;
       return 0;
    default:
       NOUVEAU_ERR("unknown PIPE_SHADER_CAP %d\n", param);
@@ -532,6 +540,7 @@ nvc0_screen_destroy(struct pipe_screen *pscreen)
    nouveau_heap_destroy(&screen->lib_code);
    nouveau_heap_destroy(&screen->text_heap);
 
+   FREE(screen->default_tsc);
    FREE(screen->tic.entries);
 
    nouveau_object_del(&screen->eng3d);
@@ -1002,49 +1011,6 @@ nvc0_screen_create(struct nouveau_device *dev)
 
    PUSH_REFN (push, screen->uniform_bo, NV_VRAM_DOMAIN(&screen->base) | NOUVEAU_BO_WR);
 
-   for (i = 0; i < 5; ++i) {
-      /* TIC and TSC entries for each unit (nve4+ only) */
-      /* auxiliary constants (6 user clip planes, base instance id) */
-      BEGIN_NVC0(push, NVC0_3D(CB_SIZE), 3);
-      PUSH_DATA (push, NVC0_CB_AUX_SIZE);
-      PUSH_DATAh(push, screen->uniform_bo->offset + NVC0_CB_AUX_INFO(i));
-      PUSH_DATA (push, screen->uniform_bo->offset + NVC0_CB_AUX_INFO(i));
-      BEGIN_NVC0(push, NVC0_3D(CB_BIND(i)), 1);
-      PUSH_DATA (push, (15 << 4) | 1);
-      if (screen->eng3d->oclass >= NVE4_3D_CLASS) {
-         unsigned j;
-         BEGIN_1IC0(push, NVC0_3D(CB_POS), 9);
-         PUSH_DATA (push, NVC0_CB_AUX_UNK_INFO);
-         for (j = 0; j < 8; ++j)
-            PUSH_DATA(push, j);
-      } else {
-         BEGIN_NVC0(push, NVC0_3D(TEX_LIMITS(i)), 1);
-         PUSH_DATA (push, 0x54);
-      }
-
-      /* MS sample coordinate offsets: these do not work with _ALT modes ! */
-      BEGIN_1IC0(push, NVC0_3D(CB_POS), 1 + 2 * 8);
-      PUSH_DATA (push, NVC0_CB_AUX_MS_INFO);
-      PUSH_DATA (push, 0); /* 0 */
-      PUSH_DATA (push, 0);
-      PUSH_DATA (push, 1); /* 1 */
-      PUSH_DATA (push, 0);
-      PUSH_DATA (push, 0); /* 2 */
-      PUSH_DATA (push, 1);
-      PUSH_DATA (push, 1); /* 3 */
-      PUSH_DATA (push, 1);
-      PUSH_DATA (push, 2); /* 4 */
-      PUSH_DATA (push, 0);
-      PUSH_DATA (push, 3); /* 5 */
-      PUSH_DATA (push, 0);
-      PUSH_DATA (push, 2); /* 6 */
-      PUSH_DATA (push, 1);
-      PUSH_DATA (push, 3); /* 7 */
-      PUSH_DATA (push, 1);
-   }
-   BEGIN_NVC0(push, NVC0_3D(LINKED_TSC), 1);
-   PUSH_DATA (push, 0);
-
    /* return { 0.0, 0.0, 0.0, 0.0 } for out-of-bounds vtxbuf access */
    BEGIN_NVC0(push, NVC0_3D(CB_SIZE), 3);
    PUSH_DATA (push, 256);
@@ -1214,6 +1180,50 @@ nvc0_screen_create(struct nouveau_device *dev)
    if (nvc0_screen_init_compute(screen))
       goto fail;
 
+   /* XXX: Compute and 3D are somehow aliased on Fermi. */
+   for (i = 0; i < 5; ++i) {
+      /* TIC and TSC entries for each unit (nve4+ only) */
+      /* auxiliary constants (6 user clip planes, base instance id) */
+      BEGIN_NVC0(push, NVC0_3D(CB_SIZE), 3);
+      PUSH_DATA (push, NVC0_CB_AUX_SIZE);
+      PUSH_DATAh(push, screen->uniform_bo->offset + NVC0_CB_AUX_INFO(i));
+      PUSH_DATA (push, screen->uniform_bo->offset + NVC0_CB_AUX_INFO(i));
+      BEGIN_NVC0(push, NVC0_3D(CB_BIND(i)), 1);
+      PUSH_DATA (push, (15 << 4) | 1);
+      if (screen->eng3d->oclass >= NVE4_3D_CLASS) {
+         unsigned j;
+         BEGIN_1IC0(push, NVC0_3D(CB_POS), 9);
+         PUSH_DATA (push, NVC0_CB_AUX_UNK_INFO);
+         for (j = 0; j < 8; ++j)
+            PUSH_DATA(push, j);
+      } else {
+         BEGIN_NVC0(push, NVC0_3D(TEX_LIMITS(i)), 1);
+         PUSH_DATA (push, 0x54);
+      }
+
+      /* MS sample coordinate offsets: these do not work with _ALT modes ! */
+      BEGIN_1IC0(push, NVC0_3D(CB_POS), 1 + 2 * 8);
+      PUSH_DATA (push, NVC0_CB_AUX_MS_INFO);
+      PUSH_DATA (push, 0); /* 0 */
+      PUSH_DATA (push, 0);
+      PUSH_DATA (push, 1); /* 1 */
+      PUSH_DATA (push, 0);
+      PUSH_DATA (push, 0); /* 2 */
+      PUSH_DATA (push, 1);
+      PUSH_DATA (push, 1); /* 3 */
+      PUSH_DATA (push, 1);
+      PUSH_DATA (push, 2); /* 4 */
+      PUSH_DATA (push, 0);
+      PUSH_DATA (push, 3); /* 5 */
+      PUSH_DATA (push, 0);
+      PUSH_DATA (push, 2); /* 6 */
+      PUSH_DATA (push, 1);
+      PUSH_DATA (push, 3); /* 7 */
+      PUSH_DATA (push, 1);
+   }
+   BEGIN_NVC0(push, NVC0_3D(LINKED_TSC), 1);
+   PUSH_DATA (push, 0);
+
    PUSH_KICK (push);
 
    screen->tic.entries = CALLOC(4096, sizeof(void *));
@@ -1222,7 +1232,10 @@ nvc0_screen_create(struct nouveau_device *dev)
    if (!nvc0_blitter_create(screen))
       goto fail;
 
-   nouveau_fence_new(&screen->base, &screen->base.fence.current, false);
+   screen->default_tsc = CALLOC_STRUCT(nv50_tsc_entry);
+   screen->default_tsc->tsc[0] = G80_TSC_0_SRGB_CONVERSION;
+
+   nouveau_fence_new(&screen->base, &screen->base.fence.current);
 
    return &screen->base;
 

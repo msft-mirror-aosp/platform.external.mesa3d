@@ -399,11 +399,13 @@ vtn_nir_alu_op_for_spirv_glsl_opcode(enum GLSLstd450 opcode)
    case GLSLstd450PackSnorm2x16:    return nir_op_pack_snorm_2x16;
    case GLSLstd450PackUnorm2x16:    return nir_op_pack_unorm_2x16;
    case GLSLstd450PackHalf2x16:     return nir_op_pack_half_2x16;
+   case GLSLstd450PackDouble2x32:   return nir_op_pack_double_2x32;
    case GLSLstd450UnpackSnorm4x8:   return nir_op_unpack_snorm_4x8;
    case GLSLstd450UnpackUnorm4x8:   return nir_op_unpack_unorm_4x8;
    case GLSLstd450UnpackSnorm2x16:  return nir_op_unpack_snorm_2x16;
    case GLSLstd450UnpackUnorm2x16:  return nir_op_unpack_unorm_2x16;
    case GLSLstd450UnpackHalf2x16:   return nir_op_unpack_half_2x16;
+   case GLSLstd450UnpackDouble2x32: return nir_op_unpack_double_2x32;
 
    default:
       unreachable("No NIR equivalent");
@@ -565,16 +567,21 @@ handle_glsl450_alu(struct vtn_builder *b, enum GLSLstd450 entrypoint,
                                    build_exp(nb, nir_fneg(nb, src[0]))));
       return;
 
-   case GLSLstd450Tanh:
-      /* (0.5 * (e^x - e^(-x))) / (0.5 * (e^x + e^(-x))) */
-      val->ssa->def =
-         nir_fdiv(nb, nir_fmul(nb, nir_imm_float(nb, 0.5f),
-                                   nir_fsub(nb, build_exp(nb, src[0]),
-                                                build_exp(nb, nir_fneg(nb, src[0])))),
-                      nir_fmul(nb, nir_imm_float(nb, 0.5f),
-                                   nir_fadd(nb, build_exp(nb, src[0]),
-                                                build_exp(nb, nir_fneg(nb, src[0])))));
+   case GLSLstd450Tanh: {
+      /* tanh(x) := (0.5 * (e^x - e^(-x))) / (0.5 * (e^x + e^(-x)))
+       *
+       * With a little algebra this reduces to (e^2x - 1) / (e^2x + 1)
+       *
+       * We clamp x to (-inf, +10] to avoid precision problems.  When x > 10,
+       * e^2x is so much larger than 1.0 that 1.0 gets flushed to zero in the
+       * computation e^2x +/- 1 so it can be ignored.
+       */
+      nir_ssa_def *x = nir_fmin(nb, src[0], nir_imm_float(nb, 10));
+      nir_ssa_def *exp2x = build_exp(nb, nir_fmul(nb, x, nir_imm_float(nb, 2)));
+      val->ssa->def = nir_fdiv(nb, nir_fsub(nb, exp2x, nir_imm_float(nb, 1)),
+                                   nir_fadd(nb, exp2x, nir_imm_float(nb, 1)));
       return;
+   }
 
    case GLSLstd450Asinh:
       val->ssa->def = nir_fmul(nb, nir_fsign(nb, src[0]),
@@ -662,8 +669,7 @@ handle_glsl450_interpolation(struct vtn_builder *b, enum GLSLstd450 opcode,
    nir_intrinsic_instr *intrin = nir_intrinsic_instr_create(b->nb.shader, op);
 
    nir_deref_var *deref = vtn_nir_deref(b, w[5]);
-   intrin->variables[0] =
-      nir_deref_as_var(nir_copy_deref(intrin, &deref->deref));
+   intrin->variables[0] = nir_deref_var_clone(deref, intrin);
 
    switch (opcode) {
    case GLSLstd450InterpolateAtCentroid:
