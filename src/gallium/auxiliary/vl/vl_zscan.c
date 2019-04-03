@@ -95,6 +95,27 @@ const int vl_zscan_alternate[] =
    38,46,54,62,39,47,55,63
 };
 
+const int vl_zscan_h265_up_right_diagonal_16[] =
+{
+   /* Up-right diagonal scan order for 4x4 blocks - see H.265 section 6.5.3. */
+    0,  4,  1,  8,  5,  2, 12,  9,
+    6,  3, 13, 10,  7, 14, 11, 15,
+};
+
+const int vl_zscan_h265_up_right_diagonal[] =
+{
+   /* Up-right diagonal scan order for 8x8 blocks - see H.265 section 6.5.3. */
+    0,  8,  1, 16,  9,  2, 24, 17,
+   10,  3, 32, 25, 18, 11,  4, 40,
+   33, 26, 19, 12,  5, 48, 41, 34,
+   27, 20, 13,  6, 56, 49, 42, 35,
+   28, 21, 14,  7, 57, 50, 43, 36,
+   29, 22, 15, 58, 51, 44, 37, 30,
+   23, 59, 52, 45, 38, 31, 60, 53,
+   46, 39, 61, 54, 47, 62, 55, 63,
+};
+
+
 static void *
 create_vert_shader(struct vl_zscan *zscan)
 {
@@ -276,7 +297,9 @@ init_state(struct vl_zscan *zscan)
    memset(&rs_state, 0, sizeof(rs_state));
    rs_state.half_pixel_center = true;
    rs_state.bottom_edge_rule = true;
-   rs_state.depth_clip = 1;
+   rs_state.depth_clip_near = 1;
+   rs_state.depth_clip_far = 1;
+
    zscan->rs_state = zscan->pipe->create_rasterizer_state(zscan->pipe, &rs_state);
    if (!zscan->rs_state)
       goto error_rs_state;

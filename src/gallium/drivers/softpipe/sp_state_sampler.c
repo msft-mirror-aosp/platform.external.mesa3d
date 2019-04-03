@@ -167,7 +167,7 @@ prepare_shader_sampling(
    struct softpipe_context *sp,
    unsigned num,
    struct pipe_sampler_view **views,
-   unsigned shader_type,
+   enum pipe_shader_type shader_type,
    struct pipe_resource *mapped_tex[PIPE_MAX_SHADER_SAMPLER_VIEWS])
 {
 
@@ -181,8 +181,8 @@ prepare_shader_sampling(
    if (!num)
       return;
 
-   for (i = 0; i < PIPE_MAX_SHADER_SAMPLER_VIEWS; i++) {
-      struct pipe_sampler_view *view = i < num ? views[i] : NULL;
+   for (i = 0; i < num; i++) {
+      struct pipe_sampler_view *view = views[i];
 
       if (view) {
          struct pipe_resource *tex = view->texture;

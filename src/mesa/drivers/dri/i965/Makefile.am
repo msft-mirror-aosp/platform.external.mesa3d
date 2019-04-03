@@ -26,36 +26,51 @@ include Makefile.sources
 AM_CFLAGS = \
 	-I$(top_srcdir)/include \
 	-I$(top_srcdir)/src/ \
+	-I$(top_builddir)/src/ \
 	-I$(top_srcdir)/src/mapi \
 	-I$(top_srcdir)/src/mesa/ \
 	-I$(top_srcdir)/src/gallium/include \
 	-I$(top_srcdir)/src/gallium/auxiliary \
-	-I$(top_builddir)/src/mesa/drivers/dri/common \
+	-I$(top_builddir)/src/util \
 	-I$(top_srcdir)/src/mesa/drivers/dri/common \
-	-I$(top_srcdir)/src/mesa/drivers/dri/intel/server \
 	-I$(top_srcdir)/src/gtest/include \
+	-I$(top_builddir)/src/compiler \
+	-I$(top_srcdir)/src/compiler \
 	-I$(top_builddir)/src/compiler/glsl \
 	-I$(top_builddir)/src/compiler/nir \
 	-I$(top_srcdir)/src/compiler/nir \
 	-I$(top_builddir)/src/intel \
 	-I$(top_srcdir)/src/intel \
+	-I$(top_srcdir)/include \
 	$(DEFINES) \
 	$(VISIBILITY_CFLAGS) \
-	$(INTEL_CFLAGS)
+	$(WNO_OVERRIDE_INIT) \
+	$(LIBDRM_CFLAGS) \
+	$(VALGRIND_CFLAGS) \
+	-msse2 -mstackrealign
 
 AM_CXXFLAGS = $(AM_CFLAGS)
 
-MKDIR_GEN = $(AM_V_at)$(MKDIR_P) $(@D)
-brw_nir_trig_workarounds.c: brw_nir_trig_workarounds.py $(top_srcdir)/src/compiler/nir/nir_algebraic.py
-	$(MKDIR_GEN)
-	$(AM_V_GEN) PYTHONPATH=$(top_srcdir)/src/compiler/nir $(PYTHON2) $(PYTHON_FLAGS) $(srcdir)/brw_nir_trig_workarounds.py > $@ || ($(RM) $@; false)
-
 I965_PERGEN_LIBS = \
+	libi965_gen4.la \
+	libi965_gen45.la \
+	libi965_gen5.la \
 	libi965_gen6.la \
 	libi965_gen7.la \
 	libi965_gen75.la \
 	libi965_gen8.la \
-	libi965_gen9.la
+	libi965_gen9.la \
+	libi965_gen10.la \
+	libi965_gen11.la
+
+libi965_gen4_la_SOURCES = $(i965_gen4_FILES)
+libi965_gen4_la_CFLAGS = $(AM_CFLAGS) -DGEN_VERSIONx10=40
+
+libi965_gen45_la_SOURCES = $(i965_gen45_FILES)
+libi965_gen45_la_CFLAGS = $(AM_CFLAGS) -DGEN_VERSIONx10=45
+
+libi965_gen5_la_SOURCES = $(i965_gen5_FILES)
+libi965_gen5_la_CFLAGS = $(AM_CFLAGS) -DGEN_VERSIONx10=50
 
 libi965_gen6_la_SOURCES = $(i965_gen6_FILES)
 libi965_gen6_la_CFLAGS = $(AM_CFLAGS) -DGEN_VERSIONx10=60
@@ -72,94 +87,40 @@ libi965_gen8_la_CFLAGS = $(AM_CFLAGS) -DGEN_VERSIONx10=80
 libi965_gen9_la_SOURCES = $(i965_gen9_FILES)
 libi965_gen9_la_CFLAGS = $(AM_CFLAGS) -DGEN_VERSIONx10=90
 
+libi965_gen10_la_SOURCES = $(i965_gen10_FILES)
+libi965_gen10_la_CFLAGS = $(AM_CFLAGS) -DGEN_VERSIONx10=100
+
+libi965_gen11_la_SOURCES = $(i965_gen11_FILES)
+libi965_gen11_la_CFLAGS = $(AM_CFLAGS) -DGEN_VERSIONx10=110
+
 noinst_LTLIBRARIES = \
 	libi965_dri.la \
-	libi965_compiler.la \
 	$(I965_PERGEN_LIBS)
 
-libi965_dri_la_SOURCES = $(i965_FILES)
+libi965_dri_la_SOURCES = \
+	$(i965_FILES) \
+	$(i965_oa_GENERATED_FILES)
 libi965_dri_la_LIBADD = \
 	$(top_builddir)/src/intel/common/libintel_common.la \
+	$(top_builddir)/src/intel/dev/libintel_dev.la \
 	$(top_builddir)/src/intel/isl/libisl.la \
-	libi965_compiler.la \
+	$(top_builddir)/src/intel/compiler/libintel_compiler.la \
 	$(top_builddir)/src/intel/blorp/libblorp.la \
 	$(I965_PERGEN_LIBS) \
-	$(INTEL_LIBS)
+	$(LIBDRM_LIBS)
 
-libi965_compiler_la_SOURCES = \
-	$(i965_compiler_FILES) \
-	$(i965_compiler_GENERATED_FILES)
-
-BUILT_SOURCES = $(i965_compiler_GENERATED_FILES)
+BUILT_SOURCES = $(i965_oa_GENERATED_FILES)
 CLEANFILES = $(BUILT_SOURCES)
 
 EXTRA_DIST = \
-	brw_nir_trig_workarounds.py
+	brw_oa.py \
+	$(i965_oa_xml_FILES) \
+	meson.build
 
-TEST_LIBS = \
-	libi965_compiler.la \
-	$(I965_PERGEN_LIBS) \
-	$(top_builddir)/src/compiler/nir/libnir.la \
-	$(top_builddir)/src/util/libmesautil.la \
-	$(top_builddir)/src/intel/isl/libisl.la \
-	$(PTHREAD_LIBS) \
-	$(DLOPEN_LIBS)
+brw_oa_metrics.c: brw_oa.py $(i965_oa_xml_FILES)
+	$(PYTHON) $(PYTHON_FLAGS) $(srcdir)/brw_oa.py \
+	--code=$(builddir)/brw_oa_metrics.c \
+	--header=$(builddir)/brw_oa_metrics.h \
+	$(i965_oa_xml_FILES:%=$(srcdir)/%)
 
-TESTS = \
-	test_fs_cmod_propagation \
-	test_fs_copy_propagation \
-	test_fs_saturate_propagation \
-        test_eu_compact \
-	test_vf_float_conversions \
-	test_vec4_cmod_propagation \
-        test_vec4_copy_propagation \
-        test_vec4_register_coalesce
-
-check_PROGRAMS = $(TESTS)
-
-test_fs_cmod_propagation_SOURCES = \
-	test_fs_cmod_propagation.cpp
-test_fs_cmod_propagation_LDADD = \
-	$(top_builddir)/src/gtest/libgtest.la \
-	$(TEST_LIBS)
-
-test_fs_copy_propagation_SOURCES = \
-	test_fs_copy_propagation.cpp
-test_fs_copy_propagation_LDADD = \
-	$(top_builddir)/src/gtest/libgtest.la \
-	$(TEST_LIBS)
-
-test_fs_saturate_propagation_SOURCES = \
-	test_fs_saturate_propagation.cpp
-test_fs_saturate_propagation_LDADD = \
-	$(top_builddir)/src/gtest/libgtest.la \
-	$(TEST_LIBS)
-
-test_vf_float_conversions_SOURCES = \
-	test_vf_float_conversions.cpp
-test_vf_float_conversions_LDADD = \
-	$(top_builddir)/src/gtest/libgtest.la \
-	$(TEST_LIBS)
-
-test_vec4_register_coalesce_SOURCES = \
-	test_vec4_register_coalesce.cpp
-test_vec4_register_coalesce_LDADD = \
-        $(top_builddir)/src/gtest/libgtest.la \
-        $(TEST_LIBS)
-
-test_vec4_copy_propagation_SOURCES = \
-	test_vec4_copy_propagation.cpp
-test_vec4_copy_propagation_LDADD = \
-        $(top_builddir)/src/gtest/libgtest.la \
-        $(TEST_LIBS)
-
-test_vec4_cmod_propagation_SOURCES = \
-	test_vec4_cmod_propagation.cpp
-test_vec4_cmod_propagation_LDADD = \
-	$(top_builddir)/src/gtest/libgtest.la \
-	$(TEST_LIBS)
-
-test_eu_compact_SOURCES = \
-	test_eu_compact.c
-nodist_EXTRA_test_eu_compact_SOURCES = dummy.cpp
-test_eu_compact_LDADD = $(TEST_LIBS)
+brw_oa_metrics.h: brw_oa_metrics.c

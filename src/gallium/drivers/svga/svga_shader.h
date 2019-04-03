@@ -77,6 +77,7 @@ struct svga_compile_key
       unsigned light_twoside:1;
       unsigned front_ccw:1;
       unsigned white_fragments:1;
+      unsigned alpha_to_one:1;
       unsigned flatshade:1;
       unsigned pstipple:1;
       unsigned alpha_func:4;  /**< SVGA3D_CMP_x */
@@ -92,18 +93,19 @@ struct svga_compile_key
    unsigned num_unnormalized_coords:8;
    unsigned clip_plane_enable:PIPE_MAX_CLIP_PLANES;
    unsigned sprite_origin_lower_left:1;
-   unsigned sprite_coord_enable;
+   uint16_t sprite_coord_enable;
    struct {
       unsigned compare_mode:1;
       unsigned compare_func:3;
       unsigned unnormalized:1;
+      unsigned texel_bias:1;
       unsigned width_height_idx:5; /**< texture unit */
       unsigned is_array:1;
-      unsigned sprite_texgen:1;
       unsigned swizzle_r:3;
       unsigned swizzle_g:3;
       unsigned swizzle_b:3;
       unsigned swizzle_a:3;
+      unsigned num_samples:5;   /**< Up to 16 samples */
    } tex[PIPE_MAX_SAMPLERS];
    /* Note: svga_compile_keys_equal() depends on the variable-size
     * tex[] array being at the end of this structure.
@@ -133,6 +135,9 @@ struct svga_shader_variant
    /** Parameters used to generate this variant */
    struct svga_compile_key key;
 
+   /* svga shader type */
+   SVGA3dShaderType type;
+
    /* Compiled shader tokens:
     */
    const unsigned *tokens;
@@ -155,6 +160,11 @@ struct svga_shader_variant
 
    /** Is the color output just a constant value? (fragment shader only) */
    boolean constant_color_output;
+
+   /** Bitmask indicating which texture units are doing the shadow
+    * comparison test in the shader rather than the sampler state.
+    */
+   unsigned fs_shadow_compare_units;
 
    /** For FS-based polygon stipple */
    unsigned pstipple_sampler_unit;
@@ -267,7 +277,6 @@ svga_search_shader_token_key(struct svga_shader *shader,
 
 enum pipe_error
 svga_define_shader(struct svga_context *svga,
-                   SVGA3dShaderType type,
                    struct svga_shader_variant *variant);
 
 enum pipe_error
@@ -276,11 +285,10 @@ svga_set_shader(struct svga_context *svga,
                 struct svga_shader_variant *variant);
 
 struct svga_shader_variant *
-svga_new_shader_variant(struct svga_context *svga);
+svga_new_shader_variant(struct svga_context *svga, enum pipe_shader_type type);
 
-enum pipe_error
+void
 svga_destroy_shader_variant(struct svga_context *svga,
-                            SVGA3dShaderType type,
                             struct svga_shader_variant *variant);
 
 enum pipe_error

@@ -2,7 +2,6 @@
 #ifndef COMMON_CONTEXT_H
 #define COMMON_CONTEXT_H
 
-#include "main/mm.h"
 #include "math/m_vector.h"
 #include "tnl/t_context.h"
 #include "main/colormac.h"
@@ -427,23 +426,6 @@ struct radeon_context {
     */
    GLboolean front_buffer_dirty;
 
-   /**
-    * Track whether front-buffer rendering is currently enabled
-    *
-    * A separate flag is used to track this in order to support MRT more
-    * easily.
-    */
-   GLboolean is_front_buffer_rendering;
-
-   /**
-    * Track whether front-buffer is the current read target.
-    *
-    * This is closely associated with is_front_buffer_rendering, but may
-    * be set separately.  The DRI2 fake front buffer must be referenced
-    * either way.
-    */
-   GLboolean is_front_buffer_reading;
-
    struct {
 	struct radeon_query_object *current;
 	struct radeon_state_atom queryobj;
@@ -497,7 +479,7 @@ static inline __DRIdrawable* radeon_get_readable(radeonContextPtr radeon)
 	return radeon->driContext->driReadablePriv;
 }
 
-extern const char const *radeonVendorString;
+extern const char *const radeonVendorString;
 
 const char *radeonGetRendererString(radeonScreenPtr radeonScreen);
 

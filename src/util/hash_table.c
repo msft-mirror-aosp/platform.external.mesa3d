@@ -47,6 +47,7 @@
 #include "hash_table.h"
 #include "ralloc.h"
 #include "macros.h"
+#include "main/hash.h"
 
 static const uint32_t deleted_key_value;
 
@@ -109,6 +110,27 @@ entry_is_present(const struct hash_table *ht, struct hash_entry *entry)
    return entry->key != NULL && entry->key != ht->deleted_key;
 }
 
+bool
+_mesa_hash_table_init(struct hash_table *ht,
+                      void *mem_ctx,
+                      uint32_t (*key_hash_function)(const void *key),
+                      bool (*key_equals_function)(const void *a,
+                                                  const void *b))
+{
+   ht->size_index = 0;
+   ht->size = hash_sizes[ht->size_index].size;
+   ht->rehash = hash_sizes[ht->size_index].rehash;
+   ht->max_entries = hash_sizes[ht->size_index].max_entries;
+   ht->key_hash_function = key_hash_function;
+   ht->key_equals_function = key_equals_function;
+   ht->table = rzalloc_array(mem_ctx, struct hash_entry, ht->size);
+   ht->entries = 0;
+   ht->deleted_entries = 0;
+   ht->deleted_key = &deleted_key_value;
+
+   return ht->table != NULL;
+}
+
 struct hash_table *
 _mesa_hash_table_create(void *mem_ctx,
                         uint32_t (*key_hash_function)(const void *key),
@@ -117,25 +139,39 @@ _mesa_hash_table_create(void *mem_ctx,
 {
    struct hash_table *ht;
 
+   /* mem_ctx is used to allocate the hash table, but the hash table is used
+    * to allocate all of the suballocations.
+    */
    ht = ralloc(mem_ctx, struct hash_table);
    if (ht == NULL)
       return NULL;
 
-   ht->size_index = 0;
-   ht->size = hash_sizes[ht->size_index].size;
-   ht->rehash = hash_sizes[ht->size_index].rehash;
-   ht->max_entries = hash_sizes[ht->size_index].max_entries;
-   ht->key_hash_function = key_hash_function;
-   ht->key_equals_function = key_equals_function;
-   ht->table = rzalloc_array(ht, struct hash_entry, ht->size);
-   ht->entries = 0;
-   ht->deleted_entries = 0;
-   ht->deleted_key = &deleted_key_value;
+   if (!_mesa_hash_table_init(ht, ht, key_hash_function, key_equals_function)) {
+      ralloc_free(ht);
+      return NULL;
+   }
 
+   return ht;
+}
+
+struct hash_table *
+_mesa_hash_table_clone(struct hash_table *src, void *dst_mem_ctx)
+{
+   struct hash_table *ht;
+
+   ht = ralloc(dst_mem_ctx, struct hash_table);
+   if (ht == NULL)
+      return NULL;
+
+   memcpy(ht, src, sizeof(struct hash_table));
+
+   ht->table = ralloc_array(ht, struct hash_entry, ht->size);
    if (ht->table == NULL) {
       ralloc_free(ht);
       return NULL;
    }
+
+   memcpy(ht->table, src->table, ht->size * sizeof(struct hash_entry));
 
    return ht;
 }
@@ -154,8 +190,6 @@ _mesa_hash_table_destroy(struct hash_table *ht,
       return;
 
    if (delete_function) {
-      struct hash_entry *entry;
-
       hash_table_foreach(ht, entry) {
          delete_function(entry);
       }
@@ -261,12 +295,12 @@ static void
 _mesa_hash_table_rehash(struct hash_table *ht, unsigned new_size_index)
 {
    struct hash_table old_ht;
-   struct hash_entry *table, *entry;
+   struct hash_entry *table;
 
    if (new_size_index >= ARRAY_SIZE(hash_sizes))
       return;
 
-   table = rzalloc_array(ht, struct hash_entry,
+   table = rzalloc_array(ralloc_parent(ht->table), struct hash_entry,
                          hash_sizes[new_size_index].size);
    if (table == NULL)
       return;
@@ -398,6 +432,15 @@ _mesa_hash_table_remove(struct hash_table *ht,
 }
 
 /**
+ * Removes the entry with the corresponding key, if exists.
+ */
+void _mesa_hash_table_remove_key(struct hash_table *ht,
+                                 const void *key)
+{
+   _mesa_hash_table_remove(ht, _mesa_hash_table_search(ht, key));
+}
+
+/**
  * This function is an iterator over the hash table.
  *
  * Pass in NULL for the first entry, as in the start of a for loop.  Note that
@@ -475,9 +518,10 @@ _mesa_hash_data(const void *data, size_t size)
 
 /** FNV-1a string hash implementation */
 uint32_t
-_mesa_hash_string(const char *key)
+_mesa_hash_string(const void *_key)
 {
    uint32_t hash = _mesa_fnv32_1a_offset_bias;
+   const char *key = _key;
 
    while (*key != 0) {
       hash = _mesa_fnv32_1a_accumulate(hash, *key);
@@ -501,4 +545,160 @@ bool
 _mesa_key_pointer_equal(const void *a, const void *b)
 {
    return a == b;
+}
+
+/**
+ * Helper to create a hash table with pointer keys.
+ */
+struct hash_table *
+_mesa_pointer_hash_table_create(void *mem_ctx)
+{
+   return _mesa_hash_table_create(mem_ctx, _mesa_hash_pointer,
+                                  _mesa_key_pointer_equal);
+}
+
+/**
+ * Hash table wrapper which supports 64-bit keys.
+ *
+ * TODO: unify all hash table implementations.
+ */
+
+struct hash_key_u64 {
+   uint64_t value;
+};
+
+static uint32_t
+key_u64_hash(const void *key)
+{
+   return _mesa_hash_data(key, sizeof(struct hash_key_u64));
+}
+
+static bool
+key_u64_equals(const void *a, const void *b)
+{
+   const struct hash_key_u64 *aa = a;
+   const struct hash_key_u64 *bb = b;
+
+   return aa->value == bb->value;
+}
+
+struct hash_table_u64 *
+_mesa_hash_table_u64_create(void *mem_ctx)
+{
+   struct hash_table_u64 *ht;
+
+   ht = CALLOC_STRUCT(hash_table_u64);
+   if (!ht)
+      return NULL;
+
+   if (sizeof(void *) == 8) {
+      ht->table = _mesa_hash_table_create(mem_ctx, _mesa_hash_pointer,
+                                          _mesa_key_pointer_equal);
+   } else {
+      ht->table = _mesa_hash_table_create(mem_ctx, key_u64_hash,
+                                          key_u64_equals);
+   }
+
+   if (ht->table)
+      _mesa_hash_table_set_deleted_key(ht->table, uint_key(DELETED_KEY_VALUE));
+
+   return ht;
+}
+
+void
+_mesa_hash_table_u64_destroy(struct hash_table_u64 *ht,
+                             void (*delete_function)(struct hash_entry *entry))
+{
+   if (!ht)
+      return;
+
+   if (ht->deleted_key_data) {
+      if (delete_function) {
+         struct hash_table *table = ht->table;
+         struct hash_entry deleted_entry;
+
+         /* Create a fake entry for the delete function. */
+         deleted_entry.hash = table->key_hash_function(table->deleted_key);
+         deleted_entry.key = table->deleted_key;
+         deleted_entry.data = ht->deleted_key_data;
+
+         delete_function(&deleted_entry);
+      }
+      ht->deleted_key_data = NULL;
+   }
+
+   _mesa_hash_table_destroy(ht->table, delete_function);
+   free(ht);
+}
+
+void
+_mesa_hash_table_u64_insert(struct hash_table_u64 *ht, uint64_t key,
+                            void *data)
+{
+   if (key == DELETED_KEY_VALUE) {
+      ht->deleted_key_data = data;
+      return;
+   }
+
+   if (sizeof(void *) == 8) {
+      _mesa_hash_table_insert(ht->table, (void *)(uintptr_t)key, data);
+   } else {
+      struct hash_key_u64 *_key = CALLOC_STRUCT(hash_key_u64);
+
+      if (!_key)
+         return;
+      _key->value = key;
+
+      _mesa_hash_table_insert(ht->table, _key, data);
+   }
+}
+
+static struct hash_entry *
+hash_table_u64_search(struct hash_table_u64 *ht, uint64_t key)
+{
+   if (sizeof(void *) == 8) {
+      return _mesa_hash_table_search(ht->table, (void *)(uintptr_t)key);
+   } else {
+      struct hash_key_u64 _key = { .value = key };
+      return _mesa_hash_table_search(ht->table, &_key);
+   }
+}
+
+void *
+_mesa_hash_table_u64_search(struct hash_table_u64 *ht, uint64_t key)
+{
+   struct hash_entry *entry;
+
+   if (key == DELETED_KEY_VALUE)
+      return ht->deleted_key_data;
+
+   entry = hash_table_u64_search(ht, key);
+   if (!entry)
+      return NULL;
+
+   return entry->data;
+}
+
+void
+_mesa_hash_table_u64_remove(struct hash_table_u64 *ht, uint64_t key)
+{
+   struct hash_entry *entry;
+
+   if (key == DELETED_KEY_VALUE) {
+      ht->deleted_key_data = NULL;
+      return;
+   }
+
+   entry = hash_table_u64_search(ht, key);
+   if (!entry)
+      return;
+
+   if (sizeof(void *) == 8) {
+      _mesa_hash_table_remove(ht->table, entry);
+   } else {
+      struct hash_key *_key = (struct hash_key *)entry->key;
+
+      _mesa_hash_table_remove(ht->table, entry);
+      free(_key);
+   }
 }

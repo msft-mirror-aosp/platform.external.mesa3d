@@ -7,8 +7,7 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/gallium/include \
 	-I$(top_srcdir)/src/gallium/drivers \
 	-I$(top_srcdir)/src/gallium/auxiliary \
-	-I$(top_srcdir)/src/gallium/winsys \
-	-I$(srcdir)
+	-I$(top_srcdir)/src/gallium/winsys
 
 if HAVE_CLOVER_ICD
 AM_CPPFLAGS += -DHAVE_CLOVER_ICD
@@ -18,28 +17,26 @@ cldir = $(includedir)/CL
 cl_HEADERS = \
 	$(top_srcdir)/include/CL/cl.h \
 	$(top_srcdir)/include/CL/cl.hpp \
+	$(top_srcdir)/include/CL/cl2.hpp \
 	$(top_srcdir)/include/CL/cl_d3d10.h \
 	$(top_srcdir)/include/CL/cl_d3d11.h \
 	$(top_srcdir)/include/CL/cl_dx9_media_sharing.h \
+	$(top_srcdir)/include/CL/cl_dx9_media_sharing_intel.h \
 	$(top_srcdir)/include/CL/cl_egl.h \
 	$(top_srcdir)/include/CL/cl_ext.h \
+	$(top_srcdir)/include/CL/cl_ext_intel.h \
 	$(top_srcdir)/include/CL/cl_gl.h \
 	$(top_srcdir)/include/CL/cl_gl_ext.h \
 	$(top_srcdir)/include/CL/cl_platform.h \
+	$(top_srcdir)/include/CL/cl_va_api_media_sharing_intel.h \
+	$(top_srcdir)/include/CL/cl_version.h \
 	$(top_srcdir)/include/CL/opencl.h
 endif
 
-noinst_LTLIBRARIES = libclover.la libcltgsi.la libclllvm.la
-
-libcltgsi_la_CXXFLAGS = \
-	-std=c++11 \
-	$(CLOVER_STD_OVERRIDE) \
-	$(VISIBILITY_CXXFLAGS)
-
-libcltgsi_la_SOURCES = $(TGSI_SOURCES)
+noinst_LTLIBRARIES = libclover.la libclllvm.la
 
 libclllvm_la_CXXFLAGS = \
-	-std=c++11 \
+	$(CXX11_CXXFLAGS) \
 	$(VISIBILITY_CXXFLAGS) \
 	$(LLVM_CXXFLAGS) \
 	$(CLOVER_STD_OVERRIDE) \
@@ -52,13 +49,13 @@ libclllvm_la_CXXFLAGS = \
 libclllvm_la_SOURCES = $(LLVM_SOURCES)
 
 libclover_la_CXXFLAGS = \
-	-std=c++11 \
+	$(CXX11_CXXFLAGS) \
 	$(CLOVER_STD_OVERRIDE) \
 	$(VISIBILITY_CXXFLAGS)
 
 libclover_la_LIBADD = \
-	libcltgsi.la libclllvm.la
+	libclllvm.la
 
 libclover_la_SOURCES = $(CPP_SOURCES)
 
-EXTRA_DIST = Doxyfile
+EXTRA_DIST = Doxyfile meson.build

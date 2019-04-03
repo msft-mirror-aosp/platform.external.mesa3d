@@ -24,10 +24,6 @@
  * next paragraph) shall be included in all copies or substantial portions
  * of the Software.
  */
-/*
- * Authors:
- *      Marek Olšák <maraeo@gmail.com>
- */
 
 #ifndef AMDGPU_WINSYS_H
 #define AMDGPU_WINSYS_H
@@ -35,26 +31,33 @@
 #include "pipebuffer/pb_cache.h"
 #include "pipebuffer/pb_slab.h"
 #include "gallium/drivers/radeon/radeon_winsys.h"
-#include "addrlib/addrinterface.h"
+#include "addrlib/inc/addrinterface.h"
+#include "util/simple_mtx.h"
 #include "util/u_queue.h"
 #include <amdgpu.h>
 
 struct amdgpu_cs;
 
-#define AMDGPU_SLAB_MIN_SIZE_LOG2 9
-#define AMDGPU_SLAB_MAX_SIZE_LOG2 14
+#define NUM_SLAB_ALLOCATORS 3
 
 struct amdgpu_winsys {
    struct radeon_winsys base;
    struct pipe_reference reference;
    struct pb_cache bo_cache;
-   struct pb_slabs bo_slabs;
+
+   /* Each slab buffer can only contain suballocations of equal sizes, so we
+    * need to layer the allocators, so that we don't waste too much memory.
+    */
+   struct pb_slabs bo_slabs[NUM_SLAB_ALLOCATORS];
 
    amdgpu_device_handle dev;
 
-   pipe_mutex bo_fence_lock;
+   simple_mtx_t bo_fence_lock;
 
    int num_cs; /* The number of command streams created. */
+   unsigned num_total_rejected_cs;
+   uint32_t surf_index_color;
+   uint32_t surf_index_fmask;
    uint32_t next_bo_unique_id;
    uint64_t allocated_vram;
    uint64_t allocated_gtt;
@@ -63,6 +66,9 @@ struct amdgpu_winsys {
    uint64_t buffer_wait_time; /* time spent in buffer_wait in ns */
    uint64_t num_gfx_IBs;
    uint64_t num_sdma_IBs;
+   uint64_t num_mapped_buffers;
+   uint64_t gfx_bo_list_counter;
+   uint64_t gfx_ib_size_counter;
 
    struct radeon_info info;
 
@@ -71,15 +77,21 @@ struct amdgpu_winsys {
 
    struct amdgpu_gpu_info amdinfo;
    ADDR_HANDLE addrlib;
-   uint32_t rev_id;
-   unsigned family;
 
    bool check_vm;
+   bool debug_all_bos;
+   bool reserve_vmid;
+   bool zero_all_vram_allocs;
 
    /* List of all allocated buffers */
-   pipe_mutex global_bo_list_lock;
+   simple_mtx_t global_bo_list_lock;
    struct list_head global_bo_list;
    unsigned num_buffers;
+
+   /* For returning the same amdgpu_winsys_bo instance for exported
+    * and re-imported buffers. */
+   struct util_hash_table *bo_export_table;
+   simple_mtx_t bo_export_table_lock;
 };
 
 static inline struct amdgpu_winsys *
@@ -89,6 +101,5 @@ amdgpu_winsys(struct radeon_winsys *base)
 }
 
 void amdgpu_surface_init_functions(struct amdgpu_winsys *ws);
-ADDR_HANDLE amdgpu_addr_create(struct amdgpu_winsys *ws);
 
 #endif

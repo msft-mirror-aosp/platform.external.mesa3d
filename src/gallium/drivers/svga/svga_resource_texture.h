@@ -47,12 +47,12 @@ enum SVGA3dSurfaceFormat;
 extern struct u_resource_vtbl svga_texture_vtbl;
 
 
-struct svga_texture 
+struct svga_texture
 {
    struct u_resource b;
 
    ushort *defined;
-   
+
    struct svga_sampler_view *cached_view;
 
    unsigned view_age[SVGA_MAX_TEXTURE_LEVELS];
@@ -62,8 +62,8 @@ struct svga_texture
 
    /**
     * Creation key for the host surface handle.
-    * 
-    * This structure describes all the host surface characteristics so that it 
+    *
+    * This structure describes all the host surface characteristics so that it
     * can be looked up in cache, since creating a host surface is often a slow
     * operation.
     */
@@ -102,8 +102,18 @@ struct svga_texture
 
    /** array indexed by cube face or 3D/array slice, one bit per mipmap level.
     *  Set if the level is marked as dirty.
-    */ 
+    */
    ushort *dirty;
+
+   /**
+    * A cached backing host side surface to be used if this texture is being
+    * used for rendering and sampling at the same time.
+    * Currently we only cache one handle. If needed, we can extend this to
+    * support multiple handles.
+    */
+   struct svga_host_surface_cache_key backed_key;
+   struct svga_winsys_surface *backed_handle;
+   unsigned backed_age;
 };
 
 
@@ -115,6 +125,7 @@ struct svga_transfer
    struct pipe_transfer base;
 
    unsigned slice;  /**< array slice or cube face */
+   SVGA3dBox box;   /* The adjusted box with slice index removed from z */
 
    struct svga_winsys_buffer *hwbuf;
 
@@ -273,8 +284,8 @@ svga_texture_create(struct pipe_screen *screen,
 
 struct pipe_resource *
 svga_texture_from_handle(struct pipe_screen * screen,
-			const struct pipe_resource *template,
-			struct winsys_handle *whandle);
+                         const struct pipe_resource *template,
+                         struct winsys_handle *whandle);
 
 boolean
 svga_texture_generate_mipmap(struct pipe_context *pipe,
@@ -302,5 +313,8 @@ svga_texture_transfer_map_upload(struct svga_context *svga,
 void
 svga_texture_transfer_unmap_upload(struct svga_context *svga,
                                    struct svga_transfer *st);
+
+boolean
+svga_texture_device_format_has_alpha(struct pipe_resource *texture);
 
 #endif /* SVGA_TEXTURE_H */

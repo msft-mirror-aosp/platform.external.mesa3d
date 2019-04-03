@@ -29,7 +29,6 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 
 #include <X11/Xlib-xcb.h>
 #include <X11/extensions/dri2tokens.h>
@@ -181,11 +180,12 @@ vl_dri2_screen_texture_from_drawable(struct vl_screen *vscreen, void *drawable)
    struct vl_dri_screen *scrn = (struct vl_dri_screen *)vscreen;
 
    struct winsys_handle dri2_handle;
-   struct pipe_resource template, *tex;
+   struct pipe_resource templ, *tex;
 
    xcb_dri2_get_buffers_reply_t *reply;
    xcb_dri2_dri2_buffer_t *buffers, *back_left;
 
+   unsigned depth = ((xcb_screen_t *)(vscreen->xcb_screen))->root_depth;
    unsigned i;
 
    assert(scrn);
@@ -231,25 +231,25 @@ vl_dri2_screen_texture_from_drawable(struct vl_screen *vscreen, void *drawable)
    }
 
    memset(&dri2_handle, 0, sizeof(dri2_handle));
-   dri2_handle.type = DRM_API_HANDLE_TYPE_SHARED;
+   dri2_handle.type = WINSYS_HANDLE_TYPE_SHARED;
    dri2_handle.handle = back_left->name;
    dri2_handle.stride = back_left->pitch;
 
-   memset(&template, 0, sizeof(template));
-   template.target = PIPE_TEXTURE_2D;
-   template.format = PIPE_FORMAT_B8G8R8X8_UNORM;
-   template.last_level = 0;
-   template.width0 = reply->width;
-   template.height0 = reply->height;
-   template.depth0 = 1;
-   template.array_size = 1;
-   template.usage = PIPE_USAGE_DEFAULT;
-   template.bind = PIPE_BIND_RENDER_TARGET;
-   template.flags = 0;
+   memset(&templ, 0, sizeof(templ));
+   templ.target = PIPE_TEXTURE_2D;
+   templ.format = vl_dri2_format_for_depth(vscreen, depth);
+   templ.last_level = 0;
+   templ.width0 = reply->width;
+   templ.height0 = reply->height;
+   templ.depth0 = 1;
+   templ.array_size = 1;
+   templ.usage = PIPE_USAGE_DEFAULT;
+   templ.bind = PIPE_BIND_RENDER_TARGET;
+   templ.flags = 0;
 
-   tex = scrn->base.pscreen->resource_from_handle(scrn->base.pscreen, &template,
+   tex = scrn->base.pscreen->resource_from_handle(scrn->base.pscreen, &templ,
                                                   &dri2_handle,
-                                                  PIPE_HANDLE_USAGE_READ_WRITE);
+                                                  PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
    free(reply);
 
    return tex;
@@ -314,6 +314,58 @@ get_xcb_screen(xcb_screen_iterator_t iter, int screen)
     return NULL;
 }
 
+static xcb_visualtype_t *
+get_xcb_visualtype_for_depth(struct vl_screen *vscreen, int depth)
+{
+   xcb_visualtype_iterator_t visual_iter;
+   xcb_screen_t *screen = vscreen->xcb_screen;
+   xcb_depth_iterator_t depth_iter;
+
+   if (!screen)
+      return NULL;
+
+   depth_iter = xcb_screen_allowed_depths_iterator(screen);
+   for (; depth_iter.rem; xcb_depth_next(&depth_iter)) {
+      if (depth_iter.data->depth != depth)
+         continue;
+
+      visual_iter = xcb_depth_visuals_iterator(depth_iter.data);
+      if (visual_iter.rem)
+         return visual_iter.data;
+   }
+
+   return NULL;
+}
+
+static uint32_t
+get_red_mask_for_depth(struct vl_screen *vscreen, int depth)
+{
+   xcb_visualtype_t *visual = get_xcb_visualtype_for_depth(vscreen, depth);
+
+   if (visual) {
+      return visual->red_mask;
+   }
+
+   return 0;
+}
+
+uint32_t
+vl_dri2_format_for_depth(struct vl_screen *vscreen, int depth)
+{
+   switch (depth) {
+   case 24:
+      return PIPE_FORMAT_B8G8R8X8_UNORM;
+   case 30:
+      /* Different preferred formats for different hw */
+      if (get_red_mask_for_depth(vscreen, 30) == 0x3ff)
+         return PIPE_FORMAT_R10G10B10X2_UNORM;
+      else
+         return PIPE_FORMAT_B10G10R10X2_UNORM;
+   default:
+      return PIPE_FORMAT_NONE;
+   }
+}
+
 struct vl_screen *
 vl_dri2_screen_create(Display *display, int screen)
 {
@@ -326,7 +378,6 @@ vl_dri2_screen_create(Display *display, int screen)
    xcb_dri2_authenticate_cookie_t authenticate_cookie;
    xcb_dri2_authenticate_reply_t *authenticate = NULL;
    xcb_screen_iterator_t s;
-   xcb_screen_t *xcb_screen;
    xcb_generic_error_t *error = NULL;
    char *device_name;
    int fd, device_name_length;
@@ -358,12 +409,11 @@ vl_dri2_screen_create(Display *display, int screen)
       goto free_query;
 
    s = xcb_setup_roots_iterator(xcb_get_setup(scrn->conn));
-   xcb_screen = get_xcb_screen(s, screen);
-   if (!xcb_screen)
+   scrn->base.xcb_screen = get_xcb_screen(s, screen);
+   if (!scrn->base.xcb_screen)
       goto free_query;
 
    driverType = XCB_DRI2_DRIVER_TYPE_DRI;
-#ifdef DRI2DriverPrimeShift
    {
       char *prime = getenv("DRI_PRIME");
       if (prime) {
@@ -375,11 +425,9 @@ vl_dri2_screen_create(Display *display, int screen)
                ((primeid & DRI2DriverPrimeMask) << DRI2DriverPrimeShift);
       }
    }
-#endif
 
-   connect_cookie = xcb_dri2_connect_unchecked(scrn->conn,
-                                               xcb_screen->root,
-                                               driverType);
+   connect_cookie = xcb_dri2_connect_unchecked(
+      scrn->conn, ((xcb_screen_t *)(scrn->base.xcb_screen))->root, driverType);
    connect = xcb_dri2_connect_reply(scrn->conn, connect_cookie, NULL);
    if (connect == NULL ||
        connect->driver_name_length + connect->device_name_length == 0)
@@ -399,9 +447,8 @@ vl_dri2_screen_create(Display *display, int screen)
    if (drmGetMagic(fd, &magic))
       goto close_fd;
 
-   authenticate_cookie = xcb_dri2_authenticate_unchecked(scrn->conn,
-                                                         xcb_screen->root,
-                                                         magic);
+   authenticate_cookie = xcb_dri2_authenticate_unchecked(
+      scrn->conn, ((xcb_screen_t *)(scrn->base.xcb_screen))->root, magic);
    authenticate = xcb_dri2_authenticate_reply(scrn->conn, authenticate_cookie, NULL);
 
    if (authenticate == NULL || !authenticate->authenticated)
@@ -423,6 +470,8 @@ vl_dri2_screen_create(Display *display, int screen)
    vl_compositor_reset_dirty_area(&scrn->dirty_areas[0]);
    vl_compositor_reset_dirty_area(&scrn->dirty_areas[1]);
 
+   /* The pipe loader duplicates the fd */
+   close(fd);
    free(authenticate);
    free(connect);
    free(dri2_query);
@@ -431,15 +480,12 @@ vl_dri2_screen_create(Display *display, int screen)
    return &scrn->base;
 
 release_pipe:
-   if (scrn->base.dev) {
+   if (scrn->base.dev)
       pipe_loader_release(&scrn->base.dev, 1);
-      fd = -1;
-   }
 free_authenticate:
    free(authenticate);
 close_fd:
-   if (fd != -1)
-      close(fd);
+   close(fd);
 free_connect:
    free(connect);
 free_query:
@@ -467,5 +513,6 @@ vl_dri2_screen_destroy(struct vl_screen *vscreen)
    vl_dri2_destroy_drawable(scrn);
    scrn->base.pscreen->destroy(scrn->base.pscreen);
    pipe_loader_release(&scrn->base.dev, 1);
+   /* There is no user provided fd */
    FREE(scrn);
 }

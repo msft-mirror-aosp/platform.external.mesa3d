@@ -8,7 +8,7 @@
 #include "util/u_format_s3tc.h"
 #include "util/u_string.h"
 
-#include "os/os_time.h"
+#include "util/os_time.h"
 
 #include <stdio.h>
 #include <errno.h>
@@ -60,6 +60,12 @@ nouveau_screen_get_timestamp(struct pipe_screen *pscreen)
    return cpu_time + nouveau_screen(pscreen)->cpu_gpu_time_delta;
 }
 
+static struct disk_cache *
+nouveau_screen_get_disk_shader_cache(struct pipe_screen *pscreen)
+{
+   return nouveau_screen(pscreen)->disk_shader_cache;
+}
+
 static void
 nouveau_screen_fence_ref(struct pipe_screen *pscreen,
                          struct pipe_fence_handle **ptr,
@@ -96,14 +102,14 @@ nouveau_screen_bo_from_handle(struct pipe_screen *pscreen,
       return NULL;
    }
 
-   if (whandle->type != DRM_API_HANDLE_TYPE_SHARED &&
-       whandle->type != DRM_API_HANDLE_TYPE_FD) {
+   if (whandle->type != WINSYS_HANDLE_TYPE_SHARED &&
+       whandle->type != WINSYS_HANDLE_TYPE_FD) {
       debug_printf("%s: attempt to import unsupported handle type %d\n",
                    __FUNCTION__, whandle->type);
       return NULL;
    }
 
-   if (whandle->type == DRM_API_HANDLE_TYPE_SHARED)
+   if (whandle->type == WINSYS_HANDLE_TYPE_SHARED)
       ret = nouveau_bo_name_ref(dev, whandle->handle, &bo);
    else
       ret = nouveau_bo_prime_handle_ref(dev, whandle->handle, &bo);
@@ -127,16 +133,42 @@ nouveau_screen_bo_get_handle(struct pipe_screen *pscreen,
 {
    whandle->stride = stride;
 
-   if (whandle->type == DRM_API_HANDLE_TYPE_SHARED) {
+   if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
       return nouveau_bo_name_get(bo, &whandle->handle) == 0;
-   } else if (whandle->type == DRM_API_HANDLE_TYPE_KMS) {
+   } else if (whandle->type == WINSYS_HANDLE_TYPE_KMS) {
       whandle->handle = bo->handle;
       return true;
-   } else if (whandle->type == DRM_API_HANDLE_TYPE_FD) {
+   } else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
       return nouveau_bo_set_prime(bo, (int *)&whandle->handle) == 0;
    } else {
       return false;
    }
+}
+
+static void
+nouveau_disk_cache_create(struct nouveau_screen *screen)
+{
+   struct mesa_sha1 ctx;
+   unsigned char sha1[20];
+   char cache_id[20 * 2 + 1];
+   uint64_t driver_flags = 0;
+
+   _mesa_sha1_init(&ctx);
+   if (!disk_cache_get_function_identifier(nouveau_disk_cache_create,
+                                           &ctx))
+      return;
+
+   _mesa_sha1_final(&ctx, sha1);
+   disk_cache_format_hex_id(cache_id, sha1, 20 * 2);
+
+   if (screen->prefer_nir)
+      driver_flags |= NOUVEAU_SHADER_CACHE_FLAGS_IR_NIR;
+   else
+      driver_flags |= NOUVEAU_SHADER_CACHE_FLAGS_IR_TGSI;
+
+   screen->disk_shader_cache =
+      disk_cache_create(nouveau_screen_get_name(&screen->base),
+                        cache_id, driver_flags);
 }
 
 int
@@ -153,6 +185,8 @@ nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
    char *nv_dbg = getenv("NOUVEAU_MESA_DEBUG");
    if (nv_dbg)
       nouveau_mesa_debug = atoi(nv_dbg);
+
+   screen->prefer_nir = debug_get_bool_option("NV50_PROG_USE_NIR", false);
 
    /* These must be set before any failure is possible, as the cleanup
     * paths assume they're responsible for deleting them.
@@ -208,14 +242,16 @@ nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
    pscreen->get_name = nouveau_screen_get_name;
    pscreen->get_vendor = nouveau_screen_get_vendor;
    pscreen->get_device_vendor = nouveau_screen_get_device_vendor;
+   pscreen->get_disk_shader_cache = nouveau_screen_get_disk_shader_cache;
 
    pscreen->get_timestamp = nouveau_screen_get_timestamp;
 
    pscreen->fence_reference = nouveau_screen_fence_ref;
    pscreen->fence_finish = nouveau_screen_fence_finish;
 
-   util_format_s3tc_init();
+   nouveau_disk_cache_create(screen);
 
+   screen->transfer_pushbuf_threshold = 192;
    screen->lowmem_bindings = PIPE_BIND_GLOBAL; /* gallium limit */
    screen->vidmem_bindings =
       PIPE_BIND_RENDER_TARGET | PIPE_BIND_DEPTH_STENCIL |
@@ -254,6 +290,8 @@ nouveau_screen_fini(struct nouveau_screen *screen)
    nouveau_device_del(&screen->device);
    nouveau_drm_del(&screen->drm);
    close(fd);
+
+   disk_cache_destroy(screen->disk_shader_cache);
 }
 
 static void

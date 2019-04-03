@@ -124,6 +124,7 @@ private:
 
    void emitMOV();
    void emitS2R();
+   void emitCS2R();
    void emitF2F();
    void emitF2I();
    void emitI2F();
@@ -155,12 +156,14 @@ private:
    void emitIMUL();
    void emitIMAD();
    void emitISCADD();
+   void emitXMAD();
    void emitIMNMX();
    void emitICMP();
    void emitISET();
    void emitISETP();
    void emitSHL();
    void emitSHR();
+   void emitSHF();
    void emitPOPC();
    void emitBFI();
    void emitBFE();
@@ -189,6 +192,7 @@ private:
 
    void emitTEXs(int);
    void emitTEX();
+   void emitTEXS();
    void emitTLD();
    void emitTLD4();
    void emitTXD();
@@ -251,7 +255,8 @@ CodeEmitterGM107::emitInsn(uint32_t hi, bool pred)
 void
 CodeEmitterGM107::emitGPR(int pos, const Value *val)
 {
-   emitField(pos, 8, val ? val->reg.data.id : 255);
+   emitField(pos, 8, val && !val->inFile(FILE_FLAGS) ?
+             val->reg.data.id : 255);
 }
 
 void
@@ -265,8 +270,15 @@ CodeEmitterGM107::emitSYS(int pos, const Value *val)
    case SV_INVOCATION_ID  : id = 0x11; break;
    case SV_THREAD_KILL    : id = 0x13; break;
    case SV_INVOCATION_INFO: id = 0x1d; break;
+   case SV_COMBINED_TID   : id = 0x20; break;
    case SV_TID            : id = 0x21 + val->reg.data.sv.index; break;
    case SV_CTAID          : id = 0x25 + val->reg.data.sv.index; break;
+   case SV_LANEMASK_EQ    : id = 0x38; break;
+   case SV_LANEMASK_LT    : id = 0x39; break;
+   case SV_LANEMASK_LE    : id = 0x3a; break;
+   case SV_LANEMASK_GT    : id = 0x3b; break;
+   case SV_LANEMASK_GE    : id = 0x3c; break;
+   case SV_CLOCK          : id = 0x50 + val->reg.data.sv.index; break;
    default:
       assert(!"invalid system value");
       id = 0;
@@ -313,14 +325,10 @@ CodeEmitterGM107::longIMMD(const ValueRef &ref)
 {
    if (ref.getFile() == FILE_IMMEDIATE) {
       const ImmediateValue *imm = ref.get()->asImm();
-      if (isFloatType(insn->sType)) {
-         if ((imm->reg.data.u32 & 0x00000fff) != 0x00000000)
-            return true;
-      } else {
-         if ((imm->reg.data.u32 & 0xfff00000) != 0x00000000 &&
-             (imm->reg.data.u32 & 0xfff00000) != 0xfff00000)
-            return true;
-      }
+      if (isFloatType(insn->sType))
+         return imm->reg.data.u32 & 0xfff;
+      else
+         return imm->reg.data.s32 > 0x7ffff || imm->reg.data.s32 < -0x80000;
    }
    return false;
 }
@@ -338,8 +346,9 @@ CodeEmitterGM107::emitIMMD(int pos, int len, const ValueRef &ref)
       } else if (insn->sType == TYPE_F64) {
          assert(!(imm->reg.data.u64 & 0x00000fffffffffffULL));
          val = imm->reg.data.u64 >> 44;
+      } else {
+         assert(!(val & 0xfff80000) || (val & 0xfff80000) == 0xfff80000);
       }
-      assert(!(val & 0xfff00000) || (val & 0xfff00000) == 0xfff00000);
       emitField( 56,   1, (val & 0x80000) >> 19);
       emitField(pos, len, (val & 0x7ffff));
    } else {
@@ -744,6 +753,14 @@ CodeEmitterGM107::emitS2R()
 }
 
 void
+CodeEmitterGM107::emitCS2R()
+{
+   emitInsn(0x50c80000);
+   emitSYS (0x14, insn->src(0));
+   emitGPR (0x00, insn->def(0));
+}
+
+void
 CodeEmitterGM107::emitF2F()
 {
    RoundMode rnd = insn->rnd;
@@ -964,11 +981,26 @@ CodeEmitterGM107::emitSHFL()
       break;
    }
 
-   /*XXX: what is this arg? hardcode immediate for now */
-   emitField(0x22, 13, 0x1c03);
-   type |= 2;
+   switch (insn->src(2).getFile()) {
+   case FILE_GPR:
+      emitGPR(0x27, insn->src(2));
+      break;
+   case FILE_IMMEDIATE:
+      emitIMMD(0x22, 13, insn->src(2));
+      type |= 2;
+      break;
+   default:
+      assert(!"invalid src2 file");
+      break;
+   }
 
-   emitPRED (0x30);
+   if (!insn->defExists(1))
+      emitPRED(0x30);
+   else {
+      assert(insn->def(1).getFile() == FILE_PREDICATE);
+      emitPRED(0x30, insn->def(1));
+   }
+
    emitField(0x1e, 2, insn->subOp);
    emitField(0x1c, 2, type);
    emitGPR  (0x08, insn->src(0));
@@ -1309,7 +1341,7 @@ CodeEmitterGM107::emitFMUL()
 void
 CodeEmitterGM107::emitFFMA()
 {
-   /*XXX: ffma32i exists, but not using it as third src overlaps dst */
+   bool isLongIMMD = false;
    switch(insn->src(2).getFile()) {
    case FILE_GPR:
       switch (insn->src(1).getFile()) {
@@ -1322,14 +1354,22 @@ CodeEmitterGM107::emitFFMA()
          emitCBUF(0x22, -1, 0x14, 16, 2, insn->src(1));
          break;
       case FILE_IMMEDIATE:
-         emitInsn(0x32800000);
-         emitIMMD(0x14, 19, insn->src(1));
+         if (longIMMD(insn->getSrc(1))) {
+            assert(insn->getDef(0)->reg.data.id == insn->getSrc(2)->reg.data.id);
+            isLongIMMD = true;
+            emitInsn(0x0c000000);
+            emitIMMD(0x14, 32, insn->src(1));
+         } else {
+            emitInsn(0x32800000);
+            emitIMMD(0x14, 19, insn->src(1));
+         }
          break;
       default:
          assert(!"bad src1 file");
          break;
       }
-      emitGPR (0x27, insn->src(2));
+      if (!isLongIMMD)
+         emitGPR (0x27, insn->src(2));
       break;
    case FILE_MEMORY_CONST:
       emitInsn(0x51800000);
@@ -1340,11 +1380,19 @@ CodeEmitterGM107::emitFFMA()
       assert(!"bad src2 file");
       break;
    }
-   emitRND (0x33);
-   emitSAT (0x32);
-   emitNEG (0x31, insn->src(2));
-   emitNEG2(0x30, insn->src(0), insn->src(1));
-   emitCC  (0x2f);
+
+   if (isLongIMMD) {
+      emitNEG (0x39, insn->src(2));
+      emitNEG2(0x38, insn->src(0), insn->src(1));
+      emitSAT (0x37);
+      emitCC  (0x34);
+   } else {
+      emitRND (0x33);
+      emitSAT (0x32);
+      emitNEG (0x31, insn->src(2));
+      emitNEG2(0x30, insn->src(0), insn->src(1));
+      emitCC  (0x2f);
+   }
 
    emitFMZ(0x35, 2);
    emitGPR(0x08, insn->src(0));
@@ -1363,6 +1411,7 @@ CodeEmitterGM107::emitMUFU()
    case OP_LG2: mufu = 3; break;
    case OP_RCP: mufu = 4 + 2 * insn->subOp; break;
    case OP_RSQ: mufu = 5 + 2 * insn->subOp; break;
+   case OP_SQRT: mufu = 8; break;
    default:
       assert(!"invalid mufu");
       break;
@@ -1372,7 +1421,7 @@ CodeEmitterGM107::emitMUFU()
    emitSAT  (0x32);
    emitNEG  (0x30, insn->src(0));
    emitABS  (0x2e, insn->src(0));
-   emitField(0x14, 3, mufu);
+   emitField(0x14, 4, mufu);
    emitGPR  (0x08, insn->src(0));
    emitGPR  (0x00, insn->def(0));
 }
@@ -1619,7 +1668,7 @@ CodeEmitterGM107::emitLOP()
       break;
    }
 
-   if (insn->src(1).getFile() != FILE_IMMEDIATE) {
+   if (!longIMMD(insn->src(1))) {
       switch (insn->src(1).getFile()) {
       case FILE_GPR:
          emitInsn(0x5c400000);
@@ -1692,7 +1741,7 @@ CodeEmitterGM107::emitNOT()
 void
 CodeEmitterGM107::emitIADD()
 {
-   if (insn->src(1).getFile() != FILE_IMMEDIATE) {
+   if (!longIMMD(insn->src(1))) {
       switch (insn->src(1).getFile()) {
       case FILE_GPR:
          emitInsn(0x5c100000);
@@ -1734,7 +1783,7 @@ CodeEmitterGM107::emitIADD()
 void
 CodeEmitterGM107::emitIMUL()
 {
-   if (insn->src(1).getFile() != FILE_IMMEDIATE) {
+   if (!longIMMD(insn->src(1))) {
       switch (insn->src(1).getFile()) {
       case FILE_GPR:
          emitInsn(0x5c380000);
@@ -1819,6 +1868,8 @@ CodeEmitterGM107::emitIMAD()
 void
 CodeEmitterGM107::emitISCADD()
 {
+   assert(insn->src(1).get()->asImm());
+
    switch (insn->src(2).getFile()) {
    case FILE_GPR:
       emitInsn(0x5c180000);
@@ -1845,6 +1896,67 @@ CodeEmitterGM107::emitISCADD()
 }
 
 void
+CodeEmitterGM107::emitXMAD()
+{
+   assert(insn->src(0).getFile() == FILE_GPR);
+
+   bool constbuf = false;
+   bool psl_mrg = true;
+   bool immediate = false;
+   if (insn->src(2).getFile() == FILE_MEMORY_CONST) {
+      assert(insn->src(1).getFile() == FILE_GPR);
+      constbuf = true;
+      psl_mrg = false;
+      emitInsn(0x51000000);
+      emitGPR(0x27, insn->src(1));
+      emitCBUF(0x22, -1, 0x14, 16, 2, insn->src(2));
+   } else if (insn->src(1).getFile() == FILE_MEMORY_CONST) {
+      assert(insn->src(2).getFile() == FILE_GPR);
+      constbuf = true;
+      emitInsn(0x4e000000);
+      emitCBUF(0x22, -1, 0x14, 16, 2, insn->src(1));
+      emitGPR(0x27, insn->src(2));
+   } else if (insn->src(1).getFile() == FILE_IMMEDIATE) {
+      assert(insn->src(2).getFile() == FILE_GPR);
+      assert(!(insn->subOp & NV50_IR_SUBOP_XMAD_H1(1)));
+      immediate = true;
+      emitInsn(0x36000000);
+      emitIMMD(0x14, 16, insn->src(1));
+      emitGPR(0x27, insn->src(2));
+   } else {
+      assert(insn->src(1).getFile() == FILE_GPR);
+      assert(insn->src(2).getFile() == FILE_GPR);
+      emitInsn(0x5b000000);
+      emitGPR(0x14, insn->src(1));
+      emitGPR(0x27, insn->src(2));
+   }
+
+   if (psl_mrg)
+      emitField(constbuf ? 0x37 : 0x24, 2, insn->subOp & 0x3);
+
+   unsigned cmode = (insn->subOp & NV50_IR_SUBOP_XMAD_CMODE_MASK);
+   cmode >>= NV50_IR_SUBOP_XMAD_CMODE_SHIFT;
+   emitField(0x32, constbuf ? 2 : 3, cmode);
+
+   emitX(constbuf ? 0x36 : 0x26);
+   emitCC(0x2f);
+
+   emitGPR(0x0, insn->def(0));
+   emitGPR(0x8, insn->src(0));
+
+   // source flags
+   if (isSignedType(insn->sType)) {
+      uint16_t h1s = insn->subOp & NV50_IR_SUBOP_XMAD_H1_MASK;
+      emitField(0x30, 2, h1s >> NV50_IR_SUBOP_XMAD_H1_SHIFT);
+   }
+   emitField(0x35, 1, insn->subOp & NV50_IR_SUBOP_XMAD_H1(0) ? 1 : 0);
+   if (!immediate) {
+      bool h1 = insn->subOp & NV50_IR_SUBOP_XMAD_H1(1);
+      emitField(constbuf ? 0x34 : 0x23, 1, h1);
+   }
+}
+
+void
 CodeEmitterGM107::emitIMNMX()
 {
    switch (insn->src(1).getFile()) {
@@ -1867,6 +1979,7 @@ CodeEmitterGM107::emitIMNMX()
 
    emitField(0x30, 1, isSignedType(insn->dType));
    emitCC   (0x2f);
+   emitField(0x2b, 2, insn->subOp);
    emitField(0x2a, 1, insn->op == OP_MAX);
    emitPRED (0x27);
    emitGPR  (0x08, insn->src(0));
@@ -2066,6 +2179,47 @@ CodeEmitterGM107::emitSHR()
    emitCC   (0x2f);
    emitX    (0x2c);
    emitField(0x27, 1, insn->subOp == NV50_IR_SUBOP_SHIFT_WRAP);
+   emitGPR  (0x08, insn->src(0));
+   emitGPR  (0x00, insn->def(0));
+}
+
+void
+CodeEmitterGM107::emitSHF()
+{
+   unsigned type;
+
+   switch (insn->src(1).getFile()) {
+   case FILE_GPR:
+      emitInsn(insn->op == OP_SHL ? 0x5bf80000 : 0x5cf80000);
+      emitGPR(0x14, insn->src(1));
+      break;
+   case FILE_IMMEDIATE:
+      emitInsn(insn->op == OP_SHL ? 0x36f80000 : 0x38f80000);
+      emitIMMD(0x14, 19, insn->src(1));
+      break;
+   default:
+      assert(!"bad src1 file");
+      break;
+   }
+
+   switch (insn->sType) {
+   case TYPE_U64:
+      type = 2;
+      break;
+   case TYPE_S64:
+      type = 3;
+      break;
+   default:
+      type = 0;
+      break;
+   }
+
+   emitField(0x32, 1, !!(insn->subOp & NV50_IR_SUBOP_SHIFT_WRAP));
+   emitX    (0x31);
+   emitField(0x30, 1, !!(insn->subOp & NV50_IR_SUBOP_SHIFT_HIGH));
+   emitCC   (0x2f);
+   emitGPR  (0x27, insn->src(2));
+   emitField(0x25, 2, type);
    emitGPR  (0x08, insn->src(0));
    emitGPR  (0x00, insn->def(0));
 }
@@ -2565,6 +2719,104 @@ CodeEmitterGM107::emitTEXs(int pos)
       emitGPR(pos);
 }
 
+static uint8_t
+getTEXSMask(uint8_t mask)
+{
+   switch (mask) {
+   case 0x1: return 0x0;
+   case 0x2: return 0x1;
+   case 0x3: return 0x4;
+   case 0x4: return 0x2;
+   case 0x7: return 0x0;
+   case 0x8: return 0x3;
+   case 0x9: return 0x5;
+   case 0xa: return 0x6;
+   case 0xb: return 0x1;
+   case 0xc: return 0x7;
+   case 0xd: return 0x2;
+   case 0xe: return 0x3;
+   case 0xf: return 0x4;
+   default:
+      assert(!"invalid mask");
+      return 0;
+   }
+}
+
+static uint8_t
+getTEXSTarget(const TexInstruction *tex)
+{
+   assert(tex->op == OP_TEX || tex->op == OP_TXL);
+
+   switch (tex->tex.target.getEnum()) {
+   case TEX_TARGET_1D:
+      assert(tex->tex.levelZero);
+      return 0x0;
+   case TEX_TARGET_2D:
+   case TEX_TARGET_RECT:
+      if (tex->tex.levelZero)
+         return 0x2;
+      if (tex->op == OP_TXL)
+         return 0x3;
+      return 0x1;
+   case TEX_TARGET_2D_SHADOW:
+   case TEX_TARGET_RECT_SHADOW:
+      if (tex->tex.levelZero)
+         return 0x6;
+      if (tex->op == OP_TXL)
+         return 0x5;
+      return 0x4;
+   case TEX_TARGET_2D_ARRAY:
+      if (tex->tex.levelZero)
+         return 0x8;
+      return 0x7;
+   case TEX_TARGET_2D_ARRAY_SHADOW:
+      assert(tex->tex.levelZero);
+      return 0x9;
+   case TEX_TARGET_3D:
+      if (tex->tex.levelZero)
+         return 0xb;
+      assert(tex->op != OP_TXL);
+      return 0xa;
+   case TEX_TARGET_CUBE:
+      assert(!tex->tex.levelZero);
+      if (tex->op == OP_TXL)
+         return 0xd;
+      return 0xc;
+   default:
+      assert(false);
+      return 0x0;
+   }
+}
+
+static uint8_t
+getTLDSTarget(const TexInstruction *tex)
+{
+   switch (tex->tex.target.getEnum()) {
+   case TEX_TARGET_1D:
+      if (tex->tex.levelZero)
+         return 0x0;
+      return 0x1;
+   case TEX_TARGET_2D:
+   case TEX_TARGET_RECT:
+      if (tex->tex.levelZero)
+         return tex->tex.useOffsets ? 0x4 : 0x2;
+      return tex->tex.useOffsets ? 0xc : 0x5;
+   case TEX_TARGET_2D_MS:
+      assert(tex->tex.levelZero);
+      return 0x6;
+   case TEX_TARGET_3D:
+      assert(tex->tex.levelZero);
+      return 0x7;
+   case TEX_TARGET_2D_ARRAY:
+      assert(tex->tex.levelZero);
+      return 0x8;
+
+   default:
+      assert(false);
+      return 0x0;
+   }
+}
+
 void
 CodeEmitterGM107::emitTEX()
 {
@@ -2603,6 +2855,50 @@ CodeEmitterGM107::emitTEX()
                       insn->tex.target.getDim() - 1);
    emitField(0x1c, 1, insn->tex.target.isArray());
    emitTEXs (0x14);
+   emitGPR  (0x08, insn->src(0));
+   emitGPR  (0x00, insn->def(0));
+}
+
+void
+CodeEmitterGM107::emitTEXS()
+{
+   const TexInstruction *insn = this->insn->asTex();
+   assert(!insn->tex.derivAll);
+
+   switch (insn->op) {
+   case OP_TEX:
+   case OP_TXL:
+      emitInsn (0xd8000000);
+      emitField(0x35, 4, getTEXSTarget(insn));
+      emitField(0x32, 3, getTEXSMask(insn->tex.mask));
+      break;
+   case OP_TXF:
+      emitInsn (0xda000000);
+      emitField(0x35, 4, getTLDSTarget(insn));
+      emitField(0x32, 3, getTEXSMask(insn->tex.mask));
+      break;
+   case OP_TXG:
+      assert(insn->tex.useOffsets != 4);
+      emitInsn (0xdf000000);
+      emitField(0x34, 2, insn->tex.gatherComp);
+      emitField(0x33, 1, insn->tex.useOffsets == 1);
+      emitField(0x32, 1, insn->tex.target.isShadow());
+      break;
+   default:
+      unreachable("unknown op in emitTEXS()");
+      break;
+   }
+
+   emitField(0x31, 1, insn->tex.liveOnly);
+   emitField(0x24, 13, insn->tex.r);
+   if (insn->defExists(1))
+      emitGPR(0x1c, insn->def(1));
+   else
+      emitGPR(0x1c);
+   if (insn->srcExists(1))
+      emitGPR(0x14, insn->getSrc(1));
+   else
+      emitGPR(0x14);
    emitGPR  (0x08, insn->src(0));
    emitGPR  (0x00, insn->def(0));
 }
@@ -2855,7 +3151,8 @@ CodeEmitterGM107::emitMEMBAR()
 void
 CodeEmitterGM107::emitVOTE()
 {
-   assert(insn->src(0).getFile() == FILE_PREDICATE);
+   const ImmediateValue *imm;
+   uint32_t u32;
 
    int r = -1, p = -1;
    for (int i = 0; insn->defExists(i); i++) {
@@ -2875,8 +3172,24 @@ CodeEmitterGM107::emitVOTE()
       emitPRED (0x2d, insn->def(p));
    else
       emitPRED (0x2d);
-   emitField(0x2a, 1, insn->src(0).mod == Modifier(NV50_IR_MOD_NOT));
-   emitPRED (0x27, insn->src(0));
+
+   switch (insn->src(0).getFile()) {
+   case FILE_PREDICATE:
+      emitField(0x2a, 1, insn->src(0).mod == Modifier(NV50_IR_MOD_NOT));
+      emitPRED (0x27, insn->src(0));
+      break;
+   case FILE_IMMEDIATE:
+      imm = insn->getSrc(0)->asImm();
+      assert(imm);
+      u32 = imm->reg.data.u32;
+      assert(u32 == 0 || u32 == 1);
+      emitPRED(0x27);
+      emitField(0x2a, 1, u32 == 0);
+      break;
+   default:
+      assert(!"Unhandled src");
+      break;
+   }
 }
 
 void
@@ -3094,7 +3407,10 @@ CodeEmitterGM107::emitInstruction(Instruction *i)
       emitMOV();
       break;
    case OP_RDSV:
-      emitS2R();
+      if (targGM107->isCS2RSV(insn->getSrc(0)->reg.data.sv.sv))
+         emitCS2R();
+      else
+         emitS2R();
       break;
    case OP_ABS:
    case OP_NEG:
@@ -3156,6 +3472,9 @@ CodeEmitterGM107::emitInstruction(Instruction *i)
    case OP_SHLADD:
       emitISCADD();
       break;
+   case OP_XMAD:
+      emitXMAD();
+      break;
    case OP_MIN:
    case OP_MAX:
       if (isFloatType(insn->dType)) {
@@ -3168,10 +3487,16 @@ CodeEmitterGM107::emitInstruction(Instruction *i)
       }
       break;
    case OP_SHL:
-      emitSHL();
+      if (typeSizeof(insn->sType) == 8)
+         emitSHF();
+      else
+         emitSHL();
       break;
    case OP_SHR:
-      emitSHR();
+      if (typeSizeof(insn->sType) == 8)
+         emitSHF();
+      else
+         emitSHR();
       break;
    case OP_POPCNT:
       emitPOPC();
@@ -3226,6 +3551,7 @@ CodeEmitterGM107::emitInstruction(Instruction *i)
    case OP_LG2:
    case OP_RCP:
    case OP_RSQ:
+   case OP_SQRT:
       emitMUFU();
       break;
    case OP_AND:
@@ -3291,15 +3617,26 @@ CodeEmitterGM107::emitInstruction(Instruction *i)
       emitPIXLD();
       break;
    case OP_TEX:
-   case OP_TXB:
    case OP_TXL:
+      if (insn->asTex()->tex.scalar)
+         emitTEXS();
+      else
+         emitTEX();
+      break;
+   case OP_TXB:
       emitTEX();
       break;
    case OP_TXF:
-      emitTLD();
+      if (insn->asTex()->tex.scalar)
+         emitTEXS();
+      else
+         emitTLD();
       break;
    case OP_TXG:
-      emitTLD4();
+      if (insn->asTex()->tex.scalar)
+         emitTEXS();
+      else
+         emitTLD4();
       break;
    case OP_TXD:
       emitTXD();
@@ -3515,6 +3852,7 @@ private:
 
    bool insertBarriers(BasicBlock *);
 
+   bool doesInsnWriteTo(const Instruction *insn, const Value *val) const;
    Instruction *findFirstUse(const Instruction *) const;
    Instruction *findFirstDef(const Instruction *) const;
 
@@ -3838,45 +4176,73 @@ SchedDataCalculatorGM107::needWrDepBar(const Instruction *insn) const
 
    for (int d = 0; insn->defExists(d); ++d) {
       if (insn->def(d).getFile() == FILE_GPR ||
+          insn->def(d).getFile() == FILE_FLAGS ||
           insn->def(d).getFile() == FILE_PREDICATE)
          return true;
    }
    return false;
 }
 
-// Find the next instruction inside the same basic block which uses the output
-// of the given instruction in order to avoid RaW hazards.
+// Helper function for findFirstUse() and findFirstDef()
+bool
+SchedDataCalculatorGM107::doesInsnWriteTo(const Instruction *insn,
+                                          const Value *val) const
+{
+   if (val->reg.file != FILE_GPR &&
+       val->reg.file != FILE_PREDICATE &&
+       val->reg.file != FILE_FLAGS)
+      return false;
+
+   for (int d = 0; insn->defExists(d); ++d) {
+      const Value* def = insn->getDef(d);
+      int minGPR = def->reg.data.id;
+      int maxGPR = minGPR + def->reg.size / 4 - 1;
+
+      if (def->reg.file != val->reg.file)
+         continue;
+
+      if (def->reg.file == FILE_GPR) {
+         if (val->reg.data.id + val->reg.size / 4 - 1 < minGPR ||
+             val->reg.data.id > maxGPR)
+            continue;
+         return true;
+      } else
+      if (def->reg.file == FILE_PREDICATE) {
+         if (val->reg.data.id != minGPR)
+            continue;
+         return true;
+      } else
+      if (def->reg.file == FILE_FLAGS) {
+         if (val->reg.data.id != minGPR)
+            continue;
+         return true;
+      }
+   }
+
+   return false;
+}
+
+// Find the next instruction inside the same basic block which uses (reads or
+// writes from) the output of the given instruction in order to avoid RaW and
+// WaW hazards.
 Instruction *
 SchedDataCalculatorGM107::findFirstUse(const Instruction *bari) const
 {
    Instruction *insn, *next;
-   int minGPR, maxGPR;
 
    if (!bari->defExists(0))
       return NULL;
 
-   minGPR = bari->def(0).rep()->reg.data.id;
-   maxGPR = minGPR + bari->def(0).rep()->reg.size / 4 - 1;
-
    for (insn = bari->next; insn != NULL; insn = next) {
       next = insn->next;
 
-      for (int s = 0; insn->srcExists(s); ++s) {
-         const Value *src = insn->src(s).rep();
-         if (bari->def(0).getFile() == FILE_GPR) {
-            if (insn->src(s).getFile() != FILE_GPR ||
-                src->reg.data.id + src->reg.size / 4 - 1 < minGPR ||
-                src->reg.data.id > maxGPR)
-               continue;
+      for (int s = 0; insn->srcExists(s); ++s)
+         if (doesInsnWriteTo(bari, insn->getSrc(s)))
             return insn;
-         } else
-         if (bari->def(0).getFile() == FILE_PREDICATE) {
-            if (insn->src(s).getFile() != FILE_PREDICATE ||
-                src->reg.data.id != minGPR)
-               continue;
+
+      for (int d = 0; insn->defExists(d); ++d)
+         if (doesInsnWriteTo(bari, insn->getDef(d)))
             return insn;
-         }
-      }
    }
    return NULL;
 }
@@ -3887,28 +4253,16 @@ Instruction *
 SchedDataCalculatorGM107::findFirstDef(const Instruction *bari) const
 {
    Instruction *insn, *next;
-   int minGPR, maxGPR;
+
+   if (!bari->srcExists(0))
+      return NULL;
 
    for (insn = bari->next; insn != NULL; insn = next) {
       next = insn->next;
 
-      for (int d = 0; insn->defExists(d); ++d) {
-         const Value *def = insn->def(d).rep();
-         if (insn->def(d).getFile() != FILE_GPR)
-            continue;
-
-         minGPR = def->reg.data.id;
-         maxGPR = minGPR + def->reg.size / 4 - 1;
-
-         for (int s = 0; bari->srcExists(s); ++s) {
-            const Value *src = bari->src(s).rep();
-            if (bari->src(s).getFile() != FILE_GPR ||
-                src->reg.data.id + src->reg.size / 4 - 1 < minGPR ||
-                src->reg.data.id > maxGPR)
-               continue;
+      for (int s = 0; bari->srcExists(s); ++s)
+         if (doesInsnWriteTo(insn, bari->getSrc(s)))
             return insn;
-         }
-      }
    }
    return NULL;
 }
@@ -3966,7 +4320,8 @@ SchedDataCalculatorGM107::insertBarriers(BasicBlock *bb)
       if (need_wr_bar) {
          // When the instruction requires to emit a write dependency barrier
          // (all which write something at a variable latency), find the next
-         // instruction which reads the outputs.
+         // instruction which reads the outputs (or writes to them, potentially
+         // completing before this insn.
          usei = findFirstUse(insn);
 
          // Allocate and emit a new barrier.

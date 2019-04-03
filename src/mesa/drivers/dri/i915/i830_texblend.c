@@ -29,7 +29,6 @@
 #include "main/macros.h"
 #include "main/mtypes.h"
 #include "main/enums.h"
-#include "main/mm.h"
 
 #include "intel_screen.h"
 #include "intel_tex.h"
@@ -389,7 +388,8 @@ static void
 emit_texblend(struct i830_context *i830, GLuint unit, GLuint blendUnit,
               bool last_stage)
 {
-   struct gl_texture_unit *texUnit = &i830->intel.ctx.Texture.Unit[unit];
+   struct gl_fixedfunc_texture_unit *texUnit =
+      &i830->intel.ctx.Texture.FixedFuncUnit[unit];
    GLuint tmp[I830_TEXBLEND_SIZE], tmp_sz;
 
 

@@ -50,6 +50,7 @@ struct virgl_hw_res {
    int64_t start, end;
    boolean flinked;
    uint32_t flink;
+   int fence_fd;
 };
 
 struct virgl_drm_winsys
@@ -59,17 +60,18 @@ struct virgl_drm_winsys
    struct list_head delayed;
    int num_delayed;
    unsigned usecs;
-   pipe_mutex mutex;
+   mtx_t mutex;
 
    struct util_hash_table *bo_handles;
    struct util_hash_table *bo_names;
-   pipe_mutex bo_handles_mutex;
+   mtx_t bo_handles_mutex;
+   bool has_capset_query_fix;
 };
 
 struct virgl_drm_cmd_buf {
    struct virgl_cmd_buf base;
 
-   uint32_t buf[VIRGL_MAX_CMDBUF_DWORDS];
+   uint32_t *buf;
 
    unsigned nres;
    unsigned cres;

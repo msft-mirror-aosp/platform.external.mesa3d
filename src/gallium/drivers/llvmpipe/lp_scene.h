@@ -166,7 +166,6 @@ struct lp_scene {
    unsigned resource_reference_size;
 
    boolean alloc_failed;
-   boolean discard;
    /**
     * Number of active tiles in each dimension.
     * This basically the framebuffer size divided by tile size
@@ -174,7 +173,7 @@ struct lp_scene {
    unsigned tiles_x, tiles_y;
 
    int curr_x, curr_y;  /**< for iterating over bins */
-   pipe_mutex mutex;
+   mtx_t mutex;
 
    struct cmd_bin tile[TILES_X][TILES_Y];
    struct data_block_list data;
@@ -389,12 +388,11 @@ lp_scene_bin_iter_next( struct lp_scene *scene, int *x, int *y );
 /* Begin/end binning of a scene
  */
 void
-lp_scene_begin_binning( struct lp_scene *scene,
-                        struct pipe_framebuffer_state *fb,
-                        boolean discard );
+lp_scene_begin_binning(struct lp_scene *scene,
+                       struct pipe_framebuffer_state *fb);
 
 void
-lp_scene_end_binning( struct lp_scene *scene );
+lp_scene_end_binning(struct lp_scene *scene);
 
 
 /* Begin/end rasterization of a scene
@@ -403,7 +401,7 @@ void
 lp_scene_begin_rasterization(struct lp_scene *scene);
 
 void
-lp_scene_end_rasterization(struct lp_scene *scene );
+lp_scene_end_rasterization(struct lp_scene *scene);
 
 
 

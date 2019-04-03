@@ -37,16 +37,14 @@ libxatracker_la_LIBADD = \
 	$(top_builddir)/src/gallium/state_trackers/xa/libxatracker.la \
 	$(top_builddir)/src/gallium/auxiliary/libgalliumvl_stub.la \
 	$(top_builddir)/src/gallium/auxiliary/libgallium.la \
-	$(top_builddir)/src/compiler/nir/libnir.la \
-	$(top_builddir)/src/util/libmesautil.la \
+	$(top_builddir)/src/compiler/glsl/libglsl.la \
 	$(LIBDRM_LIBS) \
 	$(GALLIUM_COMMON_LIB_DEPS)
 
 libxatracker_la_LDFLAGS = \
 	-no-undefined \
-	-version-number $(XA_MAJOR):$(XA_MINOR):$(XA_TINY) \
-	$(GC_SECTIONS) \
-	$(LD_NO_UNDEFINED)
+	-version-number $(XA_MAJOR):$(XA_MINOR):$(XA_PATCH) \
+	$(GC_SECTIONS)
 
 if HAVE_LD_VERSION_SCRIPT
 libxatracker_la_LDFLAGS += \
@@ -54,7 +52,7 @@ libxatracker_la_LDFLAGS += \
 endif
 
 EXTRA_libxatracker_la_DEPENDENCIES = xa.sym
-EXTRA_DIST = xa.sym
+EXTRA_DIST = xa.sym meson.build
 
 if HAVE_GALLIUM_STATIC_TARGETS
 
@@ -63,8 +61,6 @@ TARGET_CPPFLAGS =
 TARGET_LIB_DEPS =
 
 include $(top_srcdir)/src/gallium/drivers/i915/Automake.inc
-
-include $(top_srcdir)/src/gallium/drivers/ilo/Automake.inc
 
 include $(top_srcdir)/src/gallium/drivers/nouveau/Automake.inc
 

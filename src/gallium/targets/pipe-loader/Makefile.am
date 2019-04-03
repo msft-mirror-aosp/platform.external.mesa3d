@@ -25,13 +25,13 @@ include $(top_srcdir)/src/gallium/Automake.inc
 AM_CPPFLAGS = \
 	$(GALLIUM_CFLAGS) \
 	-I$(top_srcdir)/include \
+	-I$(top_builddir)/src/gallium/drivers \
 	-I$(top_srcdir)/src/gallium/drivers \
 	-I$(top_srcdir)/src/gallium/winsys \
+	-I$(top_builddir)/src/util \
 	$(GALLIUM_PIPE_LOADER_DEFINES) \
 	$(LIBDRM_CFLAGS) \
-	$(VISIBILITY_CFLAGS) \
-	-DGALLIUM_RBUG \
-	-DGALLIUM_TRACE
+	$(VISIBILITY_CFLAGS)
 
 pipedir = $(libdir)/gallium-pipe
 pipe_LTLIBRARIES =
@@ -53,18 +53,14 @@ endif
 
 PIPE_LIBS += \
 	$(top_builddir)/src/gallium/auxiliary/libgallium.la \
-	$(top_builddir)/src/compiler/nir/libnir.la \
-	$(top_builddir)/src/util/libmesautil.la \
-	$(top_builddir)/src/gallium/drivers/rbug/librbug.la \
-	$(top_builddir)/src/gallium/drivers/trace/libtrace.la \
+	$(top_builddir)/src/compiler/glsl/libglsl.la \
 	$(GALLIUM_COMMON_LIB_DEPS)
 
 AM_LDFLAGS = \
 	-module \
 	-no-undefined \
 	-avoid-version \
-	$(GC_SECTIONS) \
-	$(LD_NO_UNDEFINED)
+	$(GC_SECTIONS)
 
 if HAVE_LD_VERSION_SCRIPT
 AM_LDFLAGS += \
@@ -86,21 +82,7 @@ pipe_i915_la_LIBADD = \
 	$(top_builddir)/src/gallium/winsys/i915/drm/libi915drm.la \
 	$(top_builddir)/src/gallium/drivers/i915/libi915.la \
 	$(LIBDRM_LIBS) \
-	$(INTEL_LIBS)
-
-endif
-
-if HAVE_GALLIUM_ILO
-pipe_LTLIBRARIES += pipe_i965.la
-
-pipe_i965_la_SOURCES = pipe_i965.c
-nodist_EXTRA_pipe_i965_la_SOURCES = dummy.cpp
-pipe_i965_la_LIBADD = \
-	$(PIPE_LIBS) \
-	$(top_builddir)/src/gallium/winsys/intel/drm/libintelwinsys.la \
-	$(top_builddir)/src/gallium/drivers/ilo/libilo.la \
-	$(LIBDRM_LIBS) \
-	$(INTEL_LIBS)
+	$(I915_LIBS)
 
 endif
 
@@ -140,11 +122,10 @@ nodist_EXTRA_pipe_r600_la_SOURCES = dummy.cpp
 pipe_r600_la_LIBADD = \
 	$(PIPE_LIBS) \
 	$(top_builddir)/src/gallium/winsys/radeon/drm/libradeonwinsys.la \
-	$(top_builddir)/src/gallium/drivers/radeon/libradeon.la \
 	$(top_builddir)/src/gallium/drivers/r600/libr600.la \
 	$(LIBDRM_LIBS) \
-	$(RADEON_LIBS)
-
+	$(RADEON_LIBS) \
+	$(LIBELF_LIBS)
 endif
 
 if HAVE_GALLIUM_RADEONSI
@@ -156,9 +137,9 @@ pipe_radeonsi_la_LIBADD = \
 	$(PIPE_LIBS) \
 	$(top_builddir)/src/gallium/winsys/radeon/drm/libradeonwinsys.la \
 	$(top_builddir)/src/gallium/winsys/amdgpu/drm/libamdgpuwinsys.la \
-	$(top_builddir)/src/gallium/drivers/radeon/libradeon.la \
 	$(top_builddir)/src/gallium/drivers/radeonsi/libradeonsi.la \
 	$(top_builddir)/src/amd/common/libamd_common.la \
+	$(top_builddir)/src/util/libxmlconfig.la \
 	$(LIBDRM_LIBS) \
 	$(RADEON_LIBS) \
 	$(AMDGPU_LIBS)
@@ -174,6 +155,8 @@ pipe_msm_la_LIBADD = \
 	$(PIPE_LIBS) \
 	$(top_builddir)/src/gallium/winsys/freedreno/drm/libfreedrenodrm.la \
 	$(top_builddir)/src/gallium/drivers/freedreno/libfreedreno.la \
+	$(top_builddir)/src/freedreno/libfreedreno_drm.la \
+	$(top_builddir)/src/freedreno/libfreedreno_ir3.la \
 	$(LIBDRM_LIBS) \
 	$(FREEDRENO_LIBS)
 
@@ -225,4 +208,4 @@ pipe_swrast_la_LIBADD += \
 
 endif
 
-EXTRA_DIST = pipe.sym
+EXTRA_DIST = pipe.sym meson.build

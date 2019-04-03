@@ -25,6 +25,7 @@
 
 #include "util/u_inlines.h"
 #include "pipe/p_defines.h"
+#include "util/u_format.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
 #include "util/u_bitmask.h"
@@ -61,7 +62,6 @@ get_dummy_fragment_shader(void)
    const struct tgsi_token *tokens;
    struct ureg_src src;
    struct ureg_dst dst;
-   unsigned num_tokens;
 
    ureg = ureg_create(PIPE_SHADER_FRAGMENT);
    if (!ureg)
@@ -72,7 +72,7 @@ get_dummy_fragment_shader(void)
    ureg_MOV(ureg, dst, src);
    ureg_END(ureg);
 
-   tokens = ureg_get_tokens(ureg, &num_tokens);
+   tokens = ureg_get_tokens(ureg, NULL);
 
    ureg_destroy(ureg);
 
@@ -115,6 +115,10 @@ get_compiled_dummy_shader(struct svga_context *svga,
    FREE((void *) fs->base.tokens);
    fs->base.tokens = dummy;
 
+   tgsi_scan_shader(fs->base.tokens, &fs->base.info);
+   fs->generic_inputs = svga_get_generic_inputs_mask(&fs->base.info);
+   svga_remap_generics(fs->generic_inputs, fs->generic_remap_table);
+
    variant = translate_fragment_program(svga, fs, key);
    return variant;
 }
@@ -145,7 +149,7 @@ compile_fs(struct svga_context *svga,
                    (unsigned) (variant->nr_tokens
                                * sizeof(variant->tokens[0])));
       /* Free the too-large variant */
-      svga_destroy_shader_variant(svga, SVGA3D_SHADERTYPE_PS, variant);
+      svga_destroy_shader_variant(svga, variant);
       /* Use simple pass-through shader instead */
       variant = get_compiled_dummy_shader(svga, fs, key);
    }
@@ -154,9 +158,9 @@ compile_fs(struct svga_context *svga,
       return PIPE_ERROR;
    }
 
-   ret = svga_define_shader(svga, SVGA3D_SHADERTYPE_PS, variant);
+   ret = svga_define_shader(svga, variant);
    if (ret != PIPE_OK) {
-      svga_destroy_shader_variant(svga, SVGA3D_SHADERTYPE_PS, variant);
+      svga_destroy_shader_variant(svga, variant);
       return ret;
    }
 
@@ -233,9 +237,9 @@ make_fs_key(const struct svga_context *svga,
     *   
     * SVGA_NEW_BLEND
     */
-   if (svga->curr.blend->need_white_fragments) {
-      key->fs.white_fragments = 1;
-   }
+   key->fs.white_fragments = svga->curr.blend->need_white_fragments;
+
+   key->fs.alpha_to_one = svga->curr.blend->alpha_to_one;
 
 #ifdef DEBUG
    /*
@@ -327,10 +331,7 @@ make_fs_key(const struct svga_context *svga,
    }
 
    /* sprite coord gen state */
-   for (i = 0; i < svga->curr.num_samplers[shader]; ++i) {
-      key->tex[i].sprite_texgen =
-         svga->curr.rast->templ.sprite_coord_enable & (1 << i);
-   }
+   key->sprite_coord_enable = svga->curr.rast->templ.sprite_coord_enable;
 
    key->sprite_origin_lower_left = (svga->curr.rast->templ.sprite_coord_mode
                                     == PIPE_SPRITE_COORD_LOWER_LEFT);
@@ -350,9 +351,10 @@ make_fs_key(const struct svga_context *svga,
       }
    }
 
-   /* SVGA_NEW_FRAME_BUFFER */
-   if (fs->base.info.properties[TGSI_PROPERTY_FS_COLOR0_WRITES_ALL_CBUFS]) {
-      /* Replicate color0 output to N colorbuffers */
+   /* SVGA_NEW_FRAME_BUFFER | SVGA_NEW_BLEND */
+   if (fs->base.info.properties[TGSI_PROPERTY_FS_COLOR0_WRITES_ALL_CBUFS] ||
+       svga->curr.blend->need_white_fragments) {
+      /* Replicate color0 output (or white) to N colorbuffers */
       key->fs.write_color0_to_n_cbufs = svga->curr.framebuffer.nr_cbufs;
    }
 
@@ -378,18 +380,17 @@ svga_reemit_fs_bindings(struct svga_context *svga)
       ret =  svga->swc->resource_rebind(svga->swc, NULL,
                                         svga->state.hw_draw.fs->gb_shader,
                                         SVGA_RELOC_READ);
-      goto out;
+   }
+   else {
+      if (svga_have_vgpu10(svga))
+         ret = SVGA3D_vgpu10_SetShader(svga->swc, SVGA3D_SHADERTYPE_PS,
+                                       svga->state.hw_draw.fs->gb_shader,
+                                       svga->state.hw_draw.fs->id);
+      else
+         ret = SVGA3D_SetGBShader(svga->swc, SVGA3D_SHADERTYPE_PS,
+                                  svga->state.hw_draw.fs->gb_shader);
    }
 
-   if (svga_have_vgpu10(svga))
-      ret = SVGA3D_vgpu10_SetShader(svga->swc, SVGA3D_SHADERTYPE_PS,
-                                    svga->state.hw_draw.fs->gb_shader,
-                                    svga->state.hw_draw.fs->id);
-   else
-      ret = SVGA3D_SetGBShader(svga->swc, SVGA3D_SHADERTYPE_PS,
-                               svga->state.hw_draw.fs->gb_shader);
-
- out:
    if (ret != PIPE_OK)
       return ret;
 
@@ -408,6 +409,27 @@ emit_hw_fs(struct svga_context *svga, unsigned dirty)
    struct svga_compile_key key;
 
    SVGA_STATS_TIME_PUSH(svga_sws(svga), SVGA_STATS_TIME_EMITFS);
+
+   /* Disable rasterization if rasterizer_discard flag is set or
+    * vs/gs does not output position.
+    */
+   svga->disable_rasterizer =
+      svga->curr.rast->templ.rasterizer_discard ||
+      (svga->curr.gs && !svga->curr.gs->base.info.writes_position) ||
+      (!svga->curr.gs && !svga->curr.vs->base.info.writes_position);
+
+   /* Set FS to NULL when rasterization is to be disabled */
+   if (svga->disable_rasterizer) {
+      /* Set FS to NULL if it has not been done */
+      if (svga->state.hw_draw.fs) {
+         ret = svga_set_shader(svga, SVGA3D_SHADERTYPE_PS, NULL);
+         if (ret != PIPE_OK)
+            goto done;
+      }
+      svga->rebind.flags.fs = FALSE;
+      svga->state.hw_draw.fs = NULL;
+      goto done;
+   }
 
    /* SVGA_NEW_BLEND
     * SVGA_NEW_TEXTURE_BINDING

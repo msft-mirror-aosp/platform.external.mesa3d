@@ -21,6 +21,8 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#undef NDEBUG
+
 #include "hash_table.h"
 
 static void *make_key(uint32_t i)
@@ -53,7 +55,6 @@ static void delete_function(struct hash_entry *entry)
 int main()
 {
    struct hash_table *ht;
-   struct hash_entry *entry;
    const uint32_t size = 1000;
    bool flags[size];
    uint32_t i;

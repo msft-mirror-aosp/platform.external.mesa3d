@@ -48,7 +48,12 @@ import source_list
 # a path directly. We want to support both, so we need to detect the SCons version,
 # for which no API is provided by SCons 8-P
 
-scons_version = tuple(map(int, SCons.__version__.split('.')))
+# Scons version string has consistently been in this format:
+# MajorVersion.MinorVersion.Patch[.alpha/beta.yyyymmdd]
+# so this formula should cover all versions regardless of type
+# stable, alpha or beta.
+# For simplicity alpha and beta flags are removed.
+scons_version = tuple(map(int, SCons.__version__.split('.')[:3]))
 
 def quietCommandLines(env):
     # Quiet command lines
@@ -113,7 +118,7 @@ def python_scan(node, env, path):
     finder = modulefinder.ModuleFinder(path=path)
     finder.run_script(node.abspath)
     results = []
-    for name, mod in finder.modules.iteritems():
+    for name, mod in finder.modules.items():
         if mod.__file__ is None:
             continue
         assert os.path.exists(mod.__file__)
@@ -189,7 +194,7 @@ def _pkg_check_modules(env, name, modules):
     except OSError:
         return
     prefix = name + '_'
-    for flag_name, flag_value in flags.iteritems():
+    for flag_name, flag_value in flags.items():
         assert '_' not in flag_name
         env[prefix + flag_name] = flag_value
 
@@ -222,7 +227,7 @@ def pkg_use_modules(env, names):
             raise Exception('Attempt to use unavailable module %s' % name)
 
         flags = {}
-        for flag_name, flag_value in env.Dictionary().iteritems():
+        for flag_name, flag_value in env.Dictionary().items():
             if flag_name.startswith(prefix):
                 flag_name = flag_name[len(prefix):]
                 if '_' not in flag_name:
@@ -262,7 +267,7 @@ def parse_source_list(env, filename, names=None):
 
         symbols = names
     else:
-        symbols = sym_table.keys()
+        symbols = list(sym_table.keys())
 
     # convert the symbol table to source lists
     src_lists = {}
@@ -281,7 +286,7 @@ def parse_source_list(env, filename, names=None):
                     # cause duplicate actions.
                     f = f[len(cur_srcdir + '/'):]
                 # do not include any headers
-                if f.endswith(tuple(['.h','.hpp'])):
+                if f.endswith(tuple(['.h','.hpp','.inl'])):
                     continue
                 srcs.append(f)
 

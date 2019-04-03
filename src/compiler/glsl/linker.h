@@ -22,9 +22,14 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
 #ifndef GLSL_LINKER_H
 #define GLSL_LINKER_H
+
+#include "linker_util.h"
+
+struct gl_shader_program;
+struct gl_shader;
+struct gl_linked_shader;
 
 extern bool
 link_function_calls(gl_shader_program *prog, gl_linked_shader *main,
@@ -35,8 +40,7 @@ link_invalidate_variable_locations(exec_list *ir);
 
 extern void
 link_assign_uniform_locations(struct gl_shader_program *prog,
-                              struct gl_context *ctx,
-                              unsigned int num_explicit_uniform_locs);
+                              struct gl_context *ctx);
 
 extern void
 link_set_uniform_initializers(struct gl_shader_program *prog,
@@ -94,6 +98,10 @@ link_intrastage_shaders(void *mem_ctx,
                         unsigned num_shaders,
                         bool allow_missing_main);
 
+extern unsigned
+link_calculate_matrix_stride(const glsl_type *matrix, bool row_major,
+                             enum glsl_interface_packing packing);
+
 /**
  * Class for processing all of the leaf fields of a variable that corresponds
  * to a program resource.
@@ -124,7 +132,27 @@ public:
     * matter.  For example, enumerating the names of members of the block, but
     * not for determining the offsets of members.
     */
-   void process(ir_variable *var);
+   void process(ir_variable *var, bool use_std430_as_default);
+
+   /**
+    * Begin processing a variable
+    *
+    * Classes that overload this function should call \c ::process from the
+    * base class to start the recursive processing of the variable.
+    *
+    * \param var  The variable that is to be processed
+    * \param var_type The glsl_type reference of the variable
+    *
+    * Calls \c ::visit_field for each leaf of the variable.
+    *
+    * \warning
+    * When processing a uniform block, this entry should only be used in cases
+    * where the row / column ordering of matrices in the block does not
+    * matter.  For example, enumerating the names of members of the block, but
+    * not for determining the offsets of members.
+    */
+   void process(ir_variable *var, const glsl_type *var_type,
+                bool use_std430_as_default);
 
    /**
     * Begin processing a variable of a structured type.
@@ -141,7 +169,8 @@ public:
     * \c type must be \c GLSL_TYPE_RECORD, \c GLSL_TYPE_INTERFACE, or an array
     * there of.
     */
-   void process(const glsl_type *type, const char *name);
+   void process(const glsl_type *type, const char *name,
+                bool use_std430_as_default);
 
 protected:
    /**
@@ -159,16 +188,6 @@ protected:
                             bool row_major, const glsl_type *record_type,
                             const enum glsl_interface_packing packing,
                             bool last_field) = 0;
-
-   /**
-    * Visit a record before visiting its fields
-    *
-    * For structures-of-structures or interfaces-of-structures, this visits
-    * the inner structure before visiting its fields.
-    *
-    * The default implementation does nothing.
-    */
-   virtual void visit_field(const glsl_struct_field *field);
 
    virtual void enter_record(const glsl_type *type, const char *name,
                              bool row_major, const enum glsl_interface_packing packing);
@@ -193,25 +212,6 @@ private:
                   const enum glsl_interface_packing packing,
                   bool last_field, unsigned record_array_count,
                   const glsl_struct_field *named_ifc_member);
-};
-
-void
-linker_error(gl_shader_program *prog, const char *fmt, ...);
-
-void
-linker_warning(gl_shader_program *prog, const char *fmt, ...);
-
-/**
- * Sometimes there are empty slots left over in UniformRemapTable after we
- * allocate slots to explicit locations. This struct represents a single
- * continouous block of empty slots in UniformRemapTable.
- */
-struct empty_uniform_block {
-   struct exec_node link;
-   /* The start location of the block */
-   unsigned start;
-   /* The number of slots in the block */
-   unsigned slots;
 };
 
 #endif /* GLSL_LINKER_H */
