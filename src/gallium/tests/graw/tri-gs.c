@@ -90,7 +90,7 @@ static void set_vertices( void )
 
    vbuf.stride = sizeof( struct vertex );
    vbuf.buffer_offset = 0;
-   vbuf.buffer = pipe_buffer_create_with_data(ctx,
+   vbuf.buffer.resource = pipe_buffer_create_with_data(ctx,
                                               PIPE_BIND_VERTEX_BUFFER,
                                               PIPE_USAGE_DEFAULT,
                                               sizeof(vertices),
@@ -207,7 +207,6 @@ static void init( void )
    templat.depth0 = 1;
    templat.array_size = 1;
    templat.last_level = 0;
-   templat.nr_samples = 1;
    templat.bind = (PIPE_BIND_RENDER_TARGET |
                    PIPE_BIND_DISPLAY_TARGET);
    
@@ -256,7 +255,8 @@ static void init( void )
       rasterizer.cull_face = PIPE_FACE_NONE;
       rasterizer.half_pixel_center = 1;
       rasterizer.bottom_edge_rule = 1;
-      rasterizer.depth_clip = 1;
+      rasterizer.depth_clip_near = 1;
+      rasterizer.depth_clip_far = 1;
       handle = ctx->create_rasterizer_state(ctx, &rasterizer);
       ctx->bind_rasterizer_state(ctx, handle);
    }

@@ -49,21 +49,21 @@ MESA_DRI_WHOLE_STATIC_LIBRARIES := \
 MESA_DRI_SHARED_LIBRARIES := \
 	libcutils \
 	libdl \
-	libexpat \
 	libglapi \
-	liblog
+	liblog \
+	libz
+
+# If Android version >=8 MESA should static link libexpat else should dynamic link
+ifeq ($(shell test $(PLATFORM_SDK_VERSION) -ge 27; echo $$?), 0)
+MESA_DRI_WHOLE_STATIC_LIBRARIES += \
+	libexpat
+else
+MESA_DRI_SHARED_LIBRARIES += \
+	libexpat
+endif
 
 #-----------------------------------------------
 # Build drivers and libmesa_dri_common
 
-SUBDIRS := common
-
-ifneq ($(filter i915, $(MESA_GPU_DRIVERS)),)
-	SUBDIRS += i915
-endif
-
-ifneq ($(filter i965, $(MESA_GPU_DRIVERS)),)
-	SUBDIRS += i965
-endif
-
+SUBDIRS := common i915 i965
 include $(foreach d, $(SUBDIRS), $(LOCAL_PATH)/$(d)/Android.mk)

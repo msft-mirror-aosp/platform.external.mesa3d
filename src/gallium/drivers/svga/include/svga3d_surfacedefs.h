@@ -31,6 +31,9 @@
  *       Surface/format/image helper code.
  */
 
+#ifndef SVGA3D_SURFACEDEFS_H
+#define SVGA3D_SURFACEDEFS_H
+
 #include "svga3d_reg.h"
 
 #define max_t(type, x, y)  ((x) > (y) ? (x) : (y))
@@ -486,12 +489,12 @@ static const struct svga3d_surface_desc svga3d_surface_descs[] = {
       64, {{0}, {8}, {32}, {0}},
       {{0}, {32}, {0}, {0}}},
 
-   {SVGA3D_R32_FLOAT_X8X24_TYPELESS, SVGA3DBLOCKDESC_R_FP,
+   {SVGA3D_R32_FLOAT_X8X24, SVGA3DBLOCKDESC_R_FP,
       {1, 1, 1},  8, 8,
       64, {{0}, {0}, {32}, {0}},
       {{0}, {0}, {0}, {0}}},
 
-   {SVGA3D_X32_TYPELESS_G8X24_UINT, SVGA3DBLOCKDESC_GREEN,
+   {SVGA3D_X32_G8X24_UINT, SVGA3DBLOCKDESC_GREEN,
       {1, 1, 1},  8, 8,
       64, {{0}, {8}, {0}, {0}},
       {{0}, {32}, {0}, {0}}},
@@ -581,12 +584,12 @@ static const struct svga3d_surface_desc svga3d_surface_descs[] = {
       32, {{0}, {8}, {24}, {0}},
       {{0}, {24}, {0}, {0}}},
 
-   {SVGA3D_R24_UNORM_X8_TYPELESS, SVGA3DBLOCKDESC_RED,
+   {SVGA3D_R24_UNORM_X8, SVGA3DBLOCKDESC_RED,
       {1, 1, 1},  4, 4,
       32, {{0}, {0}, {24}, {0}},
       {{0}, {0}, {0}, {0}}},
 
-   {SVGA3D_X24_TYPELESS_G8_UINT, SVGA3DBLOCKDESC_GREEN,
+   {SVGA3D_X24_G8_UINT, SVGA3DBLOCKDESC_GREEN,
       {1, 1, 1},  4, 4,
       32, {{0}, {8}, {0}, {0}},
       {{0}, {24}, {0}, {0}}},
@@ -1102,6 +1105,30 @@ svga3dsurface_get_serialized_size(SVGA3dSurfaceFormat format,
 
 
 /**
+ * svga3dsurface_get_serialized_size_extended - Returns the number of bytes
+ * required for a surface with given parameters. Support for sample count.
+ *
+ */
+static inline uint32
+svga3dsurface_get_serialized_size_extended(SVGA3dSurfaceFormat format,
+                                           SVGA3dSize base_level_size,
+                                           uint32 num_mip_levels,
+                                           uint32 num_layers,
+                                           uint32 num_samples)
+{
+   uint64_t total_size = svga3dsurface_get_serialized_size(format,
+                                                           base_level_size,
+                                                           num_mip_levels,
+                                                           num_layers);
+
+   total_size *= (num_samples > 1 ? num_samples : 1);
+
+   return (total_size > (uint64_t) MAX_UINT32) ? MAX_UINT32 :
+      (uint32) total_size;
+}
+
+
+/**
  * Compute the offset (in bytes) to a pixel in an image (or volume).
  * 'width' is the image width in pixels
  * 'height' is the image height in pixels
@@ -1121,3 +1148,5 @@ svga3dsurface_get_pixel_offset(SVGA3dSurfaceFormat format,
                           x / bw * desc->bytes_per_block);
    return offset;
 }
+
+#endif

@@ -21,8 +21,8 @@
  * IN THE SOFTWARE.
  */
 
-#ifndef _DEBUG_H
-#define _DEBUG_H
+#ifndef _UTIL_DEBUG_H
+#define _UTIL_DEBUG_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -40,10 +40,14 @@ uint64_t
 parse_debug_string(const char *debug,
                    const struct debug_control *control);
 bool
+comma_separated_list_contains(const char *list, const char *s);
+bool
 env_var_as_boolean(const char *var_name, bool default_value);
+unsigned
+env_var_as_unsigned(const char *var_name, unsigned default_value);
 
 #ifdef __cplusplus
 } /* extern C */
 #endif
 
-#endif /* _DEBUG_H */
+#endif /* _UTIL_DEBUG_H */

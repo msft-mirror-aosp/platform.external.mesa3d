@@ -25,9 +25,13 @@ include $(top_srcdir)/src/gallium/Automake.inc
 
 AM_CFLAGS = \
 	-I$(top_srcdir)/src/gallium/drivers \
+	-I$(top_srcdir)/src/freedreno \
+	-I$(top_srcdir)/src/freedreno/registers \
 	$(GALLIUM_WINSYS_CFLAGS) \
 	$(FREEDRENO_CFLAGS)
 
 noinst_LTLIBRARIES = libfreedrenodrm.la
 
 libfreedrenodrm_la_SOURCES = $(C_SOURCES)
+
+EXTRA_DIST = meson.build

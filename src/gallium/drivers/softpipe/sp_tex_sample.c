@@ -796,23 +796,6 @@ get_texel_quad_2d_no_border(const struct sp_sampler_view *sp_sview,
    out[3] = get_texel_2d_no_border( sp_sview, addr, x1, y1 );
 }
 
-/* Can involve a lot of unnecessary checks for border color:
- */
-static inline void
-get_texel_quad_2d(const struct sp_sampler_view *sp_sview,
-                  const struct sp_sampler *sp_samp,
-                  union tex_tile_address addr,
-                  int x0, int y0,
-                  int x1, int y1,
-                  const float *out[4])
-{
-   out[0] = get_texel_2d( sp_sview, sp_samp, addr, x0, y0 );
-   out[1] = get_texel_2d( sp_sview, sp_samp, addr, x1, y0 );
-   out[3] = get_texel_2d( sp_sview, sp_samp, addr, x1, y1 );
-   out[2] = get_texel_2d( sp_sview, sp_samp, addr, x0, y1 );
-}
-
-
 
 /* 3d variants:
  */
@@ -2771,6 +2754,7 @@ do_swizzling(const struct pipe_sampler_view *sview,
    const unsigned swizzle_g = sview->swizzle_g;
    const unsigned swizzle_b = sview->swizzle_b;
    const unsigned swizzle_a = sview->swizzle_a;
+   float oneval = util_format_is_pure_integer(sview->format) ? uif(1) : 1.0f;
 
    switch (swizzle_r) {
    case PIPE_SWIZZLE_0:
@@ -2779,7 +2763,7 @@ do_swizzling(const struct pipe_sampler_view *sview,
       break;
    case PIPE_SWIZZLE_1:
       for (j = 0; j < 4; j++)
-         out[0][j] = 1.0f;
+         out[0][j] = oneval;
       break;
    default:
       assert(swizzle_r < 4);
@@ -2794,7 +2778,7 @@ do_swizzling(const struct pipe_sampler_view *sview,
       break;
    case PIPE_SWIZZLE_1:
       for (j = 0; j < 4; j++)
-         out[1][j] = 1.0f;
+         out[1][j] = oneval;
       break;
    default:
       assert(swizzle_g < 4);
@@ -2809,7 +2793,7 @@ do_swizzling(const struct pipe_sampler_view *sview,
       break;
    case PIPE_SWIZZLE_1:
       for (j = 0; j < 4; j++)
-         out[2][j] = 1.0f;
+         out[2][j] = oneval;
       break;
    default:
       assert(swizzle_b < 4);
@@ -2824,7 +2808,7 @@ do_swizzling(const struct pipe_sampler_view *sview,
       break;
    case PIPE_SWIZZLE_1:
       for (j = 0; j < 4; j++)
-         out[3][j] = 1.0f;
+         out[3][j] = oneval;
       break;
    default:
       assert(swizzle_a < 4);
@@ -3443,7 +3427,8 @@ softpipe_create_sampler_state(struct pipe_context *pipe,
 
 
 compute_lambda_func
-softpipe_get_lambda_func(const struct pipe_sampler_view *view, unsigned shader)
+softpipe_get_lambda_func(const struct pipe_sampler_view *view,
+                         enum pipe_shader_type shader)
 {
    if (shader != PIPE_SHADER_FRAGMENT)
       return compute_lambda_vert;

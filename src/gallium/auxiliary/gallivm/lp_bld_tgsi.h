@@ -201,7 +201,7 @@ struct lp_build_sampler_soa
 struct lp_build_sampler_aos
 {
    LLVMValueRef
-   (*emit_fetch_texel)( struct lp_build_sampler_aos *sampler,
+   (*emit_fetch_texel)( const struct lp_build_sampler_aos *sampler,
                         struct lp_build_context *bld,
                         unsigned target, /* TGSI_TEXTURE_* */
                         unsigned unit,
@@ -228,7 +228,7 @@ lp_build_tgsi_soa(struct gallivm_state *gallivm,
                   LLVMValueRef (*outputs)[4],
                   LLVMValueRef context_ptr,
                   LLVMValueRef thread_data_ptr,
-                  struct lp_build_sampler_soa *sampler,
+                  const struct lp_build_sampler_soa *sampler,
                   const struct tgsi_shader_info *info,
                   const struct lp_build_tgsi_gs_iface *gs_iface);
 
@@ -241,7 +241,7 @@ lp_build_tgsi_aos(struct gallivm_state *gallivm,
                   LLVMValueRef consts_ptr,
                   const LLVMValueRef *inputs,
                   LLVMValueRef *outputs,
-                  struct lp_build_sampler_aos *sampler,
+                  const struct lp_build_sampler_aos *sampler,
                   const struct tgsi_shader_info *info);
 
 
@@ -370,6 +370,7 @@ struct lp_build_tgsi_context
    void (*emit_store)(struct lp_build_tgsi_context *,
                       const struct tgsi_full_instruction *,
                       const struct tgsi_opcode_info *,
+                      unsigned index,
                       LLVMValueRef dst[4]);
 
    void (*emit_declaration)(struct lp_build_tgsi_context *,
@@ -458,7 +459,6 @@ struct lp_build_tgsi_soa_context
    LLVMValueRef immediates[LP_MAX_INLINED_IMMEDIATES][TGSI_NUM_CHANNELS];
    LLVMValueRef temps[LP_MAX_INLINED_TEMPS][TGSI_NUM_CHANNELS];
    LLVMValueRef addr[LP_MAX_TGSI_ADDRS][TGSI_NUM_CHANNELS];
-   LLVMValueRef preds[LP_MAX_TGSI_PREDS][TGSI_NUM_CHANNELS];
 
    /* We allocate/use this array of temps if (1 << TGSI_FILE_TEMPORARY) is
     * set in the indirect_files field.
@@ -545,14 +545,13 @@ struct lp_build_tgsi_aos_context
    const LLVMValueRef *inputs;
    LLVMValueRef *outputs;
 
-   struct lp_build_sampler_aos *sampler;
+   const struct lp_build_sampler_aos *sampler;
 
    struct tgsi_declaration_sampler_view sv[PIPE_MAX_SHADER_SAMPLER_VIEWS];
 
    LLVMValueRef immediates[LP_MAX_INLINED_IMMEDIATES];
    LLVMValueRef temps[LP_MAX_INLINED_TEMPS];
    LLVMValueRef addr[LP_MAX_TGSI_ADDRS];
-   LLVMValueRef preds[LP_MAX_TGSI_PREDS];
 
    /* We allocate/use this array of temps if (1 << TGSI_FILE_TEMPORARY) is
     * set in the indirect_files field.
@@ -643,6 +642,13 @@ boolean
 lp_build_tgsi_inst_llvm(
    struct lp_build_tgsi_context * bld_base,
    const struct tgsi_full_instruction *inst);
+
+LLVMValueRef
+lp_build_emit_fetch_src(
+   struct lp_build_tgsi_context *bld_base,
+   const struct tgsi_full_src_register *reg,
+   enum tgsi_opcode_type stype,
+   const unsigned chan_index);
 
 LLVMValueRef
 lp_build_emit_fetch(

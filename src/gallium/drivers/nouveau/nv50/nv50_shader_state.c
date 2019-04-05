@@ -174,6 +174,9 @@ nv50_fragprog_validate(struct nv50_context *nv50)
    struct nv50_program *fp = nv50->fragprog;
    struct pipe_rasterizer_state *rast = &nv50->rast->pipe;
 
+   if (!fp || !rast)
+      return;
+
    if (nv50->zsa && nv50->zsa->pipe.alpha.enabled) {
       struct pipe_framebuffer_state *fb = &nv50->framebuffer;
       bool blendable = fb->nr_cbufs == 0 || !fb->cbufs[0] ||
@@ -182,6 +185,7 @@ nv50_fragprog_validate(struct nv50_context *nv50)
                fb->cbufs[0]->format,
                fb->cbufs[0]->texture->target,
                fb->cbufs[0]->texture->nr_samples,
+               fb->cbufs[0]->texture->nr_storage_samples,
                PIPE_BIND_BLENDABLE);
       /* If we already have alphatest code, we have to keep updating
        * it. However we only have to have different code if the current RT0 is

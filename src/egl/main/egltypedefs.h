@@ -34,9 +34,6 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
-#include "eglcompiler.h"
-
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -48,6 +45,8 @@ typedef struct _egl_array _EGLArray;
 typedef struct _egl_config _EGLConfig;
 
 typedef struct _egl_context _EGLContext;
+
+typedef struct _egl_device _EGLDevice;
 
 typedef struct _egl_display _EGLDisplay;
 

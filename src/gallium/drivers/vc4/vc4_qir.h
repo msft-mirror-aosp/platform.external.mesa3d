@@ -354,7 +354,6 @@ struct vc4_fs_key {
         bool stencil_full_writemasks;
         bool is_points;
         bool is_lines;
-        bool alpha_test;
         bool point_coord_upper_left;
         bool light_twoside;
         bool msaa;
@@ -364,6 +363,7 @@ struct vc4_fs_key {
         uint8_t alpha_test_func;
         uint8_t logicop_func;
         uint32_t point_sprite_mask;
+        uint32_t ubo_1_size;
 
         struct pipe_rt_blend_state blend;
 };
@@ -506,6 +506,7 @@ struct vc4_compile {
         struct qblock *cur_block;
         struct qblock *loop_cont_block;
         struct qblock *loop_break_block;
+        struct qblock *last_top_block;
 
         struct list_head qpu_inst_list;
 
@@ -591,6 +592,8 @@ uint8_t qir_channels_written(struct qinst *inst);
 
 void qir_dump(struct vc4_compile *c);
 void qir_dump_inst(struct vc4_compile *c, struct qinst *inst);
+char *qir_describe_uniform(enum quniform_contents contents, uint32_t data,
+                           const uint32_t *uniforms);
 const char *qir_get_stage_name(enum qstage stage);
 
 void qir_validate(struct vc4_compile *c);

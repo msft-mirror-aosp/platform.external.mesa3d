@@ -24,7 +24,7 @@
 #include "util/u_memory.h"
 #include "util/u_format.h"
 #include "util/u_inlines.h"
-#include "os/os_time.h"
+#include "util/os_time.h"
 #include "state_tracker/sw_winsys.h"
 
 #include "virgl_vtest_winsys.h"
@@ -79,9 +79,9 @@ virgl_vtest_transfer_put(struct virgl_winsys *vws,
    size = vtest_get_transfer_size(res, box, stride, layer_stride, level,
                                   &valid_stride);
 
-   virgl_vtest_send_transfer_cmd(vtws, VCMD_TRANSFER_PUT, res->res_handle,
+   virgl_vtest_send_transfer_put(vtws, res->res_handle,
                                  level, stride, layer_stride,
-                                 box, size);
+                                 box, size, buf_offset);
    ptr = virgl_vtest_resource_map(vws, res);
    virgl_vtest_send_transfer_put_data(vtws, ptr + buf_offset, size);
    virgl_vtest_resource_unmap(vws, res);
@@ -102,15 +102,15 @@ virgl_vtest_transfer_get(struct virgl_winsys *vws,
 
    size = vtest_get_transfer_size(res, box, stride, layer_stride, level,
                                   &valid_stride);
-
-   virgl_vtest_send_transfer_cmd(vtws, VCMD_TRANSFER_GET, res->res_handle,
+   virgl_vtest_send_transfer_get(vtws, res->res_handle,
                                  level, stride, layer_stride,
-                                 box, size);
-
+                                 box, size, buf_offset);
 
    ptr = virgl_vtest_resource_map(vws, res);
+
    virgl_vtest_recv_transfer_get_data(vtws, ptr + buf_offset, size,
                                       valid_stride, box, res->format);
+
    virgl_vtest_resource_unmap(vws, res);
    return 0;
 }
@@ -144,7 +144,7 @@ virgl_cache_flush(struct virgl_vtest_winsys *vtws)
    struct list_head *curr, *next;
    struct virgl_hw_res *res;
 
-   pipe_mutex_lock(vtws->mutex);
+   mtx_lock(&vtws->mutex);
    curr = vtws->delayed.next;
    next = curr->next;
 
@@ -155,7 +155,7 @@ virgl_cache_flush(struct virgl_vtest_winsys *vtws)
       curr = next;
       next = curr->next;
    }
-   pipe_mutex_unlock(vtws->mutex);
+   mtx_unlock(&vtws->mutex);
 }
 
 static void
@@ -189,14 +189,14 @@ static void virgl_vtest_resource_reference(struct virgl_vtest_winsys *vtws,
       if (!can_cache_resource(old)) {
          virgl_hw_res_destroy(vtws, old);
       } else {
-         pipe_mutex_lock(vtws->mutex);
+         mtx_lock(&vtws->mutex);
          virgl_cache_list_check_free(vtws);
 
          old->start = os_time_get();
          old->end = old->start + vtws->usecs;
          LIST_ADDTAIL(&old->head, &vtws->delayed);
          vtws->num_delayed++;
-         pipe_mutex_unlock(vtws->mutex);
+         mtx_unlock(&vtws->mutex);
       }
    }
    *dres = sres;
@@ -240,12 +240,14 @@ virgl_vtest_winsys_resource_create(struct virgl_winsys *vws,
    res->format = format;
    res->height = height;
    res->width = width;
+   res->size = size;
    virgl_vtest_send_resource_create(vtws, handle, target, format, bind,
                                     width, height, depth, array_size,
-                                    last_level, nr_samples);
+                                    last_level, nr_samples, size);
 
    res->res_handle = handle++;
    pipe_reference_init(&res->reference, 1);
+   p_atomic_set(&res->num_cs_references, 0);
    return res;
 }
 
@@ -326,14 +328,14 @@ virgl_vtest_winsys_resource_cache_create(struct virgl_winsys *vws,
    struct virgl_hw_res *res, *curr_res;
    struct list_head *curr, *next;
    int64_t now;
-   int ret;
+   int ret = -1;
 
    /* only store binds for vertex/index/const buffers */
    if (bind != VIRGL_BIND_CONSTANT_BUFFER && bind != VIRGL_BIND_INDEX_BUFFER &&
        bind != VIRGL_BIND_VERTEX_BUFFER && bind != VIRGL_BIND_CUSTOM)
       goto alloc;
 
-   pipe_mutex_lock(vtws->mutex);
+   mtx_lock(&vtws->mutex);
 
    res = NULL;
    curr = vtws->delayed.next;
@@ -376,12 +378,12 @@ virgl_vtest_winsys_resource_cache_create(struct virgl_winsys *vws,
    if (res) {
       LIST_DEL(&res->head);
       --vtws->num_delayed;
-      pipe_mutex_unlock(vtws->mutex);
+      mtx_unlock(&vtws->mutex);
       pipe_reference_init(&res->reference, 1);
       return res;
    }
 
-   pipe_mutex_unlock(vtws->mutex);
+   mtx_unlock(&vtws->mutex);
 
 alloc:
    res = virgl_vtest_winsys_resource_create(vws, target, format, bind,
@@ -391,33 +393,6 @@ alloc:
        bind == VIRGL_BIND_VERTEX_BUFFER)
       res->cacheable = TRUE;
    return res;
-}
-
-static struct virgl_cmd_buf *virgl_vtest_cmd_buf_create(struct virgl_winsys *vws)
-{
-   struct virgl_vtest_cmd_buf *cbuf;
-
-   cbuf = CALLOC_STRUCT(virgl_vtest_cmd_buf);
-   if (!cbuf)
-      return NULL;
-
-   cbuf->nres = 512;
-   cbuf->res_bo = CALLOC(cbuf->nres, sizeof(struct virgl_hw_buf*));
-   if (!cbuf->res_bo) {
-      FREE(cbuf);
-      return NULL;
-   }
-   cbuf->ws = vws;
-   cbuf->base.buf = cbuf->buf;
-   return &cbuf->base;
-}
-
-static void virgl_vtest_cmd_buf_destroy(struct virgl_cmd_buf *_cbuf)
-{
-   struct virgl_vtest_cmd_buf *cbuf = virgl_vtest_cmd_buf(_cbuf);
-
-   FREE(cbuf->res_bo);
-   FREE(cbuf);
 }
 
 static boolean virgl_vtest_lookup_res(struct virgl_vtest_cmd_buf *cbuf,
@@ -459,9 +434,18 @@ static void virgl_vtest_add_res(struct virgl_vtest_winsys *vtws,
 {
    unsigned hash = res->res_handle & (sizeof(cbuf->is_handle_added)-1);
 
-   if (cbuf->cres > cbuf->nres) {
-      fprintf(stderr,"failure to add relocation\n");
-      return;
+   if (cbuf->cres >= cbuf->nres) {
+      unsigned new_nres = cbuf->nres + 256;
+      struct virgl_hw_res **new_re_bo = REALLOC(cbuf->res_bo,
+                                                cbuf->nres * sizeof(struct virgl_hw_buf*),
+                                                new_nres * sizeof(struct virgl_hw_buf*));
+      if (!new_re_bo) {
+          fprintf(stderr,"failure to add relocation %d, %d\n", cbuf->cres, cbuf->nres);
+          return;
+      }
+
+      cbuf->res_bo = new_re_bo;
+      cbuf->nres = new_nres;
    }
 
    cbuf->res_bo[cbuf->cres] = NULL;
@@ -473,8 +457,39 @@ static void virgl_vtest_add_res(struct virgl_vtest_winsys *vtws,
    cbuf->cres++;
 }
 
+static struct virgl_cmd_buf *virgl_vtest_cmd_buf_create(struct virgl_winsys *vws,
+                                                        uint32_t size)
+{
+   struct virgl_vtest_cmd_buf *cbuf;
+
+   cbuf = CALLOC_STRUCT(virgl_vtest_cmd_buf);
+   if (!cbuf)
+      return NULL;
+
+   cbuf->nres = 512;
+   cbuf->res_bo = CALLOC(cbuf->nres, sizeof(struct virgl_hw_buf*));
+   if (!cbuf->res_bo) {
+      FREE(cbuf);
+      return NULL;
+   }
+   cbuf->ws = vws;
+   cbuf->base.buf = cbuf->buf;
+   cbuf->base.in_fence_fd = -1;
+   return &cbuf->base;
+}
+
+static void virgl_vtest_cmd_buf_destroy(struct virgl_cmd_buf *_cbuf)
+{
+   struct virgl_vtest_cmd_buf *cbuf = virgl_vtest_cmd_buf(_cbuf);
+
+   virgl_vtest_release_all_res(virgl_vtest_winsys(cbuf->ws), cbuf);
+   FREE(cbuf->res_bo);
+   FREE(cbuf);
+}
+
 static int virgl_vtest_winsys_submit_cmd(struct virgl_winsys *vws,
-                                         struct virgl_cmd_buf *_cbuf)
+                                         struct virgl_cmd_buf *_cbuf,
+                                         int in_fence_fd, int *out_fence_fd)
 {
    struct virgl_vtest_winsys *vtws = virgl_vtest_winsys(vws);
    struct virgl_vtest_cmd_buf *cbuf = virgl_vtest_cmd_buf(_cbuf);
@@ -482,6 +497,9 @@ static int virgl_vtest_winsys_submit_cmd(struct virgl_winsys *vws,
 
    if (cbuf->base.cdw == 0)
       return 0;
+
+   assert(in_fence_fd == -1);
+   assert(out_fence_fd == NULL);
 
    ret = virgl_vtest_submit_cmd(vtws, cbuf);
 
@@ -509,7 +527,7 @@ static boolean virgl_vtest_res_is_ref(struct virgl_winsys *vws,
                                       struct virgl_cmd_buf *_cbuf,
                                       struct virgl_hw_res *res)
 {
-   if (!res->num_cs_references)
+   if (!p_atomic_read(&res->num_cs_references))
       return FALSE;
 
    return TRUE;
@@ -519,18 +537,20 @@ static int virgl_vtest_get_caps(struct virgl_winsys *vws,
                                 struct virgl_drm_caps *caps)
 {
    struct virgl_vtest_winsys *vtws = virgl_vtest_winsys(vws);
+
+   virgl_ws_fill_new_caps_defaults(caps);
    return virgl_vtest_send_get_caps(vtws, caps);
 }
 
 static struct pipe_fence_handle *
-virgl_cs_create_fence(struct virgl_winsys *vws)
+virgl_cs_create_fence(struct virgl_winsys *vws, int fd)
 {
    struct virgl_hw_res *res;
 
    res = virgl_vtest_winsys_resource_cache_create(vws,
                                                 PIPE_BUFFER,
                                                 PIPE_FORMAT_R8_UNORM,
-                                                PIPE_BIND_CUSTOM,
+                                                VIRGL_BIND_CUSTOM,
                                                 8, 1, 1, 0, 0, 0, 8);
 
    return (struct pipe_fence_handle *)res;
@@ -602,10 +622,15 @@ static void virgl_vtest_flush_frontbuffer(struct virgl_winsys *vws,
    map = vtws->sws->displaytarget_map(vtws->sws, res->dt, 0);
 
    /* execute a transfer */
-   virgl_vtest_send_transfer_cmd(vtws, VCMD_TRANSFER_GET, res->res_handle,
-                                 level, res->stride, 0, &box, size);
+   virgl_vtest_send_transfer_get(vtws, res->res_handle,
+                                 level, res->stride, 0, &box, size, offset);
+
+   /* This functions gets the resource from the hardware backend that may have
+    * a hardware imposed stride that is different from the IOV stride used to
+    * get the data. */
    virgl_vtest_recv_transfer_get_data(vtws, map + offset, size, valid_stride,
                                       &box, res->format);
+
    vtws->sws->displaytarget_unmap(vtws->sws, res->dt);
 
    vtws->sws->displaytarget_display(vtws->sws, res->dt, winsys_drawable_handle,
@@ -619,7 +644,7 @@ virgl_vtest_winsys_destroy(struct virgl_winsys *vws)
 
    virgl_cache_flush(vtws);
 
-   pipe_mutex_destroy(vtws->mutex);
+   mtx_destroy(&vtws->mutex);
    FREE(vtws);
 }
 
@@ -637,7 +662,7 @@ virgl_vtest_winsys_wrap(struct sw_winsys *sws)
 
    vtws->usecs = 1000000;
    LIST_INITHEAD(&vtws->delayed);
-   pipe_mutex_init(vtws->mutex);
+   (void) mtx_init(&vtws->mutex, mtx_plain);
 
    vtws->base.destroy = virgl_vtest_winsys_destroy;
 
@@ -659,6 +684,8 @@ virgl_vtest_winsys_wrap(struct sw_winsys *sws)
    vtws->base.cs_create_fence = virgl_cs_create_fence;
    vtws->base.fence_wait = virgl_fence_wait;
    vtws->base.fence_reference = virgl_fence_reference;
+   vtws->base.supports_fences =  0;
+   vtws->base.supports_encoded_transfers = 0;
 
    vtws->base.flush_frontbuffer = virgl_vtest_flush_frontbuffer;
 

@@ -256,7 +256,6 @@ static const char *file_names[TGSI_FILE_COUNT] =
    "SAMP",
    "ADDR",
    "IMM",
-   "PRED",
    "SV",
    "RES"
 };
@@ -314,7 +313,7 @@ iter_instruction(
    uint i;
 
    if (inst->Instruction.Opcode == TGSI_OPCODE_END) {
-      if (ctx->index_of_END != ~0) {
+      if (ctx->index_of_END != ~0u) {
          report_error( ctx, "Too many END instructions" );
       }
       ctx->index_of_END = ctx->num_instructions;
@@ -327,10 +326,12 @@ iter_instruction(
    }
 
    if (info->num_dst != inst->Instruction.NumDstRegs) {
-      report_error( ctx, "%s: Invalid number of destination operands, should be %u", info->mnemonic, info->num_dst );
+      report_error( ctx, "%s: Invalid number of destination operands, should be %u",
+                    tgsi_get_opcode_name(inst->Instruction.Opcode), info->num_dst );
    }
    if (info->num_src != inst->Instruction.NumSrcRegs) {
-      report_error( ctx, "%s: Invalid number of source operands, should be %u", info->mnemonic, info->num_src );
+      report_error( ctx, "%s: Invalid number of source operands, should be %u",
+                    tgsi_get_opcode_name(inst->Instruction.Opcode), info->num_src );
    }
 
    /* Check destination and source registers' validity.
@@ -513,7 +514,7 @@ epilog(
 
    /* There must be an END instruction somewhere.
     */
-   if (ctx->index_of_END == ~0) {
+   if (ctx->index_of_END == ~0u) {
       report_error( ctx, "Missing END instruction" );
    }
 

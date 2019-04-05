@@ -1,6 +1,6 @@
 # coding=utf-8
 #
-# Copyright © 2015 Intel Corporation
+# Copyright © 2015, 2017 Intel Corporation
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the "Software"),
@@ -22,128 +22,108 @@
 # IN THE SOFTWARE.
 #
 
-import sys
-import xml.etree.ElementTree as ET
+import argparse
+import math
+import os
+import xml.etree.cElementTree as et
+
+from collections import OrderedDict, namedtuple
+from mako.template import Template
+
+from anv_extensions import VkVersion, MAX_API_VERSION, EXTENSIONS
 
 # We generate a static hash table for entry point lookup
 # (vkGetProcAddress). We use a linear congruential generator for our hash
 # function and a power-of-two size table. The prime numbers are determined
 # experimentally.
 
-none = 0xffff
-hash_size = 256
-u32_mask = 2**32 - 1
-hash_mask = hash_size - 1
+LAYERS = [
+    'anv',
+    'gen7',
+    'gen75',
+    'gen8',
+    'gen9',
+    'gen10',
+    'gen11',
+]
 
-prime_factor = 5024183
-prime_step = 19
+TEMPLATE_H = Template("""\
+/* This file generated from ${filename}, don't edit directly. */
 
-def hash(name):
-    h = 0;
-    for c in name:
-        h = (h * prime_factor + ord(c)) & u32_mask
+struct anv_instance_dispatch_table {
+   union {
+      void *entrypoints[${len(instance_entrypoints)}];
+      struct {
+      % for e in instance_entrypoints:
+        % if e.guard is not None:
+#ifdef ${e.guard}
+          PFN_${e.name} ${e.name};
+#else
+          void *${e.name};
+# endif
+        % else:
+          PFN_${e.name} ${e.name};
+        % endif
+      % endfor
+      };
+   };
+};
 
-    return h
+struct anv_device_dispatch_table {
+   union {
+      void *entrypoints[${len(device_entrypoints)}];
+      struct {
+      % for e in device_entrypoints:
+        % if e.guard is not None:
+#ifdef ${e.guard}
+          PFN_${e.name} ${e.name};
+#else
+          void *${e.name};
+# endif
+        % else:
+          PFN_${e.name} ${e.name};
+        % endif
+      % endfor
+      };
+   };
+};
 
-def print_guard_start(guard):
-    if guard is not None:
-        print "#ifdef {0}".format(guard)
+extern const struct anv_instance_dispatch_table anv_instance_dispatch_table;
+%for layer in LAYERS:
+extern const struct anv_device_dispatch_table ${layer}_device_dispatch_table;
+%endfor
 
-def print_guard_end(guard):
-    if guard is not None:
-        print "#endif // {0}".format(guard)
+% for e in instance_entrypoints:
+  % if e.alias:
+    <% continue %>
+  % endif
+  % if e.guard is not None:
+#ifdef ${e.guard}
+  % endif
+  ${e.return_type} ${e.prefixed_name('anv')}(${e.decl_params()});
+  % if e.guard is not None:
+#endif // ${e.guard}
+  % endif
+% endfor
 
-opt_header = False
-opt_code = False
+% for e in device_entrypoints:
+  % if e.alias:
+    <% continue %>
+  % endif
+  % if e.guard is not None:
+#ifdef ${e.guard}
+  % endif
+  % for layer in LAYERS:
+  ${e.return_type} ${e.prefixed_name(layer)}(${e.decl_params()});
+  % endfor
+  % if e.guard is not None:
+#endif // ${e.guard}
+  % endif
+% endfor
+""", output_encoding='utf-8')
 
-if (sys.argv[1] == "header"):
-    opt_header = True
-    sys.argv.pop()
-elif (sys.argv[1] == "code"):
-    opt_code = True
-    sys.argv.pop()
-
-# Extract the entry points from the registry
-def get_entrypoints(doc, entrypoints_to_defines):
-    entrypoints = []
-    commands = doc.findall('./commands/command')
-    for i, command in enumerate(commands):
-        type = command.find('./proto/type').text
-        fullname = command.find('./proto/name').text
-        shortname = fullname[2:]
-        params = map(lambda p: "".join(p.itertext()), command.findall('./param'))
-        params = ', '.join(params)
-        if fullname in entrypoints_to_defines:
-            guard = entrypoints_to_defines[fullname]
-        else:
-            guard = None
-        entrypoints.append((type, shortname, params, i, hash(fullname), guard))
-    return entrypoints
-
-# Maps entry points to extension defines
-def get_entrypoints_defines(doc):
-    entrypoints_to_defines = {}
-    extensions = doc.findall('./extensions/extension')
-    for extension in extensions:
-        define = extension.get('protect')
-        entrypoints = extension.findall('./require/command')
-        for entrypoint in entrypoints:
-            fullname = entrypoint.get('name')
-            entrypoints_to_defines[fullname] = define
-    return entrypoints_to_defines
-
-doc = ET.parse(sys.stdin)
-entrypoints = get_entrypoints(doc, get_entrypoints_defines(doc))
-
-# Manually add CreateDmaBufImageINTEL for which we don't have an extension
-# defined.
-entrypoints.append(('VkResult', 'CreateDmaBufImageINTEL',
-                    'VkDevice device, ' +
-                    'const VkDmaBufImageCreateInfo* pCreateInfo, ' +
-                    'const VkAllocationCallbacks* pAllocator,' +
-                    'VkDeviceMemory* pMem,' +
-                    'VkImage* pImage', len(entrypoints),
-                    hash('vkCreateDmaBufImageINTEL'), None))
-
-# For outputting entrypoints.h we generate a anv_EntryPoint() prototype
-# per entry point.
-
-if opt_header:
-    print "/* This file generated from vk_gen.py, don't edit directly. */\n"
-
-    print "struct anv_dispatch_table {"
-    print "   union {"
-    print "      void *entrypoints[%d];" % len(entrypoints)
-    print "      struct {"
-
-    for type, name, args, num, h, guard in entrypoints:
-        if guard is not None:
-            print "#ifdef {0}".format(guard)
-            print "         PFN_vk{0} {0};".format(name)
-            print "#else"
-            print "         void *{0};".format(name)
-            print "#endif"
-        else:
-            print "         PFN_vk{0} {0};".format(name)
-    print "      };\n"
-    print "   };\n"
-    print "};\n"
-
-    print "void anv_set_dispatch_devinfo(const struct gen_device_info *info);\n"
-
-    for type, name, args, num, h, guard in entrypoints:
-        print_guard_start(guard)
-        print "%s anv_%s(%s);" % (type, name, args)
-        print "%s gen7_%s(%s);" % (type, name, args)
-        print "%s gen75_%s(%s);" % (type, name, args)
-        print "%s gen8_%s(%s);" % (type, name, args)
-        print "%s gen9_%s(%s);" % (type, name, args)
-        print_guard_end(guard)
-    exit()
-
-
-
-print """/*
+TEMPLATE_C = Template(u"""\
+/*
  * Copyright © 2015 Intel Corporation
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -166,13 +146,14 @@ print """/*
  * IN THE SOFTWARE.
  */
 
-/* DO NOT EDIT! This is a generated file. */
+/* This file generated from ${filename}, don't edit directly. */
 
 #include "anv_private.h"
 
-struct anv_entrypoint {
+struct string_map_entry {
    uint32_t name;
    uint32_t hash;
+   uint32_t num;
 };
 
 /* We use a big string constant to avoid lots of reloctions from the entry
@@ -180,147 +161,520 @@ struct anv_entrypoint {
  * store the index into this big string.
  */
 
-static const char strings[] ="""
+<%def name="strmap(strmap, prefix)">
+static const char ${prefix}_strings[] =
+% for s in strmap.sorted_strings:
+    "${s.string}\\0"
+% endfor
+;
 
-offsets = []
-i = 0;
-for type, name, args, num, h, guard in entrypoints:
-    print "   \"vk%s\\0\"" % name
-    offsets.append(i)
-    i += 2 + len(name) + 1
-print "   ;"
+static const struct string_map_entry ${prefix}_string_map_entries[] = {
+% for s in strmap.sorted_strings:
+    { ${s.offset}, ${'{:0=#8x}'.format(s.hash)}, ${s.num} }, /* ${s.string} */
+% endfor
+};
 
-# Now generate the table of all entry points
+/* Hash table stats:
+ * size ${len(strmap.sorted_strings)} entries
+ * collisions entries:
+% for i in range(10):
+ *     ${i}${'+' if i == 9 else ' '}     ${strmap.collisions[i]}
+% endfor
+ */
 
-print "\nstatic const struct anv_entrypoint entrypoints[] = {"
-for type, name, args, num, h, guard in entrypoints:
-    print "   { %5d, 0x%08x }," % (offsets[num], h)
-print "};\n"
+#define none 0xffff
+static const uint16_t ${prefix}_string_map[${strmap.hash_size}] = {
+% for e in strmap.mapping:
+    ${ '{:0=#6x}'.format(e) if e >= 0 else 'none' },
+% endfor
+};
 
-print """
+static int
+${prefix}_string_map_lookup(const char *str)
+{
+    static const uint32_t prime_factor = ${strmap.prime_factor};
+    static const uint32_t prime_step = ${strmap.prime_step};
+    const struct string_map_entry *e;
+    uint32_t hash, h;
+    uint16_t i;
+    const char *p;
+
+    hash = 0;
+    for (p = str; *p; p++)
+        hash = hash * prime_factor + *p;
+
+    h = hash;
+    while (1) {
+        i = ${prefix}_string_map[h & ${strmap.hash_mask}];
+        if (i == none)
+           return -1;
+        e = &${prefix}_string_map_entries[i];
+        if (e->hash == hash && strcmp(str, ${prefix}_strings + e->name) == 0)
+            return e->num;
+        h += prime_step;
+    }
+
+    return -1;
+}
+</%def>
+
+${strmap(instance_strmap, 'instance')}
+${strmap(device_strmap, 'device')}
 
 /* Weak aliases for all potential implementations. These will resolve to
  * NULL if they're not defined, which lets the resolve_entrypoint() function
  * either pick the correct entry point.
  */
-"""
 
-for layer in [ "anv", "gen7", "gen75", "gen8", "gen9" ]:
-    for type, name, args, num, h, guard in entrypoints:
-        print_guard_start(guard)
-        print "%s %s_%s(%s) __attribute__ ((weak));" % (type, layer, name, args)
-        print_guard_end(guard)
-    print "\nconst struct anv_dispatch_table %s_layer = {" % layer
-    for type, name, args, num, h, guard in entrypoints:
-        print_guard_start(guard)
-        print "   .%s = %s_%s," % (name, layer, name)
-        print_guard_end(guard)
-    print "};\n"
+% for e in instance_entrypoints:
+  % if e.alias:
+    <% continue %>
+  % endif
+  % if e.guard is not None:
+#ifdef ${e.guard}
+  % endif
+  ${e.return_type} ${e.prefixed_name('anv')}(${e.decl_params()}) __attribute__ ((weak));
+  % if e.guard is not None:
+#endif // ${e.guard}
+  % endif
+% endfor
 
-print """
-static void * __attribute__ ((noinline))
-anv_resolve_entrypoint(const struct gen_device_info *devinfo, uint32_t index)
+const struct anv_instance_dispatch_table anv_instance_dispatch_table = {
+% for e in instance_entrypoints:
+  % if e.guard is not None:
+#ifdef ${e.guard}
+  % endif
+  .${e.name} = ${e.prefixed_name('anv')},
+  % if e.guard is not None:
+#endif // ${e.guard}
+  % endif
+% endfor
+};
+
+% for layer in LAYERS:
+  % for e in device_entrypoints:
+    % if e.alias:
+      <% continue %>
+    % endif
+    % if e.guard is not None:
+#ifdef ${e.guard}
+    % endif
+    % if layer == 'anv':
+      ${e.return_type} __attribute__ ((weak))
+      ${e.prefixed_name('anv')}(${e.decl_params()})
+      {
+        % if e.params[0].type == 'VkDevice':
+          ANV_FROM_HANDLE(anv_device, anv_device, ${e.params[0].name});
+          return anv_device->dispatch.${e.name}(${e.call_params()});
+        % elif e.params[0].type == 'VkCommandBuffer':
+          ANV_FROM_HANDLE(anv_cmd_buffer, anv_cmd_buffer, ${e.params[0].name});
+          return anv_cmd_buffer->device->dispatch.${e.name}(${e.call_params()});
+        % elif e.params[0].type == 'VkQueue':
+          ANV_FROM_HANDLE(anv_queue, anv_queue, ${e.params[0].name});
+          return anv_queue->device->dispatch.${e.name}(${e.call_params()});
+        % else:
+          assert(!"Unhandled device child trampoline case: ${e.params[0].type}");
+        % endif
+      }
+    % else:
+      ${e.return_type} ${e.prefixed_name(layer)}(${e.decl_params()}) __attribute__ ((weak));
+    % endif
+    % if e.guard is not None:
+#endif // ${e.guard}
+    % endif
+  % endfor
+
+  const struct anv_device_dispatch_table ${layer}_device_dispatch_table = {
+  % for e in device_entrypoints:
+    % if e.guard is not None:
+#ifdef ${e.guard}
+    % endif
+    .${e.name} = ${e.prefixed_name(layer)},
+    % if e.guard is not None:
+#endif // ${e.guard}
+    % endif
+  % endfor
+  };
+% endfor
+
+
+/** Return true if the core version or extension in which the given entrypoint
+ * is defined is enabled.
+ *
+ * If device is NULL, all device extensions are considered enabled.
+ */
+bool
+anv_instance_entrypoint_is_enabled(int index, uint32_t core_version,
+                                   const struct anv_instance_extension_table *instance)
 {
-   if (devinfo == NULL) {
-      return anv_layer.entrypoints[index];
+   switch (index) {
+% for e in instance_entrypoints:
+   case ${e.num}:
+      /* ${e.name} */
+   % if e.core_version:
+      return ${e.core_version.c_vk_version()} <= core_version;
+   % elif e.extensions:
+     % for ext in e.extensions:
+        % if ext.type == 'instance':
+      if (instance->${ext.name[3:]}) return true;
+        % else:
+      /* All device extensions are considered enabled at the instance level */
+      return true;
+        % endif
+     % endfor
+      return false;
+   % else:
+      return true;
+   % endif
+% endfor
+   default:
+      return false;
    }
+}
 
+/** Return true if the core version or extension in which the given entrypoint
+ * is defined is enabled.
+ *
+ * If device is NULL, all device extensions are considered enabled.
+ */
+bool
+anv_device_entrypoint_is_enabled(int index, uint32_t core_version,
+                                 const struct anv_instance_extension_table *instance,
+                                 const struct anv_device_extension_table *device)
+{
+   switch (index) {
+% for e in device_entrypoints:
+   case ${e.num}:
+      /* ${e.name} */
+   % if e.core_version:
+      return ${e.core_version.c_vk_version()} <= core_version;
+   % elif e.extensions:
+     % for ext in e.extensions:
+        % if ext.type == 'instance':
+           <% assert False %>
+        % else:
+      if (!device || device->${ext.name[3:]}) return true;
+        % endif
+     % endfor
+      return false;
+   % else:
+      return true;
+   % endif
+% endfor
+   default:
+      return false;
+   }
+}
+
+int
+anv_get_instance_entrypoint_index(const char *name)
+{
+   return instance_string_map_lookup(name);
+}
+
+int
+anv_get_device_entrypoint_index(const char *name)
+{
+   return device_string_map_lookup(name);
+}
+
+static void * __attribute__ ((noinline))
+anv_resolve_device_entrypoint(const struct gen_device_info *devinfo, uint32_t index)
+{
+   const struct anv_device_dispatch_table *genX_table;
    switch (devinfo->gen) {
+   case 11:
+      genX_table = &gen11_device_dispatch_table;
+      break;
+   case 10:
+      genX_table = &gen10_device_dispatch_table;
+      break;
    case 9:
-      if (gen9_layer.entrypoints[index])
-         return gen9_layer.entrypoints[index];
-      /* fall through */
+      genX_table = &gen9_device_dispatch_table;
+      break;
    case 8:
-      if (gen8_layer.entrypoints[index])
-         return gen8_layer.entrypoints[index];
-      /* fall through */
+      genX_table = &gen8_device_dispatch_table;
+      break;
    case 7:
-      if (devinfo->is_haswell && gen75_layer.entrypoints[index])
-         return gen75_layer.entrypoints[index];
-
-      if (gen7_layer.entrypoints[index])
-         return gen7_layer.entrypoints[index];
-      /* fall through */
-   case 0:
-      return anv_layer.entrypoints[index];
+      if (devinfo->is_haswell)
+         genX_table = &gen75_device_dispatch_table;
+      else
+         genX_table = &gen7_device_dispatch_table;
+      break;
    default:
       unreachable("unsupported gen\\n");
    }
+
+   if (genX_table->entrypoints[index])
+      return genX_table->entrypoints[index];
+   else
+      return anv_device_dispatch_table.entrypoints[index];
 }
-"""
 
-# Now generate the hash table used for entry point look up.  This is a
-# uint16_t table of entry point indices. We use 0xffff to indicate an entry
-# in the hash table is empty.
-
-map = [none for f in xrange(hash_size)]
-collisions = [0 for f in xrange(10)]
-for type, name, args, num, h, guard in entrypoints:
-    level = 0
-    while map[h & hash_mask] != none:
-        h = h + prime_step
-        level = level + 1
-    if level > 9:
-        collisions[9] += 1
-    else:
-        collisions[level] += 1
-    map[h & hash_mask] = num
-
-print "/* Hash table stats:"
-print " * size %d entries" % hash_size
-print " * collisions  entries"
-for i in xrange(10):
-    if (i == 9):
-        plus = "+"
-    else:
-        plus = " "
-
-    print " *     %2d%s     %4d" % (i, plus, collisions[i])
-print " */\n"
-
-print "#define none 0x%04x\n" % none
-
-print "static const uint16_t map[] = {"
-for i in xrange(0, hash_size, 8):
-    print "   ",
-    for j in xrange(i, i + 8):
-        if map[j] & 0xffff == 0xffff:
-            print "  none,",
-        else:
-            print "0x%04x," % (map[j] & 0xffff),
-    print
-
-print "};"
-
-# Finally we generate the hash table lookup function.  The hash function and
-# linear probing algorithm matches the hash table generated above.
-
-print """
 void *
 anv_lookup_entrypoint(const struct gen_device_info *devinfo, const char *name)
 {
-   static const uint32_t prime_factor = %d;
-   static const uint32_t prime_step = %d;
-   const struct anv_entrypoint *e;
-   uint32_t hash, h, i;
-   const char *p;
+   int idx = anv_get_instance_entrypoint_index(name);
+   if (idx >= 0)
+      return anv_instance_dispatch_table.entrypoints[idx];
 
-   hash = 0;
-   for (p = name; *p; p++)
-      hash = hash * prime_factor + *p;
+   idx = anv_get_device_entrypoint_index(name);
+   if (idx >= 0)
+      return anv_resolve_device_entrypoint(devinfo, idx);
 
-   h = hash;
-   do {
-      i = map[h & %d];
-      if (i == none)
-         return NULL;
-      e = &entrypoints[i];
-      h += prime_step;
-   } while (e->hash != hash);
+   return NULL;
+}""", output_encoding='utf-8')
 
-   if (strcmp(name, strings + e->name) != 0)
-      return NULL;
+U32_MASK = 2**32 - 1
 
-   return anv_resolve_entrypoint(devinfo, i);
-}
-""" % (prime_factor, prime_step, hash_mask)
+PRIME_FACTOR = 5024183
+PRIME_STEP = 19
+
+class StringIntMapEntry(object):
+    def __init__(self, string, num):
+        self.string = string
+        self.num = num
+
+        # Calculate the same hash value that we will calculate in C.
+        h = 0
+        for c in string:
+            h = ((h * PRIME_FACTOR) + ord(c)) & U32_MASK
+        self.hash = h
+
+        self.offset = None
+
+def round_to_pow2(x):
+    return 2**int(math.ceil(math.log(x, 2)))
+
+class StringIntMap(object):
+    def __init__(self):
+        self.baked = False
+        self.strings = dict()
+
+    def add_string(self, string, num):
+        assert not self.baked
+        assert string not in self.strings
+        assert 0 <= num < 2**31
+        self.strings[string] = StringIntMapEntry(string, num)
+
+    def bake(self):
+        self.sorted_strings = \
+            sorted(self.strings.values(), key=lambda x: x.string)
+        offset = 0
+        for entry in self.sorted_strings:
+            entry.offset = offset
+            offset += len(entry.string) + 1
+
+        # Save off some values that we'll need in C
+        self.hash_size = round_to_pow2(len(self.strings) * 1.25)
+        self.hash_mask = self.hash_size - 1
+        self.prime_factor = PRIME_FACTOR
+        self.prime_step = PRIME_STEP
+
+        self.mapping = [-1] * self.hash_size
+        self.collisions = [0] * 10
+        for idx, s in enumerate(self.sorted_strings):
+            level = 0
+            h = s.hash
+            while self.mapping[h & self.hash_mask] >= 0:
+                h = h + PRIME_STEP
+                level = level + 1
+            self.collisions[min(level, 9)] += 1
+            self.mapping[h & self.hash_mask] = idx
+
+EntrypointParam = namedtuple('EntrypointParam', 'type name decl')
+
+class EntrypointBase(object):
+    def __init__(self, name):
+        self.name = name
+        self.alias = None
+        self.guard = None
+        self.enabled = False
+        self.num = None
+        # Extensions which require this entrypoint
+        self.core_version = None
+        self.extensions = []
+
+class Entrypoint(EntrypointBase):
+    def __init__(self, name, return_type, params, guard=None):
+        super(Entrypoint, self).__init__(name)
+        self.return_type = return_type
+        self.params = params
+        self.guard = guard
+
+    def is_device_entrypoint(self):
+        return self.params[0].type in ('VkDevice', 'VkCommandBuffer', 'VkQueue')
+
+    def prefixed_name(self, prefix):
+        assert self.name.startswith('vk')
+        return prefix + '_' + self.name[2:]
+
+    def decl_params(self):
+        return ', '.join(p.decl for p in self.params)
+
+    def call_params(self):
+        return ', '.join(p.name for p in self.params)
+
+class EntrypointAlias(EntrypointBase):
+    def __init__(self, name, entrypoint):
+        super(EntrypointAlias, self).__init__(name)
+        self.alias = entrypoint
+
+    def is_device_entrypoint(self):
+        return self.alias.is_device_entrypoint()
+
+    def prefixed_name(self, prefix):
+        return self.alias.prefixed_name(prefix)
+
+def get_entrypoints(doc, entrypoints_to_defines):
+    """Extract the entry points from the registry."""
+    entrypoints = OrderedDict()
+
+    for command in doc.findall('./commands/command'):
+        if 'alias' in command.attrib:
+            alias = command.attrib['name']
+            target = command.attrib['alias']
+            entrypoints[alias] = EntrypointAlias(alias, entrypoints[target])
+        else:
+            name = command.find('./proto/name').text
+            ret_type = command.find('./proto/type').text
+            params = [EntrypointParam(
+                type=p.find('./type').text,
+                name=p.find('./name').text,
+                decl=''.join(p.itertext())
+            ) for p in command.findall('./param')]
+            guard = entrypoints_to_defines.get(name)
+            # They really need to be unique
+            assert name not in entrypoints
+            entrypoints[name] = Entrypoint(name, ret_type, params, guard)
+
+    for feature in doc.findall('./feature'):
+        assert feature.attrib['api'] == 'vulkan'
+        version = VkVersion(feature.attrib['number'])
+        if version > MAX_API_VERSION:
+            continue
+
+        for command in feature.findall('./require/command'):
+            e = entrypoints[command.attrib['name']]
+            e.enabled = True
+            assert e.core_version is None
+            e.core_version = version
+
+    supported_exts = dict((ext.name, ext) for ext in EXTENSIONS)
+    for extension in doc.findall('.extensions/extension'):
+        ext_name = extension.attrib['name']
+        if ext_name not in supported_exts:
+            continue
+
+        ext = supported_exts[ext_name]
+        ext.type = extension.attrib['type']
+
+        for command in extension.findall('./require/command'):
+            e = entrypoints[command.attrib['name']]
+            e.enabled = True
+            assert e.core_version is None
+            e.extensions.append(ext)
+
+    return [e for e in entrypoints.values() if e.enabled]
+
+
+def get_entrypoints_defines(doc):
+    """Maps entry points to extension defines."""
+    entrypoints_to_defines = {}
+
+    platform_define = {}
+    for platform in doc.findall('./platforms/platform'):
+        name = platform.attrib['name']
+        define = platform.attrib['protect']
+        platform_define[name] = define
+
+    for extension in doc.findall('./extensions/extension[@platform]'):
+        platform = extension.attrib['platform']
+        define = platform_define[platform]
+
+        for entrypoint in extension.findall('./require/command'):
+            fullname = entrypoint.attrib['name']
+            entrypoints_to_defines[fullname] = define
+
+    return entrypoints_to_defines
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--outdir', help='Where to write the files.',
+                        required=True)
+    parser.add_argument('--xml',
+                        help='Vulkan API XML file.',
+                        required=True,
+                        action='append',
+                        dest='xml_files')
+    args = parser.parse_args()
+
+    entrypoints = []
+
+    for filename in args.xml_files:
+        doc = et.parse(filename)
+        entrypoints += get_entrypoints(doc, get_entrypoints_defines(doc))
+
+    # Manually add CreateDmaBufImageINTEL for which we don't have an extension
+    # defined.
+    entrypoints.append(Entrypoint('vkCreateDmaBufImageINTEL', 'VkResult', [
+        EntrypointParam('VkDevice', 'device', 'VkDevice device'),
+        EntrypointParam('VkDmaBufImageCreateInfo', 'pCreateInfo',
+                        'const VkDmaBufImageCreateInfo* pCreateInfo'),
+        EntrypointParam('VkAllocationCallbacks', 'pAllocator',
+                        'const VkAllocationCallbacks* pAllocator'),
+        EntrypointParam('VkDeviceMemory', 'pMem', 'VkDeviceMemory* pMem'),
+        EntrypointParam('VkImage', 'pImage', 'VkImage* pImage')
+    ]))
+
+    device_entrypoints = []
+    instance_entrypoints = []
+    for e in entrypoints:
+        if e.is_device_entrypoint():
+            device_entrypoints.append(e)
+        else:
+            instance_entrypoints.append(e)
+
+    device_strmap = StringIntMap()
+    for num, e in enumerate(device_entrypoints):
+        device_strmap.add_string(e.name, num)
+        e.num = num
+    device_strmap.bake()
+
+    instance_strmap = StringIntMap()
+    for num, e in enumerate(instance_entrypoints):
+        instance_strmap.add_string(e.name, num)
+        e.num = num
+    instance_strmap.bake()
+
+    # For outputting entrypoints.h we generate a anv_EntryPoint() prototype
+    # per entry point.
+    try:
+        with open(os.path.join(args.outdir, 'anv_entrypoints.h'), 'wb') as f:
+            f.write(TEMPLATE_H.render(instance_entrypoints=instance_entrypoints,
+                                      device_entrypoints=device_entrypoints,
+                                      LAYERS=LAYERS,
+                                      filename=os.path.basename(__file__)))
+        with open(os.path.join(args.outdir, 'anv_entrypoints.c'), 'wb') as f:
+            f.write(TEMPLATE_C.render(instance_entrypoints=instance_entrypoints,
+                                      device_entrypoints=device_entrypoints,
+                                      LAYERS=LAYERS,
+                                      instance_strmap=instance_strmap,
+                                      device_strmap=device_strmap,
+                                      filename=os.path.basename(__file__)))
+    except Exception:
+        # In the event there's an error, this imports some helpers from mako
+        # to print a useful stack trace and prints it, then exits with
+        # status 1, if python is run with debug; otherwise it just raises
+        # the exception
+        if __debug__:
+            import sys
+            from mako import exceptions
+            sys.stderr.write(exceptions.text_error_template().render() + '\n')
+            sys.exit(1)
+        raise
+
+
+if __name__ == '__main__':
+    main()

@@ -28,7 +28,6 @@ LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 endif
 
 intermediates := $(call local-generated-sources-dir)
-prebuilt_intermediates := $(MESA_TOP)/prebuilt-intermediates
 
 LOCAL_SRC_FILES := $(LOCAL_SRC_FILES)
 
@@ -36,14 +35,14 @@ LOCAL_C_INCLUDES += \
 	$(intermediates)/glsl \
 	$(intermediates)/glsl/glcpp \
 	$(LOCAL_PATH)/glsl \
-	$(LOCAL_PATH)/glsl/glcpp \
+	$(LOCAL_PATH)/glsl/glcpp
 
 LOCAL_GENERATED_SOURCES += $(addprefix $(intermediates)/, \
 	$(LIBGLCPP_GENERATED_FILES) \
 	$(LIBGLSL_GENERATED_FILES))
 
 LOCAL_EXPORT_C_INCLUDE_DIRS += \
-	$(intermediates)/glsl \
+	$(intermediates)/glsl
 
 # Modules using libmesa_nir must set LOCAL_GENERATED_SOURCES to this
 MESA_GEN_GLSL_H := $(addprefix $(call local-generated-sources-dir)/, \
@@ -93,11 +92,18 @@ $(intermediates)/glsl/glcpp/glcpp-parse.c: $(LOCAL_PATH)/glsl/glcpp/glcpp-parse.
 
 $(LOCAL_PATH)/glsl/ir.h: $(intermediates)/glsl/ir_expression_operation.h
 
-$(intermediates)/glsl/ir_expression_operation.h: $(prebuilt_intermediates)/glsl/ir_expression_operation.h
-	cp -a $< $@
+$(intermediates)/glsl/ir_expression_operation.h: $(LOCAL_PATH)/glsl/ir_expression_operation.py
+	@mkdir -p $(dir $@)
+	$(hide) $(MESA_PYTHON2) $< enum > $@
 
-$(intermediates)/glsl/ir_expression_operation_constant.h: $(prebuilt_intermediates)/glsl/ir_expression_operation_constant.h
-	cp -a $< $@
+$(intermediates)/glsl/ir_expression_operation_constant.h: $(LOCAL_PATH)/glsl/ir_expression_operation.py
+	@mkdir -p $(dir $@)
+	$(hide) $(MESA_PYTHON2) $< constant > $@
 
-$(intermediates)/glsl/ir_expression_operation_strings.h: $(prebuilt_intermediates)/glsl/ir_expression_operation_strings.h
-	cp -a $< $@
+$(intermediates)/glsl/ir_expression_operation_strings.h: $(LOCAL_PATH)/glsl/ir_expression_operation.py
+	@mkdir -p $(dir $@)
+	$(hide) $(MESA_PYTHON2) $< strings > $@
+
+$(intermediates)/glsl/float64_glsl.h: $(LOCAL_PATH)/glsl/xxd.py
+	@mkdir -p $(dir $@)
+	$(hide) $(MESA_PYTHON2) $< $(MESA_TOP)/src/compiler/glsl/float64.glsl $@ -n float64_source > $@

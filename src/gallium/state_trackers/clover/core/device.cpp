@@ -20,10 +20,12 @@
 // OTHER DEALINGS IN THE SOFTWARE.
 //
 
+#include <unistd.h>
 #include "core/device.hpp"
 #include "core/platform.hpp"
 #include "pipe/p_screen.h"
 #include "pipe/p_state.h"
+#include "util/u_debug.h"
 
 using namespace clover;
 
@@ -43,7 +45,8 @@ namespace {
 device::device(clover::platform &platform, pipe_loader_device *ldev) :
    platform(platform), ldev(ldev) {
    pipe = pipe_loader_create_screen(ldev);
-   if (!pipe || !pipe->get_param(pipe, PIPE_CAP_COMPUTE)) {
+   if (!pipe || !pipe->get_param(pipe, PIPE_CAP_COMPUTE) ||
+       !supports_ir(PIPE_SHADER_IR_NATIVE)) {
       if (pipe)
          pipe->destroy(pipe);
       throw error(CL_INVALID_DEVICE);
@@ -186,8 +189,29 @@ device::image_support() const {
 
 bool
 device::has_doubles() const {
+   return pipe->get_param(pipe, PIPE_CAP_DOUBLES);
+}
+
+bool
+device::has_halves() const {
    return pipe->get_shader_param(pipe, PIPE_SHADER_COMPUTE,
-                                 PIPE_SHADER_CAP_DOUBLES);
+                                 PIPE_SHADER_CAP_FP16);
+}
+
+bool
+device::has_int64_atomics() const {
+   return pipe->get_shader_param(pipe, PIPE_SHADER_COMPUTE,
+                                 PIPE_SHADER_CAP_INT64_ATOMICS);
+}
+
+bool
+device::has_unified_memory() const {
+   return pipe->get_param(pipe, PIPE_CAP_UMA);
+}
+
+cl_uint
+device::mem_base_addr_align() const {
+   return sysconf(_SC_PAGESIZE);
 }
 
 std::vector<size_t>
@@ -221,8 +245,7 @@ device::vendor_name() const {
 
 enum pipe_shader_ir
 device::ir_format() const {
-   return (enum pipe_shader_ir) pipe->get_shader_param(
-      pipe, PIPE_SHADER_COMPUTE, PIPE_SHADER_CAP_PREFERRED_IR);
+   return PIPE_SHADER_IR_NATIVE;
 }
 
 std::string
@@ -235,4 +258,38 @@ device::ir_target() const {
 enum pipe_endian
 device::endianness() const {
    return (enum pipe_endian)pipe->get_param(pipe, PIPE_CAP_ENDIANNESS);
+}
+
+std::string
+device::device_version() const {
+   static const std::string device_version =
+         debug_get_option("CLOVER_DEVICE_VERSION_OVERRIDE", "1.1");
+   return device_version;
+}
+
+std::string
+device::device_clc_version() const {
+   static const std::string device_clc_version =
+         debug_get_option("CLOVER_DEVICE_CLC_VERSION_OVERRIDE", "1.1");
+   return device_clc_version;
+}
+
+bool
+device::supports_ir(enum pipe_shader_ir ir) const {
+   return pipe->get_shader_param(pipe, PIPE_SHADER_COMPUTE,
+                                 PIPE_SHADER_CAP_SUPPORTED_IRS) & (1 << ir);
+}
+
+std::string
+device::supported_extensions() const {
+   return
+      "cl_khr_byte_addressable_store"
+      " cl_khr_global_int32_base_atomics"
+      " cl_khr_global_int32_extended_atomics"
+      " cl_khr_local_int32_base_atomics"
+      " cl_khr_local_int32_extended_atomics"
+      + std::string(has_int64_atomics() ? " cl_khr_int64_base_atomics" : "")
+      + std::string(has_int64_atomics() ? " cl_khr_int64_extended_atomics" : "")
+      + std::string(has_doubles() ? " cl_khr_fp64" : "")
+      + std::string(has_halves() ? " cl_khr_fp16" : "");
 }

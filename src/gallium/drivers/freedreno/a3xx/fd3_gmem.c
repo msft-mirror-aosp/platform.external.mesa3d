@@ -1,5 +1,3 @@
-/* -*- mode: C; c-file-style: "k&r"; tab-width 4; indent-tabs-mode: t; -*- */
-
 /*
  * Copyright (C) 2013 Rob Clark <robclark@freedesktop.org>
  *
@@ -78,7 +76,7 @@ emit_mrt(struct fd_ringbuffer *ring, unsigned nr_bufs,
 			 */
 			if (rsc->stencil) {
 				rsc = rsc->stencil;
-				pformat = rsc->base.b.format;
+				pformat = rsc->base.format;
 				if (bases)
 					bases++;
 			}
@@ -147,6 +145,12 @@ use_hw_binning(struct fd_batch *batch)
 	 * used.
 	 */
 	if (gmem->minx || gmem->miny)
+		return false;
+
+	if ((gmem->maxpw * gmem->maxph) > 32)
+		return false;
+
+	if ((gmem->maxpw > 15) || (gmem->maxph > 15))
 		return false;
 
 	return fd_binning_enabled && ((gmem->nbins_x * gmem->nbins_y) > 2);
@@ -316,10 +320,15 @@ emit_gmem2mem_surf(struct fd_batch *batch,
 	struct fd_ringbuffer *ring = batch->gmem;
 	struct fd_resource *rsc = fd_resource(psurf->texture);
 	enum pipe_format format = psurf->format;
+
+	if (!rsc->valid)
+		return;
+
 	if (stencil) {
 		rsc = rsc->stencil;
-		format = rsc->base.b.format;
+		format = rsc->base.format;
 	}
+
 	struct fd_resource_slice *slice = fd_resource_slice(rsc, psurf->u.tex.level);
 	uint32_t offset = fd_resource_offset(rsc, psurf->u.tex.level,
 			psurf->u.tex.first_layer);
@@ -772,11 +781,11 @@ update_vsc_pipe(struct fd_batch *batch)
 	OUT_RELOCW(ring, fd3_ctx->vsc_size_mem, 0, 0, 0); /* VSC_SIZE_ADDRESS */
 
 	for (i = 0; i < 8; i++) {
-		struct fd_vsc_pipe *pipe = &ctx->pipe[i];
+		struct fd_vsc_pipe *pipe = &ctx->vsc_pipe[i];
 
 		if (!pipe->bo) {
 			pipe->bo = fd_bo_new(ctx->dev, 0x40000,
-					DRM_FREEDRENO_GEM_TYPE_KMEM);
+					DRM_FREEDRENO_GEM_TYPE_KMEM, "vsc_pipe[%u]", i);
 		}
 
 		OUT_PKT0(ring, REG_A3XX_VSC_PIPE(i), 3);
@@ -1005,7 +1014,7 @@ fd3_emit_tile_renderprep(struct fd_batch *batch, struct fd_tile *tile)
 	}
 
 	if (use_hw_binning(batch)) {
-		struct fd_vsc_pipe *pipe = &ctx->pipe[tile->p];
+		struct fd_vsc_pipe *pipe = &ctx->vsc_pipe[tile->p];
 
 		assert(pipe->w * pipe->h);
 

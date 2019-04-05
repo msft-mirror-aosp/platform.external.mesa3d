@@ -126,7 +126,6 @@ static LLVMAttribute lp_attr_to_llvm_attr(enum lp_func_attr attr)
 {
    switch (attr) {
    case LP_FUNC_ATTR_ALWAYSINLINE: return LLVMAlwaysInlineAttribute;
-   case LP_FUNC_ATTR_BYVAL: return LLVMByValAttribute;
    case LP_FUNC_ATTR_INREG: return LLVMInRegAttribute;
    case LP_FUNC_ATTR_NOALIAS: return LLVMNoAliasAttribute;
    case LP_FUNC_ATTR_NOUNWIND: return LLVMNoUnwindAttribute;
@@ -144,12 +143,14 @@ static const char *attr_to_str(enum lp_func_attr attr)
 {
    switch (attr) {
    case LP_FUNC_ATTR_ALWAYSINLINE: return "alwaysinline";
-   case LP_FUNC_ATTR_BYVAL: return "byval";
    case LP_FUNC_ATTR_INREG: return "inreg";
    case LP_FUNC_ATTR_NOALIAS: return "noalias";
    case LP_FUNC_ATTR_NOUNWIND: return "nounwind";
    case LP_FUNC_ATTR_READNONE: return "readnone";
    case LP_FUNC_ATTR_READONLY: return "readonly";
+   case LP_FUNC_ATTR_WRITEONLY: return "writeonly";
+   case LP_FUNC_ATTR_INACCESSIBLE_MEM_ONLY: return "inaccessiblememonly";
+   case LP_FUNC_ATTR_CONVERGENT: return "convergent";
    default:
       _debug_printf("Unhandled function attribute: %x\n", attr);
       return 0;
@@ -159,26 +160,58 @@ static const char *attr_to_str(enum lp_func_attr attr)
 #endif
 
 void
-lp_add_function_attr(LLVMValueRef function,
-                     int attr_idx,
-                     enum lp_func_attr attr)
+lp_add_function_attr(LLVMValueRef function_or_call,
+                     int attr_idx, enum lp_func_attr attr)
 {
 
 #if HAVE_LLVM < 0x0400
    LLVMAttribute llvm_attr = lp_attr_to_llvm_attr(attr);
-   if (attr_idx == -1) {
-      LLVMAddFunctionAttr(function, llvm_attr);
+   if (LLVMIsAFunction(function_or_call)) {
+      if (attr_idx == -1) {
+         LLVMAddFunctionAttr(function_or_call, llvm_attr);
+      } else {
+         LLVMAddAttribute(LLVMGetParam(function_or_call, attr_idx - 1), llvm_attr);
+      }
    } else {
-      LLVMAddAttribute(LLVMGetParam(function, attr_idx - 1), llvm_attr);
+      LLVMAddInstrAttribute(function_or_call, attr_idx, llvm_attr);
    }
 #else
-   LLVMContextRef context = LLVMGetModuleContext(LLVMGetGlobalParent(function));
+
+   LLVMModuleRef module;
+   if (LLVMIsAFunction(function_or_call)) {
+      module = LLVMGetGlobalParent(function_or_call);
+   } else {
+      LLVMBasicBlockRef bb = LLVMGetInstructionParent(function_or_call);
+      LLVMValueRef function = LLVMGetBasicBlockParent(bb);
+      module = LLVMGetGlobalParent(function);
+   }
+   LLVMContextRef ctx = LLVMGetModuleContext(module);
+
    const char *attr_name = attr_to_str(attr);
    unsigned kind_id = LLVMGetEnumAttributeKindForName(attr_name,
                                                       strlen(attr_name));
-   LLVMAttributeRef llvm_attr = LLVMCreateEnumAttribute(context, kind_id, 0);
-   LLVMAddAttributeAtIndex(function, attr_idx, llvm_attr);
+   LLVMAttributeRef llvm_attr = LLVMCreateEnumAttribute(ctx, kind_id, 0);
+
+   if (LLVMIsAFunction(function_or_call))
+      LLVMAddAttributeAtIndex(function_or_call, attr_idx, llvm_attr);
+   else
+      LLVMAddCallSiteAttribute(function_or_call, attr_idx, llvm_attr);
 #endif
+}
+
+static void
+lp_add_func_attributes(LLVMValueRef function, unsigned attrib_mask)
+{
+   /* NoUnwind indicates that the intrinsic never raises a C++ exception.
+    * Set it for all intrinsics.
+    */
+   attrib_mask |= LP_FUNC_ATTR_NOUNWIND;
+   attrib_mask &= ~LP_FUNC_ATTR_LEGACY;
+
+   while (attrib_mask) {
+      enum lp_func_attr attr = 1u << u_bit_scan(&attrib_mask);
+      lp_add_function_attr(function, -1, attr);
+   }
 }
 
 LLVMValueRef
@@ -190,7 +223,9 @@ lp_build_intrinsic(LLVMBuilderRef builder,
                    unsigned attr_mask)
 {
    LLVMModuleRef module = LLVMGetGlobalParent(LLVMGetBasicBlockParent(LLVMGetInsertBlock(builder)));
-   LLVMValueRef function;
+   LLVMValueRef function, call;
+   bool set_callsite_attrs = HAVE_LLVM >= 0x0400 &&
+                             !(attr_mask & LP_FUNC_ATTR_LEGACY);
 
    function = LLVMGetNamedFunction(module, name);
    if(!function) {
@@ -206,22 +241,28 @@ lp_build_intrinsic(LLVMBuilderRef builder,
 
       function = lp_declare_intrinsic(module, name, ret_type, arg_types, num_args);
 
-      /* NoUnwind indicates that the intrinsic never raises a C++ exception.
-       * Set it for all intrinsics.
+      /*
+       * If llvm removes an intrinsic we use, we'll hit this abort (rather
+       * than a call to address zero in the jited code).
        */
-      attr_mask |= LP_FUNC_ATTR_NOUNWIND;
-
-      while (attr_mask) {
-         enum lp_func_attr attr = 1 << u_bit_scan(&attr_mask);
-         lp_add_function_attr(function, -1, attr);
+      if (LLVMGetIntrinsicID(function) == 0) {
+         _debug_printf("llvm (version 0x%x) found no intrinsic for %s, going to crash...\n",
+                HAVE_LLVM, name);
+         abort();
       }
+
+      if (!set_callsite_attrs)
+         lp_add_func_attributes(function, attr_mask);
 
       if (gallivm_debug & GALLIVM_DEBUG_IR) {
          lp_debug_dump_value(function);
       }
    }
 
-   return LLVMBuildCall(builder, function, args, num_args, "");
+   call = LLVMBuildCall(builder, function, args, num_args, "");
+   if (set_callsite_attrs)
+      lp_add_func_attributes(call, attr_mask);
+   return call;
 }
 
 
@@ -309,9 +350,9 @@ lp_build_intrinsic_binary_anylength(struct gallivm_state *gallivm,
       unsigned num_vec = src_type.length / intrin_length;
       LLVMValueRef tmp[LP_MAX_VECTOR_LENGTH];
 
-      /* don't support arbitrary size here as this is so yuck */
+      /* don't support arbitrary size here as this is so yuck */
       if (src_type.length % intrin_length) {
-         /* FIXME: This is something which should be supported
+         /* FIXME: This is something which should be supported
           * but there doesn't seem to be any need for it currently
           * so crash and burn.
           */

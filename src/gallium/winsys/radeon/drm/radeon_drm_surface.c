@@ -22,9 +22,6 @@
  * The above copyright notice and this permission notice (including the
  * next paragraph) shall be included in all copies or substantial portions
  * of the Software.
- *
- * Authors:
- *   Marek Olšák <maraeo@gmail.com>
  */
 
 #include "radeon_drm_winsys.h"
@@ -36,7 +33,7 @@ static unsigned cik_get_macro_tile_index(struct radeon_surf *surf)
 	unsigned index, tileb;
 
 	tileb = 8 * 8 * surf->bpe;
-	tileb = MIN2(surf->tile_split, tileb);
+	tileb = MIN2(surf->u.legacy.tile_split, tileb);
 
 	for (index = 0; tileb > 64; index++)
 		tileb >>= 1;
@@ -58,7 +55,7 @@ static void set_micro_tile_mode(struct radeon_surf *surf,
         return;
     }
 
-    tile_mode = info->si_tile_mode_array[surf->tiling_index[0]];
+    tile_mode = info->si_tile_mode_array[surf->u.legacy.tiling_index[0]];
 
     if (info->chip_class >= CIK)
         surf->micro_tile_mode = G_009910_MICRO_TILE_MODE_NEW(tile_mode);
@@ -67,23 +64,23 @@ static void set_micro_tile_mode(struct radeon_surf *surf,
 }
 
 static void surf_level_winsys_to_drm(struct radeon_surface_level *level_drm,
-                                     const struct radeon_surf_level *level_ws,
+                                     const struct legacy_surf_level *level_ws,
                                      unsigned bpe)
 {
     level_drm->offset = level_ws->offset;
-    level_drm->slice_size = level_ws->slice_size;
+    level_drm->slice_size = (uint64_t)level_ws->slice_size_dw * 4;
     level_drm->nblk_x = level_ws->nblk_x;
     level_drm->nblk_y = level_ws->nblk_y;
     level_drm->pitch_bytes = level_ws->nblk_x * bpe;
     level_drm->mode = level_ws->mode;
 }
 
-static void surf_level_drm_to_winsys(struct radeon_surf_level *level_ws,
+static void surf_level_drm_to_winsys(struct legacy_surf_level *level_ws,
                                      const struct radeon_surface_level *level_drm,
                                      unsigned bpe)
 {
     level_ws->offset = level_drm->offset;
-    level_ws->slice_size = level_drm->slice_size;
+    level_ws->slice_size_dw = level_drm->slice_size / 4;
     level_ws->nblk_x = level_drm->nblk_x;
     level_ws->nblk_y = level_drm->nblk_y;
     level_ws->mode = level_drm->mode;
@@ -151,26 +148,26 @@ static void surf_winsys_to_drm(struct radeon_surface *surf_drm,
     surf_drm->bo_size = surf_ws->surf_size;
     surf_drm->bo_alignment = surf_ws->surf_alignment;
 
-    surf_drm->bankw = surf_ws->bankw;
-    surf_drm->bankh = surf_ws->bankh;
-    surf_drm->mtilea = surf_ws->mtilea;
-    surf_drm->tile_split = surf_ws->tile_split;
+    surf_drm->bankw = surf_ws->u.legacy.bankw;
+    surf_drm->bankh = surf_ws->u.legacy.bankh;
+    surf_drm->mtilea = surf_ws->u.legacy.mtilea;
+    surf_drm->tile_split = surf_ws->u.legacy.tile_split;
 
     for (i = 0; i <= surf_drm->last_level; i++) {
-        surf_level_winsys_to_drm(&surf_drm->level[i], &surf_ws->level[i],
+        surf_level_winsys_to_drm(&surf_drm->level[i], &surf_ws->u.legacy.level[i],
                                  bpe * surf_drm->nsamples);
 
-        surf_drm->tiling_index[i] = surf_ws->tiling_index[i];
+        surf_drm->tiling_index[i] = surf_ws->u.legacy.tiling_index[i];
     }
 
     if (flags & RADEON_SURF_SBUFFER) {
-        surf_drm->stencil_tile_split = surf_ws->stencil_tile_split;
+        surf_drm->stencil_tile_split = surf_ws->u.legacy.stencil_tile_split;
 
         for (i = 0; i <= surf_drm->last_level; i++) {
             surf_level_winsys_to_drm(&surf_drm->stencil_level[i],
-                                     &surf_ws->stencil_level[i],
+                                     &surf_ws->u.legacy.stencil_level[i],
                                      surf_drm->nsamples);
-            surf_drm->stencil_tiling_index[i] = surf_ws->stencil_tiling_index[i];
+            surf_drm->stencil_tiling_index[i] = surf_ws->u.legacy.stencil_tiling_index[i];
         }
     }
 }
@@ -187,36 +184,100 @@ static void surf_drm_to_winsys(struct radeon_drm_winsys *ws,
     surf_ws->blk_h = surf_drm->blk_h;
     surf_ws->bpe = surf_drm->bpe;
     surf_ws->is_linear = surf_drm->level[0].mode <= RADEON_SURF_MODE_LINEAR_ALIGNED;
+    surf_ws->has_stencil = !!(surf_drm->flags & RADEON_SURF_SBUFFER);
     surf_ws->flags = surf_drm->flags;
 
     surf_ws->surf_size = surf_drm->bo_size;
     surf_ws->surf_alignment = surf_drm->bo_alignment;
 
-    surf_ws->bankw = surf_drm->bankw;
-    surf_ws->bankh = surf_drm->bankh;
-    surf_ws->mtilea = surf_drm->mtilea;
-    surf_ws->tile_split = surf_drm->tile_split;
+    surf_ws->u.legacy.bankw = surf_drm->bankw;
+    surf_ws->u.legacy.bankh = surf_drm->bankh;
+    surf_ws->u.legacy.mtilea = surf_drm->mtilea;
+    surf_ws->u.legacy.tile_split = surf_drm->tile_split;
 
-    surf_ws->macro_tile_index = cik_get_macro_tile_index(surf_ws);
+    surf_ws->u.legacy.macro_tile_index = cik_get_macro_tile_index(surf_ws);
 
     for (i = 0; i <= surf_drm->last_level; i++) {
-        surf_level_drm_to_winsys(&surf_ws->level[i], &surf_drm->level[i],
+        surf_level_drm_to_winsys(&surf_ws->u.legacy.level[i], &surf_drm->level[i],
                                  surf_drm->bpe * surf_drm->nsamples);
-        surf_ws->tiling_index[i] = surf_drm->tiling_index[i];
+        surf_ws->u.legacy.tiling_index[i] = surf_drm->tiling_index[i];
     }
 
     if (surf_ws->flags & RADEON_SURF_SBUFFER) {
-        surf_ws->stencil_tile_split = surf_drm->stencil_tile_split;
+        surf_ws->u.legacy.stencil_tile_split = surf_drm->stencil_tile_split;
 
         for (i = 0; i <= surf_drm->last_level; i++) {
-            surf_level_drm_to_winsys(&surf_ws->stencil_level[i],
+            surf_level_drm_to_winsys(&surf_ws->u.legacy.stencil_level[i],
                                      &surf_drm->stencil_level[i],
                                      surf_drm->nsamples);
-            surf_ws->stencil_tiling_index[i] = surf_drm->stencil_tiling_index[i];
+            surf_ws->u.legacy.stencil_tiling_index[i] = surf_drm->stencil_tiling_index[i];
         }
     }
 
     set_micro_tile_mode(surf_ws, &ws->info);
+    surf_ws->is_displayable = surf_ws->is_linear ||
+			      surf_ws->micro_tile_mode == RADEON_MICRO_MODE_DISPLAY ||
+			      surf_ws->micro_tile_mode == RADEON_MICRO_MODE_ROTATED;
+}
+
+static void si_compute_cmask(const struct radeon_info *info,
+		      const struct ac_surf_config *config,
+		      struct radeon_surf *surf)
+{
+	unsigned pipe_interleave_bytes = info->pipe_interleave_bytes;
+	unsigned num_pipes = info->num_tile_pipes;
+	unsigned cl_width, cl_height;
+
+	if (surf->flags & RADEON_SURF_Z_OR_SBUFFER)
+		return;
+
+	assert(info->chip_class <= VI);
+
+	switch (num_pipes) {
+	case 2:
+		cl_width = 32;
+		cl_height = 16;
+		break;
+	case 4:
+		cl_width = 32;
+		cl_height = 32;
+		break;
+	case 8:
+		cl_width = 64;
+		cl_height = 32;
+		break;
+	case 16: /* Hawaii */
+		cl_width = 64;
+		cl_height = 64;
+		break;
+	default:
+		assert(0);
+		return;
+	}
+
+	unsigned base_align = num_pipes * pipe_interleave_bytes;
+
+	unsigned width = align(surf->u.legacy.level[0].nblk_x, cl_width*8);
+	unsigned height = align(surf->u.legacy.level[0].nblk_y, cl_height*8);
+	unsigned slice_elements = (width * height) / (8*8);
+
+	/* Each element of CMASK is a nibble. */
+	unsigned slice_bytes = slice_elements / 2;
+
+	surf->u.legacy.cmask_slice_tile_max = (width * height) / (128*128);
+	if (surf->u.legacy.cmask_slice_tile_max)
+		surf->u.legacy.cmask_slice_tile_max -= 1;
+
+	unsigned num_layers;
+	if (config->is_3d)
+		num_layers = config->info.depth;
+	else if (config->is_cube)
+		num_layers = 6;
+	else
+		num_layers = config->info.array_size;
+
+	surf->cmask_alignment = MAX2(256, base_align);
+	surf->cmask_size = align(slice_bytes, base_align) * num_layers;
 }
 
 static int radeon_winsys_surface_init(struct radeon_winsys *rws,
@@ -242,6 +303,67 @@ static int radeon_winsys_surface_init(struct radeon_winsys *rws,
         return r;
 
     surf_drm_to_winsys(ws, surf_ws, &surf_drm);
+
+    /* Compute FMASK. */
+    if (ws->gen == DRV_SI &&
+        tex->nr_samples >= 2 &&
+        !(flags & (RADEON_SURF_Z_OR_SBUFFER | RADEON_SURF_FMASK))) {
+        /* FMASK is allocated like an ordinary texture. */
+        struct pipe_resource templ = *tex;
+        struct radeon_surf fmask = {};
+        unsigned fmask_flags, bpe;
+
+        templ.nr_samples = 1;
+        fmask_flags = flags | RADEON_SURF_FMASK;
+
+        switch (tex->nr_samples) {
+        case 2:
+        case 4:
+            bpe = 1;
+            break;
+        case 8:
+            bpe = 4;
+            break;
+        default:
+            fprintf(stderr, "radeon: Invalid sample count for FMASK allocation.\n");
+            return -1;
+        }
+
+        if (radeon_winsys_surface_init(rws, &templ, fmask_flags, bpe,
+                                       RADEON_SURF_MODE_2D, &fmask)) {
+            fprintf(stderr, "Got error in surface_init while allocating FMASK.\n");
+            return -1;
+        }
+
+        assert(fmask.u.legacy.level[0].mode == RADEON_SURF_MODE_2D);
+
+        surf_ws->fmask_size = fmask.surf_size;
+        surf_ws->fmask_alignment = MAX2(256, fmask.surf_alignment);
+        surf_ws->fmask_tile_swizzle = fmask.tile_swizzle;
+
+        surf_ws->u.legacy.fmask.slice_tile_max =
+            (fmask.u.legacy.level[0].nblk_x * fmask.u.legacy.level[0].nblk_y) / 64;
+        if (surf_ws->u.legacy.fmask.slice_tile_max)
+            surf_ws->u.legacy.fmask.slice_tile_max -= 1;
+
+        surf_ws->u.legacy.fmask.tiling_index = fmask.u.legacy.tiling_index[0];
+        surf_ws->u.legacy.fmask.bankh = fmask.u.legacy.bankh;
+        surf_ws->u.legacy.fmask.pitch_in_pixels = fmask.u.legacy.level[0].nblk_x;
+    }
+
+    if (ws->gen == DRV_SI) {
+	    struct ac_surf_config config;
+
+	    /* Only these fields need to be set for the CMASK computation. */
+	    config.info.width = tex->width0;
+	    config.info.height = tex->height0;
+	    config.info.depth = tex->depth0;
+	    config.info.array_size = tex->array_size;
+	    config.is_3d = !!(tex->target == PIPE_TEXTURE_3D);
+	    config.is_cube = !!(tex->target == PIPE_TEXTURE_CUBE);
+
+	    si_compute_cmask(&ws->info, &config, surf_ws);
+    }
     return 0;
 }
 

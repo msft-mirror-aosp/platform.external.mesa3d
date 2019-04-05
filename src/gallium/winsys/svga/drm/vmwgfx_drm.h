@@ -29,7 +29,7 @@
 #define __VMWGFX_DRM_H__
 
 #ifndef __KERNEL__
-#include <drm.h>
+#include "drm-uapi/drm.h"
 #endif
 
 #define DRM_VMW_MAX_SURFACE_FACES 6
@@ -65,6 +65,8 @@
 #define DRM_VMW_GB_SURFACE_REF       24
 #define DRM_VMW_SYNCCPU              25
 #define DRM_VMW_CREATE_EXTENDED_CONTEXT 26
+#define DRM_VMW_GB_SURFACE_CREATE_EXT   27
+#define DRM_VMW_GB_SURFACE_REF_EXT      28
 
 /*************************************************************************/
 /**
@@ -76,6 +78,9 @@
  *
  * DRM_VMW_PARAM_OVERLAY_IOCTL:
  * Does the driver support the overlay ioctl.
+ *
+ * DRM_VMW_PARAM_SM4_1
+ * SM4_1 support is enabled.
  */
 
 #define DRM_VMW_PARAM_NUM_STREAMS      0
@@ -91,6 +96,8 @@
 #define DRM_VMW_PARAM_MAX_MOB_SIZE     10
 #define DRM_VMW_PARAM_SCREEN_TARGET    11
 #define DRM_VMW_PARAM_VGPU10           12
+#define DRM_VMW_PARAM_HW_CAPS2         13
+#define DRM_VMW_PARAM_SM4_1            14
 
 /**
  * enum drm_vmw_handle_type - handle type for ref ioctls
@@ -294,12 +301,16 @@ union drm_vmw_surface_reference_arg {
  * @version: Allows expanding the execbuf ioctl parameters without breaking
  * backwards compatibility, since user-space will always tell the kernel
  * which version it uses.
- * @flags: Execbuf flags. None currently.
+ * @flags: Execbuf flags.
+ * @imported_fence_fd:  FD for a fence imported from another device
  *
  * Argument to the DRM_VMW_EXECBUF Ioctl.
  */
 
 #define DRM_VMW_EXECBUF_VERSION 2
+
+#define DRM_VMW_EXECBUF_FLAG_IMPORT_FENCE_FD (1 << 0)
+#define DRM_VMW_EXECBUF_FLAG_EXPORT_FENCE_FD (1 << 1)
 
 struct drm_vmw_execbuf_arg {
 	uint64_t commands;
@@ -309,7 +320,7 @@ struct drm_vmw_execbuf_arg {
 	uint32_t version;
 	uint32_t flags;
 	uint32_t context_handle;
-	uint32_t pad64;
+	int32_t imported_fence_fd;
 };
 
 /**
@@ -325,6 +336,7 @@ struct drm_vmw_execbuf_arg {
  * @passed_seqno: The highest seqno number processed by the hardware
  * so far. This can be used to mark user-space fence objects as signaled, and
  * to determine whether a fence seqno might be stale.
+ * @fd: FD associated with the fence, -1 if not exported
  * @error: This member should've been set to -EFAULT on submission.
  * The following actions should be take on completion:
  * error == -EFAULT: Fence communication failed. The host is synchronized.
@@ -342,7 +354,7 @@ struct drm_vmw_fence_rep {
 	uint32_t mask;
 	uint32_t seqno;
 	uint32_t passed_seqno;
-	uint32_t pad64;
+	int32_t fd;
 	int32_t error;
 };
 
@@ -1090,4 +1102,105 @@ union drm_vmw_extended_context_arg {
 	enum drm_vmw_extended_context req;
 	struct drm_vmw_context_arg rep;
 };
+
+/*************************************************************************/
+/**
+ * DRM_VMW_GB_SURFACE_CREATE_EXT - Create a host guest-backed surface.
+ *
+ * Allocates a surface handle and queues a create surface command
+ * for the host on the first use of the surface. The surface ID can
+ * be used as the surface ID in commands referencing the surface.
+ *
+ * This new command extends DRM_VMW_GB_SURFACE_CREATE by adding version
+ * parameter and 64 bit svga flag.
+ */
+
+/**
+ * enum drm_vmw_surface_version
+ *
+ * @drm_vmw_surface_gb_v1: Corresponds to current gb surface format with
+ * svga3d surface flags split into 2, upper half and lower half.
+ */
+enum drm_vmw_surface_version {
+	drm_vmw_gb_surface_v1
+};
+
+/**
+ * struct drm_vmw_gb_surface_create_ext_req
+ *
+ * @base: Surface create parameters.
+ * @version: Version of surface create ioctl.
+ * @svga3d_flags_upper_32_bits: Upper 32 bits of svga3d flags.
+ * @multisample_pattern: Multisampling pattern when msaa is supported.
+ * @quality_level: Precision settings for each sample.
+ * @must_be_zero: Reserved for future usage.
+ *
+ * Input argument to the  DRM_VMW_GB_SURFACE_CREATE_EXT Ioctl.
+ * Part of output argument for the DRM_VMW_GB_SURFACE_REF_EXT Ioctl.
+ */
+struct drm_vmw_gb_surface_create_ext_req {
+	struct drm_vmw_gb_surface_create_req base;
+	enum drm_vmw_surface_version version;
+	uint32_t svga3d_flags_upper_32_bits;
+	SVGA3dMSPattern multisample_pattern;
+	SVGA3dMSQualityLevel quality_level;
+	uint64_t must_be_zero;
+};
+
+/**
+ * union drm_vmw_gb_surface_create_ext_arg
+ *
+ * @req: Input argument as described above.
+ * @rep: Output argument as described above.
+ *
+ * Argument to the DRM_VMW_GB_SURFACE_CREATE_EXT ioctl.
+ */
+union drm_vmw_gb_surface_create_ext_arg {
+	struct drm_vmw_gb_surface_create_rep rep;
+	struct drm_vmw_gb_surface_create_ext_req req;
+};
+
+/*************************************************************************/
+/**
+ * DRM_VMW_GB_SURFACE_REF_EXT - Reference a host surface.
+ *
+ * Puts a reference on a host surface with a given handle, as previously
+ * returned by the DRM_VMW_GB_SURFACE_CREATE_EXT ioctl.
+ * A reference will make sure the surface isn't destroyed while we hold
+ * it and will allow the calling client to use the surface handle in
+ * the command stream.
+ *
+ * On successful return, the Ioctl returns the surface information given
+ * to and returned from the DRM_VMW_GB_SURFACE_CREATE_EXT ioctl.
+ */
+
+/**
+ * struct drm_vmw_gb_surface_ref_ext_rep
+ *
+ * @creq: The data used as input when the surface was created, as described
+ *        above at "struct drm_vmw_gb_surface_create_ext_req"
+ * @crep: Additional data output when the surface was created, as described
+ *        above at "struct drm_vmw_gb_surface_create_rep"
+ *
+ * Output Argument to the DRM_VMW_GB_SURFACE_REF_EXT ioctl.
+ */
+struct drm_vmw_gb_surface_ref_ext_rep {
+	struct drm_vmw_gb_surface_create_ext_req creq;
+	struct drm_vmw_gb_surface_create_rep crep;
+};
+
+/**
+ * union drm_vmw_gb_surface_reference_ext_arg
+ *
+ * @req: Input data as described above at "struct drm_vmw_surface_arg"
+ * @rep: Output data as described above at
+ *       "struct drm_vmw_gb_surface_ref_ext_rep"
+ *
+ * Argument to the DRM_VMW_GB_SURFACE_REF Ioctl.
+ */
+union drm_vmw_gb_surface_reference_ext_arg {
+	struct drm_vmw_gb_surface_ref_ext_rep rep;
+	struct drm_vmw_surface_arg req;
+};
+
 #endif

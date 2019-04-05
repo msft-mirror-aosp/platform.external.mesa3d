@@ -1,11 +1,5 @@
 include $(top_srcdir)/src/gallium/Automake.inc
 
-if HAVE_ANDROID
-if HAVE_SHARED_GLAPI
-SHARED_GLAPI_LIB = $(top_builddir)/src/mapi/shared-glapi/libglapi.la
-endif
-endif
-
 AM_CFLAGS = \
 	-I$(top_srcdir)/src/mapi \
 	-I$(top_srcdir)/src/mesa \
@@ -15,11 +9,7 @@ AM_CFLAGS = \
 	$(GALLIUM_TARGET_CFLAGS)
 
 AM_CPPFLAGS = \
-	$(DEFINES) \
-        -DGALLIUM_DDEBUG \
-	-DGALLIUM_NOOP \
-	-DGALLIUM_RBUG \
-	-DGALLIUM_TRACE
+	$(DEFINES)
 
 dridir = $(DRI_DRIVER_INSTALL_DIR)
 dri_LTLIBRARIES = gallium_dri.la
@@ -31,8 +21,10 @@ gallium_dri_la_LDFLAGS = \
 	-shared \
 	-shrext .so \
 	-module \
+	-no-undefined \
 	-avoid-version \
-	$(GC_SECTIONS)
+	$(GC_SECTIONS) \
+	$(LD_NO_UNDEFINED)
 
 if HAVE_LD_VERSION_SCRIPT
 gallium_dri_la_LDFLAGS += \
@@ -51,14 +43,10 @@ gallium_dri_la_LIBADD = \
 	$(top_builddir)/src/gallium/state_trackers/dri/libdri.la \
 	$(top_builddir)/src/gallium/auxiliary/libgalliumvl.la \
 	$(top_builddir)/src/gallium/auxiliary/libgallium.la \
-        $(top_builddir)/src/gallium/drivers/ddebug/libddebug.la \
-	$(top_builddir)/src/gallium/drivers/noop/libnoop.la \
-	$(top_builddir)/src/gallium/drivers/rbug/librbug.la \
-	$(top_builddir)/src/gallium/drivers/trace/libtrace.la \
-	$(SHARED_GLAPI_LIB) \
+	$(top_builddir)/src/mapi/shared-glapi/libglapi.la \
+	$(LIBDRM_LIBS) \
 	$(SELINUX_LIBS) \
 	$(EXPAT_LIBS) \
-	$(LIBDRM_LIBS) \
 	$(GALLIUM_COMMON_LIB_DEPS)
 
 EXTRA_gallium_dri_la_DEPENDENCIES = \
@@ -66,6 +54,7 @@ EXTRA_gallium_dri_la_DEPENDENCIES = \
 	$(top_srcdir)/src/gallium/targets/dri-vdpau.dyn
 EXTRA_DIST = \
 	SConscript \
+	meson.build \
 	dri.sym \
 	$(top_srcdir)/src/gallium/targets/dri-vdpau.dyn
 
@@ -74,8 +63,6 @@ TARGET_CPPFLAGS =
 TARGET_LIB_DEPS =
 
 include $(top_srcdir)/src/gallium/drivers/i915/Automake.inc
-
-include $(top_srcdir)/src/gallium/drivers/ilo/Automake.inc
 
 include $(top_srcdir)/src/gallium/drivers/nouveau/Automake.inc
 
@@ -87,12 +74,15 @@ include $(top_srcdir)/src/gallium/drivers/svga/Automake.inc
 
 include $(top_srcdir)/src/gallium/drivers/freedreno/Automake.inc
 
+include $(top_srcdir)/src/gallium/drivers/tegra/Automake.inc
+
+include $(top_srcdir)/src/gallium/drivers/v3d/Automake.inc
 include $(top_srcdir)/src/gallium/drivers/vc4/Automake.inc
+include $(top_srcdir)/src/gallium/drivers/kmsro/Automake.inc
 
 include $(top_srcdir)/src/gallium/drivers/virgl/Automake.inc
 
 include $(top_srcdir)/src/gallium/drivers/etnaviv/Automake.inc
-include $(top_srcdir)/src/gallium/drivers/imx/Automake.inc
 
 include $(top_srcdir)/src/gallium/drivers/softpipe/Automake.inc
 include $(top_srcdir)/src/gallium/drivers/llvmpipe/Automake.inc
@@ -144,7 +134,8 @@ install-data-hook:
 		ln -f $(DESTDIR)$(dridir)/gallium_dri.so                \
 		      $(DESTDIR)$(dridir)/$${i}_dri.so;                 \
 	done;                                                           \
-	$(RM) $(DESTDIR)$(dridir)/gallium_dri.*
+	$(RM) $(DESTDIR)$(dridir)/gallium_dri.*;                        \
+	$(RM) -d $(DESTDIR)$(dridir) &>/dev/null || true
 
 uninstall-hook:
 	for i in $(TARGET_DRIVERS); do                                  \

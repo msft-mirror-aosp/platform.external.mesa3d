@@ -44,8 +44,8 @@ VkBool32 radv_GetPhysicalDeviceXcbPresentationSupportKHR(
 
    return wsi_get_physical_device_xcb_presentation_support(
       &device->wsi_device,
-      &device->instance->alloc,
-      queueFamilyIndex, connection, visual_id);
+      queueFamilyIndex,
+      connection, visual_id);
 }
 
 VkBool32 radv_GetPhysicalDeviceXlibPresentationSupportKHR(
@@ -58,8 +58,8 @@ VkBool32 radv_GetPhysicalDeviceXlibPresentationSupportKHR(
 
    return wsi_get_physical_device_xcb_presentation_support(
       &device->wsi_device,
-      &device->instance->alloc,
-      queueFamilyIndex, XGetXCBConnection(dpy), visualID);
+      queueFamilyIndex,
+      XGetXCBConnection(dpy), visualID);
 }
 
 VkResult radv_CreateXcbSurfaceKHR(

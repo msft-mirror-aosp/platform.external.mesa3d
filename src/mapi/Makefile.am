@@ -31,12 +31,19 @@ pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA =
 
 EXTRA_DIST = \
+	new/genCommon.py \
+	new/gen_gldispatch_mapi.py \
 	es1api/ABI-check \
 	es2api/ABI-check \
 	mapi_abi.py \
 	glapi/SConscript \
 	glapi/registry/gl.xml \
-	shared-glapi/SConscript
+	shared-glapi/SConscript \
+	es1api/meson.build \
+	es2api/meson.build \
+	glapi/meson.build \
+	shared-glapi/meson.build \
+	meson.build
 
 AM_CFLAGS = \
 	$(PTHREAD_CFLAGS) \
@@ -47,17 +54,28 @@ AM_CPPFLAGS =							\
 	-I$(top_srcdir)/include					\
 	-I$(top_srcdir)/src					\
 	-I$(top_builddir)/src/mapi				\
-	-I$(top_srcdir)/src/mapi
+	-I$(top_srcdir)/src/mapi				\
+	-I$(top_builddir)/src/mapi/glapi			\
+	-I$(top_srcdir)/src/mapi/glapi
 
 include Makefile.sources
 
 MKDIR_GEN = $(AM_V_at)$(MKDIR_P) $(@D)
-PYTHON_GEN = $(AM_V_GEN)$(PYTHON2) $(PYTHON_FLAGS)
+PYTHON_GEN = $(AM_V_GEN)$(PYTHON) $(PYTHON_FLAGS)
 
-glapi_gen_mapi_deps := \
+shared_glapi_gen_mapi_deps := \
 	mapi_abi.py \
 	$(wildcard $(top_srcdir)/src/mapi/glapi/gen/*.xml) \
 	$(wildcard $(top_srcdir)/src/mapi/glapi/gen/*.py)
+
+glapi_gen_gl_xml := \
+	$(srcdir)/glapi/registry/gl.xml
+glapi_gen_mapi_script = $(srcdir)/new/gen_gldispatch_mapi.py
+glapi_gen_mapi_deps = \
+	$(glapi_gen_mapi_script) \
+	$(srcdir)/new/genCommon.py \
+	$(glapi_gen_gl_xml)
+glapi_gen_mapi = $(AM_V_GEN)$(PYTHON) $(PYTHON_FLAGS) $(glapi_gen_mapi_script)
 
 if HAVE_SHARED_GLAPI
 BUILT_SOURCES += shared-glapi/glapi_mapi_tmp.h
@@ -85,15 +103,16 @@ check_PROGRAMS += shared-glapi-test
 shared_glapi_test_SOURCES = shared-glapi/tests/check_table.cpp
 shared_glapi_test_CPPFLAGS = \
 	$(AM_CPPFLAGS) \
-	-I$(top_srcdir)/src/gtest/include
+	-I$(top_srcdir)/src/gtest/include \
+	-I$(top_srcdir)/src/mesa
 shared_glapi_test_LDADD = \
 	$(top_builddir)/src/mapi/shared-glapi/libglapi.la \
 	$(top_builddir)/src/gtest/libgtest.la
 endif
 
-shared-glapi/glapi_mapi_tmp.h : glapi/gen/gl_and_es_API.xml $(glapi_gen_mapi_deps)
+shared-glapi/glapi_mapi_tmp.h : glapi/gen/gl_and_es_API.xml $(shared_glapi_gen_mapi_deps)
 	$(MKDIR_GEN)
-	$(PYTHON_GEN) $(srcdir)/mapi_abi.py --mode lib --printer shared-glapi \
+	$(PYTHON_GEN) $(srcdir)/mapi_abi.py --printer shared-glapi \
 		$(srcdir)/glapi/gen/gl_and_es_API.xml > $@
 
 if HAVE_OPENGL
@@ -113,7 +132,6 @@ endif
 glapi_libglapi_la_SOURCES =
 glapi_libglapi_la_CPPFLAGS = \
 	$(AM_CPPFLAGS) \
-	-I$(top_srcdir)/src/mapi/glapi \
 	-I$(top_srcdir)/src/mesa
 
 if HAVE_APPLEDRI
@@ -148,7 +166,8 @@ check_PROGRAMS += glapi-test
 glapi_test_SOURCES = glapi/tests/check_table.cpp
 glapi_test_CPPFLAGS = \
 	$(AM_CPPFLAGS) \
-	-I$(top_srcdir)/src/gtest/include
+	-I$(top_srcdir)/src/gtest/include \
+	-I$(top_srcdir)/src/mesa
 
 glapi_test_LDADD = \
 	$(top_builddir)/src/mapi/glapi/libglapi.la \
@@ -156,6 +175,8 @@ glapi_test_LDADD = \
 endif
 endif
 
+if USE_LIBGLVND
+else
 if HAVE_OPENGL_ES1
 TESTS += es1api/ABI-check
 
@@ -170,33 +191,33 @@ GLES_include_HEADERS = \
 	$(top_srcdir)/include/GLES/glext.h \
 	$(top_srcdir)/include/GLES/glplatform.h
 
-lib_LTLIBRARIES += es1api/libGLESv1_CM.la
+lib_LTLIBRARIES += es1api/libGLESv1_CM@GLES_LIB_SUFFIX@.la
 
-es1api_libGLESv1_CM_la_SOURCES = entry.c es1api/glapi_mapi_tmp.h
-es1api_libGLESv1_CM_la_CFLAGS = \
+es1api_libGLESv1_CM@GLES_LIB_SUFFIX@_la_SOURCES = entry.c es1api/glapi_mapi_tmp.h
+es1api_libGLESv1_CM@GLES_LIB_SUFFIX@_la_CFLAGS = \
 	$(AM_CFLAGS) \
 	$(VISIBILITY_CFLAGS)
-es1api_libGLESv1_CM_la_CPPFLAGS = \
+es1api_libGLESv1_CM@GLES_LIB_SUFFIX@_la_CPPFLAGS = \
 	$(AM_CPPFLAGS) \
 	-DMAPI_MODE_BRIDGE \
 	-DMAPI_ABI_HEADER=\"es1api/glapi_mapi_tmp.h\"
-es1api_libGLESv1_CM_la_LIBADD = $(GLESv1_CM_LIB_DEPS)
-es1api_libGLESv1_CM_la_LDFLAGS = \
+es1api_libGLESv1_CM@GLES_LIB_SUFFIX@_la_LIBADD = $(GLESv1_CM_LIB_DEPS)
+es1api_libGLESv1_CM@GLES_LIB_SUFFIX@_la_LDFLAGS = \
 	-no-undefined \
 	-version-number 1:1 \
 	$(GC_SECTIONS) \
 	$(LD_NO_UNDEFINED)
 
-if HAVE_SHARED_GLAPI
-es1api_libGLESv1_CM_la_LIBADD += shared-glapi/libglapi.la
-endif
-endif
+es1api_libGLESv1_CM@GLES_LIB_SUFFIX@_la_LIBADD += shared-glapi/libglapi.la
+endif # HAVE_OPENGL_ES1
+endif # USE_LIBGLVND
 
-es1api/glapi_mapi_tmp.h: glapi/gen/gl_and_es_API.xml $(glapi_gen_mapi_deps)
+es1api/glapi_mapi_tmp.h: $(glapi_gen_mapi_deps)
 	$(MKDIR_GEN)
-	$(PYTHON_GEN) $(srcdir)/mapi_abi.py --mode lib --printer es1api \
-		$(srcdir)/glapi/gen/gl_and_es_API.xml > $@
+	$(glapi_gen_mapi) glesv1 $(glapi_gen_gl_xml) > $@
 
+if USE_LIBGLVND
+else
 if HAVE_OPENGL_ES2
 TESTS += es2api/ABI-check
 
@@ -217,31 +238,34 @@ GLES3_include_HEADERS = \
 	$(top_srcdir)/include/GLES3/gl3ext.h \
 	$(top_srcdir)/include/GLES3/gl3platform.h
 
-lib_LTLIBRARIES += es2api/libGLESv2.la
+lib_LTLIBRARIES += es2api/libGLESv2@GLES_LIB_SUFFIX@.la
 
-es2api_libGLESv2_la_SOURCES = entry.c es2api/glapi_mapi_tmp.h
-es2api_libGLESv2_la_CFLAGS = \
+es2api_libGLESv2@GLES_LIB_SUFFIX@_la_SOURCES = entry.c es2api/glapi_mapi_tmp.h
+es2api_libGLESv2@GLES_LIB_SUFFIX@_la_CFLAGS = \
 	$(AM_CFLAGS) \
 	$(VISIBILITY_CFLAGS)
-es2api_libGLESv2_la_CPPFLAGS = \
+es2api_libGLESv2@GLES_LIB_SUFFIX@_la_CPPFLAGS = \
 	$(AM_CPPFLAGS) \
 	-DMAPI_MODE_BRIDGE \
 	-DMAPI_ABI_HEADER=\"es2api/glapi_mapi_tmp.h\"
-es2api_libGLESv2_la_LIBADD = $(GLESv2_LIB_DEPS)
-es2api_libGLESv2_la_LDFLAGS = \
+es2api_libGLESv2@GLES_LIB_SUFFIX@_la_LIBADD = $(GLESv2_LIB_DEPS)
+es2api_libGLESv2@GLES_LIB_SUFFIX@_la_LDFLAGS = \
 	-no-undefined \
 	-version-number 2 \
 	$(GC_SECTIONS) \
 	$(LD_NO_UNDEFINED)
 
-if HAVE_SHARED_GLAPI
-es2api_libGLESv2_la_LIBADD += shared-glapi/libglapi.la
-endif
-endif
+es2api_libGLESv2@GLES_LIB_SUFFIX@_la_LIBADD += shared-glapi/libglapi.la
+endif # HAVE_OPENGL_ES2
+endif # USE_LIBGLVND
 
-es2api/glapi_mapi_tmp.h: glapi/gen/gl_and_es_API.xml $(glapi_gen_mapi_deps)
+es2api/glapi_mapi_tmp.h: $(glapi_gen_mapi_deps)
 	$(MKDIR_GEN)
-	$(PYTHON_GEN) $(srcdir)/mapi_abi.py --mode lib --printer es2api \
-		$(srcdir)/glapi/gen/gl_and_es_API.xml > $@
+	$(glapi_gen_mapi) glesv2 $(glapi_gen_gl_xml) > $@
 
 include $(top_srcdir)/install-lib-links.mk
+
+if NEED_KHRPLATFORM
+khrdir = $(includedir)/KHR
+khr_HEADERS = $(top_srcdir)/include/KHR/khrplatform.h
+endif

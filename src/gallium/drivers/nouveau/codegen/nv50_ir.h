@@ -58,6 +58,9 @@ enum operation
    OP_FMA,
    OP_SAD, // abs(src0 - src1) + src2
    OP_SHLADD,
+   // extended multiply-add (GM107+), does a lot of things.
+   // see envytools for detailed documentation
+   OP_XMAD,
    OP_ABS,
    OP_NEG,
    OP_NOT,
@@ -175,6 +178,7 @@ enum operation
 #define NV50_IR_SUBOP_LDC_IS       2
 #define NV50_IR_SUBOP_LDC_ISL      3
 #define NV50_IR_SUBOP_SHIFT_WRAP   1
+#define NV50_IR_SUBOP_SHIFT_HIGH   2
 #define NV50_IR_SUBOP_EMU_PRERET   1
 #define NV50_IR_SUBOP_TEXBAR(n)    n
 #define NV50_IR_SUBOP_MOV_FINAL    1
@@ -250,6 +254,33 @@ enum operation
 #define NV50_IR_SUBOP_VOTE_ALL 0
 #define NV50_IR_SUBOP_VOTE_ANY 1
 #define NV50_IR_SUBOP_VOTE_UNI 2
+
+#define NV50_IR_SUBOP_MINMAX_LOW  1
+#define NV50_IR_SUBOP_MINMAX_MED  2
+#define NV50_IR_SUBOP_MINMAX_HIGH 3
+
+// xmad(src0, src1, 0) << 16 + src2
+#define NV50_IR_SUBOP_XMAD_PSL (1 << 0)
+// (xmad(src0, src1, src2) & 0xffff) | (src1 << 16)
+#define NV50_IR_SUBOP_XMAD_MRG (1 << 1)
+// xmad(src0, src1, src2.lo)
+#define NV50_IR_SUBOP_XMAD_CLO (1 << 2)
+// xmad(src0, src1, src2.hi)
+#define NV50_IR_SUBOP_XMAD_CHI (2 << 2)
+// if both operands to the multiplication are non-zero, subtract 65536 for each
+// negative operand
+#define NV50_IR_SUBOP_XMAD_CSFU (3 << 2)
+// xmad(src0, src1, src2) + src1 << 16
+#define NV50_IR_SUBOP_XMAD_CBCC (4 << 2)
+#define NV50_IR_SUBOP_XMAD_CMODE_SHIFT 2
+#define NV50_IR_SUBOP_XMAD_CMODE_MASK (0x7 << NV50_IR_SUBOP_XMAD_CMODE_SHIFT)
+
+// use the high 16 bits instead of the low 16 bits for the multiplication.
+// if the instruction's sType is signed, sign extend the operand from 16 bits
+// to 32 before multiplication.
+#define NV50_IR_SUBOP_XMAD_H1_SHIFT 5
+#define NV50_IR_SUBOP_XMAD_H1(i) (1 << (NV50_IR_SUBOP_XMAD_H1_SHIFT + (i)))
+#define NV50_IR_SUBOP_XMAD_H1_MASK (0x3 << NV50_IR_SUBOP_XMAD_H1_SHIFT)
 
 enum DataType
 {
@@ -448,6 +479,7 @@ enum SVSemantic
    SV_TESS_INNER,
    SV_TESS_COORD,
    SV_TID,
+   SV_COMBINED_TID,
    SV_CTAID,
    SV_NTID,
    SV_GRIDID,
@@ -465,6 +497,11 @@ enum SVSemantic
    SV_BASEINSTANCE,
    SV_DRAWID,
    SV_WORK_DIM,
+   SV_LANEMASK_EQ,
+   SV_LANEMASK_LT,
+   SV_LANEMASK_LE,
+   SV_LANEMASK_GT,
+   SV_LANEMASK_GE,
    SV_UNDEFINED,
    SV_LAST
 };
@@ -591,7 +628,6 @@ public:
 public:
    Modifier mod;
    int8_t indirect[2]; // >= 0 if relative to lvalue in insn->src(indirect[i])
-   uint8_t swizzle;
 
    bool usedAsPtr; // for printing
 
@@ -657,7 +693,7 @@ public:
    inline const Symbol *asSym() const;
    inline const ImmediateValue *asImm() const;
 
-   inline bool inFile(DataFile f) { return reg.file == f; }
+   inline bool inFile(DataFile f) const { return reg.file == f; }
 
    static inline Value *get(Iterator&);
 
@@ -875,6 +911,8 @@ public:
    unsigned perPatch   : 1;
    unsigned exit       : 1; // terminate program after insn
    unsigned mask       : 4; // for vector ops
+   // prevent algebraic optimisations that aren't bit-for-bit identical
+   unsigned precise    : 1;
 
    int8_t postFactor; // MUL/DIV(if < 0) by 1 << postFactor
 
@@ -1013,12 +1051,15 @@ public:
       bool liveOnly; // only execute on live pixels of a quad (optimization)
       bool levelZero;
       bool derivAll;
+      bool bindless;
 
       int8_t useOffsets; // 0, 1, or 4 for textureGatherOffsets
       int8_t offset[3]; // only used on nv50
 
       enum TexQuery query;
       const struct ImgFormatDesc *format;
+
+      bool scalar; // for GM107s TEXS, TLDS, TLD4S
    } tex;
 
    ValueRef dPdx[3];
@@ -1243,8 +1284,8 @@ public:
    inline void del(Function *fn, int& id) { allFuncs.remove(id); }
    inline void add(Value *rval, int& id) { allRValues.insert(rval, id); }
 
+   bool makeFromNIR(struct nv50_ir_prog_info *);
    bool makeFromTGSI(struct nv50_ir_prog_info *);
-   bool makeFromSM4(struct nv50_ir_prog_info *);
    bool convertToSSA();
    bool optimizeSSA(int level);
    bool optimizePostRA(int level);
@@ -1271,6 +1312,7 @@ public:
    uint32_t tlsSize; // size required for FILE_MEMORY_LOCAL
 
    int maxGPR;
+   bool fp64;
 
    MemoryPool mem_Instruction;
    MemoryPool mem_CmpInstruction;

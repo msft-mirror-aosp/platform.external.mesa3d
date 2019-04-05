@@ -37,10 +37,10 @@
 #include "d3dadapter/d3dadapter9.h"
 #include "d3dadapter/drm.h"
 
-#include "xmlconfig.h"
-#include "xmlpool.h"
+#include "util/xmlconfig.h"
+#include "util/xmlpool.h"
 
-#include <drm.h>
+#include "drm-uapi/drm.h"
 #include <sys/ioctl.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -149,8 +149,8 @@ read_descriptor( struct d3dadapter9_context *ctx,
                  &drvid->SubSysId, &drvid->Revision);
     snprintf(drvid->DeviceName, sizeof(drvid->DeviceName),
                  "Gallium 0.4 with %s", ctx->hal->get_vendor(ctx->hal));
-    strncpy(drvid->Description, ctx->hal->get_name(ctx->hal),
-                 sizeof(drvid->Description));
+    snprintf(drvid->Description, sizeof(drvid->Description),
+                 "%s", ctx->hal->get_name(ctx->hal));
 
     if (override_vendorid > 0) {
         found = FALSE;
@@ -163,8 +163,8 @@ read_descriptor( struct d3dadapter9_context *ctx,
                         fallback_cards[i].device_id);
                 drvid->VendorId = fallback_cards[i].vendor_id;
                 drvid->DeviceId = fallback_cards[i].device_id;
-                strncpy(drvid->Description, fallback_cards[i].name,
-                             sizeof(drvid->Description));
+                snprintf(drvid->Description, sizeof(drvid->Description),
+                             "%s", fallback_cards[i].name);
                 found = TRUE;
                 break;
             }
@@ -204,7 +204,7 @@ drm_create_adapter( int fd,
 {
     struct d3dadapter9drm_context *ctx = CALLOC_STRUCT(d3dadapter9drm_context);
     HRESULT hr;
-    int different_device;
+    bool different_device;
     const struct drm_conf_ret *throttle_ret = NULL;
     const struct drm_conf_ret *dmabuf_ret = NULL;
     driOptionCache defaultInitOptions;
@@ -220,7 +220,7 @@ drm_create_adapter( int fd,
      * takes ownership of it. */
     fd = loader_get_user_preferred_fd(fd, &different_device);
     ctx->fd = fd;
-    ctx->base.linear_framebuffer = !!different_device;
+    ctx->base.linear_framebuffer = different_device;
 
     if (!pipe_loader_drm_probe_fd(&ctx->dev, fd)) {
         ERR("Failed to probe drm fd %d.\n", fd);
@@ -252,7 +252,7 @@ drm_create_adapter( int fd,
         ctx->base.throttling = FALSE;
 
     driParseOptionInfo(&defaultInitOptions, __driConfigOptionsNine);
-    driParseConfigFiles(&userInitOptions, &defaultInitOptions, 0, "nine");
+    driParseConfigFiles(&userInitOptions, &defaultInitOptions, 0, "nine", NULL);
     if (driCheckOption(&userInitOptions, "throttle_value", DRI_INT)) {
         throttling_value_user = driQueryOptioni(&userInitOptions, "throttle_value");
         if (throttling_value_user == -1)
@@ -271,7 +271,7 @@ drm_create_adapter( int fd,
     if (driCheckOption(&userInitOptions, "thread_submit", DRI_BOOL))
         ctx->base.thread_submit = driQueryOptionb(&userInitOptions, "thread_submit");
     else
-        ctx->base.thread_submit = !!different_device;
+        ctx->base.thread_submit = different_device;
 
     if (ctx->base.thread_submit && (throttling_value_user == -2 || throttling_value_user == 0)) {
         ctx->base.throttling_value = 0;
@@ -279,9 +279,6 @@ drm_create_adapter( int fd,
         DBG("You have set a non standard throttling value in combination with thread_submit."
             "We advise to use a throttling value of -2/0");
     }
-    if (ctx->base.thread_submit && !different_device)
-        DBG("You have set thread_submit but do not use a different device than the server."
-            "You should not expect any benefit.");
 
     if (driCheckOption(&userInitOptions, "override_vendorid", DRI_INT)) {
         override_vendorid = driQueryOptioni(&userInitOptions, "override_vendorid");

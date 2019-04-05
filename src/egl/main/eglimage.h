@@ -46,6 +46,8 @@ struct _egl_image_attrib_int
    EGLBoolean IsPresent;
 };
 
+#define DMA_BUF_MAX_PLANES 4
+
 struct _egl_image_attribs
 {
    /* EGL_KHR_image_base */
@@ -65,11 +67,14 @@ struct _egl_image_attribs
    /* EGL_WL_bind_wayland_display */
    EGLint PlaneWL;
 
-   /* EGL_EXT_image_dma_buf_import */
+   /* EGL_EXT_image_dma_buf_import and
+    * EGL_EXT_image_dma_buf_import_modifiers */
    struct _egl_image_attrib_int DMABufFourCC;
-   struct _egl_image_attrib_int DMABufPlaneFds[3];
-   struct _egl_image_attrib_int DMABufPlaneOffsets[3];
-   struct _egl_image_attrib_int DMABufPlanePitches[3];
+   struct _egl_image_attrib_int DMABufPlaneFds[DMA_BUF_MAX_PLANES];
+   struct _egl_image_attrib_int DMABufPlaneOffsets[DMA_BUF_MAX_PLANES];
+   struct _egl_image_attrib_int DMABufPlanePitches[DMA_BUF_MAX_PLANES];
+   struct _egl_image_attrib_int DMABufPlaneModifiersLo[DMA_BUF_MAX_PLANES];
+   struct _egl_image_attrib_int DMABufPlaneModifiersHi[DMA_BUF_MAX_PLANES];
    struct _egl_image_attrib_int DMABufYuvColorSpaceHint;
    struct _egl_image_attrib_int DMABufSampleRangeHint;
    struct _egl_image_attrib_int DMABufChromaHorizontalSiting;
@@ -86,13 +91,16 @@ struct _egl_image
 };
 
 
-extern EGLint
-_eglParseImageAttribList(_EGLImageAttribs *attrs, _EGLDisplay *dpy,
+EGLBoolean
+_eglParseImageAttribList(_EGLImageAttribs *attrs, _EGLDisplay *disp,
                          const EGLint *attrib_list);
 
 
-extern EGLBoolean
-_eglInitImage(_EGLImage *img, _EGLDisplay *dpy);
+static inline void
+_eglInitImage(_EGLImage *img, _EGLDisplay *disp)
+{
+   _eglInitResource(&img->Resource, sizeof(*img), disp);
+}
 
 
 /**
@@ -145,10 +153,10 @@ _eglUnlinkImage(_EGLImage *img)
  * Return NULL if the handle has no corresponding linked image.
  */
 static inline _EGLImage *
-_eglLookupImage(EGLImage image, _EGLDisplay *dpy)
+_eglLookupImage(EGLImage image, _EGLDisplay *disp)
 {
    _EGLImage *img = (_EGLImage *) image;
-   if (!dpy || !_eglCheckResource((void *) img, _EGL_RESOURCE_IMAGE, dpy))
+   if (!disp || !_eglCheckResource((void *) img, _EGL_RESOURCE_IMAGE, disp))
       img = NULL;
    return img;
 }
