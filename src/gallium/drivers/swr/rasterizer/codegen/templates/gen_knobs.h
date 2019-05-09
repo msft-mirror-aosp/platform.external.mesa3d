@@ -72,7 +72,7 @@ private:
     T m_Value;
 };
 
-#define DEFINE_KNOB(_name, _type)                               \\
+#define DEFINE_KNOB(_name, _type, _default)                     \\
 
     struct Knob_##_name : Knob<_type>                           \\
 
@@ -80,11 +80,7 @@ private:
 
         static const char* Name() { return "KNOB_" #_name; }    \\
 
-        static _type DefaultValue() { return (m_default); }     \\
-
-    private:                                                    \\
-
-        static _type m_default;                                 \\
+        static _type DefaultValue() { return (_default); }      \\
 
     } _name;
 
@@ -109,7 +105,11 @@ struct GlobalKnobs
     % endfor
     % endif
     //
-    DEFINE_KNOB(${knob[0]}, ${knob[1]['type']});
+    % if knob[1]['type'] == 'std::string':
+    DEFINE_KNOB(${knob[0]}, ${knob[1]['type']}, "${repr(knob[1]['default'])[1:-1]}");
+    % else:
+    DEFINE_KNOB(${knob[0]}, ${knob[1]['type']}, ${knob[1]['default']});
+    % endif
 
     % endfor
 

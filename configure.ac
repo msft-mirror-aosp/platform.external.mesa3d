@@ -122,7 +122,7 @@ LLVM_REQUIRED_OPENCL=3.9.0
 LLVM_REQUIRED_R600=3.9.0
 LLVM_REQUIRED_RADEONSI=7.0.0
 LLVM_REQUIRED_RADV=7.0.0
-LLVM_REQUIRED_SWR=6.0.0
+LLVM_REQUIRED_SWR=7.0.0
 
 dnl Check for progs
 AC_PROG_CPP
@@ -320,7 +320,6 @@ dnl
 AX_CHECK_COMPILE_FLAG([-Wall],                                 [CFLAGS="$CFLAGS -Wall"])
 AX_CHECK_COMPILE_FLAG([-Werror=implicit-function-declaration], [CFLAGS="$CFLAGS -Werror=implicit-function-declaration"])
 AX_CHECK_COMPILE_FLAG([-Werror=missing-prototypes],            [CFLAGS="$CFLAGS -Werror=missing-prototypes"])
-AX_CHECK_COMPILE_FLAG([-Werror=incompatible-pointer-types],    [CFLAGS="$CFLAGS -Werror=incompatible-pointer-types"])
 AX_CHECK_COMPILE_FLAG([-Wmissing-prototypes],                  [CFLAGS="$CFLAGS -Wmissing-prototypes"])
 dnl Dylan Baker: gcc and clang always accepr -Wno-*, hence check for the original warning, then set the no-* flag
 AX_CHECK_COMPILE_FLAG([-Wmissing-field-initializers],          [CFLAGS="$CFLAGS -Wno-missing-field-initializers"])
@@ -1557,29 +1556,6 @@ AC_ARG_WITH([osmesa-lib-name],
 GL_LIB="$DEFAULT_GL_LIB_NAME"
 OSMESA_LIB=OSMesa
 
-AC_ARG_WITH([egl-lib-suffix],
-  [AS_HELP_STRING([--with-egl-lib-suffix@<:@=NAME@:>@],
-    [specify EGL library suffix @<:@default=none@:>@])],
-  [EGL_LIB_SUFFIX=$withval],
-  [EGL_LIB_SUFFIX=""])
-AC_ARG_WITH([gles-lib-suffix],
-  [AS_HELP_STRING([--with-gles-lib-suffix@<:@=NAME@:>@],
-    [specify GLES library suffix @<:@default=none@:>@])],
-  [GLES_LIB_SUFFIX=$withval],
-  [GLES_LIB_SUFFIX=""])
-AS_IF([test "x$EGL_LIB_SUFFIX" = xyes], [EGL_LIB_SUFFIX=""])
-AS_IF([test "x$GLES_LIB_SUFFIX" = xyes], [GLES_LIB_SUFFIX=""])
-
-if test "x$enable_libglvnd" = xyes -a "x$EGL_LIB_SUFFIX" != x; then
-    AC_MSG_ERROR([EGL lib suffix can't be used with libglvnd])
-fi
-
-AC_ARG_WITH([platform-sdk-version],
-  [AS_HELP_STRING([--with-platform-sdk-version@<:@=NAME@:>@],
-    [specify Android platform SDK version @<:@default=none@:>@])],
-  [platform_sdk_version=$withval],
-  [platform_sdk_version=""])
-
 dnl
 dnl Mangled Mesa support
 dnl
@@ -1598,8 +1574,6 @@ if test "x${enable_mangling}" = "xyes" ; then
   OSMESA_LIB="Mangled${OSMESA_LIB}"
 fi
 AC_SUBST([GL_LIB])
-AC_SUBST([EGL_LIB_SUFFIX])
-AC_SUBST([GLES_LIB_SUFFIX])
 AC_SUBST([OSMESA_LIB])
 
 dnl HACK when building glx + glvnd we ship gl.pc, despite that glvnd should do it
@@ -1914,12 +1888,7 @@ for plat in $platforms; do
         ;;
 
     android)
-        if test -n "$platform_sdk_version" && test "$platform_sdk_version" -ge 26; then
-            PKG_CHECK_MODULES([ANDROID], [cutils hardware nativewindow sync])
-        else
-            PKG_CHECK_MODULES([ANDROID], [cutils hardware sync])
-        fi
-
+        PKG_CHECK_MODULES([ANDROID], [cutils hardware sync])
         if test -n "$with_gallium_drivers"; then
             PKG_CHECK_MODULES([BACKTRACE], [backtrace])
         fi
@@ -2876,8 +2845,8 @@ if test -n "$with_gallium_drivers"; then
 fi
 
 # XXX: Keep in sync with LLVM_REQUIRED_SWR
-AM_CONDITIONAL(SWR_INVALID_LLVM_VERSION, test "x$LLVM_VERSION" != x6.0.0 -a \
-                                              "x$LLVM_VERSION" != x6.0.1)
+AM_CONDITIONAL(SWR_INVALID_LLVM_VERSION, test "x$LLVM_VERSION" != x7.0.0 -a \
+                                              "x$LLVM_VERSION" != x7.0.1)
 
 if test "x$enable_llvm" = "xyes" -a "$with_gallium_drivers"; then
     llvm_require_version $LLVM_REQUIRED_GALLIUM "gallium"

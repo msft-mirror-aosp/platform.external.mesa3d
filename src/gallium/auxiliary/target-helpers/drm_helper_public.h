@@ -11,7 +11,7 @@ struct pipe_screen *
 pipe_i915_create_screen(int fd, const struct pipe_screen_config *config);
 
 struct pipe_screen *
-pipe_iris_create_screen(int fd, const struct pipe_screen_config *config);
+pipe_ilo_create_screen(int fd, const struct pipe_screen_config *config);
 
 struct pipe_screen *
 pipe_nouveau_create_screen(int fd, const struct pipe_screen_config *config);
@@ -41,9 +41,6 @@ pipe_v3d_create_screen(int fd, const struct pipe_screen_config *config);
 
 struct pipe_screen *
 pipe_vc4_create_screen(int fd, const struct pipe_screen_config *config);
-
-struct pipe_screen *
-pipe_panfrost_create_screen(int fd, const struct pipe_screen_config *config);
 
 struct pipe_screen *
 pipe_kmsro_create_screen(int fd, const struct pipe_screen_config *config);

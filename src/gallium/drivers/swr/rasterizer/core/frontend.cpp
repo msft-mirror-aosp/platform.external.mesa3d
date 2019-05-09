@@ -575,7 +575,7 @@ static void StreamOut(
         // Call SOS
         SWR_ASSERT(state.pfnSoFunc[streamIndex] != nullptr,
                    "Trying to execute uninitialized streamout jit function.");
-        state.pfnSoFunc[streamIndex](GetPrivateState(pDC), soContext);
+        state.pfnSoFunc[streamIndex](soContext);
     }
 
     // Update SO write offset. The driver provides memory for the update.
@@ -583,9 +583,7 @@ static void StreamOut(
     {
         if (state.soBuffer[i].pWriteOffset)
         {
-            bool nullTileAccessed = false;
-            void* pWriteOffset = pDC->pContext->pfnTranslateGfxptrForWrite(GetPrivateState(pDC), soContext.pBuffer[i]->pWriteOffset, &nullTileAccessed);
-            *((uint32_t*)pWriteOffset) = soContext.pBuffer[i]->streamOffset * sizeof(uint32_t);
+            *state.soBuffer[i].pWriteOffset = soContext.pBuffer[i]->streamOffset * sizeof(uint32_t);
         }
 
         if (state.soBuffer[i].soWriteEnable)
@@ -784,19 +782,19 @@ void TransposeSOAtoAOS(uint8_t* pDst, uint8_t* pSrc, uint32_t numVerts, uint32_t
 
         for (uint32_t a = 0; a < numAttribs; ++a)
         {
-            auto attribGatherX = SIMD_T::mask_i32gather_ps(
+            auto attribGatherX = SIMD_T::template mask_i32gather_ps<ScaleFactor<SIMD_T>(1)>(
                 SIMD_T::setzero_ps(), (const float*)pSrcBase, vGatherOffsets, vMask);
-            auto attribGatherY = SIMD_T::mask_i32gather_ps(
+            auto attribGatherY = SIMD_T::template mask_i32gather_ps<ScaleFactor<SIMD_T>(1)>(
                 SIMD_T::setzero_ps(),
                 (const float*)(pSrcBase + sizeof(float)),
                 vGatherOffsets,
                 vMask);
-            auto attribGatherZ = SIMD_T::mask_i32gather_ps(
+            auto attribGatherZ = SIMD_T::template mask_i32gather_ps<ScaleFactor<SIMD_T>(1)>(
                 SIMD_T::setzero_ps(),
                 (const float*)(pSrcBase + sizeof(float) * 2),
                 vGatherOffsets,
                 vMask);
-            auto attribGatherW = SIMD_T::mask_i32gather_ps(
+            auto attribGatherW = SIMD_T::template mask_i32gather_ps<ScaleFactor<SIMD_T>(1)>(
                 SIMD_T::setzero_ps(),
                 (const float*)(pSrcBase + sizeof(float) * 3),
                 vGatherOffsets,
@@ -890,7 +888,7 @@ static void GeometryShaderStage(DRAW_CONTEXT* pDC,
 
         // execute the geometry shader
         state.pfnGsFunc(GetPrivateState(pDC), pWorkerData, &gsContext);
-        AR_EVENT(GSStats((HANDLE)&gsContext.stats));
+        AR_EVENT(GSStats(gsContext.stats.numInstExecuted));
 
         for (uint32_t i = 0; i < KNOB_SIMD_WIDTH; ++i)
         {
@@ -1377,7 +1375,7 @@ static void TessellationStages(DRAW_CONTEXT* pDC,
     RDTSC_END(FEHullShader, 0);
 
     UPDATE_STAT_FE(HsInvocations, numPrims);
-    AR_EVENT(HSStats((HANDLE)&hsContext.stats));
+    AR_EVENT(HSStats(hsContext.stats.numInstExecuted));
 
     const uint32_t* pPrimId = (const uint32_t*)&primID;
 
@@ -1445,7 +1443,7 @@ static void TessellationStages(DRAW_CONTEXT* pDC,
             state.pfnDsFunc(GetPrivateState(pDC), pWorkerData, &dsContext);
             RDTSC_END(FEDomainShader, 0);
 
-            AR_EVENT(DSStats((HANDLE)&dsContext.stats));
+            AR_EVENT(DSStats(dsContext.stats.numInstExecuted));
 
             dsInvocations += KNOB_SIMD_WIDTH;
         }
@@ -1842,10 +1840,9 @@ void ProcessDraw(SWR_CONTEXT* pContext, DRAW_CONTEXT* pDC, uint32_t workerId, vo
         {
             vIndex = _simd16_add_epi32(_simd16_set1_epi32(work.startVertexID), vScale);
 
-            fetchInfo_lo.xpIndices = pDC->pContext->pfnMakeGfxPtr(GetPrivateState(pDC), &vIndex);
-            fetchInfo_hi.xpIndices = pDC->pContext->pfnMakeGfxPtr(
-                GetPrivateState(pDC),
-                &vIndex + KNOB_SIMD_WIDTH * sizeof(int32_t)); // 1/2 of KNOB_SIMD16_WIDTH
+            fetchInfo_lo.xpIndices = (gfxptr_t)&vIndex;
+            fetchInfo_hi.xpIndices =
+                (gfxptr_t)&vIndex + KNOB_SIMD_WIDTH * sizeof(int32_t); // 1/2 of KNOB_SIMD16_WIDTH
         }
 
         fetchInfo_lo.CurInstance = instanceNum;
@@ -1953,15 +1950,15 @@ void ProcessDraw(SWR_CONTEXT* pContext, DRAW_CONTEXT* pDC, uint32_t workerId, vo
                     RDTSC_BEGIN(FEVertexShader, pDC->drawId);
 #if USE_SIMD16_VS
                     state.pfnVertexFunc(GetPrivateState(pDC), pWorkerData, &vsContext_lo);
-                    AR_EVENT(VSStats((HANDLE)&vsContext_lo.stats));
+                    AR_EVENT(VSStats(vsContext_lo.stats.numInstExecuted));
 #else
                     state.pfnVertexFunc(GetPrivateState(pDC), pWorkerData, &vsContext_lo);
-                    AR_EVENT(VSStats((HANDLE)&vsContext_lo.stats));
+                    AR_EVENT(VSStats(vsContext_lo.stats.numInstExecuted));
 
                     if ((i + KNOB_SIMD_WIDTH) < endVertex) // 1/2 of KNOB_SIMD16_WIDTH
                     {
                         state.pfnVertexFunc(GetPrivateState(pDC), pWorkerData, &vsContext_hi);
-                        AR_EVENT(VSStats((HANDLE)&vsContext_hi.stats));
+                        AR_EVENT(VSStats(vsContext_hi.stats.numInstExecuted));
                     }
 #endif
                     RDTSC_END(FEVertexShader, 0);
@@ -2217,7 +2214,7 @@ void ProcessDraw(SWR_CONTEXT* pContext, DRAW_CONTEXT* pDC, uint32_t workerId, vo
                     RDTSC_END(FEVertexShader, 0);
 
                     UPDATE_STAT_FE(VsInvocations, GetNumInvocations(i, endVertex));
-                    AR_EVENT(VSStats((HANDLE)&vsContext.stats));
+                    AR_EVENT(VSStats(vsContext.stats.numInstExecuted));
                 }
             }
 

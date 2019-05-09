@@ -487,7 +487,7 @@ wglGetPixelFormatAttribfvARB(HDC hdc, int iPixelFormat, int iLayerPlane,
    (void) hdc;
 
    for (i = 0; i < nAttributes; i++) {
-      int value = 0;
+      int value;
 
       if (!stw_query_attrib(iPixelFormat, iLayerPlane,
                              piAttributes[i], &value))

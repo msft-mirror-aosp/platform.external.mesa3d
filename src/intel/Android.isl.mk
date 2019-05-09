@@ -283,23 +283,13 @@ endif
 LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 
 intermediates := $(call local-generated-sources-dir)
+prebuilt_intermediates := $(MESA_TOP)/prebuilt-intermediates
 
 LOCAL_GENERATED_SOURCES += $(addprefix $(intermediates)/, $(ISL_GENERATED_FILES))
 
-define bash-gen
+$(intermediates)/isl/isl_format_layout.c: $(prebuilt_intermediates)/isl/isl_format_layout.c
 	@mkdir -p $(dir $@)
-	@echo "Gen Bash: $(PRIVATE_MODULE) <= $(notdir $(@))"
-	$(hide) $(PRIVATE_SCRIPT) --csv $(PRIVATE_CSV) --out $@
-endef
-
-isl_format_layout_deps := \
-	$(LOCAL_PATH)/isl/gen_format_layout.py \
-	$(LOCAL_PATH)/isl/isl_format_layout.csv
-
-$(intermediates)/isl/isl_format_layout.c: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(LOCAL_PATH)/isl/gen_format_layout.py
-$(intermediates)/isl/isl_format_layout.c: PRIVATE_CSV := $(LOCAL_PATH)/isl/isl_format_layout.csv
-$(intermediates)/isl/isl_format_layout.c: $(isl_format_layout_deps)
-	$(call bash-gen)
+	@cp -f $< $@
 
 include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)

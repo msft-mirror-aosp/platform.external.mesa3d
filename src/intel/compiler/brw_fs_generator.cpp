@@ -279,16 +279,16 @@ fs_generator::generate_send(fs_inst *inst,
        * also covers the dual-payload case because ex_mlen goes in ex_desc.
        */
       brw_send_indirect_split_message(p, inst->sfid, dst, payload, payload2,
-                                      desc, desc_imm, ex_desc, ex_desc_imm,
-                                      inst->eot);
+                                      desc, desc_imm, ex_desc, ex_desc_imm);
       if (inst->check_tdr)
          brw_inst_set_opcode(p->devinfo, brw_last_inst, BRW_OPCODE_SENDSC);
    } else {
-      brw_send_indirect_message(p, inst->sfid, dst, payload, desc, desc_imm,
-                                   inst->eot);
+      brw_send_indirect_message(p, inst->sfid, dst, payload, desc, desc_imm);
       if (inst->check_tdr)
          brw_inst_set_opcode(p->devinfo, brw_last_inst, BRW_OPCODE_SENDC);
    }
+
+   brw_inst_set_eot(p->devinfo, brw_last_inst, inst->eot);
 }
 
 void
@@ -988,11 +988,12 @@ fs_generator::generate_tex(fs_inst *inst, struct brw_reg dst,
    int msg_type = -1;
    uint32_t simd_mode;
    uint32_t return_format;
+   bool is_combined_send = inst->eot;
 
    /* Sampler EOT message of less than the dispatch width would kill the
     * thread prematurely.
     */
-   assert(!inst->eot || inst->exec_size == dispatch_width);
+   assert(!is_combined_send || inst->exec_size == dispatch_width);
 
    switch (dst.type) {
    case BRW_REGISTER_TYPE_D:
@@ -1463,8 +1464,7 @@ fs_generator::generate_uniform_pull_constant_load_gen7(fs_inst *inst,
          brw_dp_read_desc(devinfo, 0 /* surface */,
                           BRW_DATAPORT_OWORD_BLOCK_DWORDS(inst->exec_size),
                           GEN7_DATAPORT_DC_OWORD_BLOCK_READ,
-                          BRW_DATAPORT_READ_TARGET_DATA_CACHE),
-         false /* EOT */);
+                          BRW_DATAPORT_READ_TARGET_DATA_CACHE));
 
       brw_pop_insn_state(p);
    }

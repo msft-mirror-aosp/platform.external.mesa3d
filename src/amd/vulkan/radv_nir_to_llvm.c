@@ -589,7 +589,6 @@ set_loc_desc(struct radv_shader_context *ctx, int idx, uint8_t *sgpr_idx)
 struct user_sgpr_info {
 	bool need_ring_offsets;
 	bool indirect_all_descriptor_sets;
-	uint8_t remaining_sgprs;
 };
 
 static bool needs_view_index_sgpr(struct radv_shader_context *ctx,
@@ -626,50 +625,6 @@ count_vs_user_sgprs(struct radv_shader_context *ctx)
 	count += ctx->shader_info->info.vs.needs_draw_id ? 3 : 2;
 
 	return count;
-}
-
-static void allocate_inline_push_consts(struct radv_shader_context *ctx,
-					struct user_sgpr_info *user_sgpr_info)
-{
-	uint8_t remaining_sgprs = user_sgpr_info->remaining_sgprs;
-
-	/* Only supported if shaders use push constants. */
-	if (ctx->shader_info->info.min_push_constant_used == UINT8_MAX)
-		return;
-
-	/* Only supported if shaders don't have indirect push constants. */
-	if (ctx->shader_info->info.has_indirect_push_constants)
-		return;
-
-	/* Only supported for 32-bit push constants. */
-	if (!ctx->shader_info->info.has_only_32bit_push_constants)
-		return;
-
-	uint8_t num_push_consts =
-		(ctx->shader_info->info.max_push_constant_used -
-		 ctx->shader_info->info.min_push_constant_used) / 4;
-
-	/* Check if the number of user SGPRs is large enough. */
-	if (num_push_consts < remaining_sgprs) {
-		ctx->shader_info->info.num_inline_push_consts = num_push_consts;
-	} else {
-		ctx->shader_info->info.num_inline_push_consts = remaining_sgprs;
-	}
-
-	/* Clamp to the maximum number of allowed inlined push constants. */
-	if (ctx->shader_info->info.num_inline_push_consts > AC_MAX_INLINE_PUSH_CONSTS)
-		ctx->shader_info->info.num_inline_push_consts = AC_MAX_INLINE_PUSH_CONSTS;
-
-	if (ctx->shader_info->info.num_inline_push_consts == num_push_consts &&
-	    !ctx->shader_info->info.loads_dynamic_offsets) {
-		/* Disable the default push constants path if all constants are
-		 * inlined and if shaders don't use dynamic descriptors.
-		 */
-		ctx->shader_info->info.loads_push_constants = false;
-	}
-
-	ctx->shader_info->info.base_inline_push_consts =
-		ctx->shader_info->info.min_push_constant_used / 4;
 }
 
 static void allocate_user_sgprs(struct radv_shader_context *ctx,
@@ -747,12 +702,7 @@ static void allocate_user_sgprs(struct radv_shader_context *ctx,
 
 	if (remaining_sgprs < num_desc_set) {
 		user_sgpr_info->indirect_all_descriptor_sets = true;
-		user_sgpr_info->remaining_sgprs = remaining_sgprs - 1;
-	} else {
-		user_sgpr_info->remaining_sgprs = remaining_sgprs - num_desc_set;
 	}
-
-	allocate_inline_push_consts(ctx, user_sgpr_info);
 }
 
 static void
@@ -781,13 +731,6 @@ declare_global_input_sgprs(struct radv_shader_context *ctx,
 		/* 1 for push constants and dynamic descriptors */
 		add_arg(args, ARG_SGPR, type, &ctx->abi.push_constants);
 	}
-
-	for (unsigned i = 0; i < ctx->shader_info->info.num_inline_push_consts; i++) {
-		add_arg(args, ARG_SGPR, ctx->ac.i32,
-			&ctx->abi.inline_push_consts[i]);
-	}
-	ctx->abi.num_inline_push_consts = ctx->shader_info->info.num_inline_push_consts;
-	ctx->abi.base_inline_push_consts = ctx->shader_info->info.base_inline_push_consts;
 
 	if (ctx->shader_info->info.so.num_outputs) {
 		add_arg(args, ARG_SGPR,
@@ -905,11 +848,6 @@ set_global_input_locs(struct radv_shader_context *ctx,
 
 	if (ctx->shader_info->info.loads_push_constants) {
 		set_loc_shader_ptr(ctx, AC_UD_PUSH_CONSTANTS, user_sgpr_idx);
-	}
-
-	if (ctx->shader_info->info.num_inline_push_consts) {
-		set_loc_shader(ctx, AC_UD_INLINE_PUSH_CONSTANTS, user_sgpr_idx,
-			       ctx->shader_info->info.num_inline_push_consts);
 	}
 
 	if (ctx->streamout_buffers) {
@@ -2008,8 +1946,6 @@ adjust_vertex_fetch_alpha(struct radv_shader_context *ctx,
 
 	LLVMValueRef c30 = LLVMConstInt(ctx->ac.i32, 30, 0);
 
-	alpha = LLVMBuildBitCast(ctx->ac.builder, alpha, ctx->ac.f32, "");
-
 	if (adjustment == RADV_ALPHA_ADJUST_SSCALED)
 		alpha = LLVMBuildFPToUI(ctx->ac.builder, alpha, ctx->ac.i32, "");
 	else
@@ -2037,71 +1973,7 @@ adjust_vertex_fetch_alpha(struct radv_shader_context *ctx,
 		alpha = LLVMBuildSIToFP(ctx->ac.builder, alpha, ctx->ac.f32, "");
 	}
 
-	return LLVMBuildBitCast(ctx->ac.builder, alpha, ctx->ac.i32, "");
-}
-
-static unsigned
-get_num_channels_from_data_format(unsigned data_format)
-{
-	switch (data_format) {
-	case V_008F0C_BUF_DATA_FORMAT_8:
-	case V_008F0C_BUF_DATA_FORMAT_16:
-	case V_008F0C_BUF_DATA_FORMAT_32:
-		return 1;
-	case V_008F0C_BUF_DATA_FORMAT_8_8:
-	case V_008F0C_BUF_DATA_FORMAT_16_16:
-	case V_008F0C_BUF_DATA_FORMAT_32_32:
-		return 2;
-	case V_008F0C_BUF_DATA_FORMAT_10_11_11:
-	case V_008F0C_BUF_DATA_FORMAT_11_11_10:
-	case V_008F0C_BUF_DATA_FORMAT_32_32_32:
-		return 3;
-	case V_008F0C_BUF_DATA_FORMAT_8_8_8_8:
-	case V_008F0C_BUF_DATA_FORMAT_10_10_10_2:
-	case V_008F0C_BUF_DATA_FORMAT_2_10_10_10:
-	case V_008F0C_BUF_DATA_FORMAT_16_16_16_16:
-	case V_008F0C_BUF_DATA_FORMAT_32_32_32_32:
-		return 4;
-	default:
-		break;
-	}
-
-	return 4;
-}
-
-static LLVMValueRef
-radv_fixup_vertex_input_fetches(struct radv_shader_context *ctx,
-				LLVMValueRef value,
-				unsigned num_channels,
-				bool is_float)
-{
-	LLVMValueRef zero = is_float ? ctx->ac.f32_0 : ctx->ac.i32_0;
-	LLVMValueRef one = is_float ? ctx->ac.f32_1 : ctx->ac.i32_1;
-	LLVMValueRef chan[4];
-
-	if (LLVMGetTypeKind(LLVMTypeOf(value)) == LLVMVectorTypeKind) {
-		unsigned vec_size = LLVMGetVectorSize(LLVMTypeOf(value));
-
-		if (num_channels == 4 && num_channels == vec_size)
-			return value;
-
-		num_channels = MIN2(num_channels, vec_size);
-
-		for (unsigned i = 0; i < num_channels; i++)
-			chan[i] = ac_llvm_extract_elem(&ctx->ac, value, i);
-	} else {
-		if (num_channels) {
-			assert(num_channels == 1);
-			chan[0] = value;
-		}
-	}
-
-	for (unsigned i = num_channels; i < 4; i++) {
-		chan[i] = i == 3 ? one : zero;
-		chan[i] = ac_to_integer(&ctx->ac, chan[i]);
-	}
-
-	return ac_build_gather_values(&ctx->ac, chan, 4);
+	return alpha;
 }
 
 static void
@@ -2116,7 +1988,7 @@ handle_vs_input_decl(struct radv_shader_context *ctx,
 	unsigned attrib_count = glsl_count_attribute_slots(variable->type, true);
 	uint8_t input_usage_mask =
 		ctx->shader_info->info.vs.input_usage_mask[variable->data.location];
-	unsigned num_input_channels = util_last_bit(input_usage_mask);
+	unsigned num_channels = util_last_bit(input_usage_mask);
 
 	variable->data.driver_location = variable->data.location * 4;
 
@@ -2124,11 +1996,6 @@ handle_vs_input_decl(struct radv_shader_context *ctx,
 	for (unsigned i = 0; i < attrib_count; ++i) {
 		LLVMValueRef output[4];
 		unsigned attrib_index = variable->data.location + i - VERT_ATTRIB_GENERIC0;
-		unsigned attrib_format = ctx->options->key.vs.vertex_attribute_formats[attrib_index];
-		unsigned data_format = attrib_format & 0x0f;
-		unsigned num_format = (attrib_format >> 4) & 0x07;
-		bool is_float = num_format != V_008F0C_BUF_NUM_FORMAT_UINT &&
-		                num_format != V_008F0C_BUF_NUM_FORMAT_SINT;
 
 		if (ctx->options->key.vs.instance_rate_inputs & (1u << attrib_index)) {
 			uint32_t divisor = ctx->options->key.vs.instance_rate_divisors[attrib_index];
@@ -2156,58 +2023,38 @@ handle_vs_input_decl(struct radv_shader_context *ctx,
 		} else
 			buffer_index = LLVMBuildAdd(ctx->ac.builder, ctx->abi.vertex_id,
 			                            ctx->abi.base_vertex, "");
+		t_offset = LLVMConstInt(ctx->ac.i32, attrib_index, false);
 
-		/* Adjust the number of channels to load based on the vertex
-		 * attribute format.
-		 */
-		unsigned num_format_channels = get_num_channels_from_data_format(data_format);
-		unsigned num_channels = MIN2(num_input_channels, num_format_channels);
-		unsigned attrib_binding = ctx->options->key.vs.vertex_attribute_bindings[attrib_index];
-		unsigned attrib_offset = ctx->options->key.vs.vertex_attribute_offsets[attrib_index];
-		unsigned attrib_stride = ctx->options->key.vs.vertex_attribute_strides[attrib_index];
-
-		if (ctx->options->key.vs.post_shuffle & (1 << attrib_index)) {
-			/* Always load, at least, 3 channels for formats that
-			 * need to be shuffled because X<->Z.
-			 */
-			num_channels = MAX2(num_channels, 3);
-		}
-
-		if (attrib_stride != 0 && attrib_offset > attrib_stride) {
-			LLVMValueRef buffer_offset =
-				LLVMConstInt(ctx->ac.i32,
-					     attrib_offset / attrib_stride, false);
-
-			buffer_index = LLVMBuildAdd(ctx->ac.builder,
-						    buffer_index,
-						    buffer_offset, "");
-
-			attrib_offset = attrib_offset % attrib_stride;
-		}
-
-		t_offset = LLVMConstInt(ctx->ac.i32, attrib_binding, false);
 		t_list = ac_build_load_to_sgpr(&ctx->ac, t_list_ptr, t_offset);
 
-		input = ac_build_struct_tbuffer_load(&ctx->ac, t_list,
-						     buffer_index,
-						     LLVMConstInt(ctx->ac.i32, attrib_offset, false),
-						     ctx->ac.i32_0, ctx->ac.i32_0,
-						     num_channels,
-						     data_format, num_format,
-						     false, false, true);
+		if (ctx->options->key.vs.vertex_attribute_provided & (1u << attrib_index)) {
+			input = ac_build_buffer_load_format(&ctx->ac, t_list,
+							    buffer_index,
+							    ctx->ac.i32_0,
+							    num_channels, false, true);
+		} else {
+			/* Per the Vulkan spec, it's invalid to consume vertex
+			 * attributes that are not provided by the pipeline but
+			 * some (invalid) apps appear to do that. Fill the
+			 * input array with (eg. (0, 0, 0, 1)) to workaround
+			 * the problem and to avoid possible GPU hangs.
+			 */
+			LLVMValueRef chan[4];
 
-		if (ctx->options->key.vs.post_shuffle & (1 << attrib_index)) {
-			LLVMValueRef c[4];
-			c[0] = ac_llvm_extract_elem(&ctx->ac, input, 2);
-			c[1] = ac_llvm_extract_elem(&ctx->ac, input, 1);
-			c[2] = ac_llvm_extract_elem(&ctx->ac, input, 0);
-			c[3] = ac_llvm_extract_elem(&ctx->ac, input, 3);
+			/* The input_usage mask might be 0 if input variables
+			 * are not removed by the compiler.
+			 */
+			num_channels = CLAMP(num_channels, 1, 4);
 
-			input = ac_build_gather_values(&ctx->ac, c, 4);
+			for (unsigned i = 0; i < num_channels; i++) {
+				chan[i] = i == 3 ? ctx->ac.f32_1 : ctx->ac.f32_0;
+				chan[i] = ac_to_float(&ctx->ac, chan[i]);
+			}
+
+			input = ac_build_gather_values(&ctx->ac, chan, num_channels);
 		}
 
-		input = radv_fixup_vertex_input_fetches(ctx, input, num_channels,
-							is_float);
+		input = ac_build_expand_to_vec4(&ctx->ac, input, num_channels);
 
 		for (unsigned chan = 0; chan < 4; chan++) {
 			LLVMValueRef llvm_chan = LLVMConstInt(ctx->ac.i32, chan, false);
@@ -2305,7 +2152,7 @@ static void mark_16bit_fs_input(struct radv_shader_context *ctx,
 			mark_16bit_fs_input(ctx, glsl_get_array_element(type), location + i * stride);
 		}
 	} else {
-		assert(glsl_type_is_struct_or_ifc(type));
+		assert(glsl_type_is_struct(type));
 		for (unsigned i = 0; i < glsl_get_length(type); i++) {
 			mark_16bit_fs_input(ctx, glsl_get_struct_field(type, i), location);
 			location += glsl_count_attribute_slots(glsl_get_struct_field(type, i), false);
@@ -3555,9 +3402,9 @@ ac_setup_rings(struct radv_shader_context *ctx)
 	}
 }
 
-unsigned
-radv_nir_get_max_workgroup_size(enum chip_class chip_class,
-				const struct nir_shader *nir)
+static unsigned
+ac_nir_get_max_workgroup_size(enum chip_class chip_class,
+			      const struct nir_shader *nir)
 {
 	switch (nir->info.stage) {
 	case MESA_SHADER_TESS_CTRL:
@@ -3622,8 +3469,6 @@ LLVMModuleRef ac_translate_nir_to_llvm(struct ac_llvm_compiler *ac_llvm,
 
 	memset(shader_info, 0, sizeof(*shader_info));
 
-	radv_nir_shader_info_init(&shader_info->info);
-
 	for(int i = 0; i < shader_count; ++i)
 		radv_nir_shader_info_pass(shaders[i], options, &shader_info->info);
 
@@ -3635,7 +3480,7 @@ LLVMModuleRef ac_translate_nir_to_llvm(struct ac_llvm_compiler *ac_llvm,
 	ctx.max_workgroup_size = 0;
 	for (int i = 0; i < shader_count; ++i) {
 		ctx.max_workgroup_size = MAX2(ctx.max_workgroup_size,
-		                              radv_nir_get_max_workgroup_size(ctx.options->chip_class,
+		                              ac_nir_get_max_workgroup_size(ctx.options->chip_class,
 		                                                            shaders[i]));
 	}
 

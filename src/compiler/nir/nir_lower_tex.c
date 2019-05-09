@@ -114,9 +114,7 @@ get_texture_size(nir_builder *b, nir_tex_instr *tex)
       if (tex->src[i].src_type == nir_tex_src_texture_deref ||
           tex->src[i].src_type == nir_tex_src_sampler_deref ||
           tex->src[i].src_type == nir_tex_src_texture_offset ||
-          tex->src[i].src_type == nir_tex_src_sampler_offset ||
-          tex->src[i].src_type == nir_tex_src_texture_handle ||
-          tex->src[i].src_type == nir_tex_src_sampler_handle)
+          tex->src[i].src_type == nir_tex_src_sampler_offset)
          num_srcs++;
    }
 
@@ -135,9 +133,7 @@ get_texture_size(nir_builder *b, nir_tex_instr *tex)
       if (tex->src[i].src_type == nir_tex_src_texture_deref ||
           tex->src[i].src_type == nir_tex_src_sampler_deref ||
           tex->src[i].src_type == nir_tex_src_texture_offset ||
-          tex->src[i].src_type == nir_tex_src_sampler_offset ||
-          tex->src[i].src_type == nir_tex_src_texture_handle ||
-          tex->src[i].src_type == nir_tex_src_sampler_handle) {
+          tex->src[i].src_type == nir_tex_src_sampler_offset) {
          nir_src_copy(&txs->src[idx].src, &tex->src[i].src, txs);
          txs->src[idx].src_type = tex->src[i].src_type;
          idx++;
@@ -167,9 +163,7 @@ get_texture_lod(nir_builder *b, nir_tex_instr *tex)
           tex->src[i].src_type == nir_tex_src_texture_deref ||
           tex->src[i].src_type == nir_tex_src_sampler_deref ||
           tex->src[i].src_type == nir_tex_src_texture_offset ||
-          tex->src[i].src_type == nir_tex_src_sampler_offset ||
-          tex->src[i].src_type == nir_tex_src_texture_handle ||
-          tex->src[i].src_type == nir_tex_src_sampler_handle)
+          tex->src[i].src_type == nir_tex_src_sampler_offset)
          num_srcs++;
    }
 
@@ -190,9 +184,7 @@ get_texture_lod(nir_builder *b, nir_tex_instr *tex)
           tex->src[i].src_type == nir_tex_src_texture_deref ||
           tex->src[i].src_type == nir_tex_src_sampler_deref ||
           tex->src[i].src_type == nir_tex_src_texture_offset ||
-          tex->src[i].src_type == nir_tex_src_sampler_offset ||
-          tex->src[i].src_type == nir_tex_src_texture_handle ||
-          tex->src[i].src_type == nir_tex_src_sampler_handle) {
+          tex->src[i].src_type == nir_tex_src_sampler_offset) {
          nir_src_copy(&tql->src[idx].src, &tex->src[i].src, tql);
          tql->src[idx].src_type = tex->src[i].src_type;
          idx++;
@@ -314,8 +306,7 @@ lower_implicit_lod(nir_builder *b, nir_tex_instr *tex)
 }
 
 static nir_ssa_def *
-sample_plane(nir_builder *b, nir_tex_instr *tex, int plane,
-             const nir_lower_tex_options *options)
+sample_plane(nir_builder *b, nir_tex_instr *tex, int plane)
 {
    assert(tex->dest.is_ssa);
    assert(nir_tex_instr_dest_size(tex) == 4);
@@ -342,11 +333,6 @@ sample_plane(nir_builder *b, nir_tex_instr *tex, int plane,
    nir_ssa_dest_init(&plane_tex->instr, &plane_tex->dest, 4, 32, NULL);
 
    nir_builder_instr_insert(b, &plane_tex->instr);
-
-   /* If scaling_factor is set, return a scaled value. */
-   if (options->scale_factors[tex->texture_index])
-      return nir_fmul_imm(b, &plane_tex->dest.ssa,
-                          options->scale_factors[tex->texture_index]);
 
    return &plane_tex->dest.ssa;
 }
@@ -380,13 +366,12 @@ convert_yuv_to_rgb(nir_builder *b, nir_tex_instr *tex,
 }
 
 static void
-lower_y_uv_external(nir_builder *b, nir_tex_instr *tex,
-                    const nir_lower_tex_options *options)
+lower_y_uv_external(nir_builder *b, nir_tex_instr *tex)
 {
    b->cursor = nir_after_instr(&tex->instr);
 
-   nir_ssa_def *y = sample_plane(b, tex, 0, options);
-   nir_ssa_def *uv = sample_plane(b, tex, 1, options);
+   nir_ssa_def *y = sample_plane(b, tex, 0);
+   nir_ssa_def *uv = sample_plane(b, tex, 1);
 
    convert_yuv_to_rgb(b, tex,
                       nir_channel(b, y, 0),
@@ -396,14 +381,13 @@ lower_y_uv_external(nir_builder *b, nir_tex_instr *tex,
 }
 
 static void
-lower_y_u_v_external(nir_builder *b, nir_tex_instr *tex,
-                     const nir_lower_tex_options *options)
+lower_y_u_v_external(nir_builder *b, nir_tex_instr *tex)
 {
    b->cursor = nir_after_instr(&tex->instr);
 
-   nir_ssa_def *y = sample_plane(b, tex, 0, options);
-   nir_ssa_def *u = sample_plane(b, tex, 1, options);
-   nir_ssa_def *v = sample_plane(b, tex, 2, options);
+   nir_ssa_def *y = sample_plane(b, tex, 0);
+   nir_ssa_def *u = sample_plane(b, tex, 1);
+   nir_ssa_def *v = sample_plane(b, tex, 2);
 
    convert_yuv_to_rgb(b, tex,
                       nir_channel(b, y, 0),
@@ -413,13 +397,12 @@ lower_y_u_v_external(nir_builder *b, nir_tex_instr *tex,
 }
 
 static void
-lower_yx_xuxv_external(nir_builder *b, nir_tex_instr *tex,
-                       const nir_lower_tex_options *options)
+lower_yx_xuxv_external(nir_builder *b, nir_tex_instr *tex)
 {
    b->cursor = nir_after_instr(&tex->instr);
 
-   nir_ssa_def *y = sample_plane(b, tex, 0, options);
-   nir_ssa_def *xuxv = sample_plane(b, tex, 1, options);
+   nir_ssa_def *y = sample_plane(b, tex, 0);
+   nir_ssa_def *xuxv = sample_plane(b, tex, 1);
 
    convert_yuv_to_rgb(b, tex,
                       nir_channel(b, y, 0),
@@ -429,13 +412,12 @@ lower_yx_xuxv_external(nir_builder *b, nir_tex_instr *tex,
 }
 
 static void
-lower_xy_uxvx_external(nir_builder *b, nir_tex_instr *tex,
-                       const nir_lower_tex_options *options)
+lower_xy_uxvx_external(nir_builder *b, nir_tex_instr *tex)
 {
   b->cursor = nir_after_instr(&tex->instr);
 
-  nir_ssa_def *y = sample_plane(b, tex, 0, options);
-  nir_ssa_def *uxvx = sample_plane(b, tex, 1, options);
+  nir_ssa_def *y = sample_plane(b, tex, 0);
+  nir_ssa_def *uxvx = sample_plane(b, tex, 1);
 
   convert_yuv_to_rgb(b, tex,
                      nir_channel(b, y, 1),
@@ -445,33 +427,17 @@ lower_xy_uxvx_external(nir_builder *b, nir_tex_instr *tex,
 }
 
 static void
-lower_ayuv_external(nir_builder *b, nir_tex_instr *tex,
-                    const nir_lower_tex_options *options)
+lower_ayuv_external(nir_builder *b, nir_tex_instr *tex)
 {
   b->cursor = nir_after_instr(&tex->instr);
 
-  nir_ssa_def *ayuv = sample_plane(b, tex, 0, options);
+  nir_ssa_def *ayuv = sample_plane(b, tex, 0);
 
   convert_yuv_to_rgb(b, tex,
                      nir_channel(b, ayuv, 2),
                      nir_channel(b, ayuv, 1),
                      nir_channel(b, ayuv, 0),
                      nir_channel(b, ayuv, 3));
-}
-
-static void
-lower_xyuv_external(nir_builder *b, nir_tex_instr *tex,
-                    const nir_lower_tex_options *options)
-{
-  b->cursor = nir_after_instr(&tex->instr);
-
-  nir_ssa_def *xyuv = sample_plane(b, tex, 0, options);
-
-  convert_yuv_to_rgb(b, tex,
-                     nir_channel(b, xyuv, 2),
-                     nir_channel(b, xyuv, 1),
-                     nir_channel(b, xyuv, 0),
-                     nir_imm_float(b, 1.0f));
 }
 
 /*
@@ -933,53 +899,6 @@ sampler_index_lt(nir_tex_instr *tex, unsigned max)
 }
 
 static bool
-lower_tg4_offsets(nir_builder *b, nir_tex_instr *tex)
-{
-   assert(tex->op == nir_texop_tg4);
-   assert(nir_tex_instr_has_explicit_tg4_offsets(tex));
-   assert(nir_tex_instr_src_index(tex, nir_tex_src_offset) == -1);
-
-   b->cursor = nir_after_instr(&tex->instr);
-
-   nir_ssa_def *dest[4];
-   for (unsigned i = 0; i < 4; ++i) {
-      nir_tex_instr *tex_copy = nir_tex_instr_create(b->shader, tex->num_srcs + 1);
-      tex_copy->op = tex->op;
-      tex_copy->coord_components = tex->coord_components;
-      tex_copy->sampler_dim = tex->sampler_dim;
-      tex_copy->is_array = tex->is_array;
-      tex_copy->is_shadow = tex->is_shadow;
-      tex_copy->is_new_style_shadow = tex->is_new_style_shadow;
-      tex_copy->component = tex->component;
-      tex_copy->dest_type = tex->dest_type;
-
-      for (unsigned j = 0; j < tex->num_srcs; ++j) {
-         nir_src_copy(&tex_copy->src[j].src, &tex->src[j].src, tex_copy);
-         tex_copy->src[j].src_type = tex->src[j].src_type;
-      }
-
-      nir_tex_src src;
-      src.src = nir_src_for_ssa(nir_imm_ivec2(b, tex->tg4_offsets[i][0],
-                                                 tex->tg4_offsets[i][1]));
-      src.src_type = nir_tex_src_offset;
-      tex_copy->src[tex_copy->num_srcs - 1] = src;
-
-      nir_ssa_dest_init(&tex_copy->instr, &tex_copy->dest,
-                        nir_tex_instr_dest_size(tex), 32, NULL);
-
-      nir_builder_instr_insert(b, &tex_copy->instr);
-
-      dest[i] = nir_channel(b, &tex_copy->dest.ssa, 3);
-   }
-
-   nir_ssa_def *res = nir_vec4(b, dest[0], dest[1], dest[2], dest[3]);
-   nir_ssa_def_rewrite_uses(&tex->dest.ssa, nir_src_for_ssa(res));
-   nir_instr_remove(&tex->instr);
-
-   return true;
-}
-
-static bool
 nir_lower_tex_block(nir_block *block, nir_builder *b,
                     const nir_lower_tex_options *options)
 {
@@ -1023,32 +942,27 @@ nir_lower_tex_block(nir_block *block, nir_builder *b,
       }
 
       if ((1 << tex->texture_index) & options->lower_y_uv_external) {
-         lower_y_uv_external(b, tex, options);
+         lower_y_uv_external(b, tex);
          progress = true;
       }
 
       if ((1 << tex->texture_index) & options->lower_y_u_v_external) {
-         lower_y_u_v_external(b, tex, options);
+         lower_y_u_v_external(b, tex);
          progress = true;
       }
 
       if ((1 << tex->texture_index) & options->lower_yx_xuxv_external) {
-         lower_yx_xuxv_external(b, tex, options);
+         lower_yx_xuxv_external(b, tex);
          progress = true;
       }
 
       if ((1 << tex->texture_index) & options->lower_xy_uxvx_external) {
-         lower_xy_uxvx_external(b, tex, options);
+         lower_xy_uxvx_external(b, tex);
          progress = true;
       }
 
       if ((1 << tex->texture_index) & options->lower_ayuv_external) {
-         lower_ayuv_external(b, tex, options);
-         progress = true;
-      }
-
-      if ((1 << tex->texture_index) & options->lower_xyuv_external) {
-         lower_xyuv_external(b, tex, options);
+         lower_ayuv_external(b, tex);
          progress = true;
       }
 
@@ -1122,16 +1036,6 @@ nir_lower_tex_block(nir_block *block, nir_builder *b,
          b->cursor = nir_before_instr(&tex->instr);
          nir_tex_instr_add_src(tex, nir_tex_src_lod, nir_src_for_ssa(nir_imm_int(b, 0)));
          progress = true;
-         continue;
-      }
-
-      /* has to happen after all the other lowerings as the original tg4 gets
-       * replaced by 4 tg4 instructions.
-       */
-      if (tex->op == nir_texop_tg4 &&
-          nir_tex_instr_has_explicit_tg4_offsets(tex) &&
-          options->lower_tg4_offsets) {
-         progress |= lower_tg4_offsets(b, tex);
          continue;
       }
    }

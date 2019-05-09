@@ -188,7 +188,7 @@ void BackendSingleSample(DRAW_CONTEXT*        pDC,
 
                 // update stats
                 UPDATE_STAT_BE(PsInvocations, _mm_popcnt_u32(_simd_movemask_ps(vCoverageMask)));
-                AR_EVENT(PSStats((HANDLE)&psContext.stats));
+                AR_EVENT(PSStats(psContext.stats.numInstExecuted));
 
                 vCoverageMask = _simd_castsi_ps(psContext.activeMask);
 

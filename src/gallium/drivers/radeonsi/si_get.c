@@ -160,7 +160,6 @@ static int si_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
 	case PIPE_CAP_TGSI_BALLOT:
 	case PIPE_CAP_TGSI_VOTE:
 	case PIPE_CAP_TGSI_FS_FBFETCH:
-	case PIPE_CAP_COMPUTE_GRID_INFO_LAST_BLOCK:
 		return 1;
 
 	case PIPE_CAP_RESOURCE_FROM_USER_MEMORY:
@@ -487,6 +486,7 @@ static const struct nir_shader_compiler_options nir_options = {
 	.lower_scmp = true,
 	.lower_flrp32 = true,
 	.lower_flrp64 = true,
+	.lower_fpow = true,
 	.lower_fsat = true,
 	.lower_fdiv = true,
 	.lower_sub = true,

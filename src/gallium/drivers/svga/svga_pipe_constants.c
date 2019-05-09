@@ -31,8 +31,11 @@
 #include "svga_context.h"
 #include "svga_resource_buffer.h"
 
+/***********************************************************************
+ * Constant buffers 
+ */
 
-struct svga_constbuf
+struct svga_constbuf 
 {
    unsigned type;
    float (*data)[4];
@@ -41,10 +44,9 @@ struct svga_constbuf
 
 
 
-static void
-svga_set_constant_buffer(struct pipe_context *pipe,
-                         enum pipe_shader_type shader, uint index,
-                         const struct pipe_constant_buffer *cb)
+static void svga_set_constant_buffer(struct pipe_context *pipe,
+                                     enum pipe_shader_type shader, uint index,
+                                     const struct pipe_constant_buffer *cb)
 {
    struct svga_screen *svgascreen = svga_screen(pipe->screen);
    struct svga_context *svga = svga_context(pipe);
@@ -93,8 +95,8 @@ svga_set_constant_buffer(struct pipe_context *pipe,
 }
 
 
-void
-svga_init_constbuffer_functions(struct svga_context *svga)
+
+void svga_init_constbuffer_functions( struct svga_context *svga )
 {
    svga->pipe.set_constant_buffer = svga_set_constant_buffer;
 }

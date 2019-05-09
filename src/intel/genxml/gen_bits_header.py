@@ -25,7 +25,6 @@ from __future__ import (
 
 import argparse
 import os
-import re
 import xml.parsers.expat
 
 from mako.template import Template
@@ -131,10 +130,33 @@ ${emit_per_gen_prop_func(field, 'start')}
 
 #endif /* ${guard} */""", output_encoding='utf-8')
 
-alphanum_nono = re.compile(r'[ /\[\]()\-:.,=>#&*"+\\]+')
 def to_alphanum(name):
-    global alphanum_nono
-    return alphanum_nono.sub('', name).replace('α', 'alpha')
+    substitutions = {
+        ' ': '',
+        '/': '',
+        '[': '',
+        ']': '',
+        '(': '',
+        ')': '',
+        '-': '',
+        ':': '',
+        '.': '',
+        ',': '',
+        '=': '',
+        '>': '',
+        '#': '',
+        'α': 'alpha',
+        '&': '',
+        '*': '',
+        '"': '',
+        '+': '',
+        '\'': '',
+    }
+
+    for i, j in substitutions.items():
+        name = name.replace(i, j)
+
+    return name
 
 def safe_name(name):
     name = to_alphanum(name)
@@ -266,10 +288,6 @@ class XmlParser(object):
         if name == 'genxml':
             self.gen = Gen(attrs['gen'])
         elif name in ('instruction', 'struct', 'register'):
-            if name == 'instruction' and 'engine' in attrs:
-                engines = set(attrs['engine'].split('|'))
-                if not engines & self.engines:
-                    return
             self.start_container(attrs)
         elif name == 'field':
             self.start_field(attrs)
@@ -308,8 +326,6 @@ def parse_args():
                    help="If OUTPUT is unset or '-', then it defaults to '/dev/stdout'")
     p.add_argument('--cpp-guard', type=str,
                    help='If unset, then CPP_GUARD is derived from OUTPUT.')
-    p.add_argument('--engines', nargs='?', type=str, default='render',
-                   help="Comma-separated list of engines whose instructions should be parsed (default: %(default)s)")
     p.add_argument('xml_sources', metavar='XML_SOURCE', nargs='+')
 
     pargs = p.parse_args()
@@ -325,21 +341,11 @@ def parse_args():
 def main():
     pargs = parse_args()
 
-    engines = pargs.engines.split(',')
-    valid_engines = [ 'render', 'blitter', 'video' ]
-    if set(engines) - set(valid_engines):
-        print("Invalid engine specified, valid engines are:\n")
-        for e in valid_engines:
-            print("\t%s" % e)
-        sys.exit(1)
-
     # Maps name => Container
     containers = {}
 
     for source in pargs.xml_sources:
-        p = XmlParser(containers)
-        p.engines = set(engines)
-        p.parse(source)
+        XmlParser(containers).parse(source)
 
     with open(pargs.output, 'wb') as f:
         f.write(TEMPLATE.render(containers=containers, guard=pargs.cpp_guard))

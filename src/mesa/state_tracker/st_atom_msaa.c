@@ -31,7 +31,6 @@
 #include "pipe/p_context.h"
 #include "st_atom.h"
 #include "st_program.h"
-#include "st_util.h"
 
 #include "cso_cache/cso_context.h"
 #include "util/u_framebuffer.h"

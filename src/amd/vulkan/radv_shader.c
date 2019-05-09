@@ -53,7 +53,6 @@
 static const struct nir_shader_compiler_options nir_options = {
 	.vertex_id_zero_based = true,
 	.lower_scmp = true,
-	.lower_flrp16 = true,
 	.lower_flrp32 = true,
 	.lower_flrp64 = true,
 	.lower_device_index_to_zero = true,
@@ -72,7 +71,6 @@ static const struct nir_shader_compiler_options nir_options = {
 	.lower_extract_word = true,
 	.lower_ffma = true,
 	.lower_fpow = true,
-	.lower_mul_2x32_64 = true,
 	.max_unroll_iterations = 32
 };
 
@@ -161,7 +159,7 @@ radv_optimize_nir(struct nir_shader *shader, bool optimize_conservatively,
                 NIR_PASS(progress, shader, nir_opt_if);
                 NIR_PASS(progress, shader, nir_opt_dead_cf);
                 NIR_PASS(progress, shader, nir_opt_cse);
-                NIR_PASS(progress, shader, nir_opt_peephole_select, 8, true, true);
+                NIR_PASS(progress, shader, nir_opt_peephole_select, 8, true);
                 NIR_PASS(progress, shader, nir_opt_algebraic);
                 NIR_PASS(progress, shader, nir_opt_constant_folding);
                 NIR_PASS(progress, shader, nir_opt_undef);
@@ -234,7 +232,6 @@ radv_shader_compile_to_nir(struct radv_device *device,
 				.int16 = true,
 				.int64 = true,
 				.multiview = true,
-				.physical_storage_buffer_address = true,
 				.runtime_descriptor_array = true,
 				.shader_viewport_index_layer = true,
 				.stencil_export = true,
@@ -250,12 +247,9 @@ radv_shader_compile_to_nir(struct radv_device *device,
 				.transform_feedback = true,
 				.trinary_minmax = true,
 				.variable_pointers = true,
-				.storage_8bit = true,
-				.int8 = true,
 			},
 			.ubo_ptr_type = glsl_vector_type(GLSL_TYPE_UINT, 2),
 			.ssbo_ptr_type = glsl_vector_type(GLSL_TYPE_UINT, 2),
-			.phys_ssbo_ptr_type = glsl_vector_type(GLSL_TYPE_UINT64, 1),
 			.push_const_ptr_type = glsl_uint_type(),
 			.shared_ptr_type = glsl_uint_type(),
 		};
@@ -316,7 +310,6 @@ radv_shader_compile_to_nir(struct radv_device *device,
 
 	static const nir_lower_tex_options tex_options = {
 	  .lower_txp = ~0,
-	  .lower_tg4_offsets = true,
 	};
 
 	nir_lower_tex(nir, &tex_options);
@@ -740,8 +733,7 @@ generate_shader_stats(struct radv_device *device,
 		      gl_shader_stage stage,
 		      struct _mesa_string_buffer *buf)
 {
-	enum chip_class chip_class = device->physical_device->rad_info.chip_class;
-	unsigned lds_increment = chip_class >= CIK ? 512 : 256;
+	unsigned lds_increment = device->physical_device->rad_info.chip_class >= CIK ? 512 : 256;
 	struct ac_shader_config *conf;
 	unsigned max_simd_waves;
 	unsigned lds_per_wave = 0;
@@ -754,17 +746,12 @@ generate_shader_stats(struct radv_device *device,
 		lds_per_wave = conf->lds_size * lds_increment +
 			       align(variant->info.fs.num_interp * 48,
 				     lds_increment);
-	} else if (stage == MESA_SHADER_COMPUTE) {
-		unsigned max_workgroup_size =
-				radv_nir_get_max_workgroup_size(chip_class, variant->nir);
-		lds_per_wave = (conf->lds_size * lds_increment) /
-			       DIV_ROUND_UP(max_workgroup_size, 64);
 	}
 
 	if (conf->num_sgprs)
 		max_simd_waves =
 			MIN2(max_simd_waves,
-			     ac_get_num_physical_sgprs(chip_class) / conf->num_sgprs);
+			     radv_get_num_physical_sgprs(device->physical_device) / conf->num_sgprs);
 
 	if (conf->num_vgprs)
 		max_simd_waves =
@@ -849,7 +836,7 @@ radv_GetShaderInfoAMD(VkDevice _device,
 			VkShaderStatisticsInfoAMD statistics = {};
 			statistics.shaderStageMask = shaderStage;
 			statistics.numPhysicalVgprs = RADV_NUM_PHYSICAL_VGPRS;
-			statistics.numPhysicalSgprs = ac_get_num_physical_sgprs(device->physical_device->rad_info.chip_class);
+			statistics.numPhysicalSgprs = radv_get_num_physical_sgprs(device->physical_device);
 			statistics.numAvailableSgprs = statistics.numPhysicalSgprs;
 
 			if (stage == MESA_SHADER_COMPUTE) {

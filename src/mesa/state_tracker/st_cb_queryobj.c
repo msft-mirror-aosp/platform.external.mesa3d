@@ -45,7 +45,6 @@
 #include "st_cb_queryobj.h"
 #include "st_cb_bitmap.h"
 #include "st_cb_bufferobjects.h"
-#include "st_util.h"
 
 
 static struct gl_query_object *

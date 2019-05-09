@@ -31,8 +31,7 @@ struct pipe_fence_handle;
 struct winsys_handle;
 struct virgl_hw_res;
 
-#define VIRGL_MAX_TBUF_DWORDS 1024
-#define VIRGL_MAX_CMDBUF_DWORDS ((64 * 1024) + VIRGL_MAX_TBUF_DWORDS)
+#define VIRGL_MAX_CMDBUF_DWORDS (64 * 1024)
 
 struct virgl_drm_caps {
    union virgl_caps caps;
@@ -48,7 +47,6 @@ struct virgl_cmd_buf {
 struct virgl_winsys {
    unsigned pci_id;
    int supports_fences; /* In/Out fences are supported */
-   int supports_encoded_transfers; /* Encoded transfers are supported */
 
    void (*destroy)(struct virgl_winsys *vws);
 
@@ -84,7 +82,7 @@ struct virgl_winsys {
                                   uint32_t stride,
                                   struct winsys_handle *whandle);
 
-   struct virgl_cmd_buf *(*cmd_buf_create)(struct virgl_winsys *ws, uint32_t size);
+   struct virgl_cmd_buf *(*cmd_buf_create)(struct virgl_winsys *ws);
    void (*cmd_buf_destroy)(struct virgl_cmd_buf *buf);
 
    void (*emit_res)(struct virgl_winsys *vws, struct virgl_cmd_buf *buf, struct virgl_hw_res *res, boolean write_buffer);
@@ -152,6 +150,5 @@ static inline void virgl_ws_fill_new_caps_defaults(struct virgl_drm_caps *caps)
    caps->caps.v2.max_image_samples = 0;
    caps->caps.v2.max_compute_work_group_invocations = 0;
    caps->caps.v2.max_compute_shared_memory_size = 0;
-   caps->caps.v2.host_feature_check_version = 0;
 }
 #endif

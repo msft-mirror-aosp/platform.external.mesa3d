@@ -46,7 +46,7 @@ struct virgl_resource_metadata
 
 struct virgl_resource {
    struct u_resource u;
-   uint16_t clean_mask;
+   boolean clean;
    struct virgl_hw_res *hw_res;
    struct virgl_resource_metadata metadata;
 };
@@ -55,7 +55,6 @@ struct virgl_transfer {
    struct pipe_transfer base;
    uint32_t offset, l_stride;
    struct util_range range;
-   struct list_head queue_link;
    struct virgl_resource *resolve_tmp;
 };
 
@@ -107,28 +106,27 @@ static inline unsigned pipe_to_virgl_bind(unsigned pbind)
       outbind |= VIRGL_BIND_SCANOUT;
    if (pbind & PIPE_BIND_SHADER_BUFFER)
       outbind |= VIRGL_BIND_SHADER_BUFFER;
-   if (pbind & PIPE_BIND_QUERY_BUFFER)
-     outbind |= VIRGL_BIND_QUERY_BUFFER;
    return outbind;
 }
 
-bool virgl_res_needs_flush(struct virgl_context *vctx,
-                           struct virgl_transfer *transfer);
+bool virgl_res_needs_flush_wait(struct virgl_context *vctx,
+                                struct virgl_resource *res,
+                                unsigned usage);
 bool virgl_res_needs_readback(struct virgl_context *vctx,
                               struct virgl_resource *res,
-                              unsigned usage, unsigned level);
+                              unsigned usage);
 
 void virgl_resource_layout(struct pipe_resource *pt,
                            struct virgl_resource_metadata *metadata);
 
 struct virgl_transfer *
-virgl_resource_create_transfer(struct slab_child_pool *pool,
+virgl_resource_create_transfer(struct pipe_context *ctx,
                                struct pipe_resource *pres,
                                const struct virgl_resource_metadata *metadata,
                                unsigned level, unsigned usage,
                                const struct pipe_box *box);
 
-void virgl_resource_destroy_transfer(struct slab_child_pool *pool,
+void virgl_resource_destroy_transfer(struct virgl_context *vctx,
                                      struct virgl_transfer *trans);
 
 void virgl_resource_destroy(struct pipe_screen *screen,
@@ -137,7 +135,4 @@ void virgl_resource_destroy(struct pipe_screen *screen,
 boolean virgl_resource_get_handle(struct pipe_screen *screen,
                                   struct pipe_resource *resource,
                                   struct winsys_handle *whandle);
-
-void virgl_resource_dirty(struct virgl_resource *res, uint32_t level);
-
 #endif

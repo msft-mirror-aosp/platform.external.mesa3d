@@ -3,7 +3,6 @@
 from __future__ import (
     absolute_import, division, print_function, unicode_literals
 )
-import argparse
 import ast
 import xml.parsers.expat
 import re
@@ -546,13 +545,6 @@ class Parser(object):
             if name == "instruction":
                 self.instruction = safe_name(attrs["name"])
                 self.length_bias = int(attrs["bias"])
-                if "engine" in attrs:
-                    self.instruction_engines = set(attrs["engine"].split('|'))
-                else:
-                    # When an instruction doesn't have the engine specified,
-                    # it is considered to be for all engines, so 'None' is used
-                    # to signify that the instruction belongs to all engines.
-                    self.instruction_engines = None
             elif name == "struct":
                 self.struct = safe_name(attrs["name"])
                 self.structs[attrs["name"]] = 1
@@ -636,9 +628,6 @@ class Parser(object):
 
     def emit_instruction(self):
         name = self.instruction
-        if self.instruction_engines and not self.instruction_engines & self.engines:
-            return
-
         if not self.length is None:
             print('#define %-33s %6d' %
                   (self.gen_prefix(name + "_length"), self.length))
@@ -699,36 +688,11 @@ class Parser(object):
         self.parser.ParseFile(file)
         file.close()
 
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument('xml_source', metavar='XML_SOURCE',
-                   help="Input xml file")
-    p.add_argument('--engines', nargs='?', type=str, default='render',
-                   help="Comma-separated list of engines whose instructions should be parsed (default: %(default)s)")
+if len(sys.argv) < 2:
+    print("No input xml file specified")
+    sys.exit(1)
 
-    pargs = p.parse_args()
+input_file = sys.argv[1]
 
-    if pargs.engines is None:
-        print("No engines specified")
-        sys.exit(1)
-
-    return pargs
-
-def main():
-    pargs = parse_args()
-
-    input_file = pargs.xml_source
-    engines = pargs.engines.split(',')
-    valid_engines = [ 'render', 'blitter', 'video' ]
-    if set(engines) - set(valid_engines):
-        print("Invalid engine specified, valid engines are:\n")
-        for e in valid_engines:
-            print("\t%s" % e)
-        sys.exit(1)
-
-    p = Parser()
-    p.engines = set(engines)
-    p.parse(input_file)
-
-if __name__ == '__main__':
-    main()
+p = Parser()
+p.parse(input_file)

@@ -974,9 +974,6 @@ tegra_memory_barrier(struct pipe_context *pcontext, unsigned int flags)
 {
    struct tegra_context *context = to_tegra_context(pcontext);
 
-   if (!(flags & ~PIPE_BARRIER_UPDATE))
-      return;
-
    context->gpu->memory_barrier(context->gpu, flags);
 }
 

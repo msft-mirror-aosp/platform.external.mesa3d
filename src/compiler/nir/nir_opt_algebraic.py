@@ -70,10 +70,6 @@ optimizations = [
 
    (('imul', a, '#b@32(is_pos_power_of_two)'), ('ishl', a, ('find_lsb', b))),
    (('imul', a, '#b@32(is_neg_power_of_two)'), ('ineg', ('ishl', a, ('find_lsb', ('iabs', b))))),
-   (('unpack_64_2x32_split_x', ('imul_2x32_64(is_used_once)', a, b)), ('imul', a, b)),
-   (('unpack_64_2x32_split_x', ('umul_2x32_64(is_used_once)', a, b)), ('imul', a, b)),
-   (('imul_2x32_64', a, b), ('pack_64_2x32_split', ('imul', a, b), ('imul_high', a, b)), 'options->lower_mul_2x32_64'),
-   (('umul_2x32_64', a, b), ('pack_64_2x32_split', ('imul', a, b), ('umul_high', a, b)), 'options->lower_mul_2x32_64'),
    (('udiv', a, 1), a),
    (('idiv', a, 1), a),
    (('umod', a, 1), 0),
@@ -128,11 +124,9 @@ optimizations = [
    (('~flrp', 0.0, a, b), ('fmul', a, b)),
    (('~flrp', a, b, ('b2f', 'c@1')), ('bcsel', c, b, a), 'options->lower_flrp32'),
    (('~flrp', a, 0.0, c), ('fadd', ('fmul', ('fneg', a), c), a)),
-   (('flrp@16', a, b, c), ('fadd', ('fmul', c, ('fsub', b, a)), a), 'options->lower_flrp16'),
    (('flrp@32', a, b, c), ('fadd', ('fmul', c, ('fsub', b, a)), a), 'options->lower_flrp32'),
    (('flrp@64', a, b, c), ('fadd', ('fmul', c, ('fsub', b, a)), a), 'options->lower_flrp64'),
    (('ffloor', a), ('fsub', a, ('ffract', a)), 'options->lower_ffloor'),
-   (('fadd', a, ('fneg', ('ffract', a))), ('ffloor', a), '!options->lower_ffloor'),
    (('ffract', a), ('fsub', a, ('ffloor', a)), 'options->lower_ffract'),
    (('fceil', a), ('fneg', ('ffloor', ('fneg', a))), 'options->lower_fceil'),
    (('~fadd', ('fmul', a, ('fadd', 1.0, ('fneg', ('b2f', 'c@1')))), ('fmul', b, ('b2f', c))), ('bcsel', c, b, a), 'options->lower_flrp32'),
@@ -304,7 +298,6 @@ optimizations = [
    (('~bcsel', ('flt', a, b), b, a), ('fmax', a, b)),
    (('~bcsel', ('fge', a, b), b, a), ('fmin', a, b)),
    (('~bcsel', ('fge', b, a), b, a), ('fmax', a, b)),
-   (('bcsel', ('i2b', a), b, c), ('bcsel', ('ine', a, 0), b, c)),
    (('bcsel', ('inot', a), b, c), ('bcsel', a, c, b)),
    (('bcsel', a, ('bcsel', a, b, c), d), ('bcsel', a, b, d)),
    (('bcsel', a, b, ('bcsel', a, c, d)), ('bcsel', a, b, d)),
@@ -342,7 +335,6 @@ optimizations = [
    (('~fmin', ('fmax', a, 0.0), 1.0), ('fsat', a), '!options->lower_fsat'),
    (('~fmax', ('fmin', a, 1.0), 0.0), ('fsat', a), '!options->lower_fsat'),
    (('fsat', ('fsign', a)), ('b2f', ('flt', 0.0, a))),
-   (('fsat', ('b2f', a)), ('b2f', a)),
    (('fsat', a), ('fmin', ('fmax', a, 0.0), 1.0), 'options->lower_fsat'),
    (('fsat', ('fsat', a)), ('fsat', a)),
    (('fmin', ('fmax', ('fmin', ('fmax', a, b), c), b), c), ('fmin', ('fmax', a, b), c)),
@@ -384,11 +376,6 @@ optimizations = [
    (('iand', ('ult(is_used_once)', a, c), ('ult', b, c)), ('ult', ('umax', a, b), c)),
    (('iand', ('uge(is_used_once)', a, b), ('uge', a, c)), ('uge', a, ('umax', b, c))),
    (('iand', ('uge(is_used_once)', a, c), ('uge', b, c)), ('uge', ('umin', a, b), c)),
-
-   # Common pattern like 'if (i == 0 || i == 1 || ...)'
-   (('ior', ('ieq', a, 0), ('ieq', a, 1)), ('uge', 1, a)),
-   (('ior', ('uge', 1, a), ('ieq', a, 2)), ('uge', 2, a)),
-   (('ior', ('uge', 2, a), ('ieq', a, 3)), ('uge', 3, a)),
 
    (('ior', 'a@bool', ('ieq', a, False)), True),
    (('ior', a, ('inot', a)), -1),
@@ -439,12 +426,6 @@ optimizations = [
    (('ult', ('umax', '#a', b), '#c'), ('iand', ('ult', a, c), ('ult', b, c))),
    (('uge', '#a', ('umax', '#b', c)), ('iand', ('uge', a, b), ('uge', a, c))),
    (('uge', ('umin', '#a', b), '#c'), ('iand', ('uge', a, c), ('uge', b, c))),
-
-   # Thanks to sign extension, the ishr(a, b) is negative if and only if a is
-   # negative.
-   (('bcsel', ('ilt', a, 0), ('ineg', ('ishr', a, b)), ('ishr', a, b)),
-    ('iabs', ('ishr', a, b))),
-   (('iabs', ('ishr', ('iabs', a), b)), ('ishr', ('iabs', a), b)),
 
    (('fabs', ('slt', a, b)), ('slt', a, b)),
    (('fabs', ('sge', a, b)), ('sge', a, b)),
@@ -533,8 +514,6 @@ optimizations = [
    (('fsqrt', a), ('frcp', ('frsq', a)), 'options->lower_fsqrt'),
    (('~frcp', ('frsq', a)), ('fsqrt', a), '!options->lower_fsqrt'),
    # Boolean simplifications
-   (('i2b32(is_used_by_if)', a), ('ine32', a, 0)),
-   (('i2b1(is_used_by_if)', a), ('ine', a, 0)),
    (('ieq', 'a@bool', True), a),
    (('ine(is_not_used_by_if)', 'a@bool', True), ('inot', a)),
    (('ine', 'a@bool', False), a),
@@ -568,11 +547,6 @@ optimizations = [
    (('ine', ('ineg', ('b2i', 'a@1')), -1), ('inot', a)),
    (('iand', ('ineg', ('b2i', a)), 1.0), ('b2f', a)),
 
-   # SM5 32-bit shifts are defined to use the 5 least significant bits
-   (('ishl', 'a@32', ('iand', 31, b)), ('ishl', a, b)),
-   (('ishr', 'a@32', ('iand', 31, b)), ('ishr', a, b)),
-   (('ushr', 'a@32', ('iand', 31, b)), ('ushr', a, b)),
-
    # Conversions
    (('i2b32', ('b2i', 'a@32')), a),
    (('f2i', ('ftrunc', a)), ('f2i', a)),
@@ -591,19 +565,6 @@ optimizations = [
    (('~f2u32', ('i2f', 'a@32')), a),
    (('~f2u32', ('u2f', 'a@32')), a),
 
-   # Section 5.4.1 (Conversion and Scalar Constructors) of the GLSL 4.60 spec
-   # says:
-   #
-   #    It is undefined to convert a negative floating-point value to an
-   #    uint.
-   #
-   # Assuming that (uint)some_float behaves like (uint)(int)some_float allows
-   # some optimizations in the i965 backend to proceed.
-   (('ige', ('f2u', a), b), ('ige', ('f2i', a), b)),
-   (('ige', b, ('f2u', a)), ('ige', b, ('f2i', a))),
-   (('ilt', ('f2u', a), b), ('ilt', ('f2i', a), b)),
-   (('ilt', b, ('f2u', a)), ('ilt', b, ('f2i', a))),
-
    # Packing and then unpacking does nothing
    (('unpack_64_2x32_split_x', ('pack_64_2x32_split', a, b)), a),
    (('unpack_64_2x32_split_y', ('pack_64_2x32_split', a, b)), b),
@@ -611,32 +572,18 @@ optimizations = [
                            ('unpack_64_2x32_split_y', a)), a),
 
    # Byte extraction
-   (('ushr', 'a@16',  8), ('extract_u8', a, 1), '!options->lower_extract_byte'),
+   (('ushr', ('ishl', 'a@32', 24), 24), ('extract_u8', a, 0), '!options->lower_extract_byte'),
+   (('ushr', ('ishl', 'a@32', 16), 24), ('extract_u8', a, 1), '!options->lower_extract_byte'),
+   (('ushr', ('ishl', 'a@32', 8), 24), ('extract_u8', a, 2), '!options->lower_extract_byte'),
    (('ushr', 'a@32', 24), ('extract_u8', a, 3), '!options->lower_extract_byte'),
-   (('ushr', 'a@64', 56), ('extract_u8', a, 7), '!options->lower_extract_byte'),
-   (('ishr', 'a@16',  8), ('extract_i8', a, 1), '!options->lower_extract_byte'),
+   (('ishr', ('ishl', 'a@32', 24), 24), ('extract_i8', a, 0), '!options->lower_extract_byte'),
+   (('ishr', ('ishl', 'a@32', 16), 24), ('extract_i8', a, 1), '!options->lower_extract_byte'),
+   (('ishr', ('ishl', 'a@32', 8), 24), ('extract_i8', a, 2), '!options->lower_extract_byte'),
    (('ishr', 'a@32', 24), ('extract_i8', a, 3), '!options->lower_extract_byte'),
-   (('ishr', 'a@64', 56), ('extract_i8', a, 7), '!options->lower_extract_byte'),
-   (('iand', 0xff, a), ('extract_u8', a, 0), '!options->lower_extract_byte')
-]
+   (('iand', 0xff, ('ushr', a, 16)), ('extract_u8', a, 2), '!options->lower_extract_byte'),
+   (('iand', 0xff, ('ushr', a,  8)), ('extract_u8', a, 1), '!options->lower_extract_byte'),
+   (('iand', 0xff, a), ('extract_u8', a, 0), '!options->lower_extract_byte'),
 
-# After the ('extract_u8', a, 0) pattern, above, triggers, there will be
-# patterns like those below.
-for op in ('ushr', 'ishr'):
-   optimizations.extend([(('extract_u8', (op, 'a@16',  8),     0), ('extract_u8', a, 1))])
-   optimizations.extend([(('extract_u8', (op, 'a@32',  8 * i), 0), ('extract_u8', a, i)) for i in range(1, 4)])
-   optimizations.extend([(('extract_u8', (op, 'a@64',  8 * i), 0), ('extract_u8', a, i)) for i in range(1, 8)])
-
-optimizations.extend([(('extract_u8', ('extract_u16', a, 1), 0), ('extract_u8', a, 2))])
-
-# After the ('extract_[iu]8', a, 3) patterns, above, trigger, there will be
-# patterns like those below.
-for op in ('extract_u8', 'extract_i8'):
-   optimizations.extend([((op, ('ishl', 'a@16',      8),     1), (op, a, 0))])
-   optimizations.extend([((op, ('ishl', 'a@32', 24 - 8 * i), 3), (op, a, i)) for i in range(2, -1, -1)])
-   optimizations.extend([((op, ('ishl', 'a@64', 56 - 8 * i), 7), (op, a, i)) for i in range(6, -1, -1)])
-
-optimizations.extend([
     # Word extraction
    (('ushr', ('ishl', 'a@32', 16), 16), ('extract_u16', a, 0), '!options->lower_extract_word'),
    (('ushr', 'a@32', 16), ('extract_u16', a, 1), '!options->lower_extract_word'),
@@ -689,7 +636,6 @@ optimizations.extend([
    (('bcsel', ('ine', a, -1), ('ifind_msb', a), -1), ('ifind_msb', a)),
 
    # Misc. lowering
-   (('fmod@16', a, b), ('fsub', a, ('fmul', b, ('ffloor', ('fdiv', a, b)))), 'options->lower_fmod16'),
    (('fmod@32', a, b), ('fsub', a, ('fmul', b, ('ffloor', ('fdiv', a, b)))), 'options->lower_fmod32'),
    (('fmod@64', a, b), ('fsub', a, ('fmul', b, ('ffloor', ('fdiv', a, b)))), 'options->lower_fmod64'),
    (('frem', a, b), ('fsub', a, ('fmul', b, ('ftrunc', ('fdiv', a, b)))), 'options->lower_fmod32'),
@@ -700,12 +646,6 @@ optimizations.extend([
     ('bcsel', ('ilt', 31, 'bits'), 'insert',
               ('bfi', ('bfm', 'bits', 'offset'), 'insert', 'base')),
     'options->lower_bitfield_insert'),
-   (('ihadd', a, b), ('iadd', ('iand', a, b), ('ishr', ('ixor', a, b), 1)), 'options->lower_hadd'),
-   (('uhadd', a, b), ('iadd', ('iand', a, b), ('ushr', ('ixor', a, b), 1)), 'options->lower_hadd'),
-   (('irhadd', a, b), ('isub', ('ior', a, b), ('ishr', ('ixor', a, b), 1)), 'options->lower_hadd'),
-   (('urhadd', a, b), ('isub', ('ior', a, b), ('ushr', ('ixor', a, b), 1)), 'options->lower_hadd'),
-   (('uadd_sat', a, b), ('bcsel', ('ult', ('iadd', a, b), a), -1, ('iadd', a, b)), 'options->lower_add_sat'),
-   (('usub_sat', a, b), ('bcsel', ('ult', a, b), 0, ('isub', a, b)), 'options->lower_add_sat'),
 
    # Alternative lowering that doesn't rely on bfi.
    (('bitfield_insert', 'base', 'insert', 'offset', 'bits'),
@@ -818,24 +758,7 @@ optimizations.extend([
                                                             ('extract_i8', 'v', 3))),
                                            127.0))),
      'options->lower_unpack_snorm_4x8'),
-
-   (('isign', a), ('imin', ('imax', a, -1), 1), 'options->lower_isign'),
-])
-
-# bit_size dependent lowerings
-for bit_size in [8, 16, 32, 64]:
-   # convenience constants
-   intmax = (1 << (bit_size - 1)) - 1
-   intmin = 1 << (bit_size - 1)
-
-   optimizations += [
-      (('iadd_sat@' + str(bit_size), a, b),
-       ('bcsel', ('ige', b, 1), ('bcsel', ('ilt', ('iadd', a, b), a), intmax, ('iadd', a, b)),
-                                ('bcsel', ('ilt', a, ('iadd', a, b)), intmin, ('iadd', a, b))), 'options->lower_add_sat'),
-      (('isub_sat@' + str(bit_size), a, b),
-       ('bcsel', ('ilt', b, 0), ('bcsel', ('ilt', ('isub', a, b), a), intmax, ('isub', a, b)),
-                                ('bcsel', ('ilt', a, ('isub', a, b)), intmin, ('isub', a, b))), 'options->lower_add_sat'),
-   ]
+]
 
 invert = OrderedDict([('feq', 'fne'), ('fne', 'feq'), ('fge', 'flt'), ('flt', 'fge')])
 
@@ -865,9 +788,7 @@ for x, y in itertools.product(['f', 'u', 'i'], ['f', 'u', 'i']):
 
 def fexp2i(exp, bits):
    # We assume that exp is already in the right range.
-   if bits == 16:
-      return ('i2i16', ('ishl', ('iadd', exp, 15), 10))
-   elif bits == 32:
+   if bits == 32:
       return ('ishl', ('iadd', exp, 127), 23)
    elif bits == 64:
       return ('pack_64_2x32_split', 0, ('ishl', ('iadd', exp, 1023), 20))
@@ -885,9 +806,7 @@ def ldexp(f, exp, bits):
    # handles a range on exp of [-252, 254] which allows you to create any
    # value (including denorms if the hardware supports it) and to adjust the
    # exponent of any normal value to anything you want.
-   if bits == 16:
-      exp = ('imin', ('imax', exp, -28), 30)
-   elif bits == 32:
+   if bits == 32:
       exp = ('imin', ('imax', exp, -252), 254)
    elif bits == 64:
       exp = ('imin', ('imax', exp, -2044), 2046)
@@ -907,7 +826,6 @@ def ldexp(f, exp, bits):
    return ('fmul', ('fmul', f, pow2_1), pow2_2)
 
 optimizations += [
-   (('ldexp@16', 'x', 'exp'), ldexp('x', 'exp', 16), 'options->lower_ldexp'),
    (('ldexp@32', 'x', 'exp'), ldexp('x', 'exp', 32), 'options->lower_ldexp'),
    (('ldexp@64', 'x', 'exp'), ldexp('x', 'exp', 64), 'options->lower_ldexp'),
 ]
@@ -1017,8 +935,6 @@ late_optimizations = [
    # we do these late so that we don't get in the way of creating ffmas
    (('fmin', ('fadd(is_used_once)', '#c', a), ('fadd(is_used_once)', '#c', b)), ('fadd', c, ('fmin', a, b))),
    (('fmax', ('fadd(is_used_once)', '#c', a), ('fadd(is_used_once)', '#c', b)), ('fadd', c, ('fmax', a, b))),
-
-   (('bcsel', 'a@bool', 0, ('b2f32', ('inot', 'b@bool'))), ('b2f32', ('inot', ('ior', a, b)))),
 ]
 
 print(nir_algebraic.AlgebraicPass("nir_opt_algebraic", optimizations).render())

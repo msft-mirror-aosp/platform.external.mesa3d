@@ -21,8 +21,6 @@
  * IN THE SOFTWARE.
  */
 
-#undef NDEBUG
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>

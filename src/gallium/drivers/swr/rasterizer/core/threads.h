@@ -45,8 +45,7 @@ struct THREAD_DATA
     uint32_t     numaId;             // NUMA node id
     uint32_t     coreId;             // Core id
     uint32_t     htId;               // Hyperthread id
-    uint32_t     workerId;           // index of worker in total thread data
-    void*        clipperData;        // pointer to hang clipper-private data on
+    uint32_t     workerId;
     SWR_CONTEXT* pContext;
     bool         forceBindProcGroup; // Only useful when MAX_WORKER_THREADS is set.
 };

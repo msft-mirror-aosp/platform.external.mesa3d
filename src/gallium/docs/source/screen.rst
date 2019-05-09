@@ -105,15 +105,6 @@ The integer capabilities:
   The only legacy features that Gallium drivers must implement are
   the legacy shader inputs and outputs (colors, texcoords, fog, clipvertex,
   edgeflag).
-* ``PIPE_CAP_ESSL_FEATURE_LEVEL``: An optional cap to allow drivers to
-  report a higher GLSL version for GLES contexts.  This is useful when a
-  driver does not support all the required features for a higher GL version,
-  but does support the required features for a higher GLES version.  A driver
-  is allowed to return ``0`` in which case ``PIPE_CAP_GLSL_FEATURE_LEVEL`` is
-  used.
-  Note that simply returning the same value as the GLSL feature level cap is
-  incorrect.  For example, GLSL version 3.30 does not require ``ARB_gpu_shader5``,
-  but ESSL version 3.20 es does require ``EXT_gpu_shader5``
 * ``PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION``: Whether quads adhere to
   the flatshade_first setting in ``pipe_rasterizer_state``.
 * ``PIPE_CAP_USER_VERTEX_BUFFERS``: Whether the driver supports user vertex
@@ -496,13 +487,10 @@ The integer capabilities:
 * ``PIPE_CAP_DEST_SURFACE_SRGB_CONTROL``: Indicates whether the drivers
   supports switching the format between sRGB and linear for a surface that is
   used as destination in draw and blit calls.
-* ``PIPE_CAP_NIR_COMPACT_ARRAYS``: True if the compiler backend supports NIR's compact array feature, for all shader stages.
 * ``PIPE_CAP_MAX_VARYINGS``: The maximum number of fragment shader
   varyings. This will generally correspond to
   ``PIPE_SHADER_CAP_MAX_INPUTS`` for the fragment shader, but in some
   cases may be a smaller number.
-* ``PIPE_CAP_COMPUTE_GRID_INFO_LAST_BLOCK``: Whether pipe_grid_info::last_block
-  is implemented by the driver. See struct pipe_grid_info for more details.
 
 .. _pipe_capf:
 

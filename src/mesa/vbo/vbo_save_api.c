@@ -1307,7 +1307,6 @@ static void GLAPIENTRY
 _save_OBE_DrawArrays(GLenum mode, GLint start, GLsizei count)
 {
    GET_CURRENT_CONTEXT(ctx);
-   struct gl_vertex_array_object *vao = ctx->Array.VAO;
    struct vbo_save_context *save = &vbo_context(ctx)->save;
    GLint i;
 
@@ -1326,15 +1325,15 @@ _save_OBE_DrawArrays(GLenum mode, GLint start, GLsizei count)
    /* Make sure to process any VBO binding changes */
    _mesa_update_state(ctx);
 
-   _mesa_vao_map_arrays(ctx, vao, GL_MAP_READ_BIT);
+   _ae_map_vbos(ctx);
 
    vbo_save_NotifyBegin(ctx, mode, true);
 
    for (i = 0; i < count; i++)
-      _mesa_array_element(ctx, GET_DISPATCH(), start + i);
+      CALL_ArrayElement(GET_DISPATCH(), (start + i));
    CALL_End(GET_DISPATCH(), ());
 
-   _mesa_vao_unmap_arrays(ctx, vao);
+   _ae_unmap_vbos(ctx);
 }
 
 
@@ -1372,29 +1371,6 @@ _save_OBE_MultiDrawArrays(GLenum mode, const GLint *first,
 }
 
 
-static void
-array_element(struct gl_context *ctx, struct _glapi_table *disp,
-              GLint basevertex, GLuint elt, unsigned index_size)
-{
-   /* Section 10.3.5 Primitive Restart:
-    * [...]
-    *    When one of the *BaseVertex drawing commands specified in section 10.5
-    * is used, the primitive restart comparison occurs before the basevertex
-    * offset is added to the array index.
-    */
-   /* If PrimitiveRestart is enabled and the index is the RestartIndex
-    * then we call PrimitiveRestartNV and return.
-    */
-   if (ctx->Array._PrimitiveRestart &&
-       elt == _mesa_primitive_restart_index(ctx, index_size)) {
-      CALL_PrimitiveRestartNV(disp, ());
-      return;
-   }
-
-   _mesa_array_element(ctx, disp, basevertex + elt);
-}
-
-
 /* Could do better by copying the arrays and element list intact and
  * then emitting an indexed prim at runtime.
  */
@@ -1404,8 +1380,7 @@ _save_OBE_DrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type,
 {
    GET_CURRENT_CONTEXT(ctx);
    struct vbo_save_context *save = &vbo_context(ctx)->save;
-   struct gl_vertex_array_object *vao = ctx->Array.VAO;
-   struct gl_buffer_object *indexbuf = vao->IndexBufferObj;
+   struct gl_buffer_object *indexbuf = ctx->Array.VAO->IndexBufferObj;
    GLint i;
 
    if (!_mesa_is_valid_prim_mode(ctx, mode)) {
@@ -1429,7 +1404,7 @@ _save_OBE_DrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type,
    /* Make sure to process any VBO binding changes */
    _mesa_update_state(ctx);
 
-   _mesa_vao_map(ctx, vao, GL_MAP_READ_BIT);
+   _ae_map_vbos(ctx);
 
    if (_mesa_is_bufferobj(indexbuf))
       indices =
@@ -1440,18 +1415,15 @@ _save_OBE_DrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type,
    switch (type) {
    case GL_UNSIGNED_BYTE:
       for (i = 0; i < count; i++)
-         array_element(ctx, GET_DISPATCH(), basevertex,
-                       ((GLubyte *) indices)[i], 1);
+         CALL_ArrayElement(GET_DISPATCH(), (basevertex + ((GLubyte *) indices)[i]));
       break;
    case GL_UNSIGNED_SHORT:
       for (i = 0; i < count; i++)
-         array_element(ctx, GET_DISPATCH(), basevertex,
-                       ((GLushort *) indices)[i], 2);
+         CALL_ArrayElement(GET_DISPATCH(), (basevertex + ((GLushort *) indices)[i]));
       break;
    case GL_UNSIGNED_INT:
       for (i = 0; i < count; i++)
-         array_element(ctx, GET_DISPATCH(), basevertex,
-                       ((GLuint *) indices)[i], 4);
+         CALL_ArrayElement(GET_DISPATCH(), (basevertex + ((GLuint *) indices)[i]));
       break;
    default:
       _mesa_error(ctx, GL_INVALID_ENUM, "glDrawElements(type)");
@@ -1460,7 +1432,7 @@ _save_OBE_DrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type,
 
    CALL_End(GET_DISPATCH(), ());
 
-   _mesa_vao_unmap(ctx, vao);
+   _ae_unmap_vbos(ctx);
 }
 
 static void GLAPIENTRY

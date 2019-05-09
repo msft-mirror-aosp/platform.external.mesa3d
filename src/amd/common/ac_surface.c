@@ -1142,7 +1142,6 @@ static int gfx9_compute_miptree(ADDR_HANDLE addrlib,
 		hin.unalignedHeight = in->height;
 		hin.numSlices = in->numSlices;
 		hin.numMipLevels = in->numMipLevels;
-		hin.firstMipIdInTail = out.firstMipIdInTail;
 
 		ret = Addr2ComputeHtileInfo(addrlib, &hin, &hout);
 		if (ret != ADDR_OK)
@@ -1209,7 +1208,6 @@ static int gfx9_compute_miptree(ADDR_HANDLE addrlib,
 			din.numFrags = in->numFrags;
 			din.numMipLevels = in->numMipLevels;
 			din.dataSurfaceSize = out.surfSize;
-			din.firstMipIdInTail = out.firstMipIdInTail;
 
 			ret = Addr2ComputeDccInfo(addrlib, &din, &dout);
 			if (ret != ADDR_OK)

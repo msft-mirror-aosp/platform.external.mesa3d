@@ -36,7 +36,6 @@ enum class JIT_MEM_CLIENT
     GFX_MEM_CLIENT_FETCH,
     GFX_MEM_CLIENT_SAMPLER,
     GFX_MEM_CLIENT_SHADER,
-    GFX_MEM_CLIENT_STREAMOUT
 };
 
 protected:
@@ -86,19 +85,9 @@ virtual CallInst* MASKED_LOAD(Value*         Ptr,
     return IRB()->CreateMaskedLoad(Ptr, Align, Mask, PassThru, Name);
 }
 
-virtual StoreInst* STORE(Value *Val, Value *Ptr, bool isVolatile = false, Type* Ty = nullptr, JIT_MEM_CLIENT usage = JIT_MEM_CLIENT::MEM_CLIENT_INTERNAL)
-{
-    return IRB()->CreateStore(Val, Ptr, isVolatile);
-}
-
-virtual StoreInst* STORE(Value* Val, Value* BasePtr, const std::initializer_list<uint32_t>& offset, Type* Ty = nullptr, JIT_MEM_CLIENT usage = JIT_MEM_CLIENT::MEM_CLIENT_INTERNAL);
-
-virtual CallInst* MASKED_STORE(Value *Val, Value *Ptr, unsigned Align, Value *Mask, Type* Ty = nullptr, JIT_MEM_CLIENT usage = JIT_MEM_CLIENT::MEM_CLIENT_INTERNAL)
-{
-    return IRB()->CreateMaskedStore(Val, Ptr, Align, Mask);
-}
-
-LoadInst*  LOADV(Value* BasePtr, const std::initializer_list<Value*>& offset, const llvm::Twine& name = "");
+LoadInst*
+           LOADV(Value* BasePtr, const std::initializer_list<Value*>& offset, const llvm::Twine& name = "");
+StoreInst* STORE(Value* Val, Value* BasePtr, const std::initializer_list<uint32_t>& offset);
 StoreInst* STOREV(Value* Val, Value* BasePtr, const std::initializer_list<Value*>& offset);
 
 Value* MEM_ADD(Value*                                 i32Incr,

@@ -400,9 +400,11 @@ compile_shader(struct gl_context *ctx, struct gl_shader *shader)
 
 extern "C" struct gl_shader_program *
 standalone_compile_shader(const struct standalone_options *_options,
-      unsigned num_files, char* const* files, struct gl_context *ctx)
+      unsigned num_files, char* const* files)
 {
    int status = EXIT_SUCCESS;
+   static struct gl_context local_ctx;
+   struct gl_context *ctx = &local_ctx;
    bool glsl_es = false;
 
    options = _options;

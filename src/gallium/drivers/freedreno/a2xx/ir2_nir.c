@@ -43,14 +43,9 @@ static const nir_shader_compiler_options options = {
 };
 
 struct nir_shader *
-ir2_tgsi_to_nir(const struct tgsi_token *tokens,
-		struct pipe_screen *screen)
+ir2_tgsi_to_nir(const struct tgsi_token *tokens)
 {
-	if (!screen) {
-		return tgsi_to_nir_noscreen(tokens, &options);
-	}
-
-	return tgsi_to_nir(tokens, screen);
+	return tgsi_to_nir(tokens, &options);
 }
 
 const nir_shader_compiler_options *
@@ -79,7 +74,7 @@ ir2_optimize_loop(nir_shader *s)
 		progress |= OPT(s, nir_opt_dce);
 		progress |= OPT(s, nir_opt_cse);
 		/* progress |= OPT(s, nir_opt_gcm, true); */
-		progress |= OPT(s, nir_opt_peephole_select, UINT_MAX, true, true);
+		progress |= OPT(s, nir_opt_peephole_select, UINT_MAX, true);
 		progress |= OPT(s, nir_opt_intrinsics);
 		progress |= OPT(s, nir_opt_algebraic);
 		progress |= OPT(s, nir_opt_constant_folding);

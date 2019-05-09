@@ -68,10 +68,3 @@ swr_StoreHotTileClear(HANDLE hPrivateContext,
 
    pDC->pAPI->pfnSwrStoreHotTileClear(hWorkerPrivateData, pDstSurface, renderTargetIndex, x, y, renderTargetArrayIndex, pClearColor);
 }
-
-INLINE gfxptr_t
-swr_MakeGfxPtr(HANDLE hPrivateContext, void* sysAddr)
-{
-    // Fulfill an unused internal interface
-    return (gfxptr_t)sysAddr;
-}

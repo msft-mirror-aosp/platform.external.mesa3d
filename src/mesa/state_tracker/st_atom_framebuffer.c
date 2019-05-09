@@ -38,7 +38,6 @@
 #include "st_cb_bitmap.h"
 #include "st_cb_fbo.h"
 #include "st_texture.h"
-#include "st_util.h"
 #include "pipe/p_context.h"
 #include "cso_cache/cso_context.h"
 #include "util/u_math.h"

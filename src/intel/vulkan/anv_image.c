@@ -27,7 +27,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
-#include "drm-uapi/drm_fourcc.h"
+#include <drm_fourcc.h>
 
 #include "anv_private.h"
 #include "util/debug.h"
@@ -714,7 +714,7 @@ resolve_ahw_image(struct anv_device *device,
                   struct anv_image *image,
                   struct anv_device_memory *mem)
 {
-#if defined(ANDROID) && ANDROID_API_LEVEL >= 26
+#ifdef ANDROID
    assert(mem->ahw);
    AHardwareBuffer_Desc desc;
    AHardwareBuffer_describe(mem->ahw, &desc);
@@ -1203,7 +1203,6 @@ anv_image_fill_surface_state(struct anv_device *device,
                             .address = anv_address_physical(address),
                             .size_B = surface->isl.size_B,
                             .format = ISL_FORMAT_RAW,
-                            .swizzle = ISL_SWIZZLE_IDENTITY,
                             .stride_B = 1,
                             .mocs = anv_mocs_for_bo(device, address.bo));
       state_inout->address = address,

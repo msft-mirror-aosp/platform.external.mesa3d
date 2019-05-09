@@ -84,7 +84,7 @@ _eglInitDriver(_EGLDriver *driver);
 
 
 extern _EGLDriver *
-_eglMatchDriver(_EGLDisplay *disp);
+_eglMatchDriver(_EGLDisplay *dpy);
 
 
 extern __eglMustCastToProperFunctionPointerType

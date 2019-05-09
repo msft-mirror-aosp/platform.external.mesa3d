@@ -55,7 +55,6 @@ brw_type_for_base_type(const struct glsl_type *type)
    case GLSL_TYPE_ARRAY:
       return brw_type_for_base_type(type->fields.array);
    case GLSL_TYPE_STRUCT:
-   case GLSL_TYPE_INTERFACE:
    case GLSL_TYPE_SAMPLER:
    case GLSL_TYPE_ATOMIC_UINT:
       /* These should be overridden with the type of the member when
@@ -73,6 +72,7 @@ brw_type_for_base_type(const struct glsl_type *type)
       return BRW_REGISTER_TYPE_Q;
    case GLSL_TYPE_VOID:
    case GLSL_TYPE_ERROR:
+   case GLSL_TYPE_INTERFACE:
    case GLSL_TYPE_FUNCTION:
       unreachable("not reached");
    }
@@ -270,42 +270,40 @@ brw_instruction_name(const struct gen_device_info *devinfo, enum opcode op)
    case SHADER_OPCODE_SAMPLEINFO_LOGICAL:
       return "sampleinfo_logical";
 
+   case SHADER_OPCODE_IMAGE_SIZE:
+      return "image_size";
    case SHADER_OPCODE_IMAGE_SIZE_LOGICAL:
       return "image_size_logical";
 
    case SHADER_OPCODE_SHADER_TIME_ADD:
       return "shader_time_add";
 
-   case VEC4_OPCODE_UNTYPED_ATOMIC:
+   case SHADER_OPCODE_UNTYPED_ATOMIC:
       return "untyped_atomic";
    case SHADER_OPCODE_UNTYPED_ATOMIC_LOGICAL:
       return "untyped_atomic_logical";
+   case SHADER_OPCODE_UNTYPED_ATOMIC_FLOAT:
+      return "untyped_atomic_float";
    case SHADER_OPCODE_UNTYPED_ATOMIC_FLOAT_LOGICAL:
       return "untyped_atomic_float_logical";
-   case VEC4_OPCODE_UNTYPED_SURFACE_READ:
+   case SHADER_OPCODE_UNTYPED_SURFACE_READ:
       return "untyped_surface_read";
    case SHADER_OPCODE_UNTYPED_SURFACE_READ_LOGICAL:
       return "untyped_surface_read_logical";
-   case VEC4_OPCODE_UNTYPED_SURFACE_WRITE:
+   case SHADER_OPCODE_UNTYPED_SURFACE_WRITE:
       return "untyped_surface_write";
    case SHADER_OPCODE_UNTYPED_SURFACE_WRITE_LOGICAL:
       return "untyped_surface_write_logical";
-   case SHADER_OPCODE_A64_UNTYPED_READ_LOGICAL:
-      return "a64_untyped_read_logical";
-   case SHADER_OPCODE_A64_UNTYPED_WRITE_LOGICAL:
-      return "a64_untyped_write_logical";
-   case SHADER_OPCODE_A64_BYTE_SCATTERED_READ_LOGICAL:
-      return "a64_byte_scattered_read_logical";
-   case SHADER_OPCODE_A64_BYTE_SCATTERED_WRITE_LOGICAL:
-      return "a64_byte_scattered_write_logical";
-   case SHADER_OPCODE_A64_UNTYPED_ATOMIC_LOGICAL:
-      return "a64_untyped_atomic_logical";
-   case SHADER_OPCODE_A64_UNTYPED_ATOMIC_FLOAT_LOGICAL:
-      return "a64_untyped_atomic_float_logical";
+   case SHADER_OPCODE_TYPED_ATOMIC:
+      return "typed_atomic";
    case SHADER_OPCODE_TYPED_ATOMIC_LOGICAL:
       return "typed_atomic_logical";
+   case SHADER_OPCODE_TYPED_SURFACE_READ:
+      return "typed_surface_read";
    case SHADER_OPCODE_TYPED_SURFACE_READ_LOGICAL:
       return "typed_surface_read_logical";
+   case SHADER_OPCODE_TYPED_SURFACE_WRITE:
+      return "typed_surface_write";
    case SHADER_OPCODE_TYPED_SURFACE_WRITE_LOGICAL:
       return "typed_surface_write_logical";
    case SHADER_OPCODE_MEMORY_FENCE:
@@ -314,8 +312,12 @@ brw_instruction_name(const struct gen_device_info *devinfo, enum opcode op)
       /* For an interlock we actually issue a memory fence via sendc. */
       return "interlock";
 
+   case SHADER_OPCODE_BYTE_SCATTERED_READ:
+      return "byte_scattered_read";
    case SHADER_OPCODE_BYTE_SCATTERED_READ_LOGICAL:
       return "byte_scattered_read_logical";
+   case SHADER_OPCODE_BYTE_SCATTERED_WRITE:
+      return "byte_scattered_write";
    case SHADER_OPCODE_BYTE_SCATTERED_WRITE_LOGICAL:
       return "byte_scattered_write_logical";
 
@@ -1001,18 +1003,18 @@ backend_instruction::has_side_effects() const
    case SHADER_OPCODE_SEND:
       return send_has_side_effects;
 
-   case VEC4_OPCODE_UNTYPED_ATOMIC:
+   case SHADER_OPCODE_UNTYPED_ATOMIC:
    case SHADER_OPCODE_UNTYPED_ATOMIC_LOGICAL:
+   case SHADER_OPCODE_UNTYPED_ATOMIC_FLOAT:
    case SHADER_OPCODE_UNTYPED_ATOMIC_FLOAT_LOGICAL:
    case SHADER_OPCODE_GEN4_SCRATCH_WRITE:
-   case VEC4_OPCODE_UNTYPED_SURFACE_WRITE:
+   case SHADER_OPCODE_UNTYPED_SURFACE_WRITE:
    case SHADER_OPCODE_UNTYPED_SURFACE_WRITE_LOGICAL:
-   case SHADER_OPCODE_A64_UNTYPED_WRITE_LOGICAL:
-   case SHADER_OPCODE_A64_BYTE_SCATTERED_WRITE_LOGICAL:
-   case SHADER_OPCODE_A64_UNTYPED_ATOMIC_LOGICAL:
-   case SHADER_OPCODE_A64_UNTYPED_ATOMIC_FLOAT_LOGICAL:
+   case SHADER_OPCODE_BYTE_SCATTERED_WRITE:
    case SHADER_OPCODE_BYTE_SCATTERED_WRITE_LOGICAL:
+   case SHADER_OPCODE_TYPED_ATOMIC:
    case SHADER_OPCODE_TYPED_ATOMIC_LOGICAL:
+   case SHADER_OPCODE_TYPED_SURFACE_WRITE:
    case SHADER_OPCODE_TYPED_SURFACE_WRITE_LOGICAL:
    case SHADER_OPCODE_MEMORY_FENCE:
    case SHADER_OPCODE_INTERLOCK:
@@ -1040,12 +1042,12 @@ backend_instruction::is_volatile() const
    case SHADER_OPCODE_SEND:
       return send_is_volatile;
 
-   case VEC4_OPCODE_UNTYPED_SURFACE_READ:
+   case SHADER_OPCODE_UNTYPED_SURFACE_READ:
    case SHADER_OPCODE_UNTYPED_SURFACE_READ_LOGICAL:
+   case SHADER_OPCODE_TYPED_SURFACE_READ:
    case SHADER_OPCODE_TYPED_SURFACE_READ_LOGICAL:
+   case SHADER_OPCODE_BYTE_SCATTERED_READ:
    case SHADER_OPCODE_BYTE_SCATTERED_READ_LOGICAL:
-   case SHADER_OPCODE_A64_UNTYPED_READ_LOGICAL:
-   case SHADER_OPCODE_A64_BYTE_SCATTERED_READ_LOGICAL:
    case SHADER_OPCODE_URB_READ_SIMD8:
    case SHADER_OPCODE_URB_READ_SIMD8_PER_SLOT:
    case VEC4_OPCODE_URB_READ:

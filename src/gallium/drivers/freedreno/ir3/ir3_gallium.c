@@ -25,7 +25,6 @@
  */
 
 #include "pipe/p_state.h"
-#include "pipe/p_screen.h"
 #include "util/u_string.h"
 #include "util/u_memory.h"
 #include "util/u_inlines.h"
@@ -53,8 +52,7 @@ dump_shader_info(struct ir3_shader_variant *v, struct pipe_debug_callback *debug
 			"SHADER-DB: %s prog %d/%d: %u instructions, %u dwords\n"
 			"SHADER-DB: %s prog %d/%d: %u half, %u full\n"
 			"SHADER-DB: %s prog %d/%d: %u const, %u constlen\n"
-			"SHADER-DB: %s prog %d/%d: %u (ss), %u (sy)\n"
-			"SHADER-DB: %s prog %d/%d: max_sun=%u\n",
+			"SHADER-DB: %s prog %d/%d: %u (ss), %u (sy)\n",
 			ir3_shader_stage(v->shader),
 			v->shader->id, v->id,
 			v->info.instrs_count,
@@ -69,10 +67,7 @@ dump_shader_info(struct ir3_shader_variant *v, struct pipe_debug_callback *debug
 			v->constlen,
 			ir3_shader_stage(v->shader),
 			v->shader->id, v->id,
-			v->info.ss, v->info.sy,
-			ir3_shader_stage(v->shader),
-			v->shader->id, v->id,
-			v->max_sun);
+			v->info.ss, v->info.sy);
 }
 
 struct ir3_shader_variant *
@@ -121,8 +116,7 @@ copy_stream_out(struct ir3_stream_output_info *i,
 struct ir3_shader *
 ir3_shader_create(struct ir3_compiler *compiler,
 		const struct pipe_shader_state *cso, gl_shader_stage type,
-		struct pipe_debug_callback *debug,
-		struct pipe_screen *screen)
+		struct pipe_debug_callback *debug)
 {
 	nir_shader *nir;
 	if (cso->type == PIPE_SHADER_IR_NIR) {
@@ -133,7 +127,7 @@ ir3_shader_create(struct ir3_compiler *compiler,
 		if (ir3_shader_debug & IR3_DBG_DISASM) {
 			tgsi_dump(cso->tokens, 0);
 		}
-		nir = ir3_tgsi_to_nir(compiler, cso->tokens, screen);
+		nir = ir3_tgsi_to_nir(compiler, cso->tokens);
 	}
 
 	struct ir3_shader *shader = ir3_shader_from_nir(compiler, nir);
@@ -158,8 +152,7 @@ ir3_shader_create(struct ir3_compiler *compiler,
 struct ir3_shader *
 ir3_shader_create_compute(struct ir3_compiler *compiler,
 		const struct pipe_compute_state *cso,
-		struct pipe_debug_callback *debug,
-		struct pipe_screen *screen)
+		struct pipe_debug_callback *debug)
 {
 	nir_shader *nir;
 	if (cso->ir_type == PIPE_SHADER_IR_NIR) {
@@ -170,7 +163,7 @@ ir3_shader_create_compute(struct ir3_compiler *compiler,
 		if (ir3_shader_debug & IR3_DBG_DISASM) {
 			tgsi_dump(cso->prog, 0);
 		}
-		nir = ir3_tgsi_to_nir(compiler, cso->prog, screen);
+		nir = ir3_tgsi_to_nir(compiler, cso->prog);
 	}
 
 	struct ir3_shader *shader = ir3_shader_from_nir(compiler, nir);
@@ -179,17 +172,9 @@ ir3_shader_create_compute(struct ir3_compiler *compiler,
 }
 
 struct nir_shader *
-ir3_tgsi_to_nir(struct ir3_compiler *compiler,
-		const struct tgsi_token *tokens,
-		struct pipe_screen *screen)
+ir3_tgsi_to_nir(struct ir3_compiler *compiler, const struct tgsi_token *tokens)
 {
-	if (!screen) {
-		const nir_shader_compiler_options *options =
-			ir3_get_compiler_options(compiler);
-		return tgsi_to_nir_noscreen(tokens, options);
-	}
-
-	return tgsi_to_nir(tokens, screen);
+	return tgsi_to_nir(tokens, ir3_get_compiler_options(compiler));
 }
 
 /* This has to reach into the fd_context a bit more than the rest of
@@ -229,11 +214,7 @@ emit_user_consts(struct fd_context *ctx, const struct ir3_shader_variant *v,
 
 	if (constbuf->enabled_mask & (1 << index)) {
 		struct pipe_constant_buffer *cb = &constbuf->cb[index];
-		/* size in dwords, aligned to vec4.  (This works at least
-		 * with mesa/st, which seems to align constant buffer to
-		 * 16 bytes)
-		 */
-		unsigned size = align(cb->buffer_size, 16) / 4;
+		unsigned size = align(cb->buffer_size, 4) / 4; /* size in dwords */
 
 		/* in particular, with binning shader we may end up with
 		 * unused consts, ie. we could end up w/ constlen that is
@@ -242,6 +223,9 @@ emit_user_consts(struct fd_context *ctx, const struct ir3_shader_variant *v,
 		 * writing too many consts
 		 */
 		uint32_t max_const = MIN2(v->num_uniforms, v->constlen);
+
+		// I expect that size should be a multiple of vec4's:
+		assert(size == align(size, 4));
 
 		/* and even if the start of the const buffer is before
 		 * first_immediate, the end may not be:
@@ -253,22 +237,6 @@ emit_user_consts(struct fd_context *ctx, const struct ir3_shader_variant *v,
 			ctx->emit_const(ring, v->type, 0,
 					cb->buffer_offset, size,
 					cb->user_buffer, cb->buffer);
-		}
-	}
-
-	struct ir3_ubo_analysis_state *state;
-	state = &v->shader->ubo_state;
-
-	for (uint32_t i = 1; i < ARRAY_SIZE(state->range); i++) {
-		struct pipe_constant_buffer *cb = &constbuf->cb[i];
-
-		if (state->range[i].start < state->range[i].end &&
-			constbuf->enabled_mask & (1 << i)) {
-
-			ctx->emit_const(ring, v->type, state->range[i].offset / 4,
-							cb->buffer_offset + state->range[i].start,
-							(state->range[i].end - state->range[i].start) / 4,
-							cb->user_buffer, cb->buffer);
 		}
 	}
 }

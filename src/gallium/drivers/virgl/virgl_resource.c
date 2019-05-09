@@ -27,32 +27,24 @@
 #include "virgl_resource.h"
 #include "virgl_screen.h"
 
-bool virgl_res_needs_flush(struct virgl_context *vctx,
-                           struct virgl_transfer *trans)
+bool virgl_res_needs_flush_wait(struct virgl_context *vctx,
+                                struct virgl_resource *res,
+                                unsigned usage)
 {
    struct virgl_screen *vs = virgl_screen(vctx->base.screen);
-   struct virgl_resource *res = virgl_resource(trans->base.resource);
 
-   if (trans->base.usage & PIPE_TRANSFER_UNSYNCHRONIZED)
-      return false;
-   if (!vs->vws->res_is_referenced(vs->vws, vctx->cbuf, res->hw_res))
-      return false;
-   if (res->clean_mask & (1 << trans->base.level)) {
-      if (vctx->num_draws == 0 && vctx->num_compute == 0)
-         return false;
-      if (!virgl_transfer_queue_is_queued(&vctx->queue, trans))
-         return false;
+   if ((!(usage & PIPE_TRANSFER_UNSYNCHRONIZED)) && vs->vws->res_is_referenced(vs->vws, vctx->cbuf, res->hw_res)) {
+      return true;
    }
-
-   return true;
+   return false;
 }
 
 bool virgl_res_needs_readback(struct virgl_context *vctx,
                               struct virgl_resource *res,
-                              unsigned usage, unsigned level)
+                              unsigned usage)
 {
    bool readback = true;
-   if (res->clean_mask & (1 << level))
+   if (res->clean)
       readback = false;
    else if (usage & PIPE_TRANSFER_DISCARD_RANGE)
       readback = false;
@@ -69,6 +61,7 @@ static struct pipe_resource *virgl_resource_create(struct pipe_screen *screen,
    struct virgl_screen *vs = virgl_screen(screen);
    struct virgl_resource *res = CALLOC_STRUCT(virgl_resource);
 
+   res->clean = TRUE;
    res->u.b = *templ;
    res->u.b.screen = &vs->base;
    pipe_reference_init(&res->u.b.reference, 1);
@@ -87,8 +80,6 @@ static struct pipe_resource *virgl_resource_create(struct pipe_screen *screen,
       FREE(res);
       return NULL;
    }
-
-   res->clean_mask = (1 << VR_MAX_TEXTURE_2D_LEVELS) - 1;
 
    if (templ->target == PIPE_BUFFER)
       virgl_buffer_init(res);
@@ -146,7 +137,7 @@ static void virgl_buffer_subdata(struct pipe_context *pipe,
 
    u_box_1d(offset, size, &box);
 
-   if (resource->width0 >= getpagesize())
+   if (size >= (VIRGL_MAX_CMDBUF_DWORDS * 4))
       u_default_buffer_subdata(pipe, resource, usage, offset, size, data);
    else
       virgl_transfer_inline_write(pipe, resource, 0, usage, &box, data, 0, 0);
@@ -199,7 +190,7 @@ void virgl_resource_layout(struct pipe_resource *pt,
 }
 
 struct virgl_transfer *
-virgl_resource_create_transfer(struct slab_child_pool *pool,
+virgl_resource_create_transfer(struct pipe_context *ctx,
                                struct pipe_resource *pres,
                                const struct virgl_resource_metadata *metadata,
                                unsigned level, unsigned usage,
@@ -207,6 +198,7 @@ virgl_resource_create_transfer(struct slab_child_pool *pool,
 {
    struct virgl_transfer *trans;
    enum pipe_format format = pres->format;
+   struct virgl_context *vctx = virgl_context(ctx);
    const unsigned blocksy = box->y / util_format_get_blockheight(format);
    const unsigned blocksx = box->x / util_format_get_blockwidth(format);
 
@@ -229,7 +221,7 @@ virgl_resource_create_transfer(struct slab_child_pool *pool,
    offset += blocksy * metadata->stride[level];
    offset += blocksx * util_format_get_blocksize(format);
 
-   trans = slab_alloc(pool);
+   trans = slab_alloc(&vctx->transfer_pool);
    if (!trans)
       return NULL;
 
@@ -254,11 +246,11 @@ virgl_resource_create_transfer(struct slab_child_pool *pool,
    return trans;
 }
 
-void virgl_resource_destroy_transfer(struct slab_child_pool *pool,
+void virgl_resource_destroy_transfer(struct virgl_context *vctx,
                                      struct virgl_transfer *trans)
 {
    util_range_destroy(&trans->range);
-   slab_free(pool, trans);
+   slab_free(&vctx->transfer_pool, trans);
 }
 
 void virgl_resource_destroy(struct pipe_screen *screen,
@@ -283,14 +275,4 @@ boolean virgl_resource_get_handle(struct pipe_screen *screen,
    return vs->vws->resource_get_handle(vs->vws, res->hw_res,
                                        res->metadata.stride[0],
                                        whandle);
-}
-
-void virgl_resource_dirty(struct virgl_resource *res, uint32_t level)
-{
-   if (res) {
-      if (res->u.b.target == PIPE_BUFFER)
-         res->clean_mask &= ~1;
-      else
-         res->clean_mask &= ~(1 << level);
-   }
 }

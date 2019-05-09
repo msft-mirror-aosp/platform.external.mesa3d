@@ -168,30 +168,30 @@ event DrawIndexedInstancedEvent
 
 event VSStats
 {
-    HANDLE hStats;      // SWR_SHADER_STATS
+    uint32_t numInstExecuted;
 };
 
 event HSStats
 {
-    HANDLE hStats;      // SWR_SHADER_STATS
+    uint32_t numInstExecuted;
 };
 
 event DSStats
 {
-    HANDLE hStats;      // SWR_SHADER_STATS
+    uint32_t numInstExecuted;
 };
 
 event GSStats
 {
-    HANDLE hStats;      // SWR_SHADER_STATS
+    uint32_t numInstExecuted;
 };
 
 event PSStats
 {
-    HANDLE hStats;      // SWR_SHADER_STATS
+    uint32_t numInstExecuted;
 };
 
 event CSStats
 {
-    HANDLE hStats;      // SWR_SHADER_STATS
+    uint32_t numInstExecuted;
 };

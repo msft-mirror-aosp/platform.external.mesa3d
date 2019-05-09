@@ -365,12 +365,8 @@ struct radv_pipeline_cache {
 struct radv_pipeline_key {
 	uint32_t instance_rate_inputs;
 	uint32_t instance_rate_divisors[MAX_VERTEX_ATTRIBS];
-	uint8_t vertex_attribute_formats[MAX_VERTEX_ATTRIBS];
-	uint32_t vertex_attribute_bindings[MAX_VERTEX_ATTRIBS];
-	uint32_t vertex_attribute_offsets[MAX_VERTEX_ATTRIBS];
-	uint32_t vertex_attribute_strides[MAX_VERTEX_ATTRIBS];
+	uint32_t vertex_attribute_provided;
 	uint64_t vertex_alpha_adjust;
-	uint32_t vertex_post_shuffle;
 	unsigned tess_input_vertices;
 	uint32_t col_format;
 	uint32_t is_int8;
@@ -396,8 +392,7 @@ bool
 radv_create_shader_variants_from_pipeline_cache(struct radv_device *device,
 					        struct radv_pipeline_cache *cache,
 					        const unsigned char *sha1,
-					        struct radv_shader_variant **variants,
-						bool *found_in_application_cache);
+					        struct radv_shader_variant **variants);
 
 void
 radv_pipeline_cache_insert_shaders(struct radv_device *device,
@@ -1192,7 +1187,8 @@ radv_cmd_buffer_upload_alloc(struct radv_cmd_buffer *cmd_buffer,
 			     void **ptr);
 void
 radv_cmd_buffer_set_subpass(struct radv_cmd_buffer *cmd_buffer,
-			    const struct radv_subpass *subpass);
+			    const struct radv_subpass *subpass,
+			    bool transitions);
 bool
 radv_cmd_buffer_upload_data(struct radv_cmd_buffer *cmd_buffer,
 			    unsigned size, unsigned alignmnet,
@@ -1343,7 +1339,11 @@ struct radv_prim_vertex_count {
 };
 
 struct radv_vertex_elements_info {
+	uint32_t rsrc_word3[MAX_VERTEX_ATTRIBS];
 	uint32_t format_size[MAX_VERTEX_ATTRIBS];
+	uint32_t binding[MAX_VERTEX_ATTRIBS];
+	uint32_t offset[MAX_VERTEX_ATTRIBS];
+	uint32_t count;
 };
 
 struct radv_ia_multi_vgt_param_helpers {
@@ -1375,7 +1375,6 @@ struct radv_pipeline {
 	struct radv_vertex_elements_info             vertex_elements;
 
 	uint32_t                                     binding_stride[MAX_VBS];
-	uint8_t                                      num_vertex_bindings;
 
 	uint32_t user_data_0[MESA_SHADER_STAGES];
 	union {
@@ -1822,21 +1821,15 @@ struct radv_subpass_attachment {
 };
 
 struct radv_subpass {
-	uint32_t                                     attachment_count;
-	struct radv_subpass_attachment *             attachments;
-
 	uint32_t                                     input_count;
 	uint32_t                                     color_count;
 	struct radv_subpass_attachment *             input_attachments;
 	struct radv_subpass_attachment *             color_attachments;
 	struct radv_subpass_attachment *             resolve_attachments;
-	struct radv_subpass_attachment *             depth_stencil_attachment;
+	struct radv_subpass_attachment               depth_stencil_attachment;
 
 	/** Subpass has at least one resolve attachment */
 	bool                                         has_resolve;
-
-	/** Subpass has at least one color attachment */
-	bool                                         has_color_att;
 
 	struct radv_subpass_barrier                  start_barrier;
 
@@ -1851,9 +1844,7 @@ struct radv_render_pass_attachment {
 	VkAttachmentLoadOp                           stencil_load_op;
 	VkImageLayout                                initial_layout;
 	VkImageLayout                                final_layout;
-
-	/* The subpass id in which the attachment will be used last. */
-	uint32_t                                     last_subpass_idx;
+	uint32_t                                     view_mask;
 };
 
 struct radv_render_pass {
@@ -1948,9 +1939,6 @@ void radv_compile_nir_shader(struct ac_llvm_compiler *ac_llvm,
 			     int nir_count,
 			     const struct radv_nir_compiler_options *options);
 
-unsigned radv_nir_get_max_workgroup_size(enum chip_class chip_class,
-					 const struct nir_shader *nir);
-
 /* radv_shader_info.h */
 struct radv_shader_info;
 
@@ -1958,11 +1946,7 @@ void radv_nir_shader_info_pass(const struct nir_shader *nir,
 			       const struct radv_nir_compiler_options *options,
 			       struct radv_shader_info *info);
 
-void radv_nir_shader_info_init(struct radv_shader_info *info);
-
 struct radeon_winsys_sem;
-
-uint64_t radv_get_current_time(void);
 
 #define RADV_DEFINE_HANDLE_CASTS(__radv_type, __VkType)		\
 								\

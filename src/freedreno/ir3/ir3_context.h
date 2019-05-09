@@ -27,7 +27,6 @@
 #ifndef IR3_CONTEXT_H_
 #define IR3_CONTEXT_H_
 
-#include "ir3_compiler.h"
 #include "ir3_nir.h"
 #include "ir3.h"
 
@@ -43,7 +42,6 @@
  */
 struct ir3_context {
 	struct ir3_compiler *compiler;
-	const struct ir3_context_funcs *funcs;
 
 	struct nir_shader *s;
 
@@ -128,18 +126,6 @@ struct ir3_context {
 	bool error;
 };
 
-struct ir3_context_funcs {
-	void (*emit_intrinsic_load_ssbo)(struct ir3_context *ctx, nir_intrinsic_instr *intr,
-			struct ir3_instruction **dst);
-	void (*emit_intrinsic_store_ssbo)(struct ir3_context *ctx, nir_intrinsic_instr *intr);
-	struct ir3_instruction * (*emit_intrinsic_atomic_ssbo)(struct ir3_context *ctx, nir_intrinsic_instr *intr);
-	void (*emit_intrinsic_store_image)(struct ir3_context *ctx, nir_intrinsic_instr *intr);
-	struct ir3_instruction * (*emit_intrinsic_atomic_image)(struct ir3_context *ctx, nir_intrinsic_instr *intr);
-};
-
-extern const struct ir3_context_funcs ir3_a4xx_funcs;
-extern const struct ir3_context_funcs ir3_a6xx_funcs;
-
 struct ir3_context * ir3_context_init(struct ir3_compiler *compiler,
 		struct ir3_shader_variant *so);
 void ir3_context_free(struct ir3_context *ctx);
@@ -154,7 +140,7 @@ unsigned ir3_pointer_size(struct ir3_context *ctx)
 struct ir3_instruction ** ir3_get_dst_ssa(struct ir3_context *ctx, nir_ssa_def *dst, unsigned n);
 struct ir3_instruction ** ir3_get_dst(struct ir3_context *ctx, nir_dest *dst, unsigned n);
 struct ir3_instruction * const * ir3_get_src(struct ir3_context *ctx, nir_src *src);
-void ir3_put_dst(struct ir3_context *ctx, nir_dest *dst);
+void put_dst(struct ir3_context *ctx, nir_dest *dst);
 struct ir3_instruction * ir3_create_collect(struct ir3_context *ctx,
 		struct ir3_instruction *const *arr, unsigned arrsz);
 void ir3_split_dest(struct ir3_block *block, struct ir3_instruction **dst,

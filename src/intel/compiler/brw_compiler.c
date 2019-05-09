@@ -33,8 +33,6 @@
    .lower_sub = true,                                                         \
    .lower_fdiv = true,                                                        \
    .lower_scmp = true,                                                        \
-   .lower_flrp16 = true,                                                      \
-   .lower_fmod16 = true,                                                      \
    .lower_fmod32 = true,                                                      \
    .lower_fmod64 = false,                                                     \
    .lower_bitfield_extract = true,                                            \
@@ -43,7 +41,6 @@
    .lower_usub_borrow = true,                                                 \
    .lower_fdiv = true,                                                        \
    .lower_flrp64 = true,                                                      \
-   .lower_isign = true,                                                       \
    .lower_ldexp = true,                                                       \
    .lower_cs_local_id_from_index = true,                                      \
    .lower_device_index_to_zero = true,                                        \
@@ -145,41 +142,6 @@ brw_compiler_create(void *mem_ctx, const struct gen_device_info *devinfo)
       compiler->scalar_stage[MESA_SHADER_COMPUTE] = true;
    }
 
-   nir_lower_int64_options int64_options =
-      nir_lower_imul64 |
-      nir_lower_isign64 |
-      nir_lower_divmod64 |
-      nir_lower_imul_high64;
-   nir_lower_doubles_options fp64_options =
-      nir_lower_drcp |
-      nir_lower_dsqrt |
-      nir_lower_drsq |
-      nir_lower_dtrunc |
-      nir_lower_dfloor |
-      nir_lower_dceil |
-      nir_lower_dfract |
-      nir_lower_dround_even |
-      nir_lower_dmod;
-
-   if (!devinfo->has_64bit_types || (INTEL_DEBUG & DEBUG_SOFT64)) {
-      int64_options |= nir_lower_mov64 |
-                       nir_lower_icmp64 |
-                       nir_lower_iadd64 |
-                       nir_lower_iabs64 |
-                       nir_lower_ineg64 |
-                       nir_lower_logic64 |
-                       nir_lower_minmax64 |
-                       nir_lower_shift64;
-      fp64_options |= nir_lower_fp64_full_software;
-   }
-
-   /* The Bspec's section tittled "Instruction_multiply[DevBDW+]" claims that
-    * destination type can be Quadword and source type Doubleword for Gen8 and
-    * Gen9. So, lower 64 bit multiply instruction on rest of the platforms.
-    */
-   if (devinfo->gen < 8 || devinfo->gen > 9)
-      int64_options |= nir_lower_imul_2x32_64;
-
    /* We want the GLSL compiler to emit code that uses condition codes */
    for (int i = 0; i < MESA_SHADER_STAGES; i++) {
       compiler->glsl_compiler_options[i].MaxUnrollIterations = 0;
@@ -195,19 +157,15 @@ brw_compiler_create(void *mem_ctx, const struct gen_device_info *devinfo)
       compiler->glsl_compiler_options[i].EmitNoIndirectTemp = is_scalar;
       compiler->glsl_compiler_options[i].OptimizeForAOS = !is_scalar;
 
-      struct nir_shader_compiler_options *nir_options =
-         rzalloc(compiler, struct nir_shader_compiler_options);
       if (is_scalar) {
-         *nir_options =
-            devinfo->gen < 11 ? scalar_nir_options : scalar_nir_options_gen11;
+         compiler->glsl_compiler_options[i].NirOptions =
+            devinfo->gen < 11 ? &scalar_nir_options : &scalar_nir_options_gen11;
       } else {
-         *nir_options =
-            devinfo->gen < 6 ? vector_nir_options : vector_nir_options_gen6;
+         compiler->glsl_compiler_options[i].NirOptions =
+            devinfo->gen < 6 ? &vector_nir_options : &vector_nir_options_gen6;
       }
-      nir_options->lower_int64_options = int64_options;
-      nir_options->lower_doubles_options = fp64_options;
-      compiler->glsl_compiler_options[i].NirOptions = nir_options;
 
+      compiler->glsl_compiler_options[i].LowerBufferInterfaceBlocks = true;
       compiler->glsl_compiler_options[i].ClampBlockIndicesToArrayBounds = true;
    }
 

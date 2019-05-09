@@ -161,10 +161,11 @@ v3d33_vir_emit_tex(struct v3d_compile *c, nir_tex_instr *instr)
                                                  unit));
         }
 
-        int texture_u[] = {
-                vir_get_uniform_index(c, QUNIFORM_TEXTURE_CONFIG_P0_0 + unit, p0_packed),
-                vir_get_uniform_index(c, QUNIFORM_TEXTURE_CONFIG_P1, p1_packed),
+        struct qreg texture_u[] = {
+                vir_uniform(c, QUNIFORM_TEXTURE_CONFIG_P0_0 + unit, p0_packed),
+                vir_uniform(c, QUNIFORM_TEXTURE_CONFIG_P1, p1_packed),
         };
+        uint32_t next_texture_u = 0;
 
         for (int i = 0; i < next_coord; i++) {
                 struct qreg dst;
@@ -176,8 +177,11 @@ v3d33_vir_emit_tex(struct v3d_compile *c, nir_tex_instr *instr)
 
                 struct qinst *tmu = vir_MOV_dest(c, dst, coords[i]);
 
-                if (i < 2)
-                        tmu->uniform = texture_u[i];
+                if (i < 2) {
+                        tmu->has_implicit_uniform = true;
+                        tmu->src[vir_get_implicit_uniform_src(tmu)] =
+                                texture_u[next_texture_u++];
+                }
         }
 
         vir_emit_thrsw(c);

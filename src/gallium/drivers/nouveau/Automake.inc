@@ -8,7 +8,4 @@ TARGET_LIB_DEPS += \
 	$(NOUVEAU_LIBS) \
 	$(LIBDRM_LIBS)
 
-TARGET_COMPILER_LIB_DEPS = \
-	$(top_builddir)/src/compiler/nir/libnir.la
-
 endif

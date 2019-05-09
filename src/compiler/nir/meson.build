@@ -123,7 +123,6 @@ files_libnir = files(
   'nir_lower_constant_initializers.c',
   'nir_lower_double_ops.c',
   'nir_lower_drawpixels.c',
-  'nir_lower_frexp.c',
   'nir_lower_global_vars_to_local.c',
   'nir_lower_gs_intrinsics.c',
   'nir_lower_load_const_to_scalar.c',
@@ -136,7 +135,6 @@ files_libnir = files(
   'nir_lower_io_to_temporaries.c',
   'nir_lower_io_to_scalar.c',
   'nir_lower_io_to_vector.c',
-  'nir_lower_non_uniform_access.c',
   'nir_lower_packing.c',
   'nir_lower_passthrough_edgeflags.c',
   'nir_lower_patch_vertices.c',
@@ -154,13 +152,10 @@ files_libnir = files(
   'nir_lower_wpos_center.c',
   'nir_lower_wpos_ytransform.c',
   'nir_lower_bit_size.c',
-  'nir_lower_uniforms_to_ubo.c',
   'nir_metadata.c',
   'nir_move_load_const.c',
   'nir_move_vec_src_uses_to_dest.c',
   'nir_normalize_cubemap_coords.c',
-  'nir_opt_combine_stores.c',
-  'nir_opt_comparison_pre.c',
   'nir_opt_conditional_discard.c',
   'nir_opt_constant_folding.c',
   'nir_opt_copy_prop_vars.c',
@@ -195,7 +190,6 @@ files_libnir = files(
   'nir_search_helpers.h',
   'nir_serialize.c',
   'nir_serialize.h',
-  'nir_strip.c',
   'nir_split_per_member_structs.c',
   'nir_split_var_copies.c',
   'nir_split_vars.c',
@@ -210,7 +204,6 @@ files_libnir = files(
   '../spirv/GLSL.std.450.h',
   '../spirv/gl_spirv.c',
   '../spirv/nir_spirv.h',
-  '../spirv/OpenCL.std.h',
   '../spirv/spirv.h',
   '../spirv/spirv_info.h',
   '../spirv/spirv_to_nir.c',
@@ -218,7 +211,6 @@ files_libnir = files(
   '../spirv/vtn_amd.c',
   '../spirv/vtn_cfg.c',
   '../spirv/vtn_glsl450.c',
-  '../spirv/vtn_opencl.c',
   '../spirv/vtn_private.h',
   '../spirv/vtn_subgroup.c',
   '../spirv/vtn_variables.c',
@@ -282,17 +274,5 @@ if with_tests
       join_paths(meson.current_source_dir(), 'tests/algebraic_parser_test.py')
     ],
     suite : ['compiler', 'nir'],
-  )
-
-  test(
-    'negative_equal',
-    executable(
-      'negative_equal',
-      files('tests/negative_equal_tests.cpp'),
-      c_args : [c_vis_args, c_msvc_compat_args, no_override_init_args],
-      include_directories : [inc_common],
-      dependencies : [dep_thread, idep_gtest, idep_nir],
-      link_with : libmesa_util,
-    )
   )
 endif

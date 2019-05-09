@@ -43,7 +43,7 @@ LOCAL_CFLAGS := \
 	-DHAVE_ANDROID_PLATFORM
 
 LOCAL_C_INCLUDES := \
-	$(MESA_TOP)/include \
+	$(MESA_TOP)/include/drm-uapi \
 	$(MESA_TOP)/src/egl/main \
 	$(MESA_TOP)/src/egl/drivers/dri2
 
@@ -72,6 +72,8 @@ ifeq ($(BOARD_USES_DRM_GRALLOC),true)
 endif
 
 ifeq ($(filter $(MESA_ANDROID_MAJOR_VERSION), 4 5 6 7),)
+LOCAL_HEADER_LIBRARIES += libnativebase_headers
+LOCAL_STATIC_LIBRARIES += libarect
 LOCAL_SHARED_LIBRARIES += libnativewindow
 endif
 

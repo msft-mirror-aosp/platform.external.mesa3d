@@ -27,6 +27,7 @@ BUILT_SOURCES =
 
 AM_CFLAGS = \
 	-I$(top_srcdir)/include \
+	-I$(top_srcdir)/include/drm-uapi \
 	-I$(top_srcdir)/src/mapi \
 	-I$(top_srcdir)/src/egl/main \
 	-I$(top_srcdir)/src/gbm/main \
@@ -190,12 +191,12 @@ libEGL_mesa_la_LDFLAGS = \
 
 else # USE_LIBGLVND
 
-lib_LTLIBRARIES = libEGL@EGL_LIB_SUFFIX@.la
-libEGL@EGL_LIB_SUFFIX@_la_SOURCES =
-libEGL@EGL_LIB_SUFFIX@_la_LIBADD = \
+lib_LTLIBRARIES = libEGL.la
+libEGL_la_SOURCES =
+libEGL_la_LIBADD = \
 	libEGL_common.la \
 	$(top_builddir)/src/mapi/shared-glapi/libglapi.la
-libEGL@EGL_LIB_SUFFIX@_la_LDFLAGS = \
+libEGL_la_LDFLAGS = \
 	-no-undefined \
 	-version-number 1:0 \
 	$(BSYMBOLIC) \

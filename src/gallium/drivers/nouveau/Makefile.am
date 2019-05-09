@@ -24,11 +24,7 @@ include Makefile.sources
 include $(top_srcdir)/src/gallium/Automake.inc
 
 AM_CPPFLAGS = \
-	-I$(top_srcdir)/include \
-	-I$(top_builddir)/src/compiler/nir \
-	-I$(top_srcdir)/src/compiler/nir \
-	-I$(top_srcdir)/src/mapi \
-	-I$(top_srcdir)/src/mesa \
+	-I$(top_srcdir)/include/drm-uapi \
 	$(GALLIUM_DRIVER_CFLAGS) \
 	$(LIBDRM_CFLAGS) \
 	$(NOUVEAU_CFLAGS)
@@ -51,7 +47,6 @@ nouveau_compiler_SOURCES = \
 
 nouveau_compiler_LDADD = \
 	libnouveau.la \
-	$(top_builddir)/src/compiler/nir/libnir.la \
 	$(top_builddir)/src/gallium/auxiliary/libgallium.la \
 	$(top_builddir)/src/util/libmesautil.la \
 	$(GALLIUM_COMMON_LIB_DEPS)

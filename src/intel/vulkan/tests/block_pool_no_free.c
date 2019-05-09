@@ -21,8 +21,6 @@
  * IN THE SOFTWARE.
  */
 
-#undef NDEBUG
-
 #include <pthread.h>
 
 #include "anv_private.h"

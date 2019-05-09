@@ -46,7 +46,7 @@
 
 
 #define VIRGL_DRM_VERSION(major, minor) ((major) << 16 | (minor))
-#define VIRGL_DRM_VERSION_FENCE_FD      VIRGL_DRM_VERSION(1, 0)
+#define VIRGL_DRM_VERSION_FENCE_FD      VIRGL_DRM_VERSION(0, 1)
 
 
 static inline boolean can_cache_resource(struct virgl_hw_res *res)
@@ -230,7 +230,7 @@ virgl_drm_winsys_resource_create(struct virgl_winsys *qws,
    res->size = size;
    res->stride = stride;
    pipe_reference_init(&res->reference, 1);
-   p_atomic_set(&res->num_cs_references, 0);
+   res->num_cs_references = 0;
    res->fence_fd = -1;
    return res;
 }
@@ -564,6 +564,44 @@ static void virgl_drm_resource_wait(struct virgl_winsys *qws,
       goto again;
 }
 
+static struct virgl_cmd_buf *virgl_drm_cmd_buf_create(struct virgl_winsys *qws)
+{
+   struct virgl_drm_cmd_buf *cbuf;
+
+   cbuf = CALLOC_STRUCT(virgl_drm_cmd_buf);
+   if (!cbuf)
+      return NULL;
+
+   cbuf->ws = qws;
+
+   cbuf->nres = 512;
+   cbuf->res_bo = CALLOC(cbuf->nres, sizeof(struct virgl_hw_buf*));
+   if (!cbuf->res_bo) {
+      FREE(cbuf);
+      return NULL;
+   }
+   cbuf->res_hlist = MALLOC(cbuf->nres * sizeof(uint32_t));
+   if (!cbuf->res_hlist) {
+      FREE(cbuf->res_bo);
+      FREE(cbuf);
+      return NULL;
+   }
+
+   cbuf->base.buf = cbuf->buf;
+   cbuf->base.in_fence_fd = -1;
+   return &cbuf->base;
+}
+
+static void virgl_drm_cmd_buf_destroy(struct virgl_cmd_buf *_cbuf)
+{
+   struct virgl_drm_cmd_buf *cbuf = virgl_drm_cmd_buf(_cbuf);
+
+   FREE(cbuf->res_hlist);
+   FREE(cbuf->res_bo);
+   FREE(cbuf);
+
+}
+
 static boolean virgl_drm_lookup_res(struct virgl_drm_cmd_buf *cbuf,
                                     struct virgl_hw_res *res)
 {
@@ -654,59 +692,10 @@ static boolean virgl_drm_res_is_ref(struct virgl_winsys *qws,
                                     struct virgl_cmd_buf *_cbuf,
                                     struct virgl_hw_res *res)
 {
-   if (!p_atomic_read(&res->num_cs_references))
+   if (!res->num_cs_references)
       return FALSE;
 
    return TRUE;
-}
-
-static struct virgl_cmd_buf *virgl_drm_cmd_buf_create(struct virgl_winsys *qws,
-                                                      uint32_t size)
-{
-   struct virgl_drm_cmd_buf *cbuf;
-
-   cbuf = CALLOC_STRUCT(virgl_drm_cmd_buf);
-   if (!cbuf)
-      return NULL;
-
-   cbuf->ws = qws;
-
-   cbuf->nres = 512;
-   cbuf->res_bo = CALLOC(cbuf->nres, sizeof(struct virgl_hw_buf*));
-   if (!cbuf->res_bo) {
-      FREE(cbuf);
-      return NULL;
-   }
-   cbuf->res_hlist = MALLOC(cbuf->nres * sizeof(uint32_t));
-   if (!cbuf->res_hlist) {
-      FREE(cbuf->res_bo);
-      FREE(cbuf);
-      return NULL;
-   }
-
-   cbuf->buf = CALLOC(size, sizeof(uint32_t));
-   if (!cbuf->buf) {
-      FREE(cbuf->res_hlist);
-      FREE(cbuf->res_bo);
-      FREE(cbuf);
-      return NULL;
-   }
-
-   cbuf->base.buf = cbuf->buf;
-   cbuf->base.in_fence_fd = -1;
-   return &cbuf->base;
-}
-
-static void virgl_drm_cmd_buf_destroy(struct virgl_cmd_buf *_cbuf)
-{
-   struct virgl_drm_cmd_buf *cbuf = virgl_drm_cmd_buf(_cbuf);
-
-   virgl_drm_release_all_res(virgl_drm_winsys(cbuf->ws), cbuf);
-   FREE(cbuf->res_hlist);
-   FREE(cbuf->res_bo);
-   FREE(cbuf->buf);
-   FREE(cbuf);
-
 }
 
 static int virgl_drm_winsys_submit_cmd(struct virgl_winsys *qws,
@@ -881,7 +870,7 @@ static int virgl_drm_get_version(int fd)
 	else if (version->version_major != 0)
 		ret = -EINVAL;
 	else
-		ret = version->version_minor;
+		ret = VIRGL_DRM_VERSION(0, version->version_minor);
 
 	drmFreeVersion(version);
 
@@ -941,7 +930,6 @@ virgl_drm_winsys_create(int drmFD)
    qdws->base.fence_server_sync = virgl_fence_server_sync;
    qdws->base.fence_get_fd = virgl_fence_get_fd;
    qdws->base.supports_fences =  drm_version >= VIRGL_DRM_VERSION_FENCE_FD;
-   qdws->base.supports_encoded_transfers = 1;
 
    qdws->base.get_caps = virgl_drm_get_caps;
 
@@ -972,7 +960,6 @@ virgl_drm_screen_destroy(struct pipe_screen *pscreen)
    if (destroy) {
       int fd = virgl_drm_winsys(screen->vws)->fd;
       util_hash_table_remove(fd_tab, intptr_to_pointer(fd));
-      close(fd);
    }
    mtx_unlock(&virgl_screen_mutex);
 

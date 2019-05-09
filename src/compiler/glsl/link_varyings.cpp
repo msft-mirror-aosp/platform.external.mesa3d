@@ -79,7 +79,7 @@ create_xfb_varying_names(void *mem_ctx, const glsl_type *t, char **name,
 
       create_xfb_varying_names(mem_ctx, ifc_member_t, name, new_length, count,
                                NULL, NULL, varying_names);
-   } else if (t->is_struct()) {
+   } else if (t->is_record()) {
       for (unsigned i = 0; i < t->length; i++) {
          const char *field = t->fields.structure[i].name;
          size_t new_length = name_length;
@@ -90,7 +90,7 @@ create_xfb_varying_names(void *mem_ctx, const glsl_type *t, char **name,
                                   new_length, count, NULL, NULL,
                                   varying_names);
       }
-   } else if (t->without_array()->is_struct() ||
+   } else if (t->without_array()->is_record() ||
               t->without_array()->is_interface() ||
               (t->is_array() && t->fields.array->is_array())) {
       for (unsigned i = 0; i < t->length; i++) {
@@ -424,27 +424,13 @@ compute_variable_location_slot(ir_variable *var, gl_shader_stage stage)
 
 struct explicit_location_info {
    ir_variable *var;
-   unsigned numerical_type;
+   bool base_type_is_integer;
+   unsigned base_type_bit_size;
    unsigned interpolation;
    bool centroid;
    bool sample;
    bool patch;
 };
-
-static inline unsigned
-get_numerical_type(const glsl_type *type)
-{
-   /* From the OpenGL 4.6 spec, section 4.4.1 Input Layout Qualifiers, Page 68,
-    * (Location aliasing):
-    *
-    *    "Further, when location aliasing, the aliases sharing the location
-    *     must have the same underlying numerical type  (floating-point or
-    *     integer)
-    */
-   if (type->is_float() || type->is_double())
-      return GLSL_TYPE_FLOAT;
-   return GLSL_TYPE_INT;
-}
 
 static bool
 check_location_aliasing(struct explicit_location_info explicit_locations[][4],
@@ -461,14 +447,23 @@ check_location_aliasing(struct explicit_location_info explicit_locations[][4],
                         gl_shader_stage stage)
 {
    unsigned last_comp;
-   if (type->without_array()->is_struct()) {
-      /* The component qualifier can't be used on structs so just treat
-       * all component slots as used.
+   unsigned base_type_bit_size;
+   const glsl_type *type_without_array = type->without_array();
+   const bool base_type_is_integer =
+      glsl_base_type_is_integer(type_without_array->base_type);
+   const bool is_struct = type_without_array->is_record();
+   if (is_struct) {
+      /* structs don't have a defined underlying base type so just treat all
+       * component slots as used and set the bit size to 0. If there is
+       * location aliasing, we'll fail anyway later.
        */
       last_comp = 4;
+      base_type_bit_size = 0;
    } else {
-      unsigned dmul = type->without_array()->is_64bit() ? 2 : 1;
-      last_comp = component + type->without_array()->vector_elements * dmul;
+      unsigned dmul = type_without_array->is_64bit() ? 2 : 1;
+      last_comp = component + type_without_array->vector_elements * dmul;
+      base_type_bit_size =
+         glsl_base_type_get_bit_size(type_without_array->base_type);
    }
 
    while (location < location_limit) {
@@ -478,8 +473,22 @@ check_location_aliasing(struct explicit_location_info explicit_locations[][4],
             &explicit_locations[location][comp];
 
          if (info->var) {
-            /* Component aliasing is not alloed */
-            if (comp >= component && comp < last_comp) {
+            if (info->var->type->without_array()->is_record() || is_struct) {
+               /* Structs cannot share location since they are incompatible
+                * with any other underlying numerical type.
+                */
+               linker_error(prog,
+                            "%s shader has multiple %sputs sharing the "
+                            "same location that don't have the same "
+                            "underlying numerical type. Struct variable '%s', "
+                            "location %u\n",
+                            _mesa_shader_stage_to_string(stage),
+                            var->data.mode == ir_var_shader_in ? "in" : "out",
+                            is_struct ? var->name : info->var->name,
+                            location);
+               return false;
+            } else if (comp >= component && comp < last_comp) {
+               /* Component aliasing is not allowed */
                linker_error(prog,
                             "%s shader has multiple %sputs explicitly "
                             "assigned to location %d and component %d\n",
@@ -488,27 +497,52 @@ check_location_aliasing(struct explicit_location_info explicit_locations[][4],
                             location, comp);
                return false;
             } else {
-               /* For all other used components we need to have matching
-                * types, interpolation and auxiliary storage
+               /* From the OpenGL 4.60.5 spec, section 4.4.1 Input Layout
+                * Qualifiers, Page 67, (Location aliasing):
+                *
+                *   " Further, when location aliasing, the aliases sharing the
+                *     location must have the same underlying numerical type
+                *     and bit width (floating-point or integer, 32-bit versus
+                *     64-bit, etc.) and the same auxiliary storage and
+                *     interpolation qualification."
                 */
-               if (info->numerical_type !=
-                   get_numerical_type(type->without_array())) {
+
+               /* If the underlying numerical type isn't integer, implicitly
+                * it will be float or else we would have failed by now.
+                */
+               if (info->base_type_is_integer != base_type_is_integer) {
                   linker_error(prog,
-                               "Varyings sharing the same location must "
-                               "have the same underlying numerical type. "
-                               "Location %u component %u\n",
-                               location, comp);
+                               "%s shader has multiple %sputs sharing the "
+                               "same location that don't have the same "
+                               "underlying numerical type. Location %u "
+                               "component %u.\n",
+                               _mesa_shader_stage_to_string(stage),
+                               var->data.mode == ir_var_shader_in ?
+                               "in" : "out", location, comp);
+                  return false;
+               }
+
+               if (info->base_type_bit_size != base_type_bit_size) {
+                  linker_error(prog,
+                               "%s shader has multiple %sputs sharing the "
+                               "same location that don't have the same "
+                               "underlying numerical bit size. Location %u "
+                               "component %u.\n",
+                               _mesa_shader_stage_to_string(stage),
+                               var->data.mode == ir_var_shader_in ?
+                               "in" : "out", location, comp);
                   return false;
                }
 
                if (info->interpolation != interpolation) {
                   linker_error(prog,
-                               "%s shader has multiple %sputs at explicit "
-                               "location %u with different interpolation "
-                               "settings\n",
+                               "%s shader has multiple %sputs sharing the "
+                               "same location that don't have the same "
+                               "interpolation qualification. Location %u "
+                               "component %u.\n",
                                _mesa_shader_stage_to_string(stage),
                                var->data.mode == ir_var_shader_in ?
-                               "in" : "out", location);
+                               "in" : "out", location, comp);
                   return false;
                }
 
@@ -516,17 +550,20 @@ check_location_aliasing(struct explicit_location_info explicit_locations[][4],
                    info->sample != sample ||
                    info->patch != patch) {
                   linker_error(prog,
-                               "%s shader has multiple %sputs at explicit "
-                               "location %u with different aux storage\n",
+                               "%s shader has multiple %sputs sharing the "
+                               "same location that don't have the same "
+                               "auxiliary storage qualification. Location %u "
+                               "component %u.\n",
                                _mesa_shader_stage_to_string(stage),
                                var->data.mode == ir_var_shader_in ?
-                               "in" : "out", location);
+                               "in" : "out", location, comp);
                   return false;
                }
             }
          } else if (comp >= component && comp < last_comp) {
             info->var = var;
-            info->numerical_type = get_numerical_type(type->without_array());
+            info->base_type_is_integer = base_type_is_integer;
+            info->base_type_bit_size = base_type_bit_size;
             info->interpolation = interpolation;
             info->centroid = centroid;
             info->sample = sample;
@@ -687,8 +724,7 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
                                  gl_linked_shader *consumer)
 {
    glsl_symbol_table parameters;
-   struct explicit_location_info output_explicit_locations[MAX_VARYING][4] = { 0 };
-   struct explicit_location_info input_explicit_locations[MAX_VARYING][4] = { 0 };
+   struct explicit_location_info explicit_locations[MAX_VARYING][4] = { 0 };
 
    /* Find all shader outputs in the "producer" stage.
     */
@@ -706,7 +742,7 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
           * differently because they do not need to have matching names.
           */
          if (!validate_explicit_variable_location(ctx,
-                                                  output_explicit_locations,
+                                                  explicit_locations,
                                                   var, prog, producer)) {
             return;
          }
@@ -764,12 +800,6 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
                compute_variable_location_slot(input, consumer->Stage);
             unsigned slot_limit = idx + num_elements;
 
-            if (!validate_explicit_variable_location(ctx,
-                                                     input_explicit_locations,
-                                                     input, prog, consumer)) {
-               return;
-            }
-
             while (idx < slot_limit) {
                if (idx >= MAX_VARYING) {
                   linker_error(prog,
@@ -778,7 +808,7 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
                   return;
                }
 
-               output = output_explicit_locations[idx][input->data.location_frac].var;
+               output = explicit_locations[idx][input->data.location_frac].var;
 
                if (output == NULL) {
                   /* A linker failure should only happen when there is no
@@ -1637,7 +1667,7 @@ varying_matches::is_varying_packing_safe(const glsl_type *type,
        producer_stage == MESA_SHADER_TESS_CTRL)
       return false;
 
-   return xfb_enabled && (type->is_array() || type->is_struct() ||
+   return xfb_enabled && (type->is_array() || type->is_record() ||
                           type->is_matrix() || var->data.is_xfb_only);
 }
 
@@ -1944,7 +1974,7 @@ varying_matches::store_locations() const
          if (enhanced_layouts_enabled) {
             const glsl_type *type =
                get_varying_type(producer_var, producer_stage);
-            if (type->is_array() || type->is_matrix() || type->is_struct() ||
+            if (type->is_array() || type->is_matrix() || type->is_record() ||
                 type->is_double()) {
                unsigned comp_slots = type->component_slots() + offset;
                unsigned slots = comp_slots / 4;
@@ -2176,7 +2206,7 @@ private:
                             const enum glsl_interface_packing,
                             bool /* last_field */)
    {
-      assert(!type->without_array()->is_struct());
+      assert(!type->without_array()->is_record());
       assert(!type->without_array()->is_interface());
 
       tfeedback_candidate *candidate

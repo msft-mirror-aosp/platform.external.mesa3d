@@ -725,6 +725,14 @@ public:
       unsigned interpolation:2;
 
       /**
+       * \name ARB_fragment_coord_conventions
+       * @{
+       */
+      unsigned origin_upper_left:1;
+      unsigned pixel_center_integer:1;
+      /*@}*/
+
+      /**
        * Was the location explicitly set in the shader?
        *
        * If the location is explicitly set in the shader, it \b cannot be changed
@@ -772,17 +780,17 @@ public:
       unsigned is_xfb_only:1;
 
       /**
-       * Was a transform feedback buffer set in the shader?
+       * Was a transfor feedback buffer set in the shader?
        */
       unsigned explicit_xfb_buffer:1;
 
       /**
-       * Was a transform feedback offset set in the shader?
+       * Was a transfor feedback offset set in the shader?
        */
       unsigned explicit_xfb_offset:1;
 
       /**
-       * Was a transform feedback stride set in the shader?
+       * Was a transfor feedback stride set in the shader?
        */
       unsigned explicit_xfb_stride:1;
 

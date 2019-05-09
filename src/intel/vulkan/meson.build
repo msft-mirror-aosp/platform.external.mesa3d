@@ -98,14 +98,14 @@ foreach g : [['70', ['gen7_cmd_buffer.c']], ['75', ['gen7_cmd_buffer.c']],
     'anv_gen@0@'.format(_gen),
     [anv_gen_files, g[1], anv_entrypoints[0], anv_extensions_h],
     include_directories : [
-      inc_common, inc_compiler, inc_include, inc_intel, inc_vulkan_util,
+      inc_common, inc_compiler, inc_drm_uapi, inc_intel, inc_vulkan_util,
       inc_vulkan_wsi,
     ],
     c_args : [
       c_vis_args, no_override_init_args, c_sse2_args,
       '-DGEN_VERSIONx10=@0@'.format(_gen),
     ],
-    dependencies : [dep_libdrm, dep_valgrind, idep_nir_headers],
+    dependencies : [dep_libdrm, dep_valgrind, idep_nir_headers, idep_genxml],
   )
 endforeach
 
@@ -183,7 +183,7 @@ libanv_common = static_library(
     gen_xml_pack,
   ],
   include_directories : [
-    inc_common, inc_intel, inc_compiler, inc_include, inc_vulkan_util,
+    inc_common, inc_intel, inc_compiler, inc_drm_uapi, inc_vulkan_util,
     inc_vulkan_wsi,
   ],
   c_args : anv_flags,
@@ -194,7 +194,7 @@ libvulkan_intel = shared_library(
   'vulkan_intel',
   [files('anv_gem.c'), anv_entrypoints[0], anv_extensions_h],
   include_directories : [
-    inc_common, inc_intel, inc_compiler, inc_include, inc_vulkan_util,
+    inc_common, inc_intel, inc_compiler, inc_drm_uapi, inc_vulkan_util,
     inc_vulkan_wsi,
   ],
   link_whole : [libanv_common, libanv_gen_libs],
@@ -203,7 +203,7 @@ libvulkan_intel = shared_library(
     libvulkan_util, libvulkan_wsi, libmesa_util,
   ],
   dependencies : [
-    dep_thread, dep_dl, dep_m, anv_deps, idep_nir,
+    dep_thread, dep_dl, dep_m, anv_deps, idep_nir, idep_genxml,
   ],
   c_args : anv_flags,
   link_args : ['-Wl,--build-id=sha1', ld_args_bsymbolic, ld_args_gc_sections],
@@ -215,7 +215,7 @@ if with_tests
     'vulkan_intel_test',
     [files('anv_gem_stubs.c'), anv_entrypoints[0], anv_extensions_h],
     include_directories : [
-      inc_common, inc_intel, inc_compiler, inc_include, inc_vulkan_util,
+      inc_common, inc_intel, inc_compiler, inc_drm_uapi, inc_vulkan_util,
       inc_vulkan_wsi,
     ],
     link_whole : libanv_common,
