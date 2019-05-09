@@ -50,7 +50,9 @@
 #include "dri_drawable.h"
 #include "dri_query_renderer.h"
 
-#include "drm-uapi/drm_fourcc.h"
+#ifndef DRM_FORMAT_MOD_INVALID
+#define DRM_FORMAT_MOD_INVALID ((1ULL<<56) - 1)
+#endif
 
 struct dri2_buffer
 {
@@ -110,8 +112,6 @@ static const struct dri2_format_mapping dri2_format_table[] = {
         __DRI_IMAGE_COMPONENTS_Y_UV,      PIPE_FORMAT_NV12 },
       { __DRI_IMAGE_FOURCC_YUYV,          __DRI_IMAGE_FORMAT_YUYV,
         __DRI_IMAGE_COMPONENTS_Y_XUXV,    PIPE_FORMAT_YUYV },
-      { __DRI_IMAGE_FOURCC_UYVY,          __DRI_IMAGE_FORMAT_UYVY,
-        __DRI_IMAGE_COMPONENTS_Y_UXVX,    PIPE_FORMAT_UYVY },
 };
 
 static const struct dri2_format_mapping *

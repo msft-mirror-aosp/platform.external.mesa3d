@@ -43,15 +43,11 @@
 #include "ir3/instr-a3xx.h"
 #include "ir3/ir3.h"
 
-#include "main/mtypes.h"
-
 #include "compiler/glsl/standalone.h"
 #include "compiler/glsl/glsl_to_nir.h"
 #include "compiler/glsl/gl_nir.h"
 #include "compiler/nir_types.h"
 #include "compiler/spirv/nir_spirv.h"
-
-#include "pipe/p_context.h"
 
 static void dump_info(struct ir3_shader_variant *so, const char *str)
 {
@@ -112,13 +108,12 @@ load_glsl(unsigned num_files, char* const* files, gl_shader_stage stage)
 	struct gl_shader_program *prog;
 	const nir_shader_compiler_options *nir_options =
 			ir3_get_compiler_options(compiler);
-	static struct gl_context local_ctx;
 
-	prog = standalone_compile_shader(&options, num_files, files, &local_ctx);
+	prog = standalone_compile_shader(&options, num_files, files);
 	if (!prog)
 		errx(1, "couldn't parse `%s'", files[0]);
 
-	nir_shader *nir = glsl_to_nir(&local_ctx, prog, stage, nir_options);
+	nir_shader *nir = glsl_to_nir(prog, stage, nir_options);
 
 	/* required NIR passes: */
 	if (nir_options->lower_all_io_to_temps ||
@@ -181,7 +176,6 @@ load_glsl(unsigned num_files, char* const* files, gl_shader_stage stage)
 			ir3_glsl_type_size);
 
 	NIR_PASS_V(nir, nir_lower_system_values);
-	NIR_PASS_V(nir, nir_lower_frexp);
 	NIR_PASS_V(nir, nir_lower_io, nir_var_all, ir3_glsl_type_size, 0);
 	NIR_PASS_V(nir, gl_nir_lower_samplers, prog);
 
@@ -468,7 +462,7 @@ int main(int argc, char **argv)
 		if (ir3_shader_debug & IR3_DBG_OPTMSGS)
 			tgsi_dump(toks, 0);
 
-		nir = ir3_tgsi_to_nir(compiler, toks, NULL);
+		nir = ir3_tgsi_to_nir(compiler, toks);
 		NIR_PASS_V(nir, nir_lower_global_vars_to_local);
 	} else if (from_spirv) {
 		nir = load_spirv(filenames[0], entry, stage);

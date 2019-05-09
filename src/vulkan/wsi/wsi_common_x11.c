@@ -36,7 +36,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <xf86drm.h>
-#include "drm-uapi/drm_fourcc.h"
+#include <drm_fourcc.h>
 #include "util/hash_table.h"
 
 #include "vk_util.h"
@@ -451,7 +451,6 @@ x11_surface_get_support(VkIcdSurfaceBase *icd_surface,
 
 static VkResult
 x11_surface_get_capabilities(VkIcdSurfaceBase *icd_surface,
-                             struct wsi_device *wsi_device,
                              VkSurfaceCapabilitiesKHR *caps)
 {
    xcb_connection_t *conn = x11_surface_get_connection(icd_surface);
@@ -485,10 +484,8 @@ x11_surface_get_capabilities(VkIcdSurfaceBase *icd_surface,
        */
       caps->currentExtent = (VkExtent2D) { -1, -1 };
       caps->minImageExtent = (VkExtent2D) { 1, 1 };
-      caps->maxImageExtent = (VkExtent2D) {
-         wsi_device->maxImageDimension2D,
-         wsi_device->maxImageDimension2D,
-      };
+      /* This is the maximum supported size on Intel */
+      caps->maxImageExtent = (VkExtent2D) { 1 << 14, 1 << 14 };
    }
    free(err);
    free(geom);
@@ -526,31 +523,12 @@ x11_surface_get_capabilities(VkIcdSurfaceBase *icd_surface,
 
 static VkResult
 x11_surface_get_capabilities2(VkIcdSurfaceBase *icd_surface,
-                              struct wsi_device *wsi_device,
                               const void *info_next,
                               VkSurfaceCapabilities2KHR *caps)
 {
    assert(caps->sType == VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR);
 
-   VkResult result =
-      x11_surface_get_capabilities(icd_surface, wsi_device,
-                                   &caps->surfaceCapabilities);
-
-   vk_foreach_struct(ext, caps->pNext) {
-      switch (ext->sType) {
-      case VK_STRUCTURE_TYPE_SURFACE_PROTECTED_CAPABILITIES_KHR: {
-         VkSurfaceProtectedCapabilitiesKHR *protected = (void *)ext;
-         protected->supportsProtected = VK_FALSE;
-         break;
-      }
-
-      default:
-         /* Ignored */
-         break;
-      }
-   }
-
-   return result;
+   return x11_surface_get_capabilities(icd_surface, &caps->surfaceCapabilities);
 }
 
 static VkResult
@@ -738,7 +716,6 @@ struct x11_swapchain {
 
    struct x11_image                             images[0];
 };
-WSI_DEFINE_NONDISP_HANDLE_CASTS(x11_swapchain, VkSwapchainKHR)
 
 /**
  * Update the swapchain status with the result of an operation, and return
@@ -854,9 +831,19 @@ x11_handle_dri3_present_event(struct x11_swapchain *chain,
 }
 
 
+static uint64_t wsi_get_current_time(void)
+{
+   uint64_t current_time;
+   struct timespec tv;
+
+   clock_gettime(CLOCK_MONOTONIC, &tv);
+   current_time = tv.tv_nsec + tv.tv_sec*1000000000ull;
+   return current_time;
+}
+
 static uint64_t wsi_get_absolute_timeout(uint64_t timeout)
 {
-   uint64_t current_time = wsi_common_get_current_time();
+   uint64_t current_time = wsi_get_current_time();
 
    timeout = MIN2(UINT64_MAX - current_time, timeout);
 
@@ -907,7 +894,7 @@ x11_acquire_next_image_poll_x11(struct x11_swapchain *chain,
             /* If a non-special event happens, the fd will still
              * poll. So recalculate the timeout now just in case.
              */
-            uint64_t current_time = wsi_common_get_current_time();
+            uint64_t current_time = wsi_get_current_time();
             if (atimeout > current_time)
                timeout = atimeout - current_time;
             else
@@ -1379,7 +1366,7 @@ x11_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
     * mode which provokes reallocation when anything changes, to make
     * sure we have the most optimal allocation.
     */
-   WSI_FROM_HANDLE(x11_swapchain, old_chain, pCreateInfo->oldSwapchain);
+   struct x11_swapchain *old_chain = (void *)(intptr_t) pCreateInfo->oldSwapchain;
    if (old_chain)
       chain->last_present_mode = old_chain->last_present_mode;
    else

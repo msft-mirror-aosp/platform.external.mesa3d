@@ -213,13 +213,6 @@ struct glsl_type {
    unsigned interface_packing:2;
    unsigned interface_row_major:1;
 
-   /**
-    * For \c GLSL_TYPE_STRUCT this specifies if the struct is packed or not.
-    *
-    * Only used for Compute kernels
-    */
-   unsigned packed:1;
-
 private:
    glsl_type() : mem_ctx(NULL)
    {
@@ -356,10 +349,9 @@ public:
    /**
     * Get the instance of a record type
     */
-   static const glsl_type *get_struct_instance(const glsl_struct_field *fields,
+   static const glsl_type *get_record_instance(const glsl_struct_field *fields,
 					       unsigned num_fields,
-					       const char *name,
-					       bool packed = false);
+					       const char *name);
 
    /**
     * Get the instance of an interface block type
@@ -410,7 +402,7 @@ public:
     * For the initial call, length is the index of the member to find the
     * offset for.
     */
-   unsigned struct_location_offset(unsigned length) const;
+   unsigned record_location_offset(unsigned length) const;
 
    /**
     * Calculate the number of unique values from glGetUniformLocation for the
@@ -458,11 +450,6 @@ public:
    unsigned std140_size(bool row_major) const;
 
    /**
-    * Gets an explicitly laid out type with the std140 layout.
-    */
-   const glsl_type *get_explicit_std140_type(bool row_major) const;
-
-   /**
     * Alignment in bytes of the start of this type in a std430 shader
     * storage block.
     */
@@ -480,26 +467,6 @@ public:
     * Note that this is not GL_BUFFER_SIZE
     */
    unsigned std430_size(bool row_major) const;
-
-   /**
-    * Gets an explicitly laid out type with the std430 layout.
-    */
-   const glsl_type *get_explicit_std430_type(bool row_major) const;
-
-   /**
-    * Gets an explicitly laid out interface type.
-    */
-   const glsl_type *get_explicit_interface_type(bool supports_std430) const;
-
-   /**
-    * Alignment in bytes of the start of this type in OpenCL memory.
-    */
-   unsigned cl_alignment() const;
-
-   /**
-    * Size in bytes of this type in OpenCL memory
-    */
-   unsigned cl_size() const;
 
    /**
     * \brief Can this type be implicitly converted to another?
@@ -661,16 +628,6 @@ public:
    }
 
    /**
-    * Query whether or not a type is 32-bit
-    */
-   bool is_32bit() const
-   {
-      return base_type == GLSL_TYPE_UINT ||
-             base_type == GLSL_TYPE_INT ||
-             base_type == GLSL_TYPE_FLOAT;
-   }
-
-   /**
     * Query whether or not a type is a non-array boolean type
     */
    bool is_boolean() const
@@ -733,7 +690,7 @@ public:
    /**
     * Query whether or not a type is a record
     */
-   bool is_struct() const
+   bool is_record() const
    {
       return base_type == GLSL_TYPE_STRUCT;
    }
@@ -1001,7 +958,7 @@ private:
 
    /** Constructor for record types */
    glsl_type(const glsl_struct_field *fields, unsigned num_fields,
-	     const char *name, bool packed = false);
+	     const char *name);
 
    /** Constructor for interface types */
    glsl_type(const glsl_struct_field *fields, unsigned num_fields,
@@ -1024,8 +981,8 @@ private:
    /** Hash table containing the known array types. */
    static struct hash_table *array_types;
 
-   /** Hash table containing the known struct types. */
-   static struct hash_table *struct_types;
+   /** Hash table containing the known record types. */
+   static struct hash_table *record_types;
 
    /** Hash table containing the known interface types. */
    static struct hash_table *interface_types;
@@ -1159,7 +1116,7 @@ struct glsl_struct_field {
    unsigned implicit_sized_array:1;
 #ifdef __cplusplus
    glsl_struct_field(const struct glsl_type *_type, const char *_name)
-      : type(_type), name(_name), location(-1), offset(-1), xfb_buffer(0),
+      : type(_type), name(_name), location(-1), offset(0), xfb_buffer(0),
         xfb_stride(0), interpolation(0), centroid(0),
         sample(0), matrix_layout(GLSL_MATRIX_LAYOUT_INHERITED), patch(0),
         precision(GLSL_PRECISION_NONE), memory_read_only(0),
@@ -1171,7 +1128,7 @@ struct glsl_struct_field {
    }
 
    glsl_struct_field()
-      : type(NULL), name(NULL), location(-1), offset(-1), xfb_buffer(0),
+      : type(NULL), name(NULL), location(0), offset(0), xfb_buffer(0),
         xfb_stride(0), interpolation(0), centroid(0),
         sample(0), matrix_layout(0), patch(0),
         precision(0), memory_read_only(0),

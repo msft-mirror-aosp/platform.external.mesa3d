@@ -228,7 +228,7 @@ ir3_shader_get_variant(struct ir3_shader *shader, struct ir3_shader_key *key,
 	struct ir3_shader_variant *v =
 			shader_variant(shader, key, created);
 
-	if (v && binning_pass) {
+	if (binning_pass) {
 		if (!v->binning)
 			v->binning = create_variant(shader, key, true);
 		return v->binning;
@@ -261,11 +261,6 @@ ir3_shader_from_nir(struct ir3_compiler *compiler, nir_shader *nir)
 
 	NIR_PASS_V(nir, nir_lower_io, nir_var_all, ir3_glsl_type_size,
 			   (nir_lower_io_options)0);
-
-	if (nir->info.stage == MESA_SHADER_FRAGMENT)
-		NIR_PASS_V(nir, ir3_nir_move_varying_inputs);
-
-	NIR_PASS_V(nir, nir_lower_io_arrays_to_elements_no_indirects, false);
 
 	/* do first pass optimization, ignoring the key: */
 	shader->nir = ir3_optimize_nir(shader, nir, NULL);
@@ -397,8 +392,6 @@ ir3_shader_disasm(struct ir3_shader_variant *so, uint32_t *bin, FILE *out)
 			so->constlen);
 
 	fprintf(out, "; %u (ss), %u (sy)\n", so->info.ss, so->info.sy);
-
-	fprintf(out, "; max_sun=%u\n", ir->max_sun);
 
 	/* print shader type specific info: */
 	switch (so->type) {

@@ -68,10 +68,10 @@ _eglGetDriver(void)
 }
 
 static _EGLDriver *
-_eglMatchAndInitialize(_EGLDisplay *disp)
+_eglMatchAndInitialize(_EGLDisplay *dpy)
 {
    if (_eglGetDriver())
-      if (_eglDriver->API.Initialize(_eglDriver, disp))
+      if (_eglDriver->API.Initialize(_eglDriver, dpy))
          return _eglDriver;
 
    return NULL;
@@ -82,25 +82,25 @@ _eglMatchAndInitialize(_EGLDisplay *disp)
  * driver that can initialize the display.
  */
 _EGLDriver *
-_eglMatchDriver(_EGLDisplay *disp)
+_eglMatchDriver(_EGLDisplay *dpy)
 {
    _EGLDriver *best_drv;
 
-   assert(!disp->Initialized);
+   assert(!dpy->Initialized);
 
    /* set options */
-   disp->Options.ForceSoftware =
+   dpy->Options.ForceSoftware =
       env_var_as_boolean("LIBGL_ALWAYS_SOFTWARE", false);
 
-   best_drv = _eglMatchAndInitialize(disp);
-   if (!best_drv && !disp->Options.ForceSoftware) {
-      disp->Options.ForceSoftware = EGL_TRUE;
-      best_drv = _eglMatchAndInitialize(disp);
+   best_drv = _eglMatchAndInitialize(dpy);
+   if (!best_drv && !dpy->Options.ForceSoftware) {
+      dpy->Options.ForceSoftware = EGL_TRUE;
+      best_drv = _eglMatchAndInitialize(dpy);
    }
 
    if (best_drv) {
-      disp->Driver = best_drv;
-      disp->Initialized = EGL_TRUE;
+      dpy->Driver = best_drv;
+      dpy->Initialized = EGL_TRUE;
    }
 
    return best_drv;

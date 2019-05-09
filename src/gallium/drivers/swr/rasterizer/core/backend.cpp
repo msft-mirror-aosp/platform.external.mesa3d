@@ -61,14 +61,14 @@ void ProcessComputeBE(DRAW_CONTEXT* pDC,
     size_t spillFillSize = pDC->pState->state.totalSpillFillSize;
     if (spillFillSize && pSpillFillBuffer == nullptr)
     {
-        pSpillFillBuffer = pDC->pArena->AllocAlignedSync(spillFillSize, KNOB_SIMD16_BYTES);
+        pSpillFillBuffer = pDC->pArena->AllocAlignedSync(spillFillSize, KNOB_SIMD_BYTES);
     }
 
     size_t scratchSpaceSize =
-        pDC->pState->state.scratchSpaceSizePerWarp * pDC->pState->state.scratchSpaceNumWarps;
+        pDC->pState->state.scratchSpaceSize * pDC->pState->state.scratchSpaceNumInstances;
     if (scratchSpaceSize && pScratchSpace == nullptr)
     {
-        pScratchSpace = pDC->pArena->AllocAlignedSync(scratchSpaceSize, KNOB_SIMD16_BYTES);
+        pScratchSpace = pDC->pArena->AllocAlignedSync(scratchSpaceSize, KNOB_SIMD_BYTES);
     }
 
     const API_STATE& state = GetApiState(pDC);
@@ -81,14 +81,14 @@ void ProcessComputeBE(DRAW_CONTEXT* pDC,
     csContext.pTGSM               = pContext->ppScratch[workerId];
     csContext.pSpillFillBuffer    = (uint8_t*)pSpillFillBuffer;
     csContext.pScratchSpace       = (uint8_t*)pScratchSpace;
-    csContext.scratchSpacePerWarp = pDC->pState->state.scratchSpaceSizePerWarp;
+    csContext.scratchSpacePerSimd = pDC->pState->state.scratchSpaceSize;
 
     state.pfnCsFunc(GetPrivateState(pDC),
                     pContext->threadPool.pThreadData[workerId].pWorkerPrivateData,
                     &csContext);
 
     UPDATE_STAT_BE(CsInvocations, state.totalThreadsInGroup);
-    AR_EVENT(CSStats((HANDLE)&csContext.stats));
+    AR_EVENT(CSStats(csContext.stats.numInstExecuted));
 
     RDTSC_END(BEDispatch, 1);
 }

@@ -44,8 +44,6 @@ struct pipe_context;
  */
 
 #define VL_COMPOSITOR_MAX_LAYERS 16
-#define VL_COMPOSITOR_MIN_DIRTY (0)
-#define VL_COMPOSITOR_MAX_DIRTY (1 << 15)
 
 /* deinterlace allgorithem */
 enum vl_compositor_deinterlace
@@ -72,7 +70,6 @@ struct vl_compositor_layer
    struct pipe_viewport_state viewport;
 
    void *fs;
-   void *cs;
    void *samplers[3];
    void *blend;
 
@@ -91,7 +88,7 @@ struct vl_compositor_state
 
    bool scissor_valid;
    struct pipe_scissor_state scissor;
-   struct pipe_resource *shader_params;
+   struct pipe_resource *csc_matrix;
 
    union pipe_color_union clear_color;
 
@@ -117,11 +114,6 @@ struct vl_compositor
    void *fs_video_buffer;
    void *fs_weave_rgb;
    void *fs_rgba;
-   void *cs_video_buffer;
-   void *cs_weave_rgb;
-   void *cs_rgba;
-
-   bool pipe_compute_supported;
 
    struct {
       struct {

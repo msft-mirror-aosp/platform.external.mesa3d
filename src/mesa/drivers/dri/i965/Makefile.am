@@ -41,7 +41,7 @@ AM_CFLAGS = \
 	-I$(top_srcdir)/src/compiler/nir \
 	-I$(top_builddir)/src/intel \
 	-I$(top_srcdir)/src/intel \
-	-I$(top_srcdir)/include \
+	-I$(top_srcdir)/include/drm-uapi \
 	$(DEFINES) \
 	$(VISIBILITY_CFLAGS) \
 	$(WNO_OVERRIDE_INIT) \

@@ -474,11 +474,10 @@ static void *si_create_blend_state_mode(struct pipe_context *ctx,
 
 	si_pm4_set_reg(pm4, R_028B70_DB_ALPHA_TO_MASK,
 		       S_028B70_ALPHA_TO_MASK_ENABLE(state->alpha_to_coverage) |
-		       S_028B70_ALPHA_TO_MASK_OFFSET0(3) |
-		       S_028B70_ALPHA_TO_MASK_OFFSET1(1) |
-		       S_028B70_ALPHA_TO_MASK_OFFSET2(0) |
-		       S_028B70_ALPHA_TO_MASK_OFFSET3(2) |
-		       S_028B70_OFFSET_ROUND(1));
+		       S_028B70_ALPHA_TO_MASK_OFFSET0(2) |
+		       S_028B70_ALPHA_TO_MASK_OFFSET1(2) |
+		       S_028B70_ALPHA_TO_MASK_OFFSET2(2) |
+		       S_028B70_ALPHA_TO_MASK_OFFSET3(2));
 
 	if (state->alpha_to_coverage)
 		blend->need_src_alpha_4bit |= 0xf;
@@ -4706,12 +4705,9 @@ static void si_texture_barrier(struct pipe_context *ctx, unsigned flags)
 }
 
 /* This only ensures coherency for shader image/buffer stores. */
-void si_memory_barrier(struct pipe_context *ctx, unsigned flags)
+static void si_memory_barrier(struct pipe_context *ctx, unsigned flags)
 {
 	struct si_context *sctx = (struct si_context *)ctx;
-
-	if (!(flags & ~PIPE_BARRIER_UPDATE))
-		return;
 
 	/* Subsequent commands must wait for all shader invocations to
 	 * complete. */
@@ -4823,6 +4819,7 @@ void si_init_state_functions(struct si_context *sctx)
 	sctx->b.set_vertex_buffers = si_set_vertex_buffers;
 
 	sctx->b.texture_barrier = si_texture_barrier;
+	sctx->b.memory_barrier = si_memory_barrier;
 	sctx->b.set_min_samples = si_set_min_samples;
 	sctx->b.set_tess_state = si_set_tess_state;
 

@@ -79,6 +79,16 @@ virgl_vtest_transfer_put(struct virgl_winsys *vws,
    size = vtest_get_transfer_size(res, box, stride, layer_stride, level,
                                   &valid_stride);
 
+   /* The size calculated above is the full box size, but if this box origin
+    * is not zero we may have to correct the transfer size to not read past the
+    * end of the resource. The correct adjustment depends on various factors
+    * that are not documented, so instead of going though all the hops to get
+    * the size right up-front, we just make sure we don't read past the end.
+    * FIXME: figure out what it takes to actually get this right.
+    */
+   if (size + buf_offset > res->size)
+      size = res->size - buf_offset;
+
    virgl_vtest_send_transfer_put(vtws, res->res_handle,
                                  level, stride, layer_stride,
                                  box, size, buf_offset);
@@ -102,14 +112,21 @@ virgl_vtest_transfer_get(struct virgl_winsys *vws,
 
    size = vtest_get_transfer_size(res, box, stride, layer_stride, level,
                                   &valid_stride);
+   /* Don't ask for more pixels than available (see above) */
+   if (size + buf_offset > res->size)
+      size = res->size - buf_offset;
+
    virgl_vtest_send_transfer_get(vtws, res->res_handle,
                                  level, stride, layer_stride,
                                  box, size, buf_offset);
 
    ptr = virgl_vtest_resource_map(vws, res);
 
+   /* This functions seems to be using a specific transfer resource that
+    * has exactly the box size and hence its src stride is equal to the target
+    * stride */
    virgl_vtest_recv_transfer_get_data(vtws, ptr + buf_offset, size,
-                                      valid_stride, box, res->format);
+                                      valid_stride, box, res->format, valid_stride);
 
    virgl_vtest_resource_unmap(vws, res);
    return 0;
@@ -247,7 +264,6 @@ virgl_vtest_winsys_resource_create(struct virgl_winsys *vws,
 
    res->res_handle = handle++;
    pipe_reference_init(&res->reference, 1);
-   p_atomic_set(&res->num_cs_references, 0);
    return res;
 }
 
@@ -395,6 +411,34 @@ alloc:
    return res;
 }
 
+static struct virgl_cmd_buf *virgl_vtest_cmd_buf_create(struct virgl_winsys *vws)
+{
+   struct virgl_vtest_cmd_buf *cbuf;
+
+   cbuf = CALLOC_STRUCT(virgl_vtest_cmd_buf);
+   if (!cbuf)
+      return NULL;
+
+   cbuf->nres = 512;
+   cbuf->res_bo = CALLOC(cbuf->nres, sizeof(struct virgl_hw_buf*));
+   if (!cbuf->res_bo) {
+      FREE(cbuf);
+      return NULL;
+   }
+   cbuf->ws = vws;
+   cbuf->base.buf = cbuf->buf;
+   cbuf->base.in_fence_fd = -1;
+   return &cbuf->base;
+}
+
+static void virgl_vtest_cmd_buf_destroy(struct virgl_cmd_buf *_cbuf)
+{
+   struct virgl_vtest_cmd_buf *cbuf = virgl_vtest_cmd_buf(_cbuf);
+
+   FREE(cbuf->res_bo);
+   FREE(cbuf);
+}
+
 static boolean virgl_vtest_lookup_res(struct virgl_vtest_cmd_buf *cbuf,
                                       struct virgl_hw_res *res)
 {
@@ -457,36 +501,6 @@ static void virgl_vtest_add_res(struct virgl_vtest_winsys *vtws,
    cbuf->cres++;
 }
 
-static struct virgl_cmd_buf *virgl_vtest_cmd_buf_create(struct virgl_winsys *vws,
-                                                        uint32_t size)
-{
-   struct virgl_vtest_cmd_buf *cbuf;
-
-   cbuf = CALLOC_STRUCT(virgl_vtest_cmd_buf);
-   if (!cbuf)
-      return NULL;
-
-   cbuf->nres = 512;
-   cbuf->res_bo = CALLOC(cbuf->nres, sizeof(struct virgl_hw_buf*));
-   if (!cbuf->res_bo) {
-      FREE(cbuf);
-      return NULL;
-   }
-   cbuf->ws = vws;
-   cbuf->base.buf = cbuf->buf;
-   cbuf->base.in_fence_fd = -1;
-   return &cbuf->base;
-}
-
-static void virgl_vtest_cmd_buf_destroy(struct virgl_cmd_buf *_cbuf)
-{
-   struct virgl_vtest_cmd_buf *cbuf = virgl_vtest_cmd_buf(_cbuf);
-
-   virgl_vtest_release_all_res(virgl_vtest_winsys(cbuf->ws), cbuf);
-   FREE(cbuf->res_bo);
-   FREE(cbuf);
-}
-
 static int virgl_vtest_winsys_submit_cmd(struct virgl_winsys *vws,
                                          struct virgl_cmd_buf *_cbuf,
                                          int in_fence_fd, int *out_fence_fd)
@@ -527,7 +541,7 @@ static boolean virgl_vtest_res_is_ref(struct virgl_winsys *vws,
                                       struct virgl_cmd_buf *_cbuf,
                                       struct virgl_hw_res *res)
 {
-   if (!p_atomic_read(&res->num_cs_references))
+   if (!res->num_cs_references)
       return FALSE;
 
    return TRUE;
@@ -629,7 +643,8 @@ static void virgl_vtest_flush_frontbuffer(struct virgl_winsys *vws,
     * a hardware imposed stride that is different from the IOV stride used to
     * get the data. */
    virgl_vtest_recv_transfer_get_data(vtws, map + offset, size, valid_stride,
-                                      &box, res->format);
+                                      &box, res->format,
+                                      vtws->protocol_version == 0 ? valid_stride : util_format_get_stride(res->format, res->width));
 
    vtws->sws->displaytarget_unmap(vtws->sws, res->dt);
 
@@ -685,7 +700,6 @@ virgl_vtest_winsys_wrap(struct sw_winsys *sws)
    vtws->base.fence_wait = virgl_fence_wait;
    vtws->base.fence_reference = virgl_fence_reference;
    vtws->base.supports_fences =  0;
-   vtws->base.supports_encoded_transfers = 0;
 
    vtws->base.flush_frontbuffer = virgl_vtest_flush_frontbuffer;
 

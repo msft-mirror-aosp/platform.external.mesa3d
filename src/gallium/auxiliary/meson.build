@@ -445,10 +445,6 @@ files_libgalliumvl = files(
   'vl/vl_bicubic_filter.h',
   'vl/vl_compositor.c',
   'vl/vl_compositor.h',
-  'vl/vl_compositor_gfx.c',
-  'vl/vl_compositor_gfx.h',
-  'vl/vl_compositor_cs.c',
-  'vl/vl_compositor_cs.h',
   'vl/vl_csc.c',
   'vl/vl_csc.h',
   'vl/vl_decoder.c',
@@ -534,9 +530,6 @@ libgallium = static_library(
     idep_nir_headers,
   ],
   build_by_default : false,
-  link_with: [
-    libglsl
-  ]
 )
 
 libgalliumvl_stub = static_library(

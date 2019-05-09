@@ -37,6 +37,7 @@ VULKAN_COMMON_INCLUDES := \
 	$(MESA_TOP)/src/vulkan/wsi \
 	$(MESA_TOP)/src/vulkan/util \
 	$(MESA_TOP)/src/intel \
+	$(MESA_TOP)/include/drm-uapi \
 	$(MESA_TOP)/src/intel/vulkan \
 	$(MESA_TOP)/src/compiler \
 	frameworks/native/vulkan/include
@@ -65,6 +66,7 @@ LOCAL_MODULE := libmesa_anv_entrypoints
 LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 
 intermediates := $(call local-generated-sources-dir)
+prebuilt_intermediates := $(MESA_TOP)/prebuilt-intermediates
 
 LOCAL_C_INCLUDES := \
 	$(VULKAN_COMMON_INCLUDES)
@@ -77,13 +79,9 @@ $(intermediates)/vulkan/dummy.c:
 	@echo "Gen Dummy: $(PRIVATE_MODULE) <= $(notdir $(@))"
 	$(hide) touch $@
 
-$(intermediates)/vulkan/anv_entrypoints.h: $(intermediates)/vulkan/dummy.c \
-					   $(ANV_ENTRYPOINTS_GEN_SCRIPT) \
-					   $(ANV_EXTENSIONS_SCRIPT) \
-					   $(VULKAN_API_XML)
-	$(MESA_PYTHON2) $(ANV_ENTRYPOINTS_GEN_SCRIPT) \
-		--outdir $(dir $@) \
-		--xml $(VULKAN_API_XML)
+$(intermediates)/vulkan/anv_entrypoints.h: $(prebuilt_intermediates)/vulkan/anv_entrypoints.h
+	@mkdir -p $(dir $@)
+	@cp -f $< $@
 
 LOCAL_EXPORT_C_INCLUDE_DIRS := \
         $(intermediates)
@@ -103,6 +101,8 @@ ANV_INCLUDES := \
 ANV_SHARED_LIBRARIES := libdrm
 
 ifeq ($(filter $(MESA_ANDROID_MAJOR_VERSION), 4 5 6 7),)
+ANV_HEADER_LIBRARIES += libcutils_headers libnativebase_headers libsystem_headers
+ANV_STATIC_LIBRARIES += libarect
 ANV_SHARED_LIBRARIES += libnativewindow
 endif
 
@@ -121,6 +121,8 @@ LOCAL_C_INCLUDES := $(ANV_INCLUDES)
 
 LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
 
+LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
+LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
@@ -142,6 +144,8 @@ LOCAL_C_INCLUDES := $(ANV_INCLUDES)
 
 LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
 
+LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
+LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
@@ -163,6 +167,8 @@ LOCAL_C_INCLUDES := $(ANV_INCLUDES)
 
 LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
 
+LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
+LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
@@ -184,6 +190,8 @@ LOCAL_C_INCLUDES := $(ANV_INCLUDES)
 
 LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
 
+LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
+LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
@@ -205,6 +213,8 @@ LOCAL_C_INCLUDES := $(ANV_INCLUDES)
 
 LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
 
+LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
+LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
@@ -241,6 +251,7 @@ LOCAL_MODULE := libmesa_vulkan_common
 LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 
 intermediates := $(call local-generated-sources-dir)
+prebuilt_intermediates := $(MESA_TOP)/prebuilt-intermediates
 
 LOCAL_SRC_FILES := $(VULKAN_FILES)
 
@@ -263,36 +274,34 @@ LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_entrypoints.c
 LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_extensions.c
 LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_extensions.h
 
-$(intermediates)/vulkan/anv_entrypoints.c: $(ANV_ENTRYPOINTS_GEN_SCRIPT) \
-					   $(ANV_EXTENSIONS_SCRIPT) \
-					   $(VULKAN_API_XML)
+$(intermediates)/vulkan/anv_entrypoints.c: $(prebuilt_intermediates)/vulkan/anv_entrypoints.c
 	@mkdir -p $(dir $@)
-	$(MESA_PYTHON2) $(ANV_ENTRYPOINTS_GEN_SCRIPT) \
-		--xml $(VULKAN_API_XML) \
-		--outdir $(dir $@)
+	@cp -f $< $@
 
-$(intermediates)/vulkan/anv_extensions.c: $(ANV_EXTENSIONS_GEN_SCRIPT) \
-					  $(ANV_EXTENSIONS_SCRIPT) \
-					  $(VULKAN_API_XML)
+$(intermediates)/vulkan/anv_extensions.c: $(prebuilt_intermediates)/vulkan/anv_extensions.c
 	@mkdir -p $(dir $@)
-	$(MESA_PYTHON2) $(ANV_EXTENSIONS_GEN_SCRIPT) \
-		--xml $(VULKAN_API_XML) \
-		--out-c $@
+	@cp -f $< $@
 
-$(intermediates)/vulkan/anv_extensions.h: $(ANV_EXTENSIONS_GEN_SCRIPT) \
-					   $(ANV_EXTENSIONS_SCRIPT) \
-					   $(VULKAN_API_XML)
+$(intermediates)/vulkan/anv_extensions.h: $(prebuilt_intermediates)/vulkan/anv_extensions.h
 	@mkdir -p $(dir $@)
-	$(MESA_PYTHON2) $(ANV_EXTENSIONS_GEN_SCRIPT) \
-		--xml $(VULKAN_API_XML) \
-		--out-h $@
+	@cp -f $< $@
 
+LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
+LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
 include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
+#
+# FIXME: Defining a vulkan HAL for all TARGET_BOARD_PLATFORM, when it can
+#        only work for Intel platforms, is just wrong. For now, just omit
+#        module unless BOARD_GPU_DRIVERS contains i965. Even this is not
+#        correct, but it's difficult to determine what the 'right' list of
+#        TARGET_BOARD_PLATFORM to check really are..
+#
+ifneq ($(findstring i965,$(BOARD_GPU_DRIVERS)),)
 
 #
 # libvulkan_intel
@@ -337,17 +346,12 @@ LOCAL_WHOLE_STATIC_LIBRARIES := \
 	libmesa_intel_compiler \
 	libmesa_anv_entrypoints
 
-LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES) libz libsync liblog
+LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES) libhardware_headers
+LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
+LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES) libexpat libz libsync liblog
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
-
-# If Android version >=8 MESA should static link libexpat else should dynamic link
-ifeq ($(shell test $(PLATFORM_SDK_VERSION) -ge 27; echo $$?), 0)
-LOCAL_STATIC_LIBRARIES := \
-       libexpat
-else
- LOCAL_SHARED_LIBRARIES += \
-        libexpat
-endif
 
 include $(MESA_COMMON_MK)
 include $(BUILD_SHARED_LIBRARY)
+
+endif # BOARD_GPU_DRIVERS contains 'i965'

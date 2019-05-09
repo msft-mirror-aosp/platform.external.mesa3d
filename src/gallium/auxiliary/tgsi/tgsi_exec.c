@@ -2274,6 +2274,7 @@ exec_tex(struct tgsi_exec_machine *mach,
          FETCH(&r[last], 0, TGSI_CHAN_W);
       }
       else {
+         assert(shadow_ref != 4);
          FETCH(&r[last], 1, TGSI_CHAN_X);
       }
 
@@ -3942,38 +3943,6 @@ exec_load(struct tgsi_exec_machine *mach,
       exec_load_mem(mach, inst);
 }
 
-static uint
-fetch_store_img_unit(struct tgsi_exec_machine *mach,
-                     const struct tgsi_full_dst_register *dst)
-{
-   uint unit = 0;
-   int i;
-   if (dst->Register.Indirect) {
-      union tgsi_exec_channel indir_index, index2;
-      const uint execmask = mach->ExecMask;
-      index2.i[0] =
-      index2.i[1] =
-      index2.i[2] =
-      index2.i[3] = dst->Indirect.Index;
-
-      fetch_src_file_channel(mach,
-                             dst->Indirect.File,
-                             dst->Indirect.Swizzle,
-                             &index2,
-                             &ZeroVec,
-                             &indir_index);
-      for (i = 0; i < TGSI_QUAD_SIZE; i++) {
-         if (execmask & (1 << i)) {
-            unit = dst->Register.Index + indir_index.i[i];
-            break;
-         }
-      }
-   } else {
-      unit = dst->Register.Index;
-   }
-   return unit;
-}
-
 static void
 exec_store_img(struct tgsi_exec_machine *mach,
                const struct tgsi_full_instruction *inst)
@@ -3987,7 +3956,7 @@ exec_store_img(struct tgsi_exec_machine *mach,
    int i, j;
    uint unit;
    int kilmask = mach->Temps[TEMP_KILMASK_I].xyzw[TEMP_KILMASK_C].u[0];
-   unit = fetch_store_img_unit(mach, &inst->Dst[0]);
+   unit = inst->Dst[0].Register.Index;
    dim = get_image_coord_dim(inst->Memory.Texture);
    sample = get_image_coord_sample(inst->Memory.Texture);
    assert(dim <= 3);
@@ -4031,7 +4000,7 @@ exec_store_buf(struct tgsi_exec_machine *mach,
    uint unit;
    int kilmask = mach->Temps[TEMP_KILMASK_I].xyzw[TEMP_KILMASK_C].u[0];
 
-   unit = fetch_store_img_unit(mach, &inst->Dst[0]);
+   unit = inst->Dst[0].Register.Index;
 
    params.execmask = mach->ExecMask & mach->NonHelperMask & ~kilmask;
    params.unit = unit;
@@ -4943,13 +4912,8 @@ micro_ibfe(union tgsi_exec_channel *dst,
 {
    int i;
    for (i = 0; i < 4; i++) {
-      int width = src2->i[i];
+      int width = src2->i[i] & 0x1f;
       int offset = src1->i[i] & 0x1f;
-      if (width == 32 && offset == 0) {
-         dst->i[i] = src0->i[i];
-         continue;
-      }
-      width &= 0x1f;
       if (width == 0)
          dst->i[i] = 0;
       else if (width + offset < 32)
@@ -4970,13 +4934,8 @@ micro_ubfe(union tgsi_exec_channel *dst,
 {
    int i;
    for (i = 0; i < 4; i++) {
-      int width = src2->u[i];
+      int width = src2->u[i] & 0x1f;
       int offset = src1->u[i] & 0x1f;
-      if (width == 32 && offset == 0) {
-         dst->u[i] = src0->u[i];
-         continue;
-      }
-      width &= 0x1f;
       if (width == 0)
          dst->u[i] = 0;
       else if (width + offset < 32)
@@ -4998,14 +4957,10 @@ micro_bfi(union tgsi_exec_channel *dst,
 {
    int i;
    for (i = 0; i < 4; i++) {
-      int width = src3->u[i];
+      int width = src3->u[i] & 0x1f;
       int offset = src2->u[i] & 0x1f;
-      if (width == 32) {
-         dst->u[i] = src1->u[i];
-      } else {
-         int bitmask = ((1 << width) - 1) << offset;
-         dst->u[i] = ((src1->u[i] << offset) & bitmask) | (src0->u[i] & ~bitmask);
-      }
+      int bitmask = ((1 << width) - 1) << offset;
+      dst->u[i] = ((src1->u[i] << offset) & bitmask) | (src0->u[i] & ~bitmask);
    }
 }
 

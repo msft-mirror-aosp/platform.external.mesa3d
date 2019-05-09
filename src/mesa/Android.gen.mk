@@ -28,6 +28,7 @@ LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 endif
 
 intermediates := $(call local-generated-sources-dir)
+prebuilt_intermediates := $(MESA_TOP)/prebuilt-intermediates
 
 # This is the list of auto-generated files: sources and headers
 sources := \
@@ -71,7 +72,6 @@ define es-gen
 endef
 
 matypes_deps := \
-	$(BUILD_OUT_EXECUTABLES)/mesa_gen_matypes$(BUILD_EXECUTABLE_SUFFIX) \
 	$(LOCAL_PATH)/main/mtypes.h \
 	$(LOCAL_PATH)/tnl/t_context.h
 
@@ -104,6 +104,12 @@ $(intermediates)/main/api_exec.c: PRIVATE_XML := -f $(glapi)/gl_and_es_API.xml
 $(intermediates)/main/api_exec.c: $(dispatch_deps)
 	$(call es-gen)
 
+$(intermediates)/main/format_pack.c: $(prebuilt_intermediates)/main/format_pack.c
+	cp -a $< $@
+
+$(intermediates)/main/format_unpack.c: $(prebuilt_intermediates)/main/format_unpack.c
+	cp -a $< $@
+
 $(intermediates)/main/marshal_generated.c: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(glapi)/gl_marshal.py
 $(intermediates)/main/marshal_generated.c: PRIVATE_XML := -f $(glapi)/gl_and_es_API.xml
 
@@ -124,16 +130,8 @@ $(intermediates)/main/get_hash.h: $(glapi)/gl_and_es_API.xml \
                $(LOCAL_PATH)/main/get_hash_params.py $(GET_HASH_GEN)
 	$(call es-gen)
 
-FORMAT_FALLBACK := $(LOCAL_PATH)/main/format_fallback.py
-format_fallback_deps := \
-	$(LOCAL_PATH)/main/formats.csv \
-	$(LOCAL_PATH)/main/format_parser.py \
-	$(FORMAT_FALLBACK)
-
-$(intermediates)/main/format_fallback.c: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(FORMAT_FALLBACK)
-$(intermediates)/main/format_fallback.c: PRIVATE_XML :=
-$(intermediates)/main/format_fallback.c: $(format_fallback_deps)
-	$(call es-gen, $< /dev/stdout)
+$(intermediates)/main/format_fallback.c: $(prebuilt_intermediates)/main/format_fallback.c
+	cp -a $< $@
 
 FORMAT_INFO := $(LOCAL_PATH)/main/format_info.py
 format_info_deps := \
@@ -144,26 +142,4 @@ format_info_deps := \
 $(intermediates)/main/format_info.h: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(FORMAT_INFO)
 $(intermediates)/main/format_info.h: PRIVATE_XML :=
 $(intermediates)/main/format_info.h: $(format_info_deps)
-	$(call es-gen, $<)
-
-FORMAT_PACK := $(LOCAL_PATH)/main/format_pack.py
-format_pack_deps := \
-	$(LOCAL_PATH)/main/formats.csv \
-	$(LOCAL_PATH)/main/format_parser.py \
-	$(FORMAT_PACK)
-
-$(intermediates)/main/format_pack.c: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(FORMAT_PACK)
-$(intermediates)/main/format_pack.c: PRIVATE_XML :=
-$(intermediates)/main/format_pack.c: $(format_pack_deps)
-	$(call es-gen, $<)
-
-FORMAT_UNPACK := $(LOCAL_PATH)/main/format_unpack.py
-format_unpack_deps := \
-	$(LOCAL_PATH)/main/formats.csv \
-	$(LOCAL_PATH)/main/format_parser.py \
-	$(FORMAT_UNPACK)
-
-$(intermediates)/main/format_unpack.c: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(FORMAT_UNPACK)
-$(intermediates)/main/format_unpack.c: PRIVATE_XML :=
-$(intermediates)/main/format_unpack.c: $(format_unpack_deps)
 	$(call es-gen, $<)

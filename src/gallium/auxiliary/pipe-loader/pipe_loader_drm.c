@@ -72,11 +72,6 @@ static const struct drm_driver_descriptor driver_descriptors[] = {
         .configuration = pipe_default_configuration_query,
     },
     {
-        .driver_name = "iris",
-        .create_screen = pipe_iris_create_screen,
-        .configuration = pipe_default_configuration_query,
-    },
-    {
         .driver_name = "nouveau",
         .create_screen = pipe_nouveau_create_screen,
         .configuration = pipe_default_configuration_query,
@@ -124,11 +119,6 @@ static const struct drm_driver_descriptor driver_descriptors[] = {
     {
         .driver_name = "vc4",
         .create_screen = pipe_vc4_create_screen,
-        .configuration = pipe_default_configuration_query,
-    },
-    {
-        .driver_name = "panfrost",
-        .create_screen = pipe_panfrost_create_screen,
         .configuration = pipe_default_configuration_query,
     },
     {

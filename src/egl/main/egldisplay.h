@@ -206,7 +206,7 @@ _eglFindDisplay(_EGLPlatformType plat, void *plat_dpy);
 
 
 extern void
-_eglReleaseDisplayResources(_EGLDriver *drv, _EGLDisplay *disp);
+_eglReleaseDisplayResources(_EGLDriver *drv, _EGLDisplay *dpy);
 
 
 extern void
@@ -218,7 +218,7 @@ _eglCheckDisplayHandle(EGLDisplay dpy);
 
 
 extern EGLBoolean
-_eglCheckResource(void *res, _EGLResourceType type, _EGLDisplay *disp);
+_eglCheckResource(void *res, _EGLResourceType type, _EGLDisplay *dpy);
 
 
 /**
@@ -226,12 +226,12 @@ _eglCheckResource(void *res, _EGLResourceType type, _EGLDisplay *disp);
  * Return NULL if the handle has no corresponding linked display.
  */
 static inline _EGLDisplay *
-_eglLookupDisplay(EGLDisplay dpy)
+_eglLookupDisplay(EGLDisplay display)
 {
-   _EGLDisplay *disp = (_EGLDisplay *) dpy;
-   if (!_eglCheckDisplayHandle(dpy))
-      disp = NULL;
-   return disp;
+   _EGLDisplay *dpy = (_EGLDisplay *) display;
+   if (!_eglCheckDisplayHandle(display))
+      dpy = NULL;
+   return dpy;
 }
 
 
@@ -239,14 +239,14 @@ _eglLookupDisplay(EGLDisplay dpy)
  * Return the handle of a linked display, or EGL_NO_DISPLAY.
  */
 static inline EGLDisplay
-_eglGetDisplayHandle(_EGLDisplay *disp)
+_eglGetDisplayHandle(_EGLDisplay *dpy)
 {
-   return (EGLDisplay) ((disp) ? disp : EGL_NO_DISPLAY);
+   return (EGLDisplay) ((dpy) ? dpy : EGL_NO_DISPLAY);
 }
 
 
 extern void
-_eglInitResource(_EGLResource *res, EGLint size, _EGLDisplay *disp);
+_eglInitResource(_EGLResource *res, EGLint size, _EGLDisplay *dpy);
 
 
 extern void

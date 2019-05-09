@@ -144,8 +144,7 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_VERTEX_COLOR_CLAMPED:
       return vscreen->caps.caps.v1.bset.color_clamping;
    case PIPE_CAP_MIXED_COLORBUFFER_FORMATS:
-      return (vscreen->caps.caps.v2.capability_bits & VIRGL_CAP_FBO_MIXED_COLOR_FORMATS) ||
-            (vscreen->caps.caps.v2.host_feature_check_version < 1);
+      return 1;
    case PIPE_CAP_GLSL_FEATURE_LEVEL:
       return vscreen->caps.caps.v1.glsl_level;
    case PIPE_CAP_GLSL_FEATURE_LEVEL_COMPATIBILITY:
@@ -173,7 +172,7 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_QUERY_TIMESTAMP:
       return 1;
    case PIPE_CAP_QUERY_TIME_ELAPSED:
-      return 1;
+      return 0;
    case PIPE_CAP_TGSI_TEXCOORD:
       return 0;
    case PIPE_CAP_MIN_MAP_BUFFER_ALIGNMENT:
@@ -217,8 +216,7 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_CULL_DISTANCE:
       return vscreen->caps.caps.v1.bset.has_cull;
    case PIPE_CAP_MAX_VERTEX_STREAMS:
-      return ((vscreen->caps.caps.v2.capability_bits & VIRGL_CAP_TRANSFORM_FEEDBACK3) ||
-              (vscreen->caps.caps.v2.host_feature_check_version < 2)) ? 4 : 1;
+      return vscreen->caps.caps.v1.glsl_level >= 400 ? 4 : 1;
    case PIPE_CAP_CONDITIONAL_RENDER_INVERTED:
       return vscreen->caps.caps.v1.bset.conditional_render_inverted;
    case PIPE_CAP_TGSI_FS_FINE_DERIVATIVE:
@@ -230,8 +228,7 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_SHADER_BUFFER_OFFSET_ALIGNMENT:
       return vscreen->caps.caps.v2.shader_buffer_offset_alignment;
    case PIPE_CAP_DOUBLES:
-      return vscreen->caps.caps.v1.bset.has_fp64 ||
-            (vscreen->caps.caps.v2.capability_bits & VIRGL_CAP_FAKE_FP64);
+      return vscreen->caps.caps.v1.bset.has_fp64;
    case PIPE_CAP_MAX_SHADER_PATCH_VARYINGS:
       return vscreen->caps.caps.v2.max_shader_patch_varyings;
    case PIPE_CAP_SAMPLER_VIEW_TARGET:
@@ -261,18 +258,13 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_TEXTURE_FLOAT_LINEAR:
    case PIPE_CAP_TEXTURE_HALF_FLOAT_LINEAR:
       return 1; /* TODO: need to introduce a hw-cap for this */
-   case PIPE_CAP_QUERY_BUFFER_OBJECT:
-      return vscreen->caps.caps.v2.capability_bits & VIRGL_CAP_QBO;
    case PIPE_CAP_MAX_VARYINGS:
       if (vscreen->caps.caps.v1.glsl_level < 150)
          return vscreen->caps.caps.v2.max_vertex_attribs;
       return 32;
-   case PIPE_CAP_FAKE_SW_MSAA:
-      /* If the host supports only one sample (e.g., if it is using softpipe),
-       * fake multisampling to able to advertise higher GL versions. */
-      return (vscreen->caps.caps.v1.max_samples == 1) ? 1 : 0;
    case PIPE_CAP_TEXTURE_GATHER_SM5:
    case PIPE_CAP_BUFFER_MAP_PERSISTENT_COHERENT:
+   case PIPE_CAP_FAKE_SW_MSAA:
    case PIPE_CAP_TEXTURE_GATHER_OFFSETS:
    case PIPE_CAP_TGSI_VS_WINDOW_SPACE_POSITION:
    case PIPE_CAP_MULTI_DRAW_INDIRECT:
@@ -292,6 +284,7 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_INVALIDATE_BUFFER:
    case PIPE_CAP_GENERATE_MIPMAP:
    case PIPE_CAP_SURFACE_REINTERPRET_BLOCKS:
+   case PIPE_CAP_QUERY_BUFFER_OBJECT:
    case PIPE_CAP_STRING_MARKER:
    case PIPE_CAP_QUERY_MEMORY_INFO:
    case PIPE_CAP_PCI_GROUP:
@@ -616,20 +609,11 @@ virgl_is_format_supported( struct pipe_screen *screen,
       return virgl_is_vertex_format_supported(screen, format);
    }
 
-   if (util_format_is_compressed(format) && target == PIPE_BUFFER)
-      return FALSE;
-
    /* Allow 3-comp 32 bit textures only for TBOs (needed for ARB_tbo_rgb32) */
    if ((format == PIPE_FORMAT_R32G32B32_FLOAT ||
        format == PIPE_FORMAT_R32G32B32_SINT ||
        format == PIPE_FORMAT_R32G32B32_UINT) &&
        target != PIPE_BUFFER)
-      return FALSE;
-
-   if ((format_desc->layout == UTIL_FORMAT_LAYOUT_RGTC ||
-        format_desc->layout == UTIL_FORMAT_LAYOUT_ETC ||
-        format_desc->layout == UTIL_FORMAT_LAYOUT_S3TC) &&
-       target == PIPE_TEXTURE_3D)
       return FALSE;
 
    if (bind & PIPE_BIND_RENDER_TARGET) {

@@ -28,7 +28,6 @@
 
 #include "ir3_compiler.h"
 #include "ir3_context.h"
-#include "ir3_image.h"
 #include "ir3_shader.h"
 #include "ir3_nir.h"
 
@@ -51,12 +50,6 @@ ir3_context_init(struct ir3_compiler *compiler,
 		} else if (so->type == MESA_SHADER_FRAGMENT) {
 			ctx->samples = so->key.fsamples;
 		}
-	}
-
-	if (compiler->gpu_id >= 600) {
-		ctx->funcs = &ir3_a6xx_funcs;
-	} else if (compiler->gpu_id >= 400) {
-		ctx->funcs = &ir3_a4xx_funcs;
 	}
 
 	ctx->compiler = compiler;
@@ -106,8 +99,6 @@ ir3_context_init(struct ir3_compiler *compiler,
 	so->num_uniforms = ctx->s->num_uniforms;
 	so->num_ubos = ctx->s->info.num_ubos;
 
-	ir3_ibo_mapping_init(&so->image_mapping, ctx->s->info.num_textures);
-
 	/* Layout of constant registers, each section aligned to vec4.  Note
 	 * that pointer size (ubo, etc) changes depending on generation.
 	 *
@@ -124,7 +115,7 @@ ir3_context_init(struct ir3_compiler *compiler,
 	 * Immediates go last mostly because they are inserted in the CP pass
 	 * after the nir -> ir3 frontend.
 	 */
-	unsigned constoff = align(ctx->so->shader->ubo_state.size / 16, 4);
+	unsigned constoff = align(ctx->s->num_uniforms, 4);
 	unsigned ptrsz = ir3_pointer_size(ctx);
 
 	memset(&so->constbase, ~0, sizeof(so->constbase));
@@ -242,21 +233,9 @@ ir3_get_src(struct ir3_context *ctx, nir_src *src)
 }
 
 void
-ir3_put_dst(struct ir3_context *ctx, nir_dest *dst)
+put_dst(struct ir3_context *ctx, nir_dest *dst)
 {
 	unsigned bit_size = nir_dest_bit_size(*dst);
-
-	/* add extra mov if dst value is HIGH reg.. in some cases not all
-	 * instructions can read from HIGH regs, in cases where they can
-	 * ir3_cp will clean up the extra mov:
-	 */
-	for (unsigned i = 0; i < ctx->last_dst_n; i++) {
-		if (!ctx->last_dst[i])
-			continue;
-		if (ctx->last_dst[i]->regs[0]->flags & IR3_REG_HIGH) {
-			ctx->last_dst[i] = ir3_MOV(ctx->block, ctx->last_dst[i], TYPE_U32);
-		}
-	}
 
 	if (bit_size < 32) {
 		for (unsigned i = 0; i < ctx->last_dst_n; i++) {
@@ -287,7 +266,6 @@ ir3_put_dst(struct ir3_context *ctx, nir_dest *dst)
 
 		ralloc_free(ctx->last_dst);
 	}
-
 	ctx->last_dst = NULL;
 	ctx->last_dst_n = 0;
 }
@@ -342,8 +320,6 @@ ir3_create_collect(struct ir3_context *ctx, struct ir3_instruction *const *arr,
 		ir3_reg_create(collect, 0, IR3_REG_SSA | flags)->instr = elem;
 	}
 
-	collect->regs[0]->wrmask = MASK(arrsz);
-
 	return collect;
 }
 
@@ -361,12 +337,10 @@ ir3_split_dest(struct ir3_block *block, struct ir3_instruction **dst,
 		return;
 	}
 
-	unsigned flags = src->regs[0]->flags & (IR3_REG_HALF | IR3_REG_HIGH);
-
 	for (int i = 0, j = 0; i < n; i++) {
 		struct ir3_instruction *split = ir3_instr_create(block, OPC_META_FO);
-		ir3_reg_create(split, 0, IR3_REG_SSA | flags);
-		ir3_reg_create(split, 0, IR3_REG_SSA | flags)->instr = src;
+		ir3_reg_create(split, 0, IR3_REG_SSA);
+		ir3_reg_create(split, 0, IR3_REG_SSA)->instr = src;
 		split->fo.off = i + base;
 
 		if (prev) {

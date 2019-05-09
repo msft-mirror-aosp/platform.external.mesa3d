@@ -266,15 +266,13 @@ NineDevice9_ctor( struct NineDevice9 *This,
     }
 
     /* Initialize CSMT */
-    /* r600, radeonsi and iris are thread safe. */
     if (pCTX->csmt_force == 1)
         This->csmt_active = true;
     else if (pCTX->csmt_force == 0)
         This->csmt_active = false;
-    else if (strstr(pScreen->get_name(pScreen), "AMD") != NULL)
-        This->csmt_active = true;
-    else if (strstr(pScreen->get_name(pScreen), "Intel") != NULL)
-        This->csmt_active = true;
+    else
+        /* r600 and radeonsi are thread safe. */
+        This->csmt_active = strstr(pScreen->get_name(pScreen), "AMD") != NULL;
 
     /* We rely on u_upload_mgr using persistent coherent buffers (which don't
      * require flush to work in multi-pipe_context scenario) for vertex and

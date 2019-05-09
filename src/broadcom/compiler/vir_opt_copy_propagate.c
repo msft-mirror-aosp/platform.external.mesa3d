@@ -49,8 +49,10 @@ is_copy_mov(struct qinst *inst)
         if (inst->dst.file != QFILE_TEMP)
                 return false;
 
-        if (inst->src[0].file != QFILE_TEMP)
+        if (inst->src[0].file != QFILE_TEMP &&
+            inst->src[0].file != QFILE_UNIF) {
                 return false;
+        }
 
         if (inst->qpu.alu.add.output_pack != V3D_QPU_PACK_NONE ||
             inst->qpu.alu.mul.output_pack != V3D_QPU_PACK_NONE) {
@@ -149,36 +151,13 @@ try_copy_prop(struct v3d_compile *c, struct qinst *inst, struct qinst **movs)
                          * would be the same between the two
                          * instructions.
                          */
-                        if (v3d_qpu_unpacks_f32(&inst->qpu) !=
-                            v3d_qpu_unpacks_f32(&mov->qpu) ||
-                            v3d_qpu_unpacks_f16(&inst->qpu) !=
-                            v3d_qpu_unpacks_f16(&mov->qpu)) {
+                        if (vir_is_float_input(inst) !=
+                            vir_is_float_input(mov)) {
                                 continue;
                         }
-
                         /* No composing the unpacks. */
                         if (vir_has_unpack(inst, i))
-                                continue;
-
-                        /* these ops can't represent abs. */
-                        if (mov->qpu.alu.mul.a_unpack == V3D_QPU_UNPACK_ABS) {
-                                switch (inst->qpu.alu.add.op) {
-                                case V3D_QPU_A_VFPACK:
-                                case V3D_QPU_A_FROUND:
-                                case V3D_QPU_A_FTRUNC:
-                                case V3D_QPU_A_FFLOOR:
-                                case V3D_QPU_A_FCEIL:
-                                case V3D_QPU_A_FDX:
-                                case V3D_QPU_A_FDY:
-                                case V3D_QPU_A_FTOIN:
-                                case V3D_QPU_A_FTOIZ:
-                                case V3D_QPU_A_FTOUZ:
-                                case V3D_QPU_A_FTOC:
-                                        continue;
-                                default:
-                                        break;
-                                }
-                        }
+                            continue;
                 }
 
                 if (debug) {

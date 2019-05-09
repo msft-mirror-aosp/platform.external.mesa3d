@@ -730,7 +730,6 @@ static const _mesa_glsl_extension _mesa_glsl_supported_extensions[] = {
    EXT(EXT_texture_array),
    EXT_AEP(EXT_texture_buffer),
    EXT_AEP(EXT_texture_cube_map_array),
-   EXT(EXT_texture_query_lod),
    EXT(INTEL_conservative_rasterization),
    EXT(INTEL_shader_atomic_float_minmax),
    EXT(MESA_shader_integer_functions),
@@ -940,7 +939,7 @@ _mesa_ast_set_aggregate_type(const glsl_type *type,
       }
 
    /* If the aggregate is a struct, recursively set its fields' types. */
-   } else if (type->is_struct()) {
+   } else if (type->is_record()) {
       exec_node *expr_node = ai->expressions.get_head_raw();
 
       /* Iterate through the struct's fields. */

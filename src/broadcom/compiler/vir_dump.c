@@ -30,7 +30,6 @@ vir_dump_uniform(enum quniform_contents contents,
                  uint32_t data)
 {
         static const char *quniform_names[] = {
-                [QUNIFORM_ALPHA_REF] = "alpha_ref",
                 [QUNIFORM_VIEWPORT_X_SCALE] = "vp_x_scale",
                 [QUNIFORM_VIEWPORT_Y_SCALE] = "vp_y_scale",
                 [QUNIFORM_VIEWPORT_Z_OFFSET] = "vp_z_offset",
@@ -53,20 +52,20 @@ vir_dump_uniform(enum quniform_contents contents,
 
         case QUNIFORM_TMU_CONFIG_P0:
                 fprintf(stderr, "tex[%d].p0 | 0x%x",
-                        v3d_unit_data_get_unit(data),
-                        v3d_unit_data_get_offset(data));
+                        v3d_tmu_config_data_get_unit(data),
+                        v3d_tmu_config_data_get_value(data));
                 break;
 
         case QUNIFORM_TMU_CONFIG_P1:
                 fprintf(stderr, "tex[%d].p1 | 0x%x",
-                        v3d_unit_data_get_unit(data),
-                        v3d_unit_data_get_offset(data));
+                        v3d_tmu_config_data_get_unit(data),
+                        v3d_tmu_config_data_get_value(data));
                 break;
 
         case QUNIFORM_IMAGE_TMU_CONFIG_P0:
                 fprintf(stderr, "img[%d].p0 | 0x%x",
-                        v3d_unit_data_get_unit(data),
-                        v3d_unit_data_get_offset(data));
+                        v3d_tmu_config_data_get_unit(data),
+                        v3d_tmu_config_data_get_value(data));
                 break;
 
         case QUNIFORM_TEXTURE_WIDTH:
@@ -99,9 +98,7 @@ vir_dump_uniform(enum quniform_contents contents,
                 break;
 
         case QUNIFORM_UBO_ADDR:
-                fprintf(stderr, "ubo[%d]+0x%x",
-                        v3d_unit_data_get_unit(data),
-                        v3d_unit_data_get_offset(data));
+                fprintf(stderr, "ubo[%d]", data);
                 break;
 
         case QUNIFORM_SSBO_OFFSET:
@@ -121,8 +118,7 @@ vir_dump_uniform(enum quniform_contents contents,
                         fprintf(stderr, "tex[%d].p0: 0x%08x",
                                 contents - QUNIFORM_TEXTURE_CONFIG_P0_0,
                                 data);
-                } else if (contents < ARRAY_SIZE(quniform_names) &&
-                           quniform_names[contents]) {
+                } else if (contents < ARRAY_SIZE(quniform_names)) {
                         fprintf(stderr, "%s",
                                 quniform_names[contents]);
                 } else {
@@ -135,6 +131,13 @@ static void
 vir_print_reg(struct v3d_compile *c, const struct qinst *inst,
               struct qreg reg)
 {
+        static const char *files[] = {
+                [QFILE_TEMP] = "t",
+                [QFILE_UNIF] = "u",
+                [QFILE_TLB] = "tlb",
+                [QFILE_TLBU] = "tlbu",
+        };
+
         switch (reg.file) {
 
         case QFILE_NULL:
@@ -173,8 +176,21 @@ vir_print_reg(struct v3d_compile *c, const struct qinst *inst,
                         reg.index / 4, reg.index % 4);
                 break;
 
-        case QFILE_TEMP:
-                fprintf(stderr, "t%d", reg.index);
+        case QFILE_TLB:
+        case QFILE_TLBU:
+                fprintf(stderr, "%s", files[reg.file]);
+                break;
+
+        case QFILE_UNIF:
+                fprintf(stderr, "%s%d", files[reg.file], reg.index);
+                fprintf(stderr, " (");
+                vir_dump_uniform(c->uniform_contents[reg.index],
+                                 c->uniform_data[reg.index]);
+                fprintf(stderr, ")");
+                break;
+
+        default:
+                fprintf(stderr, "%s%d", files[reg.file], reg.index);
                 break;
         }
 }
@@ -242,7 +258,8 @@ static void
 vir_dump_alu(struct v3d_compile *c, struct qinst *inst)
 {
         struct v3d_qpu_instr *instr = &inst->qpu;
-        int nsrc = vir_get_nsrc(inst);
+        int nsrc = vir_get_non_sideband_nsrc(inst);
+        int sideband_nsrc = vir_get_nsrc(inst);
         enum v3d_qpu_input_unpack unpack[2];
 
         if (inst->qpu.alu.add.op != V3D_QPU_A_NOP) {
@@ -271,10 +288,11 @@ vir_dump_alu(struct v3d_compile *c, struct qinst *inst)
                 unpack[1] = instr->alu.mul.b_unpack;
         }
 
-        for (int i = 0; i < nsrc; i++) {
+        for (int i = 0; i < sideband_nsrc; i++) {
                 fprintf(stderr, ", ");
                 vir_print_reg(c, inst, inst->src[i]);
-                fprintf(stderr, "%s", v3d_qpu_unpack_name(unpack[i]));
+                if (i < nsrc)
+                        fprintf(stderr, "%s", v3d_qpu_unpack_name(unpack[i]));
         }
 
         vir_dump_sig(c, inst);
@@ -335,14 +353,13 @@ vir_dump_inst(struct v3d_compile *c, struct qinst *inst)
                                 break;
                         }
                 }
-                break;
-        }
 
-        if (vir_has_uniform(inst)) {
-                fprintf(stderr, " (");
-                vir_dump_uniform(c->uniform_contents[inst->uniform],
-                                 c->uniform_data[inst->uniform]);
-                fprintf(stderr, ")");
+                if (vir_has_implicit_uniform(inst)) {
+                        fprintf(stderr, " ");
+                        vir_print_reg(c, inst, inst->src[vir_get_implicit_uniform_src(inst)]);
+                }
+
+                break;
         }
 }
 
@@ -350,19 +367,11 @@ void
 vir_dump(struct v3d_compile *c)
 {
         int ip = 0;
-        int pressure = 0;
 
         vir_for_each_block(block, c) {
                 fprintf(stderr, "BLOCK %d:\n", block->index);
                 vir_for_each_inst(inst, block) {
                         if (c->live_intervals_valid) {
-                                for (int i = 0; i < c->num_temps; i++) {
-                                        if (c->temp_start[i] == ip)
-                                                pressure++;
-                                }
-
-                                fprintf(stderr, "P%4d ", pressure);
-
                                 bool first = true;
 
                                 for (int i = 0; i < c->num_temps; i++) {
@@ -374,10 +383,7 @@ vir_dump(struct v3d_compile *c)
                                         } else {
                                                 fprintf(stderr, ", ");
                                         }
-                                        if (BITSET_TEST(c->spillable, i))
-                                                fprintf(stderr, "S%4d", i);
-                                        else
-                                                fprintf(stderr, "U%4d", i);
+                                        fprintf(stderr, "S%4d", i);
                                 }
 
                                 if (first)
@@ -399,7 +405,6 @@ vir_dump(struct v3d_compile *c)
                                                 fprintf(stderr, ", ");
                                         }
                                         fprintf(stderr, "E%4d", i);
-                                        pressure--;
                                 }
 
                                 if (first)

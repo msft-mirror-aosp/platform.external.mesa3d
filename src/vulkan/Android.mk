@@ -66,6 +66,8 @@ LOCAL_EXPORT_C_INCLUDE_DIRS := \
         $(intermediates)
 
 ifeq ($(filter $(MESA_ANDROID_MAJOR_VERSION), 4 5 6 7),)
+LOCAL_HEADER_LIBRARIES += libcutils_headers libnativebase_headers libsystem_headers
+LOCAL_STATIC_LIBRARIES += libarect
 LOCAL_SHARED_LIBRARIES += libnativewindow
 endif
 

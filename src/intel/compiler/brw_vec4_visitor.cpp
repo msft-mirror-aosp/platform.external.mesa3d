@@ -611,7 +611,6 @@ type_size_xvec4(const struct glsl_type *type, bool as_vec4)
       assert(type->length > 0);
       return type_size_xvec4(type->fields.array, as_vec4) * type->length;
    case GLSL_TYPE_STRUCT:
-   case GLSL_TYPE_INTERFACE:
       size = 0;
       for (i = 0; i < type->length; i++) {
 	 size += type_size_xvec4(type->fields.structure[i].type, as_vec4);
@@ -631,6 +630,7 @@ type_size_xvec4(const struct glsl_type *type, bool as_vec4)
       return DIV_ROUND_UP(BRW_IMAGE_PARAM_SIZE, 4);
    case GLSL_TYPE_VOID:
    case GLSL_TYPE_ERROR:
+   case GLSL_TYPE_INTERFACE:
    case GLSL_TYPE_FUNCTION:
       unreachable("not reached");
    }
@@ -686,7 +686,7 @@ src_reg::src_reg(class vec4_visitor *v, const struct glsl_type *type)
    this->file = VGRF;
    this->nr = v->alloc.allocate(type_size_vec4(type));
 
-   if (type->is_array() || type->is_struct()) {
+   if (type->is_array() || type->is_record()) {
       this->swizzle = BRW_SWIZZLE_NOOP;
    } else {
       this->swizzle = brw_swizzle_for_size(type->vector_elements);
@@ -716,7 +716,7 @@ dst_reg::dst_reg(class vec4_visitor *v, const struct glsl_type *type)
    this->file = VGRF;
    this->nr = v->alloc.allocate(type_size_vec4(type));
 
-   if (type->is_array() || type->is_struct()) {
+   if (type->is_array() || type->is_record()) {
       this->writemask = WRITEMASK_XYZW;
    } else {
       this->writemask = (1 << type->vector_elements) - 1;
@@ -863,7 +863,7 @@ vec4_visitor::emit_mcs_fetch(const glsl_type *coordinate_type,
                                     dst_reg(this, glsl_type::uvec4_type));
    inst->base_mrf = 2;
    inst->src[1] = surface;
-   inst->src[2] = brw_imm_ud(0); /* sampler */
+   inst->src[2] = surface;
 
    int param_base;
 

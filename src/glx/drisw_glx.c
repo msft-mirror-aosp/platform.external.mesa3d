@@ -599,9 +599,6 @@ drisw_create_context_attribs(struct glx_screen *base,
                                  &api, &reset, &release, error))
       return NULL;
 
-   if (!dri2_check_no_error(flags, shareList, major_ver, error))
-      return NULL;
-
    /* Check the renderType value */
    if (!validate_renderType_against_config(config_base, renderType)) {
        return NULL;
@@ -644,9 +641,6 @@ drisw_create_context_attribs(struct glx_screen *base,
        * GLX_CONTEXT_*_BIT values.
        */
       ctx_attribs[num_ctx_attribs++] = flags;
-
-      if (flags & __DRI_CTX_FLAG_NO_ERROR)
-         pcp->base.noError = GL_TRUE;
    }
 
    pcp->base.renderType = renderType;

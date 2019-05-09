@@ -20,7 +20,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "drm-uapi/drm_fourcc.h"
+#include <drm_fourcc.h>
 
 #include "pipe/p_state.h"
 #include "pipe/p_defines.h"

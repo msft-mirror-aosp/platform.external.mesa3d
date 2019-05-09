@@ -232,8 +232,8 @@ create_color_renderpass(struct radv_device *device,
 							       .attachment = VK_ATTACHMENT_UNUSED,
 							       .layout = VK_IMAGE_LAYOUT_GENERAL,
 						       },
-						       .preserveAttachmentCount = 0,
-						       .pPreserveAttachments = NULL,
+						       .preserveAttachmentCount = 1,
+						       .pPreserveAttachments = (uint32_t[]) { 0 },
 					       },
 								.dependencyCount = 0,
 									 }, &device->meta_state.alloc, pass);
@@ -438,10 +438,10 @@ emit_color_clear(struct radv_cmd_buffer *cmd_buffer,
 		.color_attachments = (struct radv_subpass_attachment[]) {
 			subpass->color_attachments[clear_att->colorAttachment]
 		},
-		.depth_stencil_attachment = NULL,
+		.depth_stencil_attachment = (struct radv_subpass_attachment) { VK_ATTACHMENT_UNUSED, VK_IMAGE_LAYOUT_UNDEFINED }
 	};
 
-	radv_cmd_buffer_set_subpass(cmd_buffer, &clear_subpass);
+	radv_cmd_buffer_set_subpass(cmd_buffer, &clear_subpass, false);
 
 	radv_CmdBindPipeline(cmd_buffer_h, VK_PIPELINE_BIND_POINT_GRAPHICS,
 			     pipeline);
@@ -465,7 +465,7 @@ emit_color_clear(struct radv_cmd_buffer *cmd_buffer,
 		radv_CmdDraw(cmd_buffer_h, 3, clear_rect->layerCount, 0, clear_rect->baseArrayLayer);
 	}
 
-	radv_cmd_buffer_set_subpass(cmd_buffer, subpass);
+	radv_cmd_buffer_set_subpass(cmd_buffer, subpass, false);
 }
 
 
@@ -547,8 +547,8 @@ create_depthstencil_renderpass(struct radv_device *device,
 							       .attachment = 0,
 							       .layout = VK_IMAGE_LAYOUT_GENERAL,
 						       },
-						       .preserveAttachmentCount = 0,
-						       .pPreserveAttachments = NULL,
+						       .preserveAttachmentCount = 1,
+						       .pPreserveAttachments = (uint32_t[]) { 0 },
 					       },
 								.dependencyCount = 0,
 									 }, &device->meta_state.alloc, render_pass);
@@ -720,7 +720,7 @@ emit_depthstencil_clear(struct radv_cmd_buffer *cmd_buffer,
 	struct radv_meta_state *meta_state = &device->meta_state;
 	const struct radv_subpass *subpass = cmd_buffer->state.subpass;
 	const struct radv_framebuffer *fb = cmd_buffer->state.framebuffer;
-	const uint32_t pass_att = subpass->depth_stencil_attachment->attachment;
+	const uint32_t pass_att = subpass->depth_stencil_attachment.attachment;
 	VkClearDepthStencilValue clear_value = clear_att->clearValue.depthStencil;
 	VkImageAspectFlags aspects = clear_att->aspectMask;
 	const struct radv_image_view *iview = fb ? fb->attachments[pass_att].attachment : NULL;
@@ -760,7 +760,7 @@ emit_depthstencil_clear(struct radv_cmd_buffer *cmd_buffer,
 							 iview,
 							 samples_log2,
 							 aspects,
-							 subpass->depth_stencil_attachment->layout,
+							 subpass->depth_stencil_attachment.layout,
 							 clear_rect,
 							 clear_value);
 	if (!pipeline)
@@ -770,7 +770,7 @@ emit_depthstencil_clear(struct radv_cmd_buffer *cmd_buffer,
 			     pipeline);
 
 	if (depth_view_can_fast_clear(cmd_buffer, iview, aspects,
-	                              subpass->depth_stencil_attachment->layout,
+	                              subpass->depth_stencil_attachment.layout,
 	                              clear_rect, clear_value))
 		radv_update_ds_clear_metadata(cmd_buffer, iview->image,
 					      clear_value, aspects);
@@ -1078,10 +1078,9 @@ build_clear_htile_mask_shader()
 					   nir_intrinsic_vulkan_resource_index);
 
 	buf->src[0] = nir_src_for_ssa(nir_imm_int(&b, 0));
-	buf->num_components = 1;
 	nir_intrinsic_set_desc_set(buf, 0);
 	nir_intrinsic_set_binding(buf, 0);
-	nir_ssa_dest_init(&buf->instr, &buf->dest, buf->num_components, 32, NULL);
+	nir_ssa_dest_init(&buf->instr, &buf->dest, 1, 32, NULL);
 	nir_builder_instr_insert(&b, &buf->instr);
 
 	nir_intrinsic_instr *constants =
@@ -1321,7 +1320,6 @@ radv_clear_cmask(struct radv_cmd_buffer *cmd_buffer,
 				image->cmask.size, value);
 }
 
-
 uint32_t
 radv_clear_fmask(struct radv_cmd_buffer *cmd_buffer,
 		 struct radv_image *image, uint32_t value)
@@ -1556,11 +1554,7 @@ emit_clear(struct radv_cmd_buffer *cmd_buffer,
 
 	if (aspects & VK_IMAGE_ASPECT_COLOR_BIT) {
 		const uint32_t subpass_att = clear_att->colorAttachment;
-		assert(subpass_att < subpass->color_count);
 		const uint32_t pass_att = subpass->color_attachments[subpass_att].attachment;
-		if (pass_att == VK_ATTACHMENT_UNUSED)
-			return;
-
 		VkImageLayout image_layout = subpass->color_attachments[subpass_att].layout;
 		const struct radv_image_view *iview = fb ? fb->attachments[pass_att].attachment : NULL;
 		VkClearColorValue clear_value = clear_att->clearValue.color;
@@ -1574,11 +1568,11 @@ emit_clear(struct radv_cmd_buffer *cmd_buffer,
 			emit_color_clear(cmd_buffer, clear_att, clear_rect, view_mask);
 		}
 	} else {
-		const uint32_t pass_att = subpass->depth_stencil_attachment->attachment;
+		const uint32_t pass_att = subpass->depth_stencil_attachment.attachment;
 		if (pass_att == VK_ATTACHMENT_UNUSED)
 			return;
 
-		VkImageLayout image_layout = subpass->depth_stencil_attachment->layout;
+		VkImageLayout image_layout = subpass->depth_stencil_attachment.layout;
 		const struct radv_image_view *iview = fb ? fb->attachments[pass_att].attachment : NULL;
 		VkClearDepthStencilValue clear_value = clear_att->clearValue.depthStencil;
 
@@ -1621,10 +1615,7 @@ radv_subpass_needs_clear(struct radv_cmd_buffer *cmd_buffer)
 			return true;
 	}
 
-	if (!cmd_state->subpass->depth_stencil_attachment)
-		return false;
-
-	a = cmd_state->subpass->depth_stencil_attachment->attachment;
+	a = cmd_state->subpass->depth_stencil_attachment.attachment;
 	return radv_attachment_needs_clear(cmd_state, a);
 }
 
@@ -1693,19 +1684,17 @@ radv_cmd_buffer_clear_subpass(struct radv_cmd_buffer *cmd_buffer)
 					      &post_flush);
 	}
 
-	if (cmd_state->subpass->depth_stencil_attachment) {
-		uint32_t ds = cmd_state->subpass->depth_stencil_attachment->attachment;
-		if (radv_attachment_needs_clear(cmd_state, ds)) {
-			VkClearAttachment clear_att = {
-				.aspectMask = cmd_state->attachments[ds].pending_clear_aspects,
-				.clearValue = cmd_state->attachments[ds].clear_value,
-			};
+	uint32_t ds = cmd_state->subpass->depth_stencil_attachment.attachment;
+	if (radv_attachment_needs_clear(cmd_state, ds)) {
+		VkClearAttachment clear_att = {
+			.aspectMask = cmd_state->attachments[ds].pending_clear_aspects,
+			.clearValue = cmd_state->attachments[ds].clear_value,
+		};
 
-			radv_subpass_clear_attachment(cmd_buffer,
-						      &cmd_state->attachments[ds],
-						      &clear_att, &pre_flush,
-						      &post_flush);
-		}
+		radv_subpass_clear_attachment(cmd_buffer,
+					      &cmd_state->attachments[ds],
+					      &clear_att, &pre_flush,
+					      &post_flush);
 	}
 
 	radv_meta_restore(&saved_state, cmd_buffer);

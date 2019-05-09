@@ -100,8 +100,6 @@ struct wsi_device {
    VkPhysicalDevicePCIBusInfoPropertiesEXT pci_bus_info;
 
    bool supports_modifiers;
-   uint32_t maxImageDimension2D;
-
    uint64_t (*image_get_modifier)(VkImage image);
 
 #define WSI_CB(cb) PFN_vk##cb cb
@@ -242,8 +240,5 @@ wsi_common_queue_present(const struct wsi_device *wsi,
                          VkQueue queue_h,
                          int queue_family_index,
                          const VkPresentInfoKHR *pPresentInfo);
-
-uint64_t
-wsi_common_get_current_time(void);
 
 #endif

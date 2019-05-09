@@ -78,11 +78,6 @@ struct fd_resource {
 	/* TODO rename to secondary or auxiliary? */
 	struct fd_resource *stencil;
 
-	uint32_t offset;
-	uint32_t ubwc_offset;
-	uint32_t ubwc_pitch;
-	uint32_t ubwc_size;
-
 	/* bitmask of in-flight batches which reference this resource.  Note
 	 * that the batch doesn't hold reference to resources (but instead
 	 * the fd_ringbuffer holds refs to the underlying fd_bo), but in case
@@ -191,6 +186,10 @@ fd_resource_nr_samples(struct pipe_resource *prsc)
 {
 	return MAX2(1, prsc->nr_samples);
 }
+
+void fd_blitter_pipe_begin(struct fd_context *ctx, bool render_cond, bool discard,
+		enum fd_render_stage stage);
+void fd_blitter_pipe_end(struct fd_context *ctx);
 
 void fd_resource_screen_init(struct pipe_screen *pscreen);
 void fd_resource_context_init(struct pipe_context *pctx);

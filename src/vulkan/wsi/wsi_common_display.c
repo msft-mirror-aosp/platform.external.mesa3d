@@ -32,7 +32,7 @@
 #include <math.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
-#include "drm-uapi/drm_fourcc.h"
+#include <drm_fourcc.h>
 #ifdef VK_USE_PLATFORM_XLIB_XRANDR_EXT
 #include <xcb/randr.h>
 #include <X11/Xlib-xcb.h>
@@ -96,7 +96,7 @@ struct wsi_display {
    pthread_cond_t               wait_cond;
    pthread_t                    wait_thread;
 
-   struct list_head             connectors; /* list of all discovered connectors */
+   struct list_head             connectors;
 };
 
 #define wsi_for_each_display_mode(_mode, _conn)                 \
@@ -171,9 +171,17 @@ wsi_display_mode_refresh(struct wsi_display_mode *wsi)
                                           (double) MAX2(wsi->vscan, 1));
 }
 
+static uint64_t wsi_get_current_monotonic(void)
+{
+   struct timespec tv;
+
+   clock_gettime(CLOCK_MONOTONIC, &tv);
+   return tv.tv_nsec + tv.tv_sec*1000000000ull;
+}
+
 static uint64_t wsi_rel_to_abs_time(uint64_t rel_time)
 {
-   uint64_t current_time = wsi_common_get_current_time();
+   uint64_t current_time = wsi_get_current_monotonic();
 
    /* check for overflow */
    if (rel_time > UINT64_MAX - current_time)
@@ -758,27 +766,10 @@ wsi_get_display_plane_capabilities2(
    assert(capabilities->sType ==
           VK_STRUCTURE_TYPE_DISPLAY_PLANE_CAPABILITIES_2_KHR);
 
-   VkResult result =
-      wsi_get_display_plane_capabilities(physical_device, wsi_device,
-                                         pDisplayPlaneInfo->mode,
-                                         pDisplayPlaneInfo->planeIndex,
-                                         &capabilities->capabilities);
-
-   vk_foreach_struct(ext, capabilities->pNext) {
-      switch (ext->sType) {
-      case VK_STRUCTURE_TYPE_SURFACE_PROTECTED_CAPABILITIES_KHR: {
-         VkSurfaceProtectedCapabilitiesKHR *protected = (void *)ext;
-         protected->supportsProtected = VK_FALSE;
-         break;
-      }
-
-      default:
-         /* Ignored */
-         break;
-      }
-   }
-
-   return result;
+   return wsi_get_display_plane_capabilities(physical_device, wsi_device,
+                                             pDisplayPlaneInfo->mode,
+                                             pDisplayPlaneInfo->planeIndex,
+                                             &capabilities->capabilities);
 }
 
 VkResult
@@ -820,7 +811,6 @@ wsi_display_surface_get_support(VkIcdSurfaceBase *surface,
 
 static VkResult
 wsi_display_surface_get_capabilities(VkIcdSurfaceBase *surface_base,
-                                     struct wsi_device *wsi_device,
                                      VkSurfaceCapabilitiesKHR* caps)
 {
    VkIcdSurfaceDisplay *surface = (VkIcdSurfaceDisplay *) surface_base;
@@ -829,11 +819,8 @@ wsi_display_surface_get_capabilities(VkIcdSurfaceBase *surface_base,
    caps->currentExtent.width = mode->hdisplay;
    caps->currentExtent.height = mode->vdisplay;
 
-   caps->minImageExtent = (VkExtent2D) { 1, 1 };
-   caps->maxImageExtent = (VkExtent2D) {
-      wsi_device->maxImageDimension2D,
-      wsi_device->maxImageDimension2D,
-   };
+   /* XXX Figure out extents based on driver capabilities */
+   caps->maxImageExtent = caps->minImageExtent = caps->currentExtent;
 
    caps->supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 
@@ -864,14 +851,13 @@ wsi_display_surface_get_surface_counters(
 
 static VkResult
 wsi_display_surface_get_capabilities2(VkIcdSurfaceBase *icd_surface,
-                                      struct wsi_device *wsi_device,
                                       const void *info_next,
                                       VkSurfaceCapabilities2KHR *caps)
 {
    assert(caps->sType == VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR);
    VkResult result;
 
-   result = wsi_display_surface_get_capabilities(icd_surface, wsi_device,
+   result = wsi_display_surface_get_capabilities(icd_surface,
                                                  &caps->surfaceCapabilities);
    if (result != VK_SUCCESS)
       return result;
@@ -1445,8 +1431,8 @@ wsi_display_fence_wait(struct wsi_fence *fence_wsi, uint64_t timeout)
 
    wsi_display_debug("%9lu wait fence %lu %ld\n",
                      pthread_self(), fence->sequence,
-                     (int64_t) (timeout - wsi_common_get_current_time()));
-   wsi_display_debug_code(uint64_t start_ns = wsi_common_get_current_time());
+                     (int64_t) (timeout - wsi_get_current_monotonic()));
+   wsi_display_debug_code(uint64_t start_ns = wsi_get_current_monotonic());
    pthread_mutex_lock(&wsi->wait_mutex);
 
    VkResult result;
@@ -1478,7 +1464,7 @@ wsi_display_fence_wait(struct wsi_fence *fence_wsi, uint64_t timeout)
    pthread_mutex_unlock(&wsi->wait_mutex);
    wsi_display_debug("%9lu fence wait %f ms\n",
                      pthread_self(),
-                     ((int64_t) (wsi_common_get_current_time() - start_ns)) /
+                     ((int64_t) (wsi_get_current_monotonic() - start_ns)) /
                      1.0e6);
    return result;
 }

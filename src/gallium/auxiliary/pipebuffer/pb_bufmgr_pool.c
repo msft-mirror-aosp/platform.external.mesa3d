@@ -118,8 +118,7 @@ pool_buffer_destroy(struct pb_buffer *buf)
 
 
 static void *
-pool_buffer_map(struct pb_buffer *buf, enum pb_usage_flags flags,
-                void *flush_ctx)
+pool_buffer_map(struct pb_buffer *buf, unsigned flags, void *flush_ctx)
 {
    struct pool_buffer *pool_buf = pool_buffer(buf);
    struct pool_pb_manager *pool = pool_buf->mgr;
@@ -144,7 +143,7 @@ pool_buffer_unmap(struct pb_buffer *buf)
 static enum pipe_error 
 pool_buffer_validate(struct pb_buffer *buf, 
                      struct pb_validate *vl,
-                     enum pb_usage_flags flags)
+                     unsigned flags)
 {
    struct pool_buffer *pool_buf = pool_buffer(buf);
    struct pool_pb_manager *pool = pool_buf->mgr;

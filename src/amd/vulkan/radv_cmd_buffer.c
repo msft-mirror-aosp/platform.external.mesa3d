@@ -632,23 +632,6 @@ radv_emit_descriptor_pointers(struct radv_cmd_buffer *cmd_buffer,
 }
 
 static void
-radv_emit_inline_push_consts(struct radv_cmd_buffer *cmd_buffer,
-			     struct radv_pipeline *pipeline,
-			     gl_shader_stage stage,
-			     int idx, int count, uint32_t *values)
-{
-	struct radv_userdata_info *loc = radv_lookup_user_sgpr(pipeline, stage, idx);
-	uint32_t base_reg = pipeline->user_data_0[stage];
-	if (loc->sgpr_idx == -1)
-		return;
-
-	assert(loc->num_sgprs == count);
-
-	radeon_set_sh_reg_seq(cmd_buffer->cs, base_reg + loc->sgpr_idx * 4, count);
-	radeon_emit_array(cmd_buffer->cs, values, count);
-}
-
-static void
 radv_update_multisample_state(struct radv_cmd_buffer *cmd_buffer,
 			      struct radv_pipeline *pipeline)
 {
@@ -1225,10 +1208,10 @@ radv_update_bound_fast_clear_ds(struct radv_cmd_buffer *cmd_buffer,
 	if (!framebuffer || !subpass)
 		return;
 
-	if (!subpass->depth_stencil_attachment)
+	att_idx = subpass->depth_stencil_attachment.attachment;
+	if (att_idx == VK_ATTACHMENT_UNUSED)
 		return;
 
-	att_idx = subpass->depth_stencil_attachment->attachment;
 	att = &framebuffer->attachments[att_idx];
 	if (att->attachment->image != image)
 		return;
@@ -1242,7 +1225,7 @@ radv_update_bound_fast_clear_ds(struct radv_cmd_buffer *cmd_buffer,
 	 */
 	if ((aspects & VK_IMAGE_ASPECT_DEPTH_BIT) &&
 	    ds_clear_value.depth == 0.0) {
-		VkImageLayout layout = subpass->depth_stencil_attachment->layout;
+		VkImageLayout layout = subpass->depth_stencil_attachment.layout;
 
 		radv_update_zrange_precision(cmd_buffer, &att->ds, image,
 					     layout, false);
@@ -1594,9 +1577,9 @@ radv_emit_framebuffer_state(struct radv_cmd_buffer *cmd_buffer)
 			num_bpp64_colorbufs++;
 	}
 
-	if (subpass->depth_stencil_attachment) {
-		int idx = subpass->depth_stencil_attachment->attachment;
-		VkImageLayout layout = subpass->depth_stencil_attachment->layout;
+	if(subpass->depth_stencil_attachment.attachment != VK_ATTACHMENT_UNUSED) {
+		int idx = subpass->depth_stencil_attachment.attachment;
+		VkImageLayout layout = subpass->depth_stencil_attachment.layout;
 		struct radv_attachment_info *att = &framebuffer->attachments[idx];
 		struct radv_image *image = att->attachment->image;
 		radv_cs_add_buffer(cmd_buffer->device->ws, cmd_buffer->cs, att->attachment->bo);
@@ -1920,7 +1903,6 @@ radv_flush_constants(struct radv_cmd_buffer *cmd_buffer,
 		radv_get_descriptors_state(cmd_buffer, bind_point);
 	struct radv_pipeline_layout *layout = pipeline->layout;
 	struct radv_shader_variant *shader, *prev_shader;
-	bool need_push_constants = false;
 	unsigned offset;
 	void *ptr;
 	uint64_t va;
@@ -1930,56 +1912,37 @@ radv_flush_constants(struct radv_cmd_buffer *cmd_buffer,
 	    (!layout->push_constant_size && !layout->dynamic_offset_count))
 		return;
 
+	if (!radv_cmd_buffer_upload_alloc(cmd_buffer, layout->push_constant_size +
+					  16 * layout->dynamic_offset_count,
+					  256, &offset, &ptr))
+		return;
+
+	memcpy(ptr, cmd_buffer->push_constants, layout->push_constant_size);
+	memcpy((char*)ptr + layout->push_constant_size,
+	       descriptors_state->dynamic_buffers,
+	       16 * layout->dynamic_offset_count);
+
+	va = radv_buffer_get_va(cmd_buffer->upload.upload_bo);
+	va += offset;
+
+	MAYBE_UNUSED unsigned cdw_max = radeon_check_space(cmd_buffer->device->ws,
+	                                                   cmd_buffer->cs, MESA_SHADER_STAGES * 4);
+
+	prev_shader = NULL;
 	radv_foreach_stage(stage, stages) {
-		if (!pipeline->shaders[stage])
-			continue;
+		shader = radv_get_shader(pipeline, stage);
 
-		need_push_constants |= pipeline->shaders[stage]->info.info.loads_push_constants;
-		need_push_constants |= pipeline->shaders[stage]->info.info.loads_dynamic_offsets;
+		/* Avoid redundantly emitting the address for merged stages. */
+		if (shader && shader != prev_shader) {
+			radv_emit_userdata_address(cmd_buffer, pipeline, stage,
+						   AC_UD_PUSH_CONSTANTS, va);
 
-		uint8_t base = pipeline->shaders[stage]->info.info.base_inline_push_consts;
-		uint8_t count = pipeline->shaders[stage]->info.info.num_inline_push_consts;
-
-		radv_emit_inline_push_consts(cmd_buffer, pipeline, stage,
-					     AC_UD_INLINE_PUSH_CONSTANTS,
-					     count,
-					     (uint32_t *)&cmd_buffer->push_constants[base * 4]);
-	}
-
-	if (need_push_constants) {
-		if (!radv_cmd_buffer_upload_alloc(cmd_buffer, layout->push_constant_size +
-						  16 * layout->dynamic_offset_count,
-						  256, &offset, &ptr))
-			return;
-
-		memcpy(ptr, cmd_buffer->push_constants, layout->push_constant_size);
-		memcpy((char*)ptr + layout->push_constant_size,
-		       descriptors_state->dynamic_buffers,
-		       16 * layout->dynamic_offset_count);
-
-		va = radv_buffer_get_va(cmd_buffer->upload.upload_bo);
-		va += offset;
-
-		MAYBE_UNUSED unsigned cdw_max =
-			radeon_check_space(cmd_buffer->device->ws,
-	                                   cmd_buffer->cs, MESA_SHADER_STAGES * 4);
-
-		prev_shader = NULL;
-		radv_foreach_stage(stage, stages) {
-			shader = radv_get_shader(pipeline, stage);
-
-			/* Avoid redundantly emitting the address for merged stages. */
-			if (shader && shader != prev_shader) {
-				radv_emit_userdata_address(cmd_buffer, pipeline, stage,
-							   AC_UD_PUSH_CONSTANTS, va);
-
-				prev_shader = shader;
-			}
+			prev_shader = shader;
 		}
-		assert(cmd_buffer->cs->cdw <= cdw_max);
 	}
 
 	cmd_buffer->push_constant_stages &= ~stages;
+	assert(cmd_buffer->cs->cdw <= cdw_max);
 }
 
 static void
@@ -1988,13 +1951,13 @@ radv_flush_vertex_descriptors(struct radv_cmd_buffer *cmd_buffer,
 {
 	if ((pipeline_is_dirty ||
 	    (cmd_buffer->state.dirty & RADV_CMD_DIRTY_VERTEX_BUFFER)) &&
-	    cmd_buffer->state.pipeline->num_vertex_bindings &&
+	    cmd_buffer->state.pipeline->vertex_elements.count &&
 	    radv_get_shader(cmd_buffer->state.pipeline, MESA_SHADER_VERTEX)->info.info.vs.has_vertex_buffers) {
 		struct radv_vertex_elements_info *velems = &cmd_buffer->state.pipeline->vertex_elements;
 		unsigned vb_offset;
 		void *vb_ptr;
 		uint32_t i = 0;
-		uint32_t count = cmd_buffer->state.pipeline->num_vertex_bindings;
+		uint32_t count = velems->count;
 		uint64_t va;
 
 		/* allocate some descriptor state for vertex buffers */
@@ -2005,15 +1968,13 @@ radv_flush_vertex_descriptors(struct radv_cmd_buffer *cmd_buffer,
 		for (i = 0; i < count; i++) {
 			uint32_t *desc = &((uint32_t *)vb_ptr)[i * 4];
 			uint32_t offset;
-			struct radv_buffer *buffer = cmd_buffer->vertex_bindings[i].buffer;
-			uint32_t stride = cmd_buffer->state.pipeline->binding_stride[i];
-
-			if (!buffer)
-				continue;
+			int vb = velems->binding[i];
+			struct radv_buffer *buffer = cmd_buffer->vertex_bindings[vb].buffer;
+			uint32_t stride = cmd_buffer->state.pipeline->binding_stride[vb];
 
 			va = radv_buffer_get_va(buffer->bo);
 
-			offset = cmd_buffer->vertex_bindings[i].offset;
+			offset = cmd_buffer->vertex_bindings[vb].offset + velems->offset[i];
 			va += offset + buffer->offset;
 			desc[0] = va;
 			desc[1] = S_008F04_BASE_ADDRESS_HI(va >> 32) | S_008F04_STRIDE(stride);
@@ -2021,12 +1982,7 @@ radv_flush_vertex_descriptors(struct radv_cmd_buffer *cmd_buffer,
 				desc[2] = (buffer->size - offset - velems->format_size[i]) / stride + 1;
 			else
 				desc[2] = buffer->size - offset;
-			desc[3] = S_008F0C_DST_SEL_X(V_008F0C_SQ_SEL_X) |
-				  S_008F0C_DST_SEL_Y(V_008F0C_SQ_SEL_Y) |
-				  S_008F0C_DST_SEL_Z(V_008F0C_SQ_SEL_Z) |
-				  S_008F0C_DST_SEL_W(V_008F0C_SQ_SEL_W) |
-				  S_008F0C_NUM_FORMAT(V_008F0C_BUF_NUM_FORMAT_UINT) |
-				  S_008F0C_DATA_FORMAT(V_008F0C_BUF_DATA_FORMAT_32);
+			desc[3] = velems->rsrc_word3[i];
 		}
 
 		va = radv_buffer_get_va(cmd_buffer->upload.upload_bo);
@@ -2471,8 +2427,28 @@ static void radv_handle_subpass_image_transition(struct radv_cmd_buffer *cmd_buf
 
 void
 radv_cmd_buffer_set_subpass(struct radv_cmd_buffer *cmd_buffer,
-			    const struct radv_subpass *subpass)
+			    const struct radv_subpass *subpass, bool transitions)
 {
+	if (transitions) {
+		radv_subpass_barrier(cmd_buffer, &subpass->start_barrier);
+
+		for (unsigned i = 0; i < subpass->color_count; ++i) {
+			if (subpass->color_attachments[i].attachment != VK_ATTACHMENT_UNUSED)
+				radv_handle_subpass_image_transition(cmd_buffer,
+				                                     subpass->color_attachments[i]);
+		}
+
+		for (unsigned i = 0; i < subpass->input_count; ++i) {
+			radv_handle_subpass_image_transition(cmd_buffer,
+							subpass->input_attachments[i]);
+		}
+
+		if (subpass->depth_stencil_attachment.attachment != VK_ATTACHMENT_UNUSED) {
+			radv_handle_subpass_image_transition(cmd_buffer,
+							subpass->depth_stencil_attachment);
+		}
+	}
+
 	cmd_buffer->state.subpass = subpass;
 
 	cmd_buffer->state.dirty |= RADV_CMD_DIRTY_FRAMEBUFFER;
@@ -2655,7 +2631,7 @@ VkResult radv_BeginCommandBuffer(
 		if (result != VK_SUCCESS)
 			return result;
 
-		radv_cmd_buffer_set_subpass(cmd_buffer, subpass);
+		radv_cmd_buffer_set_subpass(cmd_buffer, subpass, false);
 	}
 
 	if (unlikely(cmd_buffer->device->trace_bo)) {
@@ -3435,69 +3411,6 @@ void radv_TrimCommandPool(
 	}
 }
 
-static uint32_t
-radv_get_subpass_id(struct radv_cmd_buffer *cmd_buffer)
-{
-	struct radv_cmd_state *state = &cmd_buffer->state;
-	uint32_t subpass_id = state->subpass - state->pass->subpasses;
-
-	/* The id of this subpass shouldn't exceed the number of subpasses in
-	 * this render pass minus 1.
-	 */
-	assert(subpass_id < state->pass->subpass_count);
-	return subpass_id;
-}
-
-static void
-radv_cmd_buffer_begin_subpass(struct radv_cmd_buffer *cmd_buffer,
-			      uint32_t subpass_id)
-{
-	struct radv_cmd_state *state = &cmd_buffer->state;
-	struct radv_subpass *subpass = &state->pass->subpasses[subpass_id];
-
-	MAYBE_UNUSED unsigned cdw_max = radeon_check_space(cmd_buffer->device->ws,
-							   cmd_buffer->cs, 4096);
-
-	radv_subpass_barrier(cmd_buffer, &subpass->start_barrier);
-
-	for (uint32_t i = 0; i < subpass->attachment_count; ++i) {
-		const uint32_t a = subpass->attachments[i].attachment;
-		if (a == VK_ATTACHMENT_UNUSED)
-			continue;
-
-		radv_handle_subpass_image_transition(cmd_buffer,
-						     subpass->attachments[i]);
-	}
-
-	radv_cmd_buffer_set_subpass(cmd_buffer, subpass);
-	radv_cmd_buffer_clear_subpass(cmd_buffer);
-
-	assert(cmd_buffer->cs->cdw <= cdw_max);
-}
-
-static void
-radv_cmd_buffer_end_subpass(struct radv_cmd_buffer *cmd_buffer)
-{
-	struct radv_cmd_state *state = &cmd_buffer->state;
-	const struct radv_subpass *subpass = state->subpass;
-	uint32_t subpass_id = radv_get_subpass_id(cmd_buffer);
-
-	radv_cmd_buffer_resolve_subpass(cmd_buffer);
-
-	for (uint32_t i = 0; i < subpass->attachment_count; ++i) {
-		const uint32_t a = subpass->attachments[i].attachment;
-		if (a == VK_ATTACHMENT_UNUSED)
-			continue;
-
-		if (state->pass->attachments[a].last_subpass_idx != subpass_id)
-			continue;
-
-		VkImageLayout layout = state->pass->attachments[a].final_layout;
-		radv_handle_subpass_image_transition(cmd_buffer,
-		                      (struct radv_subpass_attachment){a, layout});
-	}
-}
-
 void radv_CmdBeginRenderPass(
 	VkCommandBuffer                             commandBuffer,
 	const VkRenderPassBeginInfo*                pRenderPassBegin,
@@ -3506,7 +3419,10 @@ void radv_CmdBeginRenderPass(
 	RADV_FROM_HANDLE(radv_cmd_buffer, cmd_buffer, commandBuffer);
 	RADV_FROM_HANDLE(radv_render_pass, pass, pRenderPassBegin->renderPass);
 	RADV_FROM_HANDLE(radv_framebuffer, framebuffer, pRenderPassBegin->framebuffer);
-	VkResult result;
+
+	MAYBE_UNUSED unsigned cdw_max = radeon_check_space(cmd_buffer->device->ws,
+							   cmd_buffer->cs, 2048);
+	MAYBE_UNUSED VkResult result;
 
 	cmd_buffer->state.framebuffer = framebuffer;
 	cmd_buffer->state.pass = pass;
@@ -3516,7 +3432,10 @@ void radv_CmdBeginRenderPass(
 	if (result != VK_SUCCESS)
 		return;
 
-	radv_cmd_buffer_begin_subpass(cmd_buffer, 0);
+	radv_cmd_buffer_set_subpass(cmd_buffer, pass->subpasses, true);
+	assert(cmd_buffer->cs->cdw <= cdw_max);
+
+	radv_cmd_buffer_clear_subpass(cmd_buffer);
 }
 
 void radv_CmdBeginRenderPass2KHR(
@@ -3534,9 +3453,13 @@ void radv_CmdNextSubpass(
 {
 	RADV_FROM_HANDLE(radv_cmd_buffer, cmd_buffer, commandBuffer);
 
-	uint32_t prev_subpass = radv_get_subpass_id(cmd_buffer);
-	radv_cmd_buffer_end_subpass(cmd_buffer);
-	radv_cmd_buffer_begin_subpass(cmd_buffer, prev_subpass + 1);
+	radv_cmd_buffer_resolve_subpass(cmd_buffer);
+
+	radeon_check_space(cmd_buffer->device->ws, cmd_buffer->cs,
+					      2048);
+
+	radv_cmd_buffer_set_subpass(cmd_buffer, cmd_buffer->state.subpass + 1, true);
+	radv_cmd_buffer_clear_subpass(cmd_buffer);
 }
 
 void radv_CmdNextSubpass2KHR(
@@ -4404,7 +4327,13 @@ void radv_CmdEndRenderPass(
 
 	radv_subpass_barrier(cmd_buffer, &cmd_buffer->state.pass->end_barrier);
 
-	radv_cmd_buffer_end_subpass(cmd_buffer);
+	radv_cmd_buffer_resolve_subpass(cmd_buffer);
+
+	for (unsigned i = 0; i < cmd_buffer->state.framebuffer->attachment_count; ++i) {
+		VkImageLayout layout = cmd_buffer->state.pass->attachments[i].final_layout;
+		radv_handle_subpass_image_transition(cmd_buffer,
+		                      (struct radv_subpass_attachment){i, layout});
+	}
 
 	vk_free(&cmd_buffer->pool->alloc, cmd_buffer->state.attachments);
 
@@ -4670,9 +4599,6 @@ static void radv_handle_image_transition(struct radv_cmd_buffer *cmd_buffer,
 			return;
 	}
 
-	if (src_layout == dst_layout)
-		return;
-
 	unsigned src_queue_mask =
 		radv_image_queue_family_mask(image, src_family,
 					     cmd_buffer->queue_family_index);
@@ -4697,7 +4623,6 @@ struct radv_barrier_info {
 	uint32_t eventCount;
 	const VkEvent *pEvents;
 	VkPipelineStageFlags srcStageMask;
-	VkPipelineStageFlags dstStageMask;
 };
 
 static void
@@ -4749,19 +4674,7 @@ radv_barrier(struct radv_cmd_buffer *cmd_buffer,
 		                                        image);
 	}
 
-	/* The Vulkan spec 1.1.98 says:
-	 *
-	 * "An execution dependency with only
-	 *  VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT in the destination stage mask
-	 *  will only prevent that stage from executing in subsequently
-	 *  submitted commands. As this stage does not perform any actual
-	 *  execution, this is not observable - in effect, it does not delay
-	 *  processing of subsequent commands. Similarly an execution dependency
-	 *  with only VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT in the source stage mask
-	 *  will effectively not wait for any prior commands to complete."
-	 */
-	if (info->dstStageMask != VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT)
-		radv_stage_flush(cmd_buffer, info->srcStageMask);
+	radv_stage_flush(cmd_buffer, info->srcStageMask);
 	cmd_buffer->state.flush_bits |= src_flush_bits;
 
 	for (uint32_t i = 0; i < imageMemoryBarrierCount; i++) {
@@ -4802,7 +4715,6 @@ void radv_CmdPipelineBarrier(
 	info.eventCount = 0;
 	info.pEvents = NULL;
 	info.srcStageMask = srcStageMask;
-	info.dstStageMask = destStageMask;
 
 	radv_barrier(cmd_buffer, memoryBarrierCount, pMemoryBarriers,
 		     bufferMemoryBarrierCount, pBufferMemoryBarriers,

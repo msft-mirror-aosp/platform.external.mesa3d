@@ -873,43 +873,6 @@ void radv_GetPhysicalDeviceFeatures2(
 			features->memoryPriority = VK_TRUE;
 			break;
 		}
-		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_ADDRESS_FEATURES_EXT: {
-			VkPhysicalDeviceBufferAddressFeaturesEXT *features =
-				(VkPhysicalDeviceBufferAddressFeaturesEXT *)ext;
-			features->bufferDeviceAddress = true;
-			features->bufferDeviceAddressCaptureReplay = false;
-			features->bufferDeviceAddressMultiDevice = false;
-			break;
-		}
-		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT: {
-			VkPhysicalDeviceDepthClipEnableFeaturesEXT *features =
-				(VkPhysicalDeviceDepthClipEnableFeaturesEXT *)ext;
-			features->depthClipEnable = true;
-			break;
-		}
-		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES_EXT: {
-			VkPhysicalDeviceHostQueryResetFeaturesEXT *features =
-				(VkPhysicalDeviceHostQueryResetFeaturesEXT *)ext;
-			features->hostQueryReset = true;
-			break;
-		}
-		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES_KHR: {
-			VkPhysicalDevice8BitStorageFeaturesKHR *features =
-			    (VkPhysicalDevice8BitStorageFeaturesKHR*)ext;
-			bool enabled = pdevice->rad_info.chip_class >= VI;
-			features->storageBuffer8BitAccess = enabled;
-			features->uniformAndStorageBuffer8BitAccess = enabled;
-			features->storagePushConstant8 = enabled;
-			break;
-		}
-		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT16_INT8_FEATURES_KHR: {
-			VkPhysicalDeviceFloat16Int8FeaturesKHR *features =
-				(VkPhysicalDeviceFloat16Int8FeaturesKHR*)ext;
-			bool enabled = pdevice->rad_info.chip_class >= VI;
-			features->shaderFloat16 = VK_FALSE;
-			features->shaderInt8 = enabled;
-			break;
-		}
 		default:
 			break;
 		}
@@ -967,8 +930,8 @@ void radv_GetPhysicalDeviceProperties(
 		.maxDescriptorSetSampledImages            = max_descriptor_set_size,
 		.maxDescriptorSetStorageImages            = max_descriptor_set_size,
 		.maxDescriptorSetInputAttachments         = max_descriptor_set_size,
-		.maxVertexInputAttributes                 = MAX_VERTEX_ATTRIBS,
-		.maxVertexInputBindings                   = MAX_VBS,
+		.maxVertexInputAttributes                 = 32,
+		.maxVertexInputBindings                   = 32,
 		.maxVertexInputAttributeOffset            = 2047,
 		.maxVertexInputBindingStride              = 2048,
 		.maxVertexOutputComponents                = 128,
@@ -1170,7 +1133,7 @@ void radv_GetPhysicalDeviceProperties2(
 
 			/* SGPR. */
 			properties->sgprsPerSimd =
-				ac_get_num_physical_sgprs(pdevice->rad_info.chip_class);
+				radv_get_num_physical_sgprs(pdevice);
 			properties->minSgprAllocation =
 				pdevice->rad_info.chip_class >= VI ? 16 : 8;
 			properties->maxSgprAllocation =
@@ -1592,9 +1555,6 @@ static VkResult radv_bo_list_add(struct radv_device *device,
 {
 	struct radv_bo_list *bo_list = &device->bo_list;
 
-	if (bo->is_local)
-		return VK_SUCCESS;
-
 	if (unlikely(!device->use_global_bo_list))
 		return VK_SUCCESS;
 
@@ -1621,9 +1581,6 @@ static void radv_bo_list_remove(struct radv_device *device,
 				struct radeon_winsys_bo *bo)
 {
 	struct radv_bo_list *bo_list = &device->bo_list;
-
-	if (bo->is_local)
-		return;
 
 	if (unlikely(!device->use_global_bo_list))
 		return;
@@ -1735,8 +1692,7 @@ VkResult radv_CreateDevice(
 	 * from the descriptor set anymore, so we have to use a global BO list.
 	 */
 	device->use_global_bo_list =
-		device->enabled_extensions.EXT_descriptor_indexing ||
-		device->enabled_extensions.EXT_buffer_device_address;
+		device->enabled_extensions.EXT_descriptor_indexing;
 
 	mtx_init(&device->shader_slab_mutex, mtx_plain);
 	list_inithead(&device->shader_slabs);
@@ -3664,7 +3620,7 @@ void radv_DestroyFence(
 }
 
 
-uint64_t radv_get_current_time(void)
+static uint64_t radv_get_current_time()
 {
 	struct timespec tv;
 	clock_gettime(CLOCK_MONOTONIC, &tv);
@@ -4073,15 +4029,6 @@ void radv_DestroyBuffer(
 
 	vk_free2(&device->alloc, pAllocator, buffer);
 }
-
-VkDeviceAddress radv_GetBufferDeviceAddressEXT(
-	VkDevice                                    device,
-	const VkBufferDeviceAddressInfoEXT*         pInfo)
-{
-	RADV_FROM_HANDLE(radv_buffer, buffer, pInfo->buffer);
-	return radv_buffer_get_va(buffer->bo) + buffer->offset;
-}
-
 
 static inline unsigned
 si_tile_mode_index(const struct radv_image *image, unsigned level, bool stencil)

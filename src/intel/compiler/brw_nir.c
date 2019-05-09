@@ -555,7 +555,6 @@ brw_nir_optimize(nir_shader *nir, const struct brw_compiler *compiler,
       }
       OPT(nir_opt_copy_prop_vars);
       OPT(nir_opt_dead_write_vars);
-      OPT(nir_opt_combine_stores, nir_var_all);
 
       if (is_scalar) {
          OPT(nir_lower_alu_to_scalar);
@@ -570,20 +569,8 @@ brw_nir_optimize(nir_shader *nir, const struct brw_compiler *compiler,
       OPT(nir_copy_prop);
       OPT(nir_opt_dce);
       OPT(nir_opt_cse);
-      OPT(nir_opt_combine_stores, nir_var_all);
 
-      /* Passing 0 to the peephole select pass causes it to convert
-       * if-statements that contain only move instructions in the branches
-       * regardless of the count.
-       *
-       * Passing 1 to the peephole select pass causes it to convert
-       * if-statements that contain at most a single ALU instruction (total)
-       * in both branches.  Before Gen6, some math instructions were
-       * prohibitively expensive and the results of compare operations need an
-       * extra resolve step.  For these reasons, this pass is more harmful
-       * than good on those platforms.
-       *
-       * For indirect loads of uniforms (push constants), we assume that array
+      /* For indirect loads of uniforms (push constants), we assume that array
        * indices will nearly always be in bounds and the cost of the load is
        * low.  Therefore there shouldn't be a performance benefit to avoid it.
        * However, in vec4 tessellation shaders, these loads operate by
@@ -592,9 +579,7 @@ brw_nir_optimize(nir_shader *nir, const struct brw_compiler *compiler,
       const bool is_vec4_tessellation = !is_scalar &&
          (nir->info.stage == MESA_SHADER_TESS_CTRL ||
           nir->info.stage == MESA_SHADER_TESS_EVAL);
-      OPT(nir_opt_peephole_select, 0, !is_vec4_tessellation, false);
-      OPT(nir_opt_peephole_select, 1, !is_vec4_tessellation,
-          compiler->devinfo->gen >= 6);
+      OPT(nir_opt_peephole_select, 0, !is_vec4_tessellation);
 
       OPT(nir_opt_intrinsics);
       OPT(nir_opt_idiv_const, 32);
@@ -655,8 +640,7 @@ lower_bit_size_callback(const nir_alu_instr *alu, UNUSED void *data)
  * is_scalar = true to scalarize everything prior to code gen.
  */
 nir_shader *
-brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir,
-                   const nir_shader *softfp64)
+brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir)
 {
    const struct gen_device_info *devinfo = compiler->devinfo;
    UNUSED bool progress; /* Written by OPT */
@@ -666,6 +650,72 @@ brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir,
    if (is_scalar) {
       OPT(nir_lower_alu_to_scalar);
    }
+
+   /* Run opt_algebraic before int64 lowering so we can hopefully get rid
+    * of some int64 instructions.
+    */
+   OPT(nir_opt_algebraic);
+
+   /* Lower 64-bit operations before nir_optimize so that loop unrolling sees
+    * their actual cost.
+    */
+   nir_lower_int64_options int64_options =
+      nir_lower_imul64 |
+      nir_lower_isign64 |
+      nir_lower_divmod64 |
+      nir_lower_imul_high64;
+   nir_lower_doubles_options fp64_options =
+      nir_lower_drcp |
+      nir_lower_dsqrt |
+      nir_lower_drsq |
+      nir_lower_dtrunc |
+      nir_lower_dfloor |
+      nir_lower_dceil |
+      nir_lower_dfract |
+      nir_lower_dround_even |
+      nir_lower_dmod;
+
+   if (!devinfo->has_64bit_types) {
+      int64_options |= nir_lower_mov64 |
+                       nir_lower_icmp64 |
+                       nir_lower_iadd64 |
+                       nir_lower_iabs64 |
+                       nir_lower_ineg64 |
+                       nir_lower_logic64 |
+                       nir_lower_minmax64 |
+                       nir_lower_shift64;
+      fp64_options |= nir_lower_fp64_full_software;
+   }
+
+   bool lowered_64bit_ops = false;
+   do {
+      progress = false;
+
+      OPT(nir_lower_int64, int64_options);
+      OPT(nir_lower_doubles, fp64_options);
+
+      /* Necessary to lower add -> sub and div -> mul/rcp */
+      OPT(nir_opt_algebraic);
+
+      lowered_64bit_ops |= progress;
+   } while (progress);
+
+   if (lowered_64bit_ops) {
+      OPT(nir_lower_constant_initializers, nir_var_function_temp);
+      OPT(nir_lower_returns);
+      OPT(nir_inline_functions);
+      OPT(nir_opt_deref);
+   }
+
+   const nir_function *entry_point = nir_shader_get_entrypoint(nir)->function;
+   foreach_list_typed_safe(nir_function, func, node, &nir->functions) {
+      if (func != entry_point) {
+         exec_node_remove(&func->node);
+      }
+   }
+   assert(exec_list_length(&nir->functions) == 1);
+
+   OPT(nir_lower_constant_initializers, ~nir_var_function_temp);
 
    if (nir->info.stage == MESA_SHADER_GEOMETRY)
       OPT(nir_lower_gs_intrinsics);
@@ -683,7 +733,6 @@ brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir,
       .lower_txb_shadow_clamp = true,
       .lower_txd_shadow_clamp = true,
       .lower_txd_offset_clamp = true,
-      .lower_tg4_offsets = true,
    };
 
    OPT(nir_lower_tex, &tex_options);
@@ -695,19 +744,6 @@ brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir,
    OPT(nir_split_struct_vars, nir_var_function_temp);
 
    nir = brw_nir_optimize(nir, compiler, is_scalar, true);
-
-   bool lowered_64bit_ops = false;
-   do {
-      progress = false;
-
-      OPT(nir_lower_int64, nir->options->lower_int64_options);
-      OPT(nir_lower_doubles, softfp64, nir->options->lower_doubles_options);
-
-      /* Necessary to lower add -> sub and div -> mul/rcp */
-      OPT(nir_opt_algebraic);
-
-      lowered_64bit_ops |= progress;
-   } while (progress);
 
    /* This needs to be run after the first optimization pass but before we
     * lower indirect derefs away
@@ -742,6 +778,8 @@ brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir,
    nir_variable_mode indirect_mask =
       brw_nir_no_indirect_mask(compiler, nir->info.stage);
    OPT(nir_lower_indirect_derefs, indirect_mask);
+
+   OPT(brw_nir_lower_mem_access_bit_sizes);
 
    /* Lower array derefs of vectors for SSBO and UBO loads.  For both UBOs and
     * SSBOs, our back-end is capable of loading an entire vec4 at a time and
@@ -804,7 +842,6 @@ brw_nir_link_shaders(const struct brw_compiler *compiler,
    }
 
    NIR_PASS_V(*producer, nir_lower_io_to_vector, nir_var_shader_out);
-   NIR_PASS_V(*producer, nir_opt_combine_stores, nir_var_shader_out);
    NIR_PASS_V(*consumer, nir_lower_io_to_vector, nir_var_shader_in);
 
    if ((*producer)->info.stage != MESA_SHADER_TESS_CTRL) {
@@ -839,7 +876,6 @@ brw_postprocess_nir(nir_shader *nir, const struct brw_compiler *compiler,
 
    UNUSED bool progress; /* Written by OPT */
 
-   OPT(brw_nir_lower_mem_access_bit_sizes);
 
    do {
       progress = false;
@@ -851,26 +887,6 @@ brw_postprocess_nir(nir_shader *nir, const struct brw_compiler *compiler,
    if (devinfo->gen >= 6) {
       /* Try and fuse multiply-adds */
       OPT(brw_nir_opt_peephole_ffma);
-   }
-
-   if (OPT(nir_opt_comparison_pre)) {
-      OPT(nir_copy_prop);
-      OPT(nir_opt_dce);
-      OPT(nir_opt_cse);
-
-      /* Do the select peepehole again.  nir_opt_comparison_pre (combined with
-       * the other optimization passes) will have removed at least one
-       * instruction from one of the branches of the if-statement, so now it
-       * might be under the threshold of conversion to bcsel.
-       *
-       * See brw_nir_optimize for the explanation of is_vec4_tessellation.
-       */
-      const bool is_vec4_tessellation = !is_scalar &&
-         (nir->info.stage == MESA_SHADER_TESS_CTRL ||
-          nir->info.stage == MESA_SHADER_TESS_EVAL);
-      OPT(nir_opt_peephole_select, 0, is_vec4_tessellation, false);
-      OPT(nir_opt_peephole_select, 1, is_vec4_tessellation,
-          compiler->devinfo->gen >= 6);
    }
 
    OPT(nir_opt_algebraic_late);
@@ -964,11 +980,6 @@ brw_nir_apply_sampler_key(nir_shader *nir,
    tex_options.lower_yx_xuxv_external = key_tex->yx_xuxv_image_mask;
    tex_options.lower_xy_uxvx_external = key_tex->xy_uxvx_image_mask;
    tex_options.lower_ayuv_external = key_tex->ayuv_image_mask;
-   tex_options.lower_xyuv_external = key_tex->xyuv_image_mask;
-
-   /* Setup array of scaling factors for each texture. */
-   memcpy(&tex_options.scale_factors, &key_tex->scale_factors,
-          sizeof(tex_options.scale_factors));
 
    if (nir_lower_tex(nir, &tex_options)) {
       nir_validate_shader(nir, "after nir_lower_tex");
@@ -1127,7 +1138,7 @@ brw_nir_create_passthrough_tcs(void *mem_ctx, const struct brw_compiler *compile
 
    nir_validate_shader(nir, "in brw_nir_create_passthrough_tcs");
 
-   nir = brw_preprocess_nir(compiler, nir, NULL);
+   nir = brw_preprocess_nir(compiler, nir);
 
    return nir;
 }

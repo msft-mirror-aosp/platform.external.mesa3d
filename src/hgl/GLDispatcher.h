@@ -15,7 +15,7 @@
 #include <GL/gl.h>
 #include <SupportDefs.h>
 
-#include "main/glheader.h"
+#include "glheader.h"
 
 #include "glapi/glapi.h"
 

@@ -76,14 +76,7 @@ combine_clip_cull(nir_shader *nir,
       return false;
 
    if (!cull && clip) {
-      /* The GLSL IR lowering pass must have converted these to vectors */
-      if (!clip->data.compact)
-         return false;
-
-      /* If this pass has already run, don't repeat.  We would think that
-       * the combined clip/cull distance array was clip-only and mess up.
-       */
-      if (clip->data.how_declared == nir_var_hidden)
+      if (!glsl_type_is_array(clip->type))
          return false;
    }
 

@@ -29,7 +29,6 @@
 
 #include "st_context.h"
 #include "st_cb_memoryobjects.h"
-#include "st_util.h"
 
 #include "state_tracker/drm_driver.h"
 #include "pipe/p_context.h"

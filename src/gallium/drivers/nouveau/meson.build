@@ -129,16 +129,11 @@ files_libnouveau = files(
   'codegen/nv50_ir_build_util.h',
   'codegen/nv50_ir_driver.h',
   'codegen/nv50_ir_emit_nv50.cpp',
-  'codegen/nv50_ir_from_common.cpp',
-  'codegen/nv50_ir_from_common.h',
-  'codegen/nv50_ir_from_nir.cpp',
   'codegen/nv50_ir_from_tgsi.cpp',
   'codegen/nv50_ir_graph.cpp',
   'codegen/nv50_ir_graph.h',
   'codegen/nv50_ir.h',
   'codegen/nv50_ir_inlines.h',
-  'codegen/nv50_ir_lowering_helper.cpp',
-  'codegen/nv50_ir_lowering_helper.h',
   'codegen/nv50_ir_lowering_nv50.cpp',
   'codegen/nv50_ir_peephole.cpp',
   'codegen/nv50_ir_print.cpp',
@@ -211,9 +206,9 @@ files_libnouveau = files(
 
 libnouveau = static_library(
   'nouveau',
-  [files_libnouveau, nir_opcodes_h],
+  [files_libnouveau],
   include_directories : [
-    inc_src, inc_include, inc_gallium, inc_gallium_aux, inc_common,
+    inc_src, inc_include, inc_gallium, inc_gallium_aux, inc_drm_uapi
   ],
   c_args : [c_vis_args],
   cpp_args : [cpp_vis_args],
@@ -225,12 +220,12 @@ nouveau_compiler = executable(
   'nouveau_compiler.c',
   include_directories : [inc_src, inc_include, inc_gallium, inc_gallium_aux],
   dependencies : [dep_libdrm, dep_libdrm_nouveau],
-  link_with : [libnouveau, libgallium, libmesa_util, libnir],
+  link_with : [libnouveau, libgallium, libmesa_util],
   build_by_default : with_tools.contains('nouveau'),
   install : with_tools.contains('nouveau'),
 )
 
 driver_nouveau = declare_dependency(
   compile_args : '-DGALLIUM_NOUVEAU',
-  link_with : [libnouveauwinsys, libnouveau, libnir],
+  link_with : [libnouveauwinsys, libnouveau],
 )

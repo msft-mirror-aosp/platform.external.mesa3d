@@ -207,31 +207,30 @@ create_copy_instr(const fs_builder &bld, fs_inst *inst, fs_reg src, bool negate)
       DIV_ROUND_UP(inst->dst.component_size(inst->exec_size), REG_SIZE);
    fs_inst *copy;
 
-   if (inst->opcode == SHADER_OPCODE_LOAD_PAYLOAD) {
+   if (inst->opcode == SHADER_OPCODE_LOAD_PAYLOAD ||
+       written != dst_width) {
+      fs_reg *payload;
+      int sources, header_size;
+      if (inst->opcode == SHADER_OPCODE_LOAD_PAYLOAD) {
+         sources = inst->sources;
+         header_size = inst->header_size;
+      } else {
+         assert(written % dst_width == 0);
+         sources = written / dst_width;
+         header_size = 0;
+      }
+
       assert(src.file == VGRF);
-      fs_reg *payload = ralloc_array(bld.shader->mem_ctx, fs_reg,
-                                     inst->sources);
-      for (int i = 0; i < inst->header_size; i++) {
+      payload = ralloc_array(bld.shader->mem_ctx, fs_reg, sources);
+      for (int i = 0; i < header_size; i++) {
          payload[i] = src;
          src.offset += REG_SIZE;
       }
-      for (int i = inst->header_size; i < inst->sources; i++) {
-         src.type = inst->src[i].type;
+      for (int i = header_size; i < sources; i++) {
          payload[i] = src;
          src = offset(src, bld, 1);
       }
-      copy = bld.LOAD_PAYLOAD(inst->dst, payload, inst->sources,
-                              inst->header_size);
-   } else if (written != dst_width) {
-      assert(src.file == VGRF);
-      assert(written % dst_width == 0);
-      const int sources = written / dst_width;
-      fs_reg *payload = ralloc_array(bld.shader->mem_ctx, fs_reg, sources);
-      for (int i = 0; i < sources; i++) {
-         payload[i] = src;
-         src = offset(src, bld, 1);
-      }
-      copy = bld.LOAD_PAYLOAD(inst->dst, payload, sources, 0);
+      copy = bld.LOAD_PAYLOAD(inst->dst, payload, sources, header_size);
    } else {
       copy = bld.MOV(inst->dst, src);
       copy->group = inst->group;

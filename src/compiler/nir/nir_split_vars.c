@@ -91,7 +91,7 @@ init_field_for_type(struct field *field, struct field *parent,
    };
 
    const struct glsl_type *struct_type = glsl_without_array(type);
-   if (glsl_type_is_struct_or_ifc(struct_type)) {
+   if (glsl_type_is_struct(struct_type)) {
       field->num_fields = glsl_get_length(struct_type),
       field->fields = ralloc_array(state->mem_ctx, struct field,
                                    field->num_fields);
@@ -143,7 +143,7 @@ split_var_list_structs(nir_shader *shader,
     * pull all of the variables we plan to split off of the list
     */
    nir_foreach_variable_safe(var, vars) {
-      if (!glsl_type_is_struct_or_ifc(glsl_without_array(var->type)))
+      if (!glsl_type_is_struct(glsl_without_array(var->type)))
          continue;
 
       exec_node_remove(&var->node);
@@ -205,7 +205,7 @@ split_struct_derefs_impl(nir_function_impl *impl,
                continue;
 
             assert(i > 0);
-            assert(glsl_type_is_struct_or_ifc(path.path[i - 1]->type));
+            assert(glsl_type_is_struct(path.path[i - 1]->type));
             assert(path.path[i - 1]->type ==
                    glsl_without_array(tail_field->type));
 
@@ -341,6 +341,7 @@ init_var_list_array_infos(struct exec_list *vars,
 
       const struct glsl_type *type = var->type;
       for (int i = 0; i < num_levels; i++) {
+         assert(glsl_get_explicit_stride(type) == 0);
          info->levels[i].array_len = glsl_get_length(type);
          type = glsl_get_array_element(type);
 
@@ -519,7 +520,7 @@ split_var_list_arrays(nir_shader *shader,
          exec_node_remove(&var->node);
          exec_list_push_tail(&split_vars, &var->node);
       } else {
-         assert(split_type == glsl_get_bare_type(var->type));
+         assert(split_type == var->type);
          /* If we're not modifying this variable, delete the info so we skip
           * it faster in later passes.
           */
@@ -615,10 +616,11 @@ emit_split_copies(nir_builder *b,
                 glsl_get_length(src_path->path[src_level]->type));
          unsigned len = glsl_get_length(dst_path->path[dst_level]->type);
          for (unsigned i = 0; i < len; i++) {
+            nir_ssa_def *idx = nir_imm_int(b, i);
             emit_split_copies(b, dst_info, dst_path, dst_level + 1,
-                              nir_build_deref_array_imm(b, dst, i),
+                              nir_build_deref_array(b, dst, idx),
                               src_info, src_path, src_level + 1,
-                              nir_build_deref_array_imm(b, src, i));
+                              nir_build_deref_array(b, src, idx));
          }
       } else {
          /* Neither side is being split so we just keep going */
@@ -915,6 +917,7 @@ get_vec_var_usage(nir_variable *var,
    const struct glsl_type *type = var->type;
    for (unsigned i = 0; i < num_levels; i++) {
       usage->levels[i].array_len = glsl_get_length(type);
+      assert(glsl_get_explicit_stride(type) == 0);
       type = glsl_get_array_element(type);
    }
    assert(glsl_type_is_vector_or_scalar(type));
@@ -1419,12 +1422,6 @@ shrink_vec_var_access_impl(nir_function_impl *impl,
                nir_deref_instr_remove_if_unused(deref);
                continue;
             }
-
-            /* If we're not dropping any components, there's no need to
-             * compact vectors.
-             */
-            if (usage->comps_kept == usage->all_comps)
-               continue;
 
             if (intrin->intrinsic == nir_intrinsic_load_deref) {
                b.cursor = nir_after_instr(&intrin->instr);

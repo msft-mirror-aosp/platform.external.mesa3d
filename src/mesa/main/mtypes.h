@@ -603,7 +603,6 @@ struct gl_hint_attrib
    GLenum16 TextureCompression;   /**< GL_ARB_texture_compression */
    GLenum16 GenerateMipmap;       /**< GL_SGIS_generate_mipmap */
    GLenum16 FragmentShaderDerivative; /**< GL_ARB_fragment_shader */
-   GLuint MaxShaderCompilerThreads; /**< GL_ARB_parallel_shader_compile */
 };
 
 
@@ -1340,9 +1339,7 @@ typedef enum
    USAGE_SHADER_STORAGE_BUFFER = 0x8,
    USAGE_TRANSFORM_FEEDBACK_BUFFER = 0x10,
    USAGE_PIXEL_PACK_BUFFER = 0x20,
-   USAGE_ARRAY_BUFFER = 0x40,
-   USAGE_ELEMENT_ARRAY_BUFFER = 0x80,
-   USAGE_DISABLE_MINMAX_CACHE = 0x100,
+   USAGE_DISABLE_MINMAX_CACHE = 0x40,
 } gl_buffer_usage;
 
 
@@ -2104,6 +2101,10 @@ struct gl_program
    GLbitfield ShadowSamplers;
    /** Texture units used for samplerExternalOES */
    GLbitfield ExternalSamplersUsed;
+
+   /* Fragement shader only fields */
+   GLboolean OriginUpperLeft;
+   GLboolean PixelCenterInteger;
 
    /** Named parameters, constants, etc. from program text */
    struct gl_program_parameter_list *Parameters;
@@ -3505,7 +3506,6 @@ struct gl_framebuffer
 
    GLbitfield _IntegerBuffers;  /**< Which color buffers are integer valued */
    GLbitfield _RGBBuffers;  /**< Which color buffers have baseformat == RGB */
-   GLbitfield _FP32Buffers; /**< Which color buffers are FP32 */
 
    /* ARB_color_buffer_float */
    GLboolean _AllColorBuffersFixedPoint; /* no integer, no float */
@@ -4248,7 +4248,6 @@ struct gl_extensions
    GLboolean EXT_depth_bounds_test;
    GLboolean EXT_disjoint_timer_query;
    GLboolean EXT_draw_buffers2;
-   GLboolean EXT_float_blend;
    GLboolean EXT_framebuffer_multisample;
    GLboolean EXT_framebuffer_multisample_blit_scaled;
    GLboolean EXT_framebuffer_sRGB;
@@ -4271,7 +4270,6 @@ struct gl_extensions
    GLboolean EXT_texture_array;
    GLboolean EXT_texture_compression_latc;
    GLboolean EXT_texture_compression_s3tc;
-   GLboolean EXT_texture_compression_s3tc_srgb;
    GLboolean EXT_texture_env_dot3;
    GLboolean EXT_texture_filter_anisotropic;
    GLboolean EXT_texture_integer;

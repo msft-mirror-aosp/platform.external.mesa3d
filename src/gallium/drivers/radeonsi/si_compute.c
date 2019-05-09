@@ -804,7 +804,7 @@ static void si_emit_dispatch_packets(struct si_context *sctx,
 		 * allow launching waves out-of-order. (same as Vulkan) */
 		S_00B800_ORDER_MODE(sctx->chip_class >= CIK);
 
-	const uint *last_block = info->last_block;
+	uint *last_block = sctx->compute_last_block;
 	bool partial_block_en = last_block[0] || last_block[1] || last_block[2];
 
 	radeon_set_sh_reg_seq(cs, R_00B81C_COMPUTE_NUM_THREAD_X, 3);
@@ -887,14 +887,12 @@ static void si_launch_grid(
 	    program->shader.compilation_failed)
 		return;
 
-	if (sctx->has_graphics) {
-		if (sctx->last_num_draw_calls != sctx->num_draw_calls) {
-			si_update_fb_dirtiness_after_rendering(sctx);
-			sctx->last_num_draw_calls = sctx->num_draw_calls;
-		}
-
-		si_decompress_textures(sctx, 1 << PIPE_SHADER_COMPUTE);
+	if (sctx->last_num_draw_calls != sctx->num_draw_calls) {
+		si_update_fb_dirtiness_after_rendering(sctx);
+		sctx->last_num_draw_calls = sctx->num_draw_calls;
 	}
+
+	si_decompress_textures(sctx, 1 << PIPE_SHADER_COMPUTE);
 
 	/* Add buffer sizes for memory checking in need_cs_space. */
 	si_context_add_resource_size(sctx, &program->shader.bo->b.b);
@@ -926,8 +924,7 @@ static void si_launch_grid(
 	si_upload_compute_shader_descriptors(sctx);
 	si_emit_compute_shader_pointers(sctx);
 
-	if (sctx->has_graphics &&
-	    si_is_atom_dirty(sctx, &sctx->atoms.s.render_cond)) {
+	if (si_is_atom_dirty(sctx, &sctx->atoms.s.render_cond)) {
 		sctx->atoms.s.render_cond.emit(sctx);
 		si_set_atom_dirty(sctx, &sctx->atoms.s.render_cond, false);
 	}

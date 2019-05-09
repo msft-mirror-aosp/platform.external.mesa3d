@@ -29,7 +29,6 @@
 #include "st_context.h"
 #include "st_cb_bitmap.h"
 #include "st_cb_perfmon.h"
-#include "st_util.h"
 
 #include "util/bitset.h"
 

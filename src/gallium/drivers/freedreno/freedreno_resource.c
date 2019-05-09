@@ -32,7 +32,6 @@
 #include "util/u_string.h"
 #include "util/u_surface.h"
 #include "util/set.h"
-#include "util/u_drm.h"
 
 #include "freedreno_resource.h"
 #include "freedreno_batch_cache.h"
@@ -44,7 +43,7 @@
 #include "freedreno_query_hw.h"
 #include "freedreno_util.h"
 
-#include "drm-uapi/drm_fourcc.h"
+#include <drm_fourcc.h>
 #include <errno.h>
 
 /* XXX this should go away, needed for 'struct winsys_handle' */
@@ -127,7 +126,10 @@ do_blit(struct fd_context *ctx, const struct pipe_blit_info *blit, bool fallback
 	struct pipe_context *pctx = &ctx->base;
 
 	/* TODO size threshold too?? */
-	if (fallback || !fd_blit(pctx, blit)) {
+	if (!fallback) {
+		/* do blit on gpu: */
+		pctx->blit(pctx, blit);
+	} else {
 		/* do blit on cpu: */
 		util_resource_copy_region(pctx,
 				blit->dst.resource, blit->dst.level, blit->dst.box.x,
@@ -371,9 +373,7 @@ flush_resource(struct fd_context *ctx, struct fd_resource *rsc, unsigned usage)
 {
 	struct fd_batch *write_batch = NULL;
 
-	mtx_lock(&ctx->screen->lock);
-	fd_batch_reference_locked(&write_batch, rsc->write_batch);
-	mtx_unlock(&ctx->screen->lock);
+	fd_batch_reference(&write_batch, rsc->write_batch);
 
 	if (usage & PIPE_TRANSFER_WRITE) {
 		struct fd_batch *batch, *batches[32] = {};
@@ -387,7 +387,7 @@ flush_resource(struct fd_context *ctx, struct fd_resource *rsc, unsigned usage)
 		mtx_lock(&ctx->screen->lock);
 		batch_mask = rsc->batch_mask;
 		foreach_batch(batch, &ctx->screen->batch_cache, batch_mask)
-			fd_batch_reference_locked(&batches[batch->idx], batch);
+			fd_batch_reference(&batches[batch->idx], batch);
 		mtx_unlock(&ctx->screen->lock);
 
 		foreach_batch(batch, &ctx->screen->batch_cache, batch_mask)
@@ -501,10 +501,7 @@ fd_resource_transfer_map(struct pipe_context *pctx,
 				fd_blit_to_staging(ctx, trans);
 
 				struct fd_batch *batch = NULL;
-
-				fd_context_lock(ctx);
-				fd_batch_reference_locked(&batch, staging_rsc->write_batch);
-				fd_context_unlock(ctx);
+				fd_batch_reference(&batch, staging_rsc->write_batch);
 
 				/* we can't fd_bo_cpu_prep() until the blit to staging
 				 * is submitted to kernel.. in that case write_batch
@@ -553,9 +550,7 @@ fd_resource_transfer_map(struct pipe_context *pctx,
 		struct fd_batch *write_batch = NULL;
 
 		/* hold a reference, so it doesn't disappear under us: */
-		fd_context_lock(ctx);
-		fd_batch_reference_locked(&write_batch, rsc->write_batch);
-		fd_context_unlock(ctx);
+		fd_batch_reference(&write_batch, rsc->write_batch);
 
 		if ((usage & PIPE_TRANSFER_WRITE) && write_batch &&
 				write_batch->back_blit) {
@@ -831,6 +826,19 @@ has_depth(enum pipe_format format)
 	}
 }
 
+static bool
+find_modifier(uint64_t needle, const uint64_t *haystack, int count)
+{
+	int i;
+
+	for (i = 0; i < count; i++) {
+		if (haystack[i] == needle)
+			return true;
+	}
+
+	return false;
+}
+
 /**
  * Create a new texture object, using the given template info.
  */
@@ -894,7 +902,7 @@ fd_resource_create_with_modifiers(struct pipe_screen *pscreen,
 	 PIPE_BIND_LINEAR  | \
 	 PIPE_BIND_DISPLAY_TARGET)
 
-	bool linear = drm_find_modifier(DRM_FORMAT_MOD_LINEAR, modifiers, count);
+	bool linear = find_modifier(DRM_FORMAT_MOD_LINEAR, modifiers, count);
 	if (tmpl->bind & LINEAR)
 		linear = true;
 
@@ -906,18 +914,13 @@ fd_resource_create_with_modifiers(struct pipe_screen *pscreen,
 	 * except we don't have a format modifier for tiled.  (We probably
 	 * should.)
 	 */
-	bool allow_ubwc = drm_find_modifier(DRM_FORMAT_MOD_INVALID, modifiers, count);
+	bool allow_ubwc = find_modifier(DRM_FORMAT_MOD_INVALID, modifiers, count);
 	if (tmpl->bind & PIPE_BIND_SHARED)
-		allow_ubwc = drm_find_modifier(DRM_FORMAT_MOD_QCOM_COMPRESSED, modifiers, count);
-
-	/* TODO turn on UBWC for all internal buffers
-	 * Manhattan benchmark shows artifacts when enabled.  Once this
-	 * is fixed the following line can be removed.
-	 */
-	allow_ubwc &= !!(fd_mesa_debug & FD_DBG_UBWC);
+		allow_ubwc = find_modifier(DRM_FORMAT_MOD_QCOM_COMPRESSED, modifiers, count);
 
 	if (screen->tile_mode &&
 			(tmpl->target != PIPE_BUFFER) &&
+			(tmpl->bind & PIPE_BIND_SAMPLER_VIEW) &&
 			!linear) {
 		rsc->tile_mode = screen->tile_mode(tmpl);
 	}
@@ -1008,7 +1011,7 @@ is_supported_modifier(struct pipe_screen *pscreen, enum pipe_format pfmt,
 
 	/* Get the supported modifiers: */
 	uint64_t modifiers[count];
-	pscreen->query_dmabuf_modifiers(pscreen, pfmt, count, modifiers, NULL, &count);
+	pscreen->query_dmabuf_modifiers(pscreen, pfmt, 0, modifiers, NULL, &count);
 
 	for (int i = 0; i < count; i++)
 		if (modifiers[i] == mod)
@@ -1087,6 +1090,8 @@ fd_resource_from_handle(struct pipe_screen *pscreen,
 		/* failure is expected in some cases.. */
 	}
 
+	rsc->valid = true;
+
 	return prsc;
 
 fail:
@@ -1111,6 +1116,81 @@ fd_render_condition_check(struct pipe_context *pctx)
 			return (bool)res.u64 != ctx->cond_cond;
 
 	return true;
+}
+
+/**
+ * Optimal hardware path for blitting pixels.
+ * Scaling, format conversion, up- and downsampling (resolve) are allowed.
+ */
+static void
+fd_blit(struct pipe_context *pctx, const struct pipe_blit_info *blit_info)
+{
+	struct fd_context *ctx = fd_context(pctx);
+	struct pipe_blit_info info = *blit_info;
+
+	if (info.render_condition_enable && !fd_render_condition_check(pctx))
+		return;
+
+	if (info.mask & PIPE_MASK_S) {
+		DBG("cannot blit stencil, skipping");
+		info.mask &= ~PIPE_MASK_S;
+	}
+
+	if (!util_blitter_is_blit_supported(ctx->blitter, &info)) {
+		DBG("blit unsupported %s -> %s",
+				util_format_short_name(info.src.resource->format),
+				util_format_short_name(info.dst.resource->format));
+		return;
+	}
+
+	if (!(ctx->blit && ctx->blit(ctx, &info)))
+		fd_blitter_blit(ctx, &info);
+}
+
+void
+fd_blitter_pipe_begin(struct fd_context *ctx, bool render_cond, bool discard,
+		enum fd_render_stage stage)
+{
+	fd_fence_ref(ctx->base.screen, &ctx->last_fence, NULL);
+
+	util_blitter_save_fragment_constant_buffer_slot(ctx->blitter,
+			ctx->constbuf[PIPE_SHADER_FRAGMENT].cb);
+	util_blitter_save_vertex_buffer_slot(ctx->blitter, ctx->vtx.vertexbuf.vb);
+	util_blitter_save_vertex_elements(ctx->blitter, ctx->vtx.vtx);
+	util_blitter_save_vertex_shader(ctx->blitter, ctx->prog.vp);
+	util_blitter_save_so_targets(ctx->blitter, ctx->streamout.num_targets,
+			ctx->streamout.targets);
+	util_blitter_save_rasterizer(ctx->blitter, ctx->rasterizer);
+	util_blitter_save_viewport(ctx->blitter, &ctx->viewport);
+	util_blitter_save_scissor(ctx->blitter, &ctx->scissor);
+	util_blitter_save_fragment_shader(ctx->blitter, ctx->prog.fp);
+	util_blitter_save_blend(ctx->blitter, ctx->blend);
+	util_blitter_save_depth_stencil_alpha(ctx->blitter, ctx->zsa);
+	util_blitter_save_stencil_ref(ctx->blitter, &ctx->stencil_ref);
+	util_blitter_save_sample_mask(ctx->blitter, ctx->sample_mask);
+	util_blitter_save_framebuffer(ctx->blitter, &ctx->framebuffer);
+	util_blitter_save_fragment_sampler_states(ctx->blitter,
+			ctx->tex[PIPE_SHADER_FRAGMENT].num_samplers,
+			(void **)ctx->tex[PIPE_SHADER_FRAGMENT].samplers);
+	util_blitter_save_fragment_sampler_views(ctx->blitter,
+			ctx->tex[PIPE_SHADER_FRAGMENT].num_textures,
+			ctx->tex[PIPE_SHADER_FRAGMENT].textures);
+	if (!render_cond)
+		util_blitter_save_render_condition(ctx->blitter,
+			ctx->cond_query, ctx->cond_cond, ctx->cond_mode);
+
+	if (ctx->batch)
+		fd_batch_set_stage(ctx->batch, stage);
+
+	ctx->in_blit = discard;
+}
+
+void
+fd_blitter_pipe_end(struct fd_context *ctx)
+{
+	if (ctx->batch)
+		fd_batch_set_stage(ctx->batch, FD_STAGE_NULL);
+	ctx->in_blit = false;
 }
 
 static void
@@ -1246,13 +1326,6 @@ fd_get_sample_position(struct pipe_context *context,
 	pos_out[1] = ptr[sample_index][1] / 16.0f;
 }
 
-static void
-fd_blit_pipe(struct pipe_context *pctx, const struct pipe_blit_info *blit_info)
-{
-	/* wrap fd_blit to return void */
-	fd_blit(pctx, blit_info);
-}
-
 void
 fd_resource_context_init(struct pipe_context *pctx)
 {
@@ -1264,7 +1337,7 @@ fd_resource_context_init(struct pipe_context *pctx)
 	pctx->create_surface = fd_create_surface;
 	pctx->surface_destroy = fd_surface_destroy;
 	pctx->resource_copy_region = fd_resource_copy_region;
-	pctx->blit = fd_blit_pipe;
+	pctx->blit = fd_blit;
 	pctx->flush_resource = fd_flush_resource;
 	pctx->invalidate_resource = fd_invalidate_resource;
 	pctx->get_sample_position = fd_get_sample_position;

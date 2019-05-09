@@ -205,8 +205,6 @@ public:
    void nir_emit_block(nir_block *block);
    void nir_emit_instr(nir_instr *instr);
    void nir_emit_alu(const brw::fs_builder &bld, nir_alu_instr *instr);
-   bool try_emit_b2fi_of_inot(const brw::fs_builder &bld, fs_reg result,
-                              nir_alu_instr *instr);
    void nir_emit_load_const(const brw::fs_builder &bld,
                             nir_load_const_instr *instr);
    void nir_emit_vs_intrinsic(const brw::fs_builder &bld,
@@ -235,10 +233,6 @@ public:
                                int op, nir_intrinsic_instr *instr);
    void nir_emit_shared_atomic_float(const brw::fs_builder &bld,
                                      int op, nir_intrinsic_instr *instr);
-   void nir_emit_global_atomic(const brw::fs_builder &bld,
-                               int op, nir_intrinsic_instr *instr);
-   void nir_emit_global_atomic_float(const brw::fs_builder &bld,
-                                     int op, nir_intrinsic_instr *instr);
    void nir_emit_texture(const brw::fs_builder &bld,
                          nir_tex_instr *instr);
    void nir_emit_jump(const brw::fs_builder &bld,
@@ -259,7 +253,6 @@ public:
    fs_inst *emit_single_fb_write(const brw::fs_builder &bld,
                                  fs_reg color1, fs_reg color2,
                                  fs_reg src0_alpha, unsigned components);
-   void emit_alpha_to_coverage_workaround(const fs_reg &src0_alpha);
    void emit_fb_writes();
    fs_inst *emit_non_coherent_fb_read(const brw::fs_builder &bld,
                                       const fs_reg &dst, unsigned target);
@@ -387,15 +380,6 @@ public:
 
    unsigned promoted_constants;
    brw::fs_builder bld;
-
-private:
-   fs_reg prepare_alu_destination_and_sources(const brw::fs_builder &bld,
-                                              nir_alu_instr *instr,
-                                              fs_reg *op,
-                                              bool need_dest);
-
-   void resolve_inot_sources(const brw::fs_builder &bld, nir_alu_instr *instr,
-                             fs_reg *op);
 };
 
 /**

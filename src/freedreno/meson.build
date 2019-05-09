@@ -22,7 +22,3 @@ inc_freedreno = include_directories(['.', './registers'])
 
 subdir('drm')
 subdir('ir3')
-
-if with_freedreno_vk
-  subdir('vulkan')
-endif

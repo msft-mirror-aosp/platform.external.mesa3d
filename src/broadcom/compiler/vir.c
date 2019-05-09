@@ -25,7 +25,7 @@
 #include "v3d_compiler.h"
 
 int
-vir_get_nsrc(struct qinst *inst)
+vir_get_non_sideband_nsrc(struct qinst *inst)
 {
         switch (inst->qpu.type) {
         case V3D_QPU_INSTR_TYPE_BRANCH:
@@ -38,6 +38,55 @@ vir_get_nsrc(struct qinst *inst)
         }
 
         return 0;
+}
+
+int
+vir_get_nsrc(struct qinst *inst)
+{
+        int nsrc = vir_get_non_sideband_nsrc(inst);
+
+        if (vir_has_implicit_uniform(inst))
+                nsrc++;
+
+        return nsrc;
+}
+
+bool
+vir_has_implicit_uniform(struct qinst *inst)
+{
+        switch (inst->qpu.type) {
+        case V3D_QPU_INSTR_TYPE_BRANCH:
+                return true;
+        case V3D_QPU_INSTR_TYPE_ALU:
+                switch (inst->dst.file) {
+                case QFILE_TLBU:
+                        return true;
+                case QFILE_MAGIC:
+                        switch (inst->dst.index) {
+                        case V3D_QPU_WADDR_TLBU:
+                        case V3D_QPU_WADDR_TMUAU:
+                        case V3D_QPU_WADDR_SYNCU:
+                                return true;
+                        default:
+                                break;
+                        }
+                        break;
+                default:
+                        return inst->has_implicit_uniform;
+                }
+        }
+        return false;
+}
+
+/* The sideband uniform for textures gets stored after the normal ALU
+ * arguments.
+ */
+int
+vir_get_implicit_uniform_src(struct qinst *inst)
+{
+        if (!vir_has_implicit_uniform(inst))
+                return -1;
+        return vir_get_nsrc(inst) - 1;
 }
 
 /**
@@ -84,6 +133,38 @@ vir_has_side_effects(struct v3d_compile *c, struct qinst *inst)
 }
 
 bool
+vir_is_float_input(struct qinst *inst)
+{
+        /* XXX: More instrs */
+        switch (inst->qpu.type) {
+        case V3D_QPU_INSTR_TYPE_BRANCH:
+                return false;
+        case V3D_QPU_INSTR_TYPE_ALU:
+                switch (inst->qpu.alu.add.op) {
+                case V3D_QPU_A_FADD:
+                case V3D_QPU_A_FSUB:
+                case V3D_QPU_A_FMIN:
+                case V3D_QPU_A_FMAX:
+                case V3D_QPU_A_FTOIN:
+                        return true;
+                default:
+                        break;
+                }
+
+                switch (inst->qpu.alu.mul.op) {
+                case V3D_QPU_M_FMOV:
+                case V3D_QPU_M_VFMUL:
+                case V3D_QPU_M_FMUL:
+                        return true;
+                default:
+                        break;
+                }
+        }
+
+        return false;
+}
+
+bool
 vir_is_raw_mov(struct qinst *inst)
 {
         if (inst->qpu.type != V3D_QPU_INSTR_TYPE_ALU ||
@@ -94,13 +175,6 @@ vir_is_raw_mov(struct qinst *inst)
 
         if (inst->qpu.alu.add.output_pack != V3D_QPU_PACK_NONE ||
             inst->qpu.alu.mul.output_pack != V3D_QPU_PACK_NONE) {
-                return false;
-        }
-
-        if (inst->qpu.alu.add.a_unpack != V3D_QPU_UNPACK_NONE ||
-            inst->qpu.alu.add.b_unpack != V3D_QPU_UNPACK_NONE ||
-            inst->qpu.alu.mul.a_unpack != V3D_QPU_UNPACK_NONE ||
-            inst->qpu.alu.mul.b_unpack != V3D_QPU_UNPACK_NONE) {
                 return false;
         }
 
@@ -347,7 +421,7 @@ vir_mul_inst(enum v3d_qpu_mul_op op, struct qreg dst, struct qreg src0, struct q
 }
 
 struct qinst *
-vir_branch_inst(struct v3d_compile *c, enum v3d_qpu_branch_cond cond)
+vir_branch_inst(enum v3d_qpu_branch_cond cond, struct qreg src)
 {
         struct qinst *inst = calloc(1, sizeof(*inst));
 
@@ -359,8 +433,9 @@ vir_branch_inst(struct v3d_compile *c, enum v3d_qpu_branch_cond cond)
         inst->qpu.branch.ub = true;
         inst->qpu.branch.bdu = V3D_QPU_BRANCH_DEST_REL;
 
-        inst->dst = vir_nop_reg();
-        inst->uniform = vir_get_uniform_index(c, QUNIFORM_CONSTANT, 0);
+        inst->dst = vir_reg(QFILE_NULL, 0);
+        inst->src[0] = src;
+        inst->uniform = ~0;
 
         return inst;
 }
@@ -516,6 +591,7 @@ vir_compile_init(const struct v3d_compiler *compiler,
         vir_set_emit_block(c, vir_new_block(c));
 
         c->output_position_index = -1;
+        c->output_point_size_index = -1;
         c->output_sample_mask_index = -1;
 
         c->def_ht = _mesa_hash_table_create(c, _mesa_hash_pointer,
@@ -582,10 +658,47 @@ v3d_set_prog_data_uniforms(struct v3d_compile *c,
                count * sizeof(*ulist->contents));
 }
 
+/* Copy the compiler UBO range state to the compiled shader, dropping out
+ * arrays that were never referenced by an indirect load.
+ *
+ * (Note that QIR dead code elimination of an array access still leaves that
+ * array alive, though)
+ */
+static void
+v3d_set_prog_data_ubo(struct v3d_compile *c,
+                      struct v3d_prog_data *prog_data)
+{
+        if (!c->num_ubo_ranges)
+                return;
+
+        prog_data->num_ubo_ranges = 0;
+        prog_data->ubo_ranges = ralloc_array(prog_data, struct v3d_ubo_range,
+                                             c->num_ubo_ranges);
+        for (int i = 0; i < c->num_ubo_ranges; i++) {
+                if (!c->ubo_range_used[i])
+                        continue;
+
+                struct v3d_ubo_range *range = &c->ubo_ranges[i];
+                prog_data->ubo_ranges[prog_data->num_ubo_ranges++] = *range;
+                prog_data->ubo_size += range->size;
+        }
+
+        if (prog_data->ubo_size) {
+                if (V3D_DEBUG & V3D_DEBUG_SHADERDB) {
+                        fprintf(stderr, "SHADER-DB: %s prog %d/%d: %d UBO uniforms\n",
+                                vir_get_stage_name(c),
+                                c->program_id, c->variant_id,
+                                prog_data->ubo_size / 4);
+                }
+        }
+}
+
 static void
 v3d_vs_set_prog_data(struct v3d_compile *c,
                      struct v3d_vs_prog_data *prog_data)
 {
+        prog_data->base.num_inputs = c->num_inputs;
+
         /* The vertex data gets format converted by the VPM so that
          * each attribute channel takes up a VPM column.  Precompute
          * the sizes for the shader record.
@@ -609,7 +722,7 @@ v3d_vs_set_prog_data(struct v3d_compile *c,
          * channel).
          */
         prog_data->vpm_input_size = align(prog_data->vpm_input_size, 8) / 8;
-        prog_data->vpm_output_size = align(c->vpm_output_size, 8) / 8;
+        prog_data->vpm_output_size = align(c->num_vpm_writes, 8) / 8;
 
         /* Set us up for shared input/output segments.  This is apparently
          * necessary for our VCM setup to avoid varying corruption.
@@ -641,7 +754,7 @@ static void
 v3d_set_fs_prog_data_inputs(struct v3d_compile *c,
                             struct v3d_fs_prog_data *prog_data)
 {
-        prog_data->num_inputs = c->num_inputs;
+        prog_data->base.num_inputs = c->num_inputs;
         memcpy(prog_data->input_slots, c->input_slots,
                c->num_inputs * sizeof(*c->input_slots));
 
@@ -678,6 +791,7 @@ v3d_set_prog_data(struct v3d_compile *c,
         prog_data->spill_size = c->spill_size;
 
         v3d_set_prog_data_uniforms(c, prog_data);
+        v3d_set_prog_data_ubo(c, prog_data);
 
         if (c->s->info.stage == MESA_SHADER_VERTEX) {
                 v3d_vs_set_prog_data(c, (struct v3d_vs_prog_data *)prog_data);
@@ -945,15 +1059,15 @@ vir_compile_destroy(struct v3d_compile *c)
         ralloc_free(c);
 }
 
-uint32_t
-vir_get_uniform_index(struct v3d_compile *c,
-                      enum quniform_contents contents,
-                      uint32_t data)
+struct qreg
+vir_uniform(struct v3d_compile *c,
+            enum quniform_contents contents,
+            uint32_t data)
 {
         for (int i = 0; i < c->num_uniforms; i++) {
                 if (c->uniform_contents[i] == contents &&
                     c->uniform_data[i] == data) {
-                        return i;
+                        return vir_reg(QFILE_UNIF, i);
                 }
         }
 
@@ -974,20 +1088,52 @@ vir_get_uniform_index(struct v3d_compile *c,
         c->uniform_contents[uniform] = contents;
         c->uniform_data[uniform] = data;
 
-        return uniform;
+        return vir_reg(QFILE_UNIF, uniform);
 }
 
-struct qreg
-vir_uniform(struct v3d_compile *c,
-            enum quniform_contents contents,
-            uint32_t data)
+static bool
+vir_can_set_flags(struct v3d_compile *c, struct qinst *inst)
 {
-        struct qinst *inst = vir_NOP(c);
-        inst->qpu.sig.ldunif = true;
-        inst->uniform = vir_get_uniform_index(c, contents, data);
-        inst->dst = vir_get_temp(c);
-        c->defs[inst->dst.index] = inst;
-        return inst->dst;
+        if (c->devinfo->ver >= 40 && (v3d_qpu_reads_vpm(&inst->qpu) ||
+                                      v3d_qpu_uses_sfu(&inst->qpu))) {
+                return false;
+        }
+
+        if (inst->qpu.type != V3D_QPU_INSTR_TYPE_ALU ||
+            (inst->qpu.alu.add.op == V3D_QPU_A_NOP &&
+             inst->qpu.alu.mul.op == V3D_QPU_M_NOP)) {
+               return false;
+        }
+
+        return true;
+}
+
+void
+vir_PF(struct v3d_compile *c, struct qreg src, enum v3d_qpu_pf pf)
+{
+        struct qinst *last_inst = NULL;
+
+        if (!list_empty(&c->cur_block->instructions)) {
+                last_inst = (struct qinst *)c->cur_block->instructions.prev;
+
+                /* Can't stuff the PF into the last last inst if our cursor
+                 * isn't pointing after it.
+                 */
+                struct vir_cursor after_inst = vir_after_inst(last_inst);
+                if (c->cursor.mode != after_inst.mode ||
+                    c->cursor.link != after_inst.link)
+                        last_inst = NULL;
+        }
+
+        if (src.file != QFILE_TEMP ||
+            !c->defs[src.index] ||
+            last_inst != c->defs[src.index] ||
+            !vir_can_set_flags(c, last_inst)) {
+                /* XXX: Make the MOV be the appropriate type */
+                last_inst = vir_MOV_dest(c, vir_reg(QFILE_NULL, 0), src);
+        }
+
+        vir_set_pf(last_inst, pf);
 }
 
 #define OPTPASS(func)                                                   \

@@ -365,8 +365,6 @@ nir_if_create(nir_shader *shader)
 {
    nir_if *if_stmt = ralloc(shader, nir_if);
 
-   if_stmt->control = nir_selection_control_none;
-
    cf_init(&if_stmt->cf_node, nir_cf_node_if);
    src_init(&if_stmt->condition);
 
@@ -533,14 +531,6 @@ nir_call_instr_create(nir_shader *shader, nir_function *callee)
    return instr;
 }
 
-static int8_t default_tg4_offsets[4][2] =
-{
-   { 0, 1 },
-   { 1, 1 },
-   { 1, 0 },
-   { 0, 0 },
-};
-
 nir_tex_instr *
 nir_tex_instr_create(nir_shader *shader, unsigned num_srcs)
 {
@@ -557,7 +547,6 @@ nir_tex_instr_create(nir_shader *shader, unsigned num_srcs)
    instr->texture_index = 0;
    instr->texture_array_size = 0;
    instr->sampler_index = 0;
-   memcpy(instr->tg4_offsets, default_tg4_offsets, sizeof(instr->tg4_offsets));
 
    return instr;
 }
@@ -598,15 +587,6 @@ nir_tex_instr_remove_src(nir_tex_instr *tex, unsigned src_idx)
       nir_instr_move_src(&tex->instr, &tex->src[i-1].src, &tex->src[i].src);
    }
    tex->num_srcs--;
-}
-
-bool
-nir_tex_instr_has_explicit_tg4_offsets(nir_tex_instr *tex)
-{
-   if (tex->op != nir_texop_tg4)
-      return false;
-   return memcmp(tex->tg4_offsets, default_tg4_offsets,
-                 sizeof(tex->tg4_offsets)) != 0;
 }
 
 nir_phi_instr *
@@ -1531,8 +1511,7 @@ void
 nir_ssa_def_rewrite_uses_after(nir_ssa_def *def, nir_src new_src,
                                nir_instr *after_me)
 {
-   if (new_src.is_ssa && def == new_src.ssa)
-      return;
+   assert(!new_src.is_ssa || def != new_src.ssa);
 
    nir_foreach_use_safe(use_src, def) {
       assert(use_src->parent_instr != def->parent_instr);
@@ -1880,8 +1859,6 @@ nir_intrinsic_from_system_value(gl_system_value val)
       return nir_intrinsic_load_local_group_size;
    case SYSTEM_VALUE_GLOBAL_INVOCATION_ID:
       return nir_intrinsic_load_global_invocation_id;
-   case SYSTEM_VALUE_GLOBAL_INVOCATION_INDEX:
-      return nir_intrinsic_load_global_invocation_index;
    case SYSTEM_VALUE_WORK_DIM:
       return nir_intrinsic_load_work_dim;
    default:

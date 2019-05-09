@@ -335,13 +335,6 @@ struct vtn_type {
           * (i.e. a block that contains only builtins).
           */
          bool builtin_block:1;
-
-         /* for structs and unions it specifies the minimum alignment of the
-          * members. 0 means packed.
-          *
-          * Set by CPacked and Alignment Decorations in kernels.
-          */
-         bool packed:1;
       };
 
       /* Members for pointer types */
@@ -571,7 +564,7 @@ struct vtn_builder {
    size_t spirv_word_count;
 
    nir_shader *shader;
-   struct spirv_to_nir_options *options;
+   const struct spirv_to_nir_options *options;
    struct vtn_block *block;
 
    /* Current offset, file, line, and column.  Useful for debugging.  Set
@@ -607,7 +600,8 @@ struct vtn_builder {
    gl_shader_stage entry_point_stage;
    const char *entry_point_name;
    struct vtn_value *entry_point;
-   struct vtn_value *workgroup_size_builtin;
+   bool origin_upper_left;
+   bool pixel_center_integer;
    bool variable_pointers;
 
    struct vtn_function *func;
@@ -620,9 +614,6 @@ struct vtn_builder {
 
    /* false by default, set to true by the ContractionOff execution mode */
    bool exact;
-
-   /* when a physical memory model is choosen */
-   bool physical_ptrs;
 };
 
 nir_ssa_def *
@@ -682,22 +673,10 @@ bool
 vtn_set_instruction_result_type(struct vtn_builder *b, SpvOp opcode,
                                 const uint32_t *w, unsigned count);
 
-static inline uint64_t
-vtn_constant_uint(struct vtn_builder *b, uint32_t value_id)
+static inline nir_constant *
+vtn_constant_value(struct vtn_builder *b, uint32_t value_id)
 {
-   struct vtn_value *val = vtn_value(b, value_id, vtn_value_type_constant);
-
-   vtn_fail_if(val->type->base_type != vtn_base_type_scalar ||
-               !glsl_type_is_integer(val->type->type),
-               "Expected id %u to be an integer constant", value_id);
-
-   switch (glsl_get_bit_size(val->type->type)) {
-   case 8:  return val->constant->values[0].u8[0];
-   case 16: return val->constant->values[0].u16[0];
-   case 32: return val->constant->values[0].u32[0];
-   case 64: return val->constant->values[0].u64[0];
-   default: unreachable("Invalid bit size");
-   }
+   return vtn_value(b, value_id, vtn_value_type_constant)->constant;
 }
 
 struct vtn_ssa_value *vtn_ssa_value(struct vtn_builder *b, uint32_t value_id);
@@ -730,12 +709,10 @@ vtn_pointer_to_offset(struct vtn_builder *b, struct vtn_pointer *ptr,
                       nir_ssa_def **index_out);
 
 struct vtn_ssa_value *
-vtn_local_load(struct vtn_builder *b, nir_deref_instr *src,
-               enum gl_access_qualifier access);
+vtn_local_load(struct vtn_builder *b, nir_deref_instr *src);
 
 void vtn_local_store(struct vtn_builder *b, struct vtn_ssa_value *src,
-                     nir_deref_instr *dest,
-                     enum gl_access_qualifier access);
+                     nir_deref_instr *dest);
 
 struct vtn_ssa_value *
 vtn_variable_load(struct vtn_builder *b, struct vtn_pointer *src);
@@ -776,9 +753,6 @@ void vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
 
 bool vtn_handle_glsl450_instruction(struct vtn_builder *b, SpvOp ext_opcode,
                                     const uint32_t *words, unsigned count);
-
-bool vtn_handle_opencl_instruction(struct vtn_builder *b, uint32_t ext_opcode,
-                                   const uint32_t *words, unsigned count);
 
 struct vtn_builder* vtn_create_builder(const uint32_t *words, size_t word_count,
                                        gl_shader_stage stage, const char *entry_point_name,

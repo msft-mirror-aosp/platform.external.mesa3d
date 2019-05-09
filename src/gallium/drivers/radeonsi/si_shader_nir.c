@@ -51,45 +51,7 @@ static nir_variable* intrinsic_get_var(nir_intrinsic_instr *instr)
 	return nir_deref_instr_get_variable(nir_src_as_deref(instr->src[0]));
 }
 
-static void gather_intrinsic_load_deref_info(const nir_shader *nir,
-					     const nir_intrinsic_instr *instr,
-					     nir_variable *var,
-					     struct tgsi_shader_info *info)
-{
-	assert(var && var->data.mode == nir_var_shader_in);
-
-	switch (nir->info.stage) {
-	case MESA_SHADER_VERTEX: {
-		unsigned i = var->data.driver_location;
-		unsigned attrib_count = glsl_count_attribute_slots(var->type, false);
-
-		for (unsigned j = 0; j < attrib_count; j++, i++) {
-			if (glsl_type_is_64bit(glsl_without_array(var->type))) {
-				/* TODO: set usage mask more accurately for doubles */
-				info->input_usage_mask[i] = TGSI_WRITEMASK_XYZW;
-			} else {
-				uint8_t mask = nir_ssa_def_components_read(&instr->dest.ssa);
-				info->input_usage_mask[i] |= mask << var->data.location_frac;
-			}
-		}
-		break;
-	}
-	default: {
-		unsigned semantic_name, semantic_index;
-		tgsi_get_gl_varying_semantic(var->data.location, true,
-					     &semantic_name, &semantic_index);
-
-		if (semantic_name == TGSI_SEMANTIC_COLOR) {
-			uint8_t mask = nir_ssa_def_components_read(&instr->dest.ssa);
-			info->colors_read |= mask << (semantic_index * 4);
-		}
-		break;
-	}
-	}
-}
-
-static void scan_instruction(const struct nir_shader *nir,
-			     struct tgsi_shader_info *info,
+static void scan_instruction(struct tgsi_shader_info *info,
 			     nir_instr *instr)
 {
 	if (instr->type == nir_instr_type_alu) {
@@ -254,8 +216,6 @@ static void scan_instruction(const struct nir_shader *nir,
 				glsl_get_base_type(glsl_without_array(var->type));
 
 			if (mode == nir_var_shader_in) {
-				gather_intrinsic_load_deref_info(nir, intr, var, info);
-
 				switch (var->data.interpolation) {
 				case INTERP_MODE_NONE:
 					if (glsl_base_type_is_integer(base_type))
@@ -342,11 +302,6 @@ void si_nir_scan_shader(const struct nir_shader *nir,
 
 	info->properties[TGSI_PROPERTY_NEXT_SHADER] =
 		pipe_shader_type_from_mesa(nir->info.next_stage);
-
-	if (nir->info.stage == MESA_SHADER_VERTEX) {
-		info->properties[TGSI_PROPERTY_VS_WINDOW_SPACE_POSITION] =
-			nir->info.vs.window_space_position;
-	}
 
 	if (nir->info.stage == MESA_SHADER_TESS_CTRL) {
 		info->properties[TGSI_PROPERTY_TCS_VERTICES_OUT] =
@@ -435,17 +390,23 @@ void si_nir_scan_shader(const struct nir_shader *nir,
 		 * variable->data.driver_location.
 		 */
 		if (nir->info.stage == MESA_SHADER_VERTEX) {
-			if (glsl_type_is_dual_slot(glsl_without_array(variable->type)))
-				num_inputs++;
+			/* TODO: gather the actual input useage and remove this. */
+			info->input_usage_mask[i] = TGSI_WRITEMASK_XYZW;
 
-			num_inputs++;
+			if (glsl_type_is_dual_slot(variable->type)) {
+				num_inputs += 2;
+
+				/* TODO: gather the actual input useage and remove this. */
+				info->input_usage_mask[i+1] = TGSI_WRITEMASK_XYZW;
+			} else
+				num_inputs++;
 			continue;
 		}
 
 		/* Fragment shader position is a system value. */
 		if (nir->info.stage == MESA_SHADER_FRAGMENT &&
 		    variable->data.location == VARYING_SLOT_POS) {
-			if (nir->info.fs.pixel_center_integer)
+			if (variable->data.pixel_center_integer)
 				info->properties[TGSI_PROPERTY_FS_COORD_PIXEL_CENTER] =
 					TGSI_FS_COORD_PIXEL_CENTER_INTEGER;
 
@@ -509,6 +470,12 @@ void si_nir_scan_shader(const struct nir_shader *nir,
 				info->input_interpolate[i] = TGSI_INTERPOLATE_CONSTANT;
 				break;
 			}
+
+			/* TODO make this more precise */
+			if (variable->data.location == VARYING_SLOT_COL0)
+				info->colors_read |= 0x0f;
+			else if (variable->data.location == VARYING_SLOT_COL1)
+				info->colors_read |= 0xf0;
 		}
 	}
 
@@ -692,14 +659,9 @@ void si_nir_scan_shader(const struct nir_shader *nir,
 
 	struct set *ubo_set = _mesa_set_create(NULL, _mesa_hash_pointer,
 					       _mesa_key_pointer_equal);
-	struct set *ssbo_set = _mesa_set_create(NULL, _mesa_hash_pointer,
-						_mesa_key_pointer_equal);
 
 	/* Intialise const_file_max[0] */
 	info->const_file_max[0] = -1;
-
-	/* The first 8 are reserved for atomic counters using ssbo */
-	unsigned ssbo_idx = 8;
 
 	unsigned ubo_idx = 1;
 	nir_foreach_variable(variable, &nir->uniforms) {
@@ -707,9 +669,6 @@ void si_nir_scan_shader(const struct nir_shader *nir,
 		enum glsl_base_type base_type =
 			glsl_get_base_type(glsl_without_array(type));
 		unsigned aoa_size = MAX2(1, glsl_get_aoa_size(type));
-		unsigned loc = variable->data.location;
-		int slot_count = glsl_count_attribute_slots(type, false);
-		int max_slot = MAX2(info->const_file_max[0], (int) loc) + slot_count;
 
 		/* Gather buffers declared bitmasks. Note: radeonsi doesn't
 		 * really use the mask (other than ubo_idx == 1 for regular
@@ -718,16 +677,12 @@ void si_nir_scan_shader(const struct nir_shader *nir,
 		 */
 		if (variable->interface_type != NULL) {
 			if (variable->data.mode == nir_var_uniform ||
-			    variable->data.mode == nir_var_mem_ubo ||
-			    variable->data.mode == nir_var_mem_ssbo) {
-
-				struct set *buf_set = variable->data.mode == nir_var_mem_ssbo ?
-					ssbo_set : ubo_set;
+			    variable->data.mode == nir_var_mem_ubo) {
 
 				unsigned block_count;
 				if (base_type != GLSL_TYPE_INTERFACE) {
 					struct set_entry *entry =
-						_mesa_set_search(buf_set, variable->interface_type);
+						_mesa_set_search(ubo_set, variable->interface_type);
 
 					/* Check if we have already processed
 					 * a member from this ubo.
@@ -740,18 +695,16 @@ void si_nir_scan_shader(const struct nir_shader *nir,
 					block_count = aoa_size;
 				}
 
-				if (variable->data.mode == nir_var_uniform ||
-				    variable->data.mode == nir_var_mem_ubo) {
-					info->const_buffers_declared |= u_bit_consecutive(ubo_idx, block_count);
-					ubo_idx += block_count;
-				} else {
-					assert(variable->data.mode == nir_var_mem_ssbo);
+				info->const_buffers_declared |= u_bit_consecutive(ubo_idx, block_count);
+				ubo_idx += block_count;
 
-					info->shader_buffers_declared |= u_bit_consecutive(ssbo_idx, block_count);
-					ssbo_idx += block_count;
-				}
+				_mesa_set_add(ubo_set, variable->interface_type);
+			}
 
-				_mesa_set_add(buf_set, variable->interface_type);
+			if (variable->data.mode == nir_var_mem_ssbo) {
+				/* TODO: make this more accurate */
+				info->shader_buffers_declared =
+					u_bit_consecutive(0, SI_NUM_SHADER_BUFFERS);
 			}
 
 			continue;
@@ -763,7 +716,8 @@ void si_nir_scan_shader(const struct nir_shader *nir,
 		if (base_type == GLSL_TYPE_SAMPLER) {
 			if (variable->data.bindless) {
 				info->const_buffers_declared |= 1;
-				info->const_file_max[0] = max_slot;
+				info->const_file_max[0] +=
+					glsl_count_attribute_slots(type, false);
 			} else {
 				info->samplers_declared |=
 					u_bit_consecutive(variable->data.binding, aoa_size);
@@ -771,7 +725,8 @@ void si_nir_scan_shader(const struct nir_shader *nir,
 		} else if (base_type == GLSL_TYPE_IMAGE) {
 			if (variable->data.bindless) {
 				info->const_buffers_declared |= 1;
-				info->const_file_max[0] = max_slot;
+				info->const_file_max[0] +=
+					glsl_count_attribute_slots(type, false);
 			} else {
 				info->images_declared |=
 					u_bit_consecutive(variable->data.binding, aoa_size);
@@ -786,13 +741,13 @@ void si_nir_scan_shader(const struct nir_shader *nir,
 					u_bit_consecutive(0, SI_NUM_CONST_BUFFERS);
 			} else {
 				info->const_buffers_declared |= 1;
-				info->const_file_max[0] = max_slot;
+				info->const_file_max[0] +=
+					glsl_count_attribute_slots(type, false);
 			}
 		}
 	}
 
 	_mesa_set_destroy(ubo_set, NULL);
-	_mesa_set_destroy(ssbo_set, NULL);
 
 	info->num_written_clipdistance = nir->info.clip_distance_array_size;
 	info->num_written_culldistance = nir->info.cull_distance_array_size;
@@ -805,7 +760,7 @@ void si_nir_scan_shader(const struct nir_shader *nir,
 	func = (struct nir_function *)exec_list_get_head_const(&nir->functions);
 	nir_foreach_block(block, func->impl) {
 		nir_foreach_instr(instr, block)
-			scan_instruction(nir, info, instr);
+			scan_instruction(info, instr);
 	}
 }
 
@@ -841,6 +796,10 @@ si_lower_nir(struct si_shader_selector* sel)
 	 * - ensure constant offsets for texture instructions are folded
 	 *   and copy-propagated
 	 */
+	NIR_PASS_V(sel->nir, nir_lower_returns);
+	NIR_PASS_V(sel->nir, nir_lower_vars_to_ssa);
+	NIR_PASS_V(sel->nir, nir_lower_alu_to_scalar);
+	NIR_PASS_V(sel->nir, nir_lower_phis_to_scalar);
 
 	static const struct nir_lower_tex_options lower_tex_options = {
 		.lower_txp = ~0u,
@@ -863,14 +822,6 @@ si_lower_nir(struct si_shader_selector* sel)
 	do {
 		progress = false;
 
-		NIR_PASS_V(sel->nir, nir_lower_vars_to_ssa);
-
-		NIR_PASS(progress, sel->nir, nir_opt_copy_prop_vars);
-		NIR_PASS(progress, sel->nir, nir_opt_dead_write_vars);
-
-		NIR_PASS_V(sel->nir, nir_lower_alu_to_scalar);
-		NIR_PASS_V(sel->nir, nir_lower_phis_to_scalar);
-
 		/* (Constant) copy propagation is needed for txf with offsets. */
 		NIR_PASS(progress, sel->nir, nir_copy_prop);
 		NIR_PASS(progress, sel->nir, nir_opt_remove_phis);
@@ -883,7 +834,7 @@ si_lower_nir(struct si_shader_selector* sel)
 		NIR_PASS(progress, sel->nir, nir_opt_if);
 		NIR_PASS(progress, sel->nir, nir_opt_dead_cf);
 		NIR_PASS(progress, sel->nir, nir_opt_cse);
-		NIR_PASS(progress, sel->nir, nir_opt_peephole_select, 8, true, true);
+		NIR_PASS(progress, sel->nir, nir_opt_peephole_select, 8, true);
 
 		/* Needed for algebraic lowering */
 		NIR_PASS(progress, sel->nir, nir_opt_algebraic);
@@ -897,11 +848,6 @@ si_lower_nir(struct si_shader_selector* sel)
 	} while (progress);
 
 	NIR_PASS_V(sel->nir, nir_lower_bool_to_int32);
-
-	/* Strip the resulting shader so that the shader cache is more likely
-	 * to hit from other similar shaders.
-	 */
-	nir_strip(sel->nir);
 }
 
 static void declare_nir_input_vs(struct si_shader_context *ctx,
