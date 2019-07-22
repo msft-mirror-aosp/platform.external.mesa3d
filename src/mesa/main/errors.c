@@ -172,8 +172,8 @@ _mesa_problem( const struct gl_context *ctx, const char *fmtString, ... )
       va_start( args, fmtString );
       _mesa_vsnprintf( str, MAX_DEBUG_MESSAGE_LENGTH, fmtString, args );
       va_end( args );
-      fprintf(stderr, "Mesa %s implementation error: %s\n",
-              PACKAGE_VERSION, str);
+      fprintf(stderr, "Mesa " PACKAGE_VERSION " implementation error: %s\n",
+              str);
       fprintf(stderr, "Please report at " PACKAGE_BUGREPORT "\n");
    }
 }
@@ -217,13 +217,13 @@ should_output(struct gl_context *ctx, GLenum error, const char *fmtString)
 
 
 void
-_mesa_gl_vdebug(struct gl_context *ctx,
-                GLuint *id,
-                enum mesa_debug_source source,
-                enum mesa_debug_type type,
-                enum mesa_debug_severity severity,
-                const char *fmtString,
-                va_list args)
+_mesa_gl_vdebugf(struct gl_context *ctx,
+                 GLuint *id,
+                 enum mesa_debug_source source,
+                 enum mesa_debug_type type,
+                 enum mesa_debug_severity severity,
+                 const char *fmtString,
+                 va_list args)
 {
    char s[MAX_DEBUG_MESSAGE_LENGTH];
    int len;
@@ -231,23 +231,53 @@ _mesa_gl_vdebug(struct gl_context *ctx,
    _mesa_debug_get_id(id);
 
    len = _mesa_vsnprintf(s, MAX_DEBUG_MESSAGE_LENGTH, fmtString, args);
+   if (len >= MAX_DEBUG_MESSAGE_LENGTH)
+      /* message was truncated */
+      len = MAX_DEBUG_MESSAGE_LENGTH - 1;
 
    _mesa_log_msg(ctx, source, type, *id, severity, len, s);
 }
 
 
 void
+_mesa_gl_debugf(struct gl_context *ctx,
+                GLuint *id,
+                enum mesa_debug_source source,
+                enum mesa_debug_type type,
+                enum mesa_debug_severity severity,
+                const char *fmtString, ...)
+{
+   va_list args;
+   va_start(args, fmtString);
+   _mesa_gl_vdebugf(ctx, id, source, type, severity, fmtString, args);
+   va_end(args);
+}
+
+size_t
 _mesa_gl_debug(struct gl_context *ctx,
                GLuint *id,
                enum mesa_debug_source source,
                enum mesa_debug_type type,
                enum mesa_debug_severity severity,
-               const char *fmtString, ...)
+               const char *msg)
 {
-   va_list args;
-   va_start(args, fmtString);
-   _mesa_gl_vdebug(ctx, id, source, type, severity, fmtString, args);
-   va_end(args);
+   _mesa_debug_get_id(id);
+
+   size_t len = strnlen(msg, MAX_DEBUG_MESSAGE_LENGTH);
+   if (len < MAX_DEBUG_MESSAGE_LENGTH) {
+      _mesa_log_msg(ctx, source, type, *id, severity, len, msg);
+      return len;
+   }
+
+   /* limit the message to fit within KHR_debug buffers */
+   char s[MAX_DEBUG_MESSAGE_LENGTH];
+   strncpy(s, msg, MAX_DEBUG_MESSAGE_LENGTH);
+   s[MAX_DEBUG_MESSAGE_LENGTH - 1] = '\0';
+   len = MAX_DEBUG_MESSAGE_LENGTH - 1;
+   _mesa_log_msg(ctx, source, type, *id, severity, len, s);
+
+   /* report the number of characters that were logged */
+   return len;
 }
 
 
@@ -276,7 +306,7 @@ _mesa_error( struct gl_context *ctx, GLenum error, const char *fmtString, ... )
 
    do_output = should_output(ctx, error, fmtString);
 
-   mtx_lock(&ctx->DebugMutex);
+   simple_mtx_lock(&ctx->DebugMutex);
    if (ctx->Debug) {
       do_log = _mesa_debug_is_message_enabled(ctx->Debug,
                                               MESA_DEBUG_SOURCE_API,
@@ -287,7 +317,7 @@ _mesa_error( struct gl_context *ctx, GLenum error, const char *fmtString, ... )
    else {
       do_log = GL_FALSE;
    }
-   mtx_unlock(&ctx->DebugMutex);
+   simple_mtx_unlock(&ctx->DebugMutex);
 
    if (do_output || do_log) {
       char s[MAX_DEBUG_MESSAGE_LENGTH], s2[MAX_DEBUG_MESSAGE_LENGTH];
@@ -327,7 +357,8 @@ _mesa_error( struct gl_context *ctx, GLenum error, const char *fmtString, ... )
    }
 
    /* Set the GL context error state for glGetError. */
-   _mesa_record_error(ctx, error);
+   if (ctx->ErrorValue == GL_NO_ERROR)
+      ctx->ErrorValue = error;
 }
 
 void

@@ -37,8 +37,8 @@
 #include <string.h>
 #include <assert.h>
 #include "c99_compat.h"
+#include "util/macros.h"
 
-#include "eglcompiler.h"
 #include "eglconfig.h"
 #include "egldisplay.h"
 #include "eglcurrent.h"
@@ -56,11 +56,11 @@
  * IDs are from 1 to N respectively.
  */
 void
-_eglInitConfig(_EGLConfig *conf, _EGLDisplay *dpy, EGLint id)
+_eglInitConfig(_EGLConfig *conf, _EGLDisplay *disp, EGLint id)
 {
    memset(conf, 0, sizeof(*conf));
 
-   conf->Display = dpy;
+   conf->Display = disp;
 
    /* some attributes take non-zero default values */
    conf->ConfigID = id;
@@ -68,6 +68,7 @@ _eglInitConfig(_EGLConfig *conf, _EGLDisplay *dpy, EGLint id)
    conf->TransparentType = EGL_NONE;
    conf->NativeVisualType = EGL_NONE;
    conf->ColorBufferType = EGL_RGB_BUFFER;
+   conf->ComponentType = EGL_COLOR_COMPONENT_TYPE_FIXED_EXT;
 }
 
 
@@ -80,19 +81,19 @@ _eglInitConfig(_EGLConfig *conf, _EGLDisplay *dpy, EGLint id)
 EGLConfig
 _eglLinkConfig(_EGLConfig *conf)
 {
-   _EGLDisplay *dpy = conf->Display;
+   _EGLDisplay *disp = conf->Display;
 
    /* sanity check */
-   assert(dpy);
+   assert(disp);
    assert(conf->ConfigID > 0);
 
-   if (!dpy->Configs) {
-      dpy->Configs = _eglCreateArray("Config", 16);
-      if (!dpy->Configs)
+   if (!disp->Configs) {
+      disp->Configs = _eglCreateArray("Config", 16);
+      if (!disp->Configs)
          return (EGLConfig) NULL;
    }
 
-   _eglAppendArray(dpy->Configs, (void *) conf);
+   _eglAppendArray(disp->Configs, (void *) conf);
 
    return (EGLConfig) conf;
 }
@@ -103,30 +104,31 @@ _eglLinkConfig(_EGLConfig *conf)
  * Return NULL if the handle has no corresponding linked config.
  */
 _EGLConfig *
-_eglLookupConfig(EGLConfig config, _EGLDisplay *dpy)
+_eglLookupConfig(EGLConfig config, _EGLDisplay *disp)
 {
    _EGLConfig *conf;
 
-   if (!dpy)
+   if (!disp)
       return NULL;
 
-   conf = (_EGLConfig *) _eglFindArray(dpy->Configs, (void *) config);
+   conf = (_EGLConfig *) _eglFindArray(disp->Configs, (void *) config);
    if (conf)
-      assert(conf->Display == dpy);
+      assert(conf->Display == disp);
 
    return conf;
 }
 
 
-enum {
-   /* types */
+enum type {
    ATTRIB_TYPE_INTEGER,
    ATTRIB_TYPE_BOOLEAN,
    ATTRIB_TYPE_BITMASK,
    ATTRIB_TYPE_ENUM,
    ATTRIB_TYPE_PSEUDO, /* non-queryable */
    ATTRIB_TYPE_PLATFORM, /* platform-dependent */
-   /* criteria */
+};
+
+enum criterion {
    ATTRIB_CRITERION_EXACT,
    ATTRIB_CRITERION_ATLEAST,
    ATTRIB_CRITERION_MASK,
@@ -138,8 +140,8 @@ enum {
 /* EGL spec Table 3.1 and 3.4 */
 static const struct {
    EGLint attr;
-   EGLint type;
-   EGLint criterion;
+   enum type type;
+   enum criterion criterion;
    EGLint default_value;
 } _eglValidationTable[] =
 {
@@ -253,6 +255,9 @@ static const struct {
    { EGL_RECORDABLE_ANDROID,        ATTRIB_TYPE_BOOLEAN,
                                     ATTRIB_CRITERION_EXACT,
                                     EGL_DONT_CARE },
+   { EGL_COLOR_COMPONENT_TYPE_EXT,  ATTRIB_TYPE_ENUM,
+                                    ATTRIB_CRITERION_EXACT,
+                                    EGL_COLOR_COMPONENT_TYPE_FIXED_EXT },
 };
 
 
@@ -267,6 +272,7 @@ static const struct {
 EGLBoolean
 _eglValidateConfig(const _EGLConfig *conf, EGLBoolean for_matching)
 {
+   _EGLDisplay *disp = conf->Display;
    EGLint i, attr, val;
    EGLBoolean valid = EGL_TRUE;
 
@@ -315,8 +321,13 @@ _eglValidateConfig(const _EGLConfig *conf, EGLBoolean for_matching)
             if (val != EGL_RGB_BUFFER && val != EGL_LUMINANCE_BUFFER)
                valid = EGL_FALSE;
             break;
+         case EGL_COLOR_COMPONENT_TYPE_EXT:
+            if (val != EGL_COLOR_COMPONENT_TYPE_FIXED_EXT &&
+                val != EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT)
+               valid = EGL_FALSE;
+            break;
          default:
-            assert(0);
+            unreachable("check _eglValidationTable[]");
             break;
          }
          break;
@@ -330,6 +341,8 @@ _eglValidateConfig(const _EGLConfig *conf, EGLBoolean for_matching)
                    EGL_VG_ALPHA_FORMAT_PRE_BIT |
                    EGL_MULTISAMPLE_RESOLVE_BOX_BIT |
                    EGL_SWAP_BEHAVIOR_PRESERVED_BIT;
+            if (disp->Extensions.KHR_mutable_render_buffer)
+               mask |= EGL_MUTABLE_RENDER_BUFFER_BIT_KHR;
             break;
          case EGL_RENDERABLE_TYPE:
          case EGL_CONFORMANT:
@@ -340,7 +353,7 @@ _eglValidateConfig(const _EGLConfig *conf, EGLBoolean for_matching)
                    EGL_OPENGL_BIT;
             break;
          default:
-            assert(0);
+            unreachable("check _eglValidationTable[]");
             mask = 0;
             break;
          }
@@ -354,9 +367,6 @@ _eglValidateConfig(const _EGLConfig *conf, EGLBoolean for_matching)
          /* pseudo attributes should not be set */
          if (val != 0)
             valid = EGL_FALSE;
-         break;
-      default:
-         assert(0);
          break;
       }
 
@@ -465,8 +475,8 @@ _eglMatchConfig(const _EGLConfig *conf, const _EGLConfig *criteria)
       case ATTRIB_CRITERION_SPECIAL:
          /* ignored here */
          break;
-      default:
-         assert(0);
+      case ATTRIB_CRITERION_IGNORE:
+         unreachable("already handled above");
          break;
       }
 
@@ -511,12 +521,12 @@ _eglIsConfigAttribValid(_EGLConfig *conf, EGLint attr)
  * Return EGL_FALSE if any of the attribute is invalid.
  */
 EGLBoolean
-_eglParseConfigAttribList(_EGLConfig *conf, _EGLDisplay *dpy,
+_eglParseConfigAttribList(_EGLConfig *conf, _EGLDisplay *disp,
                           const EGLint *attrib_list)
 {
    EGLint attr, val, i;
 
-   _eglInitConfig(conf, dpy, EGL_DONT_CARE);
+   _eglInitConfig(conf, disp, EGL_DONT_CARE);
 
    /* reset to default values */
    for (i = 0; i < ARRAY_SIZE(_eglValidationTable); i++) {
@@ -531,7 +541,7 @@ _eglParseConfigAttribList(_EGLConfig *conf, _EGLDisplay *dpy,
       val = attrib_list[i + 1];
 
       if (!_eglIsConfigAttribValid(conf, attr))
-	 return EGL_FALSE;
+         return EGL_FALSE;
 
       _eglSetConfigKey(conf, attr, val);
    }
@@ -802,7 +812,7 @@ _eglChooseConfig(_EGLDriver *drv, _EGLDisplay *disp, const EGLint *attrib_list,
  * Fallback for eglGetConfigAttrib.
  */
 EGLBoolean
-_eglGetConfigAttrib(_EGLDriver *drv, _EGLDisplay *dpy, _EGLConfig *conf,
+_eglGetConfigAttrib(_EGLDriver *drv, _EGLDisplay *disp, _EGLConfig *conf,
                     EGLint attribute, EGLint *value)
 {
    if (!_eglIsConfigAttribValid(conf, attribute))

@@ -1,5 +1,3 @@
-/* -*- mode: C; c-file-style: "k&r"; tab-width 4; indent-tabs-mode: t; -*- */
-
 /*
  * Copyright (C) 2014 Rob Clark <robclark@freedesktop.org>
  *
@@ -117,7 +115,8 @@ time_elapsed_enable(struct fd_context *ctx, struct fd_ringbuffer *ring)
 	 * just hard coded.  If we start exposing more countables than we
 	 * have counters, we will need to be more clever.
 	 */
-	fd_wfi(ctx->batch, ring);
+	struct fd_batch *batch = fd_context_batch(ctx);
+	fd_wfi(batch, ring);
 	OUT_PKT0(ring, REG_A4XX_CP_PERFCTR_CP_SEL_0, 1);
 	OUT_RING(ring, CP_ALWAYS_COUNT);
 }
@@ -251,6 +250,13 @@ static const struct fd_hw_sample_provider occlusion_predicate = {
 		.accumulate_result = occlusion_predicate_accumulate_result,
 };
 
+static const struct fd_hw_sample_provider occlusion_predicate_conservative = {
+		.query_type = PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE,
+		.active = FD_STAGE_DRAW,
+		.get_sample = occlusion_get_sample,
+		.accumulate_result = occlusion_predicate_accumulate_result,
+};
+
 static const struct fd_hw_sample_provider time_elapsed = {
 		.query_type = PIPE_QUERY_TIME_ELAPSED,
 		.active = FD_STAGE_DRAW | FD_STAGE_CLEAR,
@@ -275,8 +281,16 @@ static const struct fd_hw_sample_provider timestamp = {
 
 void fd4_query_context_init(struct pipe_context *pctx)
 {
+	struct fd_context *ctx = fd_context(pctx);
+
+	ctx->create_query = fd_hw_create_query;
+	ctx->query_prepare = fd_hw_query_prepare;
+	ctx->query_prepare_tile = fd_hw_query_prepare_tile;
+	ctx->query_set_stage = fd_hw_query_set_stage;
+
 	fd_hw_query_register_provider(pctx, &occlusion_counter);
 	fd_hw_query_register_provider(pctx, &occlusion_predicate);
+	fd_hw_query_register_provider(pctx, &occlusion_predicate_conservative);
 	fd_hw_query_register_provider(pctx, &time_elapsed);
 	fd_hw_query_register_provider(pctx, &timestamp);
 }

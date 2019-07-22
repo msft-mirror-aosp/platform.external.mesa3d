@@ -1,5 +1,3 @@
-/* -*- mode: C; c-file-style: "k&r"; tab-width 4; indent-tabs-mode: t; -*- */
-
 /*
  * Copyright (C) 2013 Rob Clark <robclark@freedesktop.org>
  *
@@ -26,6 +24,7 @@
  *    Rob Clark <robclark@freedesktop.org>
  */
 
+#include "freedreno_query_hw.h"
 
 #include "fd3_context.h"
 #include "fd3_blend.h"
@@ -43,15 +42,19 @@ fd3_context_destroy(struct pipe_context *pctx)
 {
 	struct fd3_context *fd3_ctx = fd3_context(fd_context(pctx));
 
+	u_upload_destroy(fd3_ctx->border_color_uploader);
+
+	fd_context_destroy(pctx);
+
 	fd_bo_del(fd3_ctx->vs_pvt_mem);
 	fd_bo_del(fd3_ctx->fs_pvt_mem);
 	fd_bo_del(fd3_ctx->vsc_size_mem);
 
 	fd_context_cleanup_common_vbos(&fd3_ctx->base);
 
-	u_upload_destroy(fd3_ctx->border_color_uploader);
+	fd_hw_query_fini(pctx);
 
-	fd_context_destroy(pctx);
+	free(fd3_ctx);
 }
 
 static const uint8_t primtypes[] = {
@@ -91,25 +94,27 @@ fd3_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
 	fd3_prog_init(pctx);
 	fd3_emit_init(pctx);
 
-	pctx = fd_context_init(&fd3_ctx->base, pscreen, primtypes, priv);
+	pctx = fd_context_init(&fd3_ctx->base, pscreen, primtypes, priv, flags);
 	if (!pctx)
 		return NULL;
 
+	fd_hw_query_init(pctx);
+
 	fd3_ctx->vs_pvt_mem = fd_bo_new(screen->dev, 0x2000,
-			DRM_FREEDRENO_GEM_TYPE_KMEM);
+			DRM_FREEDRENO_GEM_TYPE_KMEM, "vs_pvt");
 
 	fd3_ctx->fs_pvt_mem = fd_bo_new(screen->dev, 0x2000,
-			DRM_FREEDRENO_GEM_TYPE_KMEM);
+			DRM_FREEDRENO_GEM_TYPE_KMEM, "fs_pvt");
 
 	fd3_ctx->vsc_size_mem = fd_bo_new(screen->dev, 0x1000,
-			DRM_FREEDRENO_GEM_TYPE_KMEM);
+			DRM_FREEDRENO_GEM_TYPE_KMEM, "vsc_size");
 
 	fd_context_setup_common_vbos(&fd3_ctx->base);
 
 	fd3_query_context_init(pctx);
 
 	fd3_ctx->border_color_uploader = u_upload_create(pctx, 4096, 0,
-                                                         PIPE_USAGE_STREAM);
+                                                         PIPE_USAGE_STREAM, 0);
 
 	return pctx;
 }

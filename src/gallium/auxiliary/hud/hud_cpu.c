@@ -29,12 +29,19 @@
  */
 
 #include "hud/hud_private.h"
-#include "os/os_time.h"
+#include "util/os_time.h"
+#include "os/os_thread.h"
 #include "util/u_memory.h"
+#include "util/u_queue.h"
 #include <stdio.h>
 #include <inttypes.h>
 #ifdef PIPE_OS_WINDOWS
 #include <windows.h>
+#endif
+#ifdef PIPE_OS_FREEBSD
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#include <sys/resource.h>
 #endif
 
 
@@ -81,6 +88,46 @@ get_cpu_stats(unsigned cpu_index, uint64_t *busy_time, uint64_t *total_time)
    /* XXX: we ignore cpu_index, i.e, we assume that the individual CPU usage
     * and the system usage are one and the same.
     */
+   return TRUE;
+}
+
+#elif defined(PIPE_OS_FREEBSD)
+
+static boolean
+get_cpu_stats(unsigned cpu_index, uint64_t *busy_time, uint64_t *total_time)
+{
+   long cp_time[CPUSTATES];
+   size_t len;
+
+   if (cpu_index == ALL_CPUS) {
+      len = sizeof(cp_time);
+
+      if (sysctlbyname("kern.cp_time", cp_time, &len, NULL, 0) == -1)
+         return FALSE;
+   } else {
+      long *cp_times = NULL;
+
+      if (sysctlbyname("kern.cp_times", NULL, &len, NULL, 0) == -1)
+         return FALSE;
+
+      if (len < (cpu_index + 1) * sizeof(cp_time))
+         return FALSE;
+
+      cp_times = malloc(len);
+
+      if (sysctlbyname("kern.cp_times", cp_times, &len, NULL, 0) == -1)
+         return FALSE;
+
+      memcpy(cp_time, cp_times + (cpu_index * CPUSTATES),
+            sizeof(cp_time));
+      free(cp_times);
+   }
+
+   *busy_time = cp_time[CP_USER] + cp_time[CP_NICE] +
+      cp_time[CP_SYS] + cp_time[CP_INTR];
+
+   *total_time = *busy_time + cp_time[CP_IDLE];
+
    return TRUE;
 }
 
@@ -142,14 +189,15 @@ struct cpu_info {
 };
 
 static void
-query_cpu_load(struct hud_graph *gr)
+query_cpu_load(struct hud_graph *gr, struct pipe_context *pipe)
 {
    struct cpu_info *info = gr->query_data;
    uint64_t now = os_time_get();
 
    if (info->last_time) {
       if (info->last_time + gr->pane->period <= now) {
-         uint64_t cpu_busy, cpu_total, cpu_load;
+         uint64_t cpu_busy, cpu_total;
+         double cpu_load;
 
          get_cpu_stats(info->cpu_index, &cpu_busy, &cpu_total);
 
@@ -171,7 +219,7 @@ query_cpu_load(struct hud_graph *gr)
 }
 
 static void
-free_query_data(void *p)
+free_query_data(void *p, struct pipe_context *pipe)
 {
    FREE(p);
 }
@@ -213,8 +261,6 @@ hud_cpu_graph_install(struct hud_pane *pane, unsigned cpu_index)
    info = gr->query_data;
    info->cpu_index = cpu_index;
 
-   hud_graph_set_dump_file(gr);
-
    hud_pane_add_graph(pane, gr);
    hud_pane_set_max_value(pane, 100);
 }
@@ -229,4 +275,155 @@ hud_get_num_cpus(void)
       i++;
 
    return i;
+}
+
+struct thread_info {
+   bool main_thread;
+   int64_t last_time;
+   int64_t last_thread_time;
+};
+
+static void
+query_api_thread_busy_status(struct hud_graph *gr, struct pipe_context *pipe)
+{
+   struct thread_info *info = gr->query_data;
+   int64_t now = os_time_get_nano();
+
+   if (info->last_time) {
+      if (info->last_time + gr->pane->period*1000 <= now) {
+         int64_t thread_now;
+
+         if (info->main_thread) {
+            thread_now = pipe_current_thread_get_time_nano();
+         } else {
+            struct util_queue_monitoring *mon = gr->pane->hud->monitored_queue;
+
+            if (mon && mon->queue)
+               thread_now = util_queue_get_thread_time_nano(mon->queue, 0);
+            else
+               thread_now = 0;
+         }
+
+         double percent = (thread_now - info->last_thread_time) * 100.0 /
+                            (now - info->last_time);
+
+         /* Check if the context changed a thread, so that we don't show
+          * a random value. When a thread is changed, the new thread clock
+          * is different, which can result in "percent" being very high.
+          */
+         if (percent > 100.0)
+            percent = 0.0;
+         hud_graph_add_value(gr, percent);
+
+         info->last_thread_time = thread_now;
+         info->last_time = now;
+      }
+   } else {
+      /* initialize */
+      info->last_time = now;
+      info->last_thread_time = pipe_current_thread_get_time_nano();
+   }
+}
+
+void
+hud_thread_busy_install(struct hud_pane *pane, const char *name, bool main)
+{
+   struct hud_graph *gr;
+
+   gr = CALLOC_STRUCT(hud_graph);
+   if (!gr)
+      return;
+
+   strcpy(gr->name, name);
+
+   gr->query_data = CALLOC_STRUCT(thread_info);
+   if (!gr->query_data) {
+      FREE(gr);
+      return;
+   }
+
+   ((struct thread_info*)gr->query_data)->main_thread = main;
+   gr->query_new_value = query_api_thread_busy_status;
+
+   /* Don't use free() as our callback as that messes up Gallium's
+    * memory debugger.  Use simple free_query_data() wrapper.
+    */
+   gr->free_query_data = free_query_data;
+
+   hud_pane_add_graph(pane, gr);
+   hud_pane_set_max_value(pane, 100);
+}
+
+struct counter_info {
+   enum hud_counter counter;
+   unsigned last_value;
+   int64_t last_time;
+};
+
+static unsigned get_counter(struct hud_graph *gr, enum hud_counter counter)
+{
+   struct util_queue_monitoring *mon = gr->pane->hud->monitored_queue;
+
+   if (!mon || !mon->queue)
+      return 0;
+
+   switch (counter) {
+   case HUD_COUNTER_OFFLOADED:
+      return mon->num_offloaded_items;
+   case HUD_COUNTER_DIRECT:
+      return mon->num_direct_items;
+   case HUD_COUNTER_SYNCS:
+      return mon->num_syncs;
+   default:
+      assert(0);
+      return 0;
+   }
+}
+
+static void
+query_thread_counter(struct hud_graph *gr, struct pipe_context *pipe)
+{
+   struct counter_info *info = gr->query_data;
+   int64_t now = os_time_get_nano();
+
+   if (info->last_time) {
+      if (info->last_time + gr->pane->period*1000 <= now) {
+         unsigned current_value = get_counter(gr, info->counter);
+
+         hud_graph_add_value(gr, current_value - info->last_value);
+         info->last_value = current_value;
+         info->last_time = now;
+      }
+   } else {
+      /* initialize */
+      info->last_value = get_counter(gr, info->counter);
+      info->last_time = now;
+   }
+}
+
+void hud_thread_counter_install(struct hud_pane *pane, const char *name,
+                                enum hud_counter counter)
+{
+   struct hud_graph *gr = CALLOC_STRUCT(hud_graph);
+   if (!gr)
+      return;
+
+   strcpy(gr->name, name);
+
+   gr->query_data = CALLOC_STRUCT(counter_info);
+   if (!gr->query_data) {
+      FREE(gr);
+      return;
+   }
+
+   ((struct counter_info*)gr->query_data)->counter = counter;
+   gr->query_new_value = query_thread_counter;
+
+   /* Don't use free() as our callback as that messes up Gallium's
+    * memory debugger.  Use simple free_query_data() wrapper.
+    */
+   gr->free_query_data = free_query_data;
+
+   hud_pane_add_graph(pane, gr);
+   hud_pane_set_max_value(pane, 100);
 }

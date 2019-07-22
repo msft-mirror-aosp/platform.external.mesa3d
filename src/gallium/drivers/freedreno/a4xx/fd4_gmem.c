@@ -1,5 +1,3 @@
-/* -*- mode: C; c-file-style: "k&r"; tab-width 4; indent-tabs-mode: t; -*- */
-
 /*
  * Copyright (C) 2014 Rob Clark <robclark@freedesktop.org>
  *
@@ -79,7 +77,7 @@ emit_mrt(struct fd_ringbuffer *ring, unsigned nr_bufs,
 			 */
 			if (rsc->stencil) {
 				rsc = rsc->stencil;
-				pformat = rsc->base.b.format;
+				pformat = rsc->base.format;
 				if (bases)
 					bases++;
 			}
@@ -135,10 +133,11 @@ static bool
 use_hw_binning(struct fd_batch *batch)
 {
 	struct fd_gmem_stateobj *gmem = &batch->ctx->gmem;
-	struct pipe_framebuffer_state *pfb = &batch->framebuffer;
 
-	/* this seems to be a hw bug.. but this hack fixes piglit fbo-maxsize: */
-	if ((pfb->width > 4096) && (pfb->height > 4096))
+	if ((gmem->maxpw * gmem->maxph) > 32)
+		return false;
+
+	if ((gmem->maxpw > 15) || (gmem->maxph > 15))
 		return false;
 
 	return fd_binning_enabled && ((gmem->nbins_x * gmem->nbins_y) > 2);
@@ -156,10 +155,13 @@ emit_gmem2mem_surf(struct fd_batch *batch, bool stencil,
 	struct fd_resource_slice *slice;
 	uint32_t offset;
 
+	if (!rsc->valid)
+		return;
+
 	if (stencil) {
 		debug_assert(rsc->stencil);
 		rsc = rsc->stencil;
-		pformat = rsc->base.b.format;
+		pformat = rsc->base.format;
 	}
 
 	slice = &rsc->slices[psurf->u.tex.level];
@@ -181,7 +183,7 @@ emit_gmem2mem_surf(struct fd_batch *batch, bool stencil,
 			A4XX_RB_COPY_DEST_INFO_SWAP(fd4_pipe2swap(pformat)));
 
 	fd4_draw(batch, ring, DI_PT_RECTLIST, IGNORE_VISIBILITY,
-			DI_SRC_SEL_AUTO_INDEX, 2, 1, INDEX_SIZE_IGN, 0, 0, NULL);
+			DI_SRC_SEL_AUTO_INDEX, 2, 1, INDEX4_SIZE_8_BIT, 0, 0, NULL);
 }
 
 static void
@@ -319,7 +321,7 @@ emit_mem2gmem_surf(struct fd_batch *batch, uint32_t *bases,
 	fd4_emit_gmem_restore_tex(ring, nr_bufs, bufs);
 
 	fd4_draw(batch, ring, DI_PT_RECTLIST, IGNORE_VISIBILITY,
-			DI_SRC_SEL_AUTO_INDEX, 2, 1, INDEX_SIZE_IGN, 0, 0, NULL);
+			DI_SRC_SEL_AUTO_INDEX, 2, 1, INDEX4_SIZE_8_BIT, 0, 0, NULL);
 }
 
 static void
@@ -568,7 +570,7 @@ update_vsc_pipe(struct fd_batch *batch)
 
 	OUT_PKT0(ring, REG_A4XX_VSC_PIPE_CONFIG_REG(0), 8);
 	for (i = 0; i < 8; i++) {
-		struct fd_vsc_pipe *pipe = &ctx->pipe[i];
+		struct fd_vsc_pipe *pipe = &ctx->vsc_pipe[i];
 		OUT_RING(ring, A4XX_VSC_PIPE_CONFIG_REG_X(pipe->x) |
 				A4XX_VSC_PIPE_CONFIG_REG_Y(pipe->y) |
 				A4XX_VSC_PIPE_CONFIG_REG_W(pipe->w) |
@@ -577,17 +579,17 @@ update_vsc_pipe(struct fd_batch *batch)
 
 	OUT_PKT0(ring, REG_A4XX_VSC_PIPE_DATA_ADDRESS_REG(0), 8);
 	for (i = 0; i < 8; i++) {
-		struct fd_vsc_pipe *pipe = &ctx->pipe[i];
+		struct fd_vsc_pipe *pipe = &ctx->vsc_pipe[i];
 		if (!pipe->bo) {
 			pipe->bo = fd_bo_new(ctx->dev, 0x40000,
-					DRM_FREEDRENO_GEM_TYPE_KMEM);
+					DRM_FREEDRENO_GEM_TYPE_KMEM, "vsc_pipe[%u]", i);
 		}
 		OUT_RELOCW(ring, pipe->bo, 0, 0, 0);       /* VSC_PIPE_DATA_ADDRESS[i] */
 	}
 
 	OUT_PKT0(ring, REG_A4XX_VSC_PIPE_DATA_LENGTH_REG(0), 8);
 	for (i = 0; i < 8; i++) {
-		struct fd_vsc_pipe *pipe = &ctx->pipe[i];
+		struct fd_vsc_pipe *pipe = &ctx->vsc_pipe[i];
 		OUT_RING(ring, fd_bo_size(pipe->bo) - 32); /* VSC_PIPE_DATA_LENGTH[i] */
 	}
 }
@@ -766,7 +768,7 @@ fd4_emit_tile_renderprep(struct fd_batch *batch, struct fd_tile *tile)
 	uint32_t y2 = tile->yoff + tile->bin_h - 1;
 
 	if (use_hw_binning(batch)) {
-		struct fd_vsc_pipe *pipe = &ctx->pipe[tile->p];
+		struct fd_vsc_pipe *pipe = &ctx->vsc_pipe[tile->p];
 
 		assert(pipe->w * pipe->h);
 

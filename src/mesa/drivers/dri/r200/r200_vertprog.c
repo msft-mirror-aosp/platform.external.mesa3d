@@ -30,6 +30,8 @@ USE OR OTHER DEALINGS IN THE SOFTWARE.
  *   Aapo Tahkola <aet@rasterburn.org>
  *   Roland Scheidegger <rscheidegger_lists@hispeed.ch>
  */
+
+#include "main/errors.h"
 #include "main/glheader.h"
 #include "main/macros.h"
 #include "main/enums.h"
@@ -120,14 +122,16 @@ static GLboolean r200VertexProgUpdateParams(struct gl_context *ctx, struct r200_
    }
 
    for(pi = 0; pi < paramList->NumParameters; pi++) {
+      unsigned pvo = paramList->ParameterValueOffset[pi];
+
       switch(paramList->Parameters[pi].Type) {
       case PROGRAM_STATE_VAR:
       //fprintf(stderr, "%s", vp->Parameters->Parameters[pi].Name);
       case PROGRAM_CONSTANT:
-	 *fcmd++ = paramList->ParameterValues[pi][0].f;
-	 *fcmd++ = paramList->ParameterValues[pi][1].f;
-	 *fcmd++ = paramList->ParameterValues[pi][2].f;
-	 *fcmd++ = paramList->ParameterValues[pi][3].f;
+	 *fcmd++ = paramList->ParameterValues[pvo + 0].f;
+	 *fcmd++ = paramList->ParameterValues[pvo + 1].f;
+	 *fcmd++ = paramList->ParameterValues[pvo + 2].f;
+	 *fcmd++ = paramList->ParameterValues[pvo + 3].f;
 	 break;
       default:
 	 _mesa_problem(NULL, "Bad param type in %s", __func__);
@@ -350,7 +354,7 @@ static unsigned long op_operands(enum prog_opcode opcode)
 		       ((t_src_class(a.File) == VSF_IN_CLASS_PARAM && \
 			 t_src_class(b.File) == VSF_IN_CLASS_PARAM) || \
 			(t_src_class(a.File) == VSF_IN_CLASS_ATTR && \
-			 t_src_class(b.File) == VSF_IN_CLASS_ATTR))) \
+			 t_src_class(b.File) == VSF_IN_CLASS_ATTR)))
 
 /* fglrx on rv250 codes up unused sources as follows:
    unused but necessary sources are same as previous source, zero-ed out.
@@ -456,7 +460,7 @@ static GLboolean r200_translate_vertex_program(struct gl_context *ctx, struct r2
    if ((mesa_vp->info.outputs_written & (1 << VARYING_SLOT_FOGC)) &&
        !vp->fogpidx) {
       struct gl_program_parameter_list *paramList;
-      gl_state_index tokens[STATE_LENGTH] = { STATE_FOG_PARAMS, 0, 0, 0, 0 };
+      gl_state_index16 tokens[STATE_LENGTH] = { STATE_FOG_PARAMS, 0, 0, 0, 0 };
       paramList = mesa_vp->Parameters;
       vp->fogpidx = _mesa_add_state_reference(paramList, tokens);
    }
@@ -496,11 +500,6 @@ static GLboolean r200_translate_vertex_program(struct gl_context *ctx, struct r2
       vp->inputs[VERT_ATTRIB_POS] = 0;
       vp->inputmap_rev[0] = VERT_ATTRIB_POS;
       free_inputs &= ~(1 << 0);
-      array_count++;
-   }
-   if (mesa_vp->info.inputs_read & VERT_BIT_WEIGHT) {
-      vp->inputs[VERT_ATTRIB_WEIGHT] = 12;
-      vp->inputmap_rev[1] = VERT_ATTRIB_WEIGHT;
       array_count++;
    }
    if (mesa_vp->info.inputs_read & VERT_BIT_NORMAL) {
@@ -1183,21 +1182,6 @@ void r200SetupVertexProg( struct gl_context *ctx ) {
 }
 
 
-static void
-r200BindProgram(struct gl_context *ctx, GLenum target, struct gl_program *prog)
-{
-   r200ContextPtr rmesa = R200_CONTEXT(ctx);
-
-   switch(target){
-   case GL_VERTEX_PROGRAM_ARB:
-      rmesa->curr_vp_hw = NULL;
-      break;
-   default:
-      _mesa_problem(ctx, "Target not supported yet!");
-      break;
-   }
-}
-
 static struct gl_program *
 r200NewProgram(struct gl_context *ctx, GLenum target, GLuint id,
                bool is_arb_asm)
@@ -1271,7 +1255,6 @@ r200IsProgramNative(struct gl_context *ctx, GLenum target, struct gl_program *pr
 void r200InitShaderFuncs(struct dd_function_table *functions)
 {
    functions->NewProgram = r200NewProgram;
-   functions->BindProgram = r200BindProgram;
    functions->DeleteProgram = r200DeleteProgram;
    functions->ProgramStringNotify = r200ProgramStringNotify;
    functions->IsProgramNative = r200IsProgramNative;

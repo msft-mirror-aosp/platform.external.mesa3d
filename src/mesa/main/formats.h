@@ -36,7 +36,6 @@
 #include <GL/gl.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "compiler.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -72,6 +71,7 @@ enum mesa_format_layout {
    MESA_FORMAT_LAYOUT_ETC2,
    MESA_FORMAT_LAYOUT_BPTC,
    MESA_FORMAT_LAYOUT_ASTC,
+   MESA_FORMAT_LAYOUT_ATC,
    MESA_FORMAT_LAYOUT_OTHER,
 };
 
@@ -350,6 +350,7 @@ typedef enum
    MESA_FORMAT_B4G4R4X4_UNORM,                       /* xxxx RRRR GGGG BBBB */
    MESA_FORMAT_A4R4G4B4_UNORM,                       /* BBBB GGGG RRRR AAAA */
    MESA_FORMAT_A1B5G5R5_UNORM,                       /* RRRR RGGG GGBB BBBA */
+   MESA_FORMAT_X1B5G5R5_UNORM,                       /* BBBB BGGG GGRR RRRX */
    MESA_FORMAT_B5G5R5A1_UNORM,                       /* ARRR RRGG GGGB BBBB */
    MESA_FORMAT_B5G5R5X1_UNORM,                       /* xRRR RRGG GGGB BBBB */
    MESA_FORMAT_A1R5G5B5_UNORM,                       /* BBBB BGGG GGRR RRRA */
@@ -440,6 +441,7 @@ typedef enum
    MESA_FORMAT_X8B8G8R8_SRGB,    /* RRRR RRRR GGGG GGGG BBBB BBBB xxxx xxxx */
    MESA_FORMAT_L8A8_SRGB,                            /* AAAA AAAA LLLL LLLL */
    MESA_FORMAT_A8L8_SRGB,                            /* LLLL LLLL AAAA AAAA */
+   MESA_FORMAT_R_SRGB8,          /* RRRR RRRR */
 
    /* Array sRGB formats */
    MESA_FORMAT_L_SRGB8,       /* ubyte[i] = L */
@@ -656,6 +658,12 @@ typedef enum
    MESA_FORMAT_SRGB8_ALPHA8_ASTC_6x5x5,
    MESA_FORMAT_SRGB8_ALPHA8_ASTC_6x6x5,
    MESA_FORMAT_SRGB8_ALPHA8_ASTC_6x6x6,
+
+   /* ATC compressed formats */
+   MESA_FORMAT_ATC_RGB,
+   MESA_FORMAT_ATC_RGBA_EXPLICIT,
+   MESA_FORMAT_ATC_RGBA_INTERPOLATED,
+
    MESA_FORMAT_COUNT
 } mesa_format;
 
@@ -721,6 +729,9 @@ _mesa_is_format_integer(mesa_format format);
 extern bool
 _mesa_is_format_etc2(mesa_format format);
 
+bool
+_mesa_is_format_astc_2d(mesa_format format);
+
 GLenum
 _mesa_is_format_color_format(mesa_format format);
 
@@ -749,6 +760,9 @@ extern mesa_format
 _mesa_get_srgb_format_linear(mesa_format format);
 
 extern mesa_format
+_mesa_get_linear_format_srgb(mesa_format format);
+
+extern mesa_format
 _mesa_get_uncompressed_format(mesa_format format);
 
 extern GLuint
@@ -761,6 +775,9 @@ GLboolean
 _mesa_format_matches_format_and_type(mesa_format mesa_format,
 				     GLenum format, GLenum type,
 				     GLboolean swapBytes, GLenum *error);
+
+mesa_format
+_mesa_format_fallback_rgbx_to_rgba(mesa_format format);
 
 #ifdef __cplusplus
 }

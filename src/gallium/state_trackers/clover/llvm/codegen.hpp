@@ -38,10 +38,6 @@
 
 namespace clover {
    namespace llvm {
-      module
-      build_module_bitcode(const ::llvm::Module &mod,
-                           const clang::CompilerInstance &c);
-
       std::string
       print_module_bitcode(const ::llvm::Module &mod);
 
@@ -49,7 +45,7 @@ namespace clover {
       build_module_library(const ::llvm::Module &mod,
                            enum module::section::type section_type);
 
-      std::unique_ptr<::llvm::Module>
+      std::unique_ptr< ::llvm::Module>
       parse_module_library(const module &m, ::llvm::LLVMContext &ctx,
                            std::string &r_log);
 

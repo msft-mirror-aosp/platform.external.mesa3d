@@ -31,8 +31,12 @@
 #include "etnaviv_tiling.h"
 #include "pipe/p_state.h"
 #include "util/list.h"
+#include "util/set.h"
+#include "util/u_helpers.h"
 
+struct etna_context;
 struct pipe_screen;
+struct util_dynarray;
 
 struct etna_resource_level {
    unsigned width, padded_width; /* in pixels */
@@ -46,6 +50,16 @@ struct etna_resource_level {
    uint32_t ts_layer_stride;
    uint32_t ts_size;
    uint32_t clear_value; /* clear value of resource level (mainly for TS) */
+   bool ts_valid;
+
+   /* keep track if we have done some per block patching */
+   bool patched;
+   struct util_dynarray *patch_offsets;
+};
+
+enum etna_resource_addressing_mode {
+   ETNA_ADDRESSING_MODE_TILED = 0,
+   ETNA_ADDRESSING_MODE_LINEAR,
 };
 
 /* status of queued up but not flushed reads and write operations.
@@ -60,10 +74,12 @@ struct etna_resource {
    struct pipe_resource base;
    struct renderonly_scanout *scanout;
    uint32_t seqno;
+   uint32_t flush_seqno;
 
    /* only lod 0 used for non-texture buffers */
    /* Layout for surface (tiled, multitiled, split tiled, ...) */
    enum etna_surface_layout layout;
+   enum etna_resource_addressing_mode addressing_mode;
    /* Horizontal alignment for texture unit (TEXTURE_HALIGN_*) */
    unsigned halign;
    struct etna_bo *bo; /* Surface video memory */
@@ -73,13 +89,15 @@ struct etna_resource {
 
    /* When we are rendering to a texture, we need a differently tiled resource */
    struct pipe_resource *texture;
+   /*
+    * If imported resources have an render/sampler incompatible tiling, we keep
+    * them as an external resource, which is blitted as needed.
+    */
+   struct pipe_resource *external;
 
    enum etna_resource_status status;
 
-   /* resources accessed by queued but not flushed draws are tracked
-    * in the used_resources list. */
-   struct list_head list;
-   struct etna_context *pending_ctx;
+   struct set *pending_ctx;
 };
 
 /* returns TRUE if a is newer than b */
@@ -94,6 +112,17 @@ static inline bool
 etna_resource_older(struct etna_resource *a, struct etna_resource *b)
 {
    return (int)(a->seqno - b->seqno) < 0;
+}
+
+/* returns TRUE if a resource has a TS, and it is valid for at least one level */
+bool
+etna_resource_has_valid_ts(struct etna_resource *res);
+
+/* returns TRUE if the resource needs a resolve to itself */
+static inline bool
+etna_resource_needs_flush(struct etna_resource *res)
+{
+   return etna_resource_has_valid_ts(res) && ((int)(res->seqno - res->flush_seqno) > 0);
 }
 
 /* is the resource only used on the sampler? */
@@ -114,9 +143,6 @@ etna_resource(struct pipe_resource *p)
 void
 etna_resource_used(struct etna_context *ctx, struct pipe_resource *prsc,
                    enum etna_resource_status status);
-
-void
-etna_resource_wait(struct pipe_context *ctx, struct etna_resource *rsc);
 
 static inline void
 resource_read(struct etna_context *ctx, struct pipe_resource *prsc)
@@ -140,6 +166,7 @@ etna_screen_resource_alloc_ts(struct pipe_screen *pscreen,
 
 struct pipe_resource *
 etna_resource_alloc(struct pipe_screen *pscreen, unsigned layout,
+                    enum etna_resource_addressing_mode mode, uint64_t modifier,
                     const struct pipe_resource *templat);
 
 void

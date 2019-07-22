@@ -69,11 +69,15 @@ nvc0_vertex_configure_translate(struct nvc0_context *nvc0, int32_t index_bias)
       const uint8_t *map;
       const struct pipe_vertex_buffer *vb = &nvc0->vtxbuf[i];
 
-      if (likely(!vb->buffer))
-         map = (const uint8_t *)vb->user_buffer;
-      else
+      if (likely(vb->is_user_buffer))
+         map = (const uint8_t *)vb->buffer.user;
+      else {
+         if (!vb->buffer.resource)
+            continue;
+
          map = nouveau_resource_map_offset(&nvc0->base,
-            nv04_resource(vb->buffer), vb->buffer_offset, NOUVEAU_BO_RD);
+            nv04_resource(vb->buffer.resource), vb->buffer_offset, NOUVEAU_BO_RD);
+      }
 
       if (index_bias && !unlikely(nvc0->vertex->instance_bufs & (1 << i)))
          map += (intptr_t)index_bias * vb->stride;
@@ -83,14 +87,15 @@ nvc0_vertex_configure_translate(struct nvc0_context *nvc0, int32_t index_bias)
 }
 
 static inline void
-nvc0_push_map_idxbuf(struct push_context *ctx, struct nvc0_context *nvc0)
+nvc0_push_map_idxbuf(struct push_context *ctx, struct nvc0_context *nvc0,
+                     const struct pipe_draw_info *info)
 {
-   if (nvc0->idxbuf.buffer) {
-      struct nv04_resource *buf = nv04_resource(nvc0->idxbuf.buffer);
-      ctx->idxbuf = nouveau_resource_map_offset(&nvc0->base,
-         buf, nvc0->idxbuf.offset, NOUVEAU_BO_RD);
+   if (!info->has_user_indices) {
+      struct nv04_resource *buf = nv04_resource(info->index.resource);
+      ctx->idxbuf = nouveau_resource_map_offset(
+            &nvc0->base, buf, 0, NOUVEAU_BO_RD);
    } else {
-      ctx->idxbuf = nvc0->idxbuf.user_buffer;
+      ctx->idxbuf = info->index.user;
    }
 }
 
@@ -101,16 +106,16 @@ nvc0_push_map_edgeflag(struct push_context *ctx, struct nvc0_context *nvc0,
    unsigned attr = nvc0->vertprog->vp.edgeflag;
    struct pipe_vertex_element *ve = &nvc0->vertex->element[attr].pipe;
    struct pipe_vertex_buffer *vb = &nvc0->vtxbuf[ve->vertex_buffer_index];
-   struct nv04_resource *buf = nv04_resource(vb->buffer);
+   struct nv04_resource *buf = nv04_resource(vb->buffer.resource);
 
    ctx->edgeflag.stride = vb->stride;
    ctx->edgeflag.width = util_format_get_blocksize(ve->src_format);
-   if (buf) {
+   if (!vb->is_user_buffer) {
       unsigned offset = vb->buffer_offset + ve->src_offset;
       ctx->edgeflag.data = nouveau_resource_map_offset(&nvc0->base,
                            buf, offset, NOUVEAU_BO_RD);
    } else {
-      ctx->edgeflag.data = (const uint8_t *)vb->user_buffer + ve->src_offset;
+      ctx->edgeflag.data = (const uint8_t *)vb->buffer.user + ve->src_offset;
    }
 
    if (index_bias)
@@ -465,6 +470,83 @@ nvc0_prim_gl(unsigned prim)
    }
 }
 
+typedef struct {
+   uint32_t count;
+   uint32_t primCount;
+   uint32_t first;
+   uint32_t baseInstance;
+} DrawArraysIndirectCommand;
+
+typedef struct {
+   uint32_t count;
+   uint32_t primCount;
+   uint32_t firstIndex;
+   int32_t  baseVertex;
+   uint32_t baseInstance;
+} DrawElementsIndirectCommand;
+
+void
+nvc0_push_vbo_indirect(struct nvc0_context *nvc0, const struct pipe_draw_info *info)
+{
+   /* The strategy here is to just read the commands from the indirect buffer
+    * and do the draws. This is suboptimal, but will only happen in the case
+    * that conversion is required for FIXED or DOUBLE inputs.
+    */
+   struct nvc0_screen *screen = nvc0->screen;
+   struct nouveau_pushbuf *push = nvc0->base.pushbuf;
+   struct nv04_resource *buf = nv04_resource(info->indirect->buffer);
+   struct nv04_resource *buf_count = nv04_resource(info->indirect->indirect_draw_count);
+   unsigned i;
+
+   unsigned draw_count = info->indirect->draw_count;
+   if (buf_count) {
+      uint32_t *count = nouveau_resource_map_offset(
+            &nvc0->base, buf_count, info->indirect->indirect_draw_count_offset,
+            NOUVEAU_BO_RD);
+      draw_count = *count;
+   }
+
+   uint8_t *buf_data = nouveau_resource_map_offset(
+            &nvc0->base, buf, info->indirect->offset, NOUVEAU_BO_RD);
+   struct pipe_draw_info single = *info;
+   single.indirect = NULL;
+   for (i = 0; i < draw_count; i++, buf_data += info->indirect->stride) {
+      if (info->index_size) {
+         DrawElementsIndirectCommand *cmd = (void *)buf_data;
+         single.start = info->start + cmd->firstIndex;
+         single.count = cmd->count;
+         single.start_instance = cmd->baseInstance;
+         single.instance_count = cmd->primCount;
+         single.index_bias = cmd->baseVertex;
+      } else {
+         DrawArraysIndirectCommand *cmd = (void *)buf_data;
+         single.start = cmd->first;
+         single.count = cmd->count;
+         single.start_instance = cmd->baseInstance;
+         single.instance_count = cmd->primCount;
+      }
+
+      if (nvc0->vertprog->vp.need_draw_parameters) {
+         PUSH_SPACE(push, 9);
+         BEGIN_NVC0(push, NVC0_3D(CB_SIZE), 3);
+         PUSH_DATA (push, NVC0_CB_AUX_SIZE);
+         PUSH_DATAh(push, screen->uniform_bo->offset + NVC0_CB_AUX_INFO(0));
+         PUSH_DATA (push, screen->uniform_bo->offset + NVC0_CB_AUX_INFO(0));
+         BEGIN_1IC0(push, NVC0_3D(CB_POS), 1 + 3);
+         PUSH_DATA (push, NVC0_CB_AUX_DRAW_INFO);
+         PUSH_DATA (push, single.index_bias);
+         PUSH_DATA (push, single.start_instance);
+         PUSH_DATA (push, single.drawid + i);
+      }
+
+      nvc0_push_vbo(nvc0, &single);
+   }
+
+   nouveau_resource_unmap(buf);
+   if (buf_count)
+      nouveau_resource_unmap(buf_count);
+}
+
 void
 nvc0_push_vbo(struct nvc0_context *nvc0, const struct pipe_draw_info *info)
 {
@@ -499,16 +581,16 @@ nvc0_push_vbo(struct nvc0_context *nvc0, const struct pipe_draw_info *info)
        */
       BEGIN_NVC0(ctx.push, NVC0_3D(PRIM_RESTART_ENABLE), 2);
       PUSH_DATA (ctx.push, 1);
-      PUSH_DATA (ctx.push, info->indexed ? 0xffffffff : info->restart_index);
+      PUSH_DATA (ctx.push, info->index_size ? 0xffffffff : info->restart_index);
    } else
    if (nvc0->state.prim_restart) {
       IMMED_NVC0(ctx.push, NVC0_3D(PRIM_RESTART_ENABLE), 0);
    }
    nvc0->state.prim_restart = info->primitive_restart;
 
-   if (info->indexed) {
-      nvc0_push_map_idxbuf(&ctx, nvc0);
-      index_size = nvc0->idxbuf.index_size;
+   if (info->index_size) {
+      nvc0_push_map_idxbuf(&ctx, nvc0, info);
+      index_size = info->index_size;
    } else {
       if (unlikely(info->count_from_stream_output)) {
          struct pipe_context *pipe = &nvc0->base.pipe;
@@ -583,10 +665,10 @@ nvc0_push_vbo(struct nvc0_context *nvc0, const struct pipe_draw_info *info)
       IMMED_NVC0(ctx.push, NVC0_3D(VERTEX_ARRAY_FETCH(1)), 0);
    }
 
-   if (info->indexed)
-      nouveau_resource_unmap(nv04_resource(nvc0->idxbuf.buffer));
+   if (info->index_size && !info->has_user_indices)
+      nouveau_resource_unmap(nv04_resource(info->index.resource));
    for (i = 0; i < nvc0->num_vtxbufs; ++i)
-      nouveau_resource_unmap(nv04_resource(nvc0->vtxbuf[i].buffer));
+      nouveau_resource_unmap(nv04_resource(nvc0->vtxbuf[i].buffer.resource));
 
    NOUVEAU_DRV_STAT(&nvc0->screen->base, draw_calls_fallback_count, 1);
 }
@@ -626,7 +708,7 @@ nvc0_push_upload_vertex_ids(struct push_context *ctx,
    uint64_t va;
    uint32_t *data;
    uint32_t format;
-   unsigned index_size = nvc0->idxbuf.index_size;
+   unsigned index_size = info->index_size;
    unsigned i;
    unsigned a = nvc0->vertex->num_elements;
 
@@ -639,11 +721,11 @@ nvc0_push_upload_vertex_ids(struct push_context *ctx,
                 bo);
    nouveau_pushbuf_validate(push);
 
-   if (info->indexed) {
+   if (info->index_size) {
       if (!info->index_bias) {
          memcpy(data, ctx->idxbuf, info->count * index_size);
       } else {
-         switch (nvc0->idxbuf.index_size) {
+         switch (info->index_size) {
          case 1:
             copy_indices_u8(data, ctx->idxbuf, info->index_bias, info->count);
             break;

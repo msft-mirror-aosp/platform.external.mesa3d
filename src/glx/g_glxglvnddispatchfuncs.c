@@ -4,6 +4,7 @@
  */
 #include <stdlib.h>
 
+#include "glxclient.h"
 #include "glxglvnd.h"
 #include "glxglvnddispatchfuncs.h"
 #include "g_glxglvnddispatchindices.h"
@@ -50,6 +51,7 @@ const char * const __glXDispatchTableStrings[DI_LAST_INDEX] = {
     __ATTRIB(GetCurrentDisplayEXT),
     // glXGetCurrentDrawable implemented by libglvnd
     // glXGetCurrentReadDrawable implemented by libglvnd
+    __ATTRIB(GetDriverConfig),
     // glXGetFBConfigAttrib implemented by libglvnd
     __ATTRIB(GetFBConfigAttribSGIX),
     __ATTRIB(GetFBConfigFromVisualSGIX),
@@ -126,7 +128,7 @@ static void dispatch_BindTexImageEXT(Display *dpy, GLXDrawable drawable,
 
 
 static GLXFBConfigSGIX *dispatch_ChooseFBConfigSGIX(Display *dpy, int screen,
-                                                    const int *attrib_list,
+                                                    int *attrib_list,
                                                     int *nelements)
 {
     PFNGLXCHOOSEFBCONFIGSGIXPROC pChooseFBConfigSGIX;
@@ -218,7 +220,7 @@ static GLXPbuffer dispatch_CreateGLXPbufferSGIX(Display *dpy,
                                                 GLXFBConfig config,
                                                 unsigned int width,
                                                 unsigned int height,
-                                                const int *attrib_list)
+                                                int *attrib_list)
 {
     PFNGLXCREATEGLXPBUFFERSGIXPROC pCreateGLXPbufferSGIX;
     __GLXvendorInfo *dd;
@@ -330,6 +332,21 @@ static Display *dispatch_GetCurrentDisplayEXT(void)
         return NULL;
 
     return (*pGetCurrentDisplayEXT)();
+}
+
+
+
+static const char *dispatch_GetDriverConfig(const char *driverName)
+{
+#if defined(GLX_DIRECT_RENDERING) && !defined(GLX_USE_APPLEGL)
+    /*
+     * The options are constant for a given driverName, so we do not need
+     * a context (and apps expect to be able to call this without one).
+     */
+    return glXGetDriverConfig(driverName);
+#else
+    return NULL;
+#endif
 }
 
 
@@ -939,6 +956,7 @@ const void * const __glXDispatchFunctions[DI_LAST_INDEX + 1] = {
     __ATTRIB(DestroyGLXPbufferSGIX),
     __ATTRIB(GetContextIDEXT),
     __ATTRIB(GetCurrentDisplayEXT),
+    __ATTRIB(GetDriverConfig),
     __ATTRIB(GetFBConfigAttribSGIX),
     __ATTRIB(GetFBConfigFromVisualSGIX),
     __ATTRIB(GetMscRateOML),

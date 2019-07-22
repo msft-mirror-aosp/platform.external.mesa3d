@@ -37,9 +37,27 @@
 #include "main/mtypes.h"
 #include "main/arbprogram.h"
 #include "main/shaderapi.h"
+#include "main/state.h"
 #include "program/arbprogparse.h"
 #include "program/program.h"
 #include "program/prog_print.h"
+
+static void
+flush_vertices_for_program_constants(struct gl_context *ctx, GLenum target)
+{
+   uint64_t new_driver_state;
+
+   if (target == GL_FRAGMENT_PROGRAM_ARB) {
+      new_driver_state =
+         ctx->DriverFlags.NewShaderConstants[MESA_SHADER_FRAGMENT];
+   } else {
+      new_driver_state =
+         ctx->DriverFlags.NewShaderConstants[MESA_SHADER_VERTEX];
+   }
+
+   FLUSH_VERTICES(ctx, new_driver_state ? 0 : _NEW_PROGRAM_CONSTANTS);
+   ctx->NewDriverState |= new_driver_state;
+}
 
 /**
  * Bind a program (make it current)
@@ -105,7 +123,8 @@ _mesa_BindProgramARB(GLenum target, GLuint id)
    }
 
    /* signal new program (and its new constants) */
-   FLUSH_VERTICES(ctx, _NEW_PROGRAM | _NEW_PROGRAM_CONSTANTS);
+   FLUSH_VERTICES(ctx, _NEW_PROGRAM);
+   flush_vertices_for_program_constants(ctx, target);
 
    /* bind newProg */
    if (target == GL_VERTEX_PROGRAM_ARB) {
@@ -115,12 +134,11 @@ _mesa_BindProgramARB(GLenum target, GLuint id)
       _mesa_reference_program(ctx, &ctx->FragmentProgram.Current, newProg);
    }
 
+   _mesa_update_vertex_processing_mode(ctx);
+
    /* Never null pointers */
    assert(ctx->VertexProgram.Current);
    assert(ctx->FragmentProgram.Current);
-
-   if (ctx->Driver.BindProgram)
-      ctx->Driver.BindProgram(ctx, target, newProg);
 }
 
 
@@ -329,6 +347,21 @@ _mesa_ProgramStringARB(GLenum target, GLenum format, GLsizei len,
       return;
    }
 
+#ifdef ENABLE_SHADER_CACHE
+   GLcharARB *replacement;
+
+   gl_shader_stage stage = _mesa_program_enum_to_shader_stage(target);
+
+   /* Dump original shader source to MESA_SHADER_DUMP_PATH and replace
+    * if corresponding entry found from MESA_SHADER_READ_PATH.
+    */
+   _mesa_dump_shader_source(stage, string);
+
+   replacement = _mesa_read_shader_source(stage, string);
+   if (replacement)
+      string = replacement;
+#endif /* ENABLE_SHADER_CACHE */
+
    if (target == GL_VERTEX_PROGRAM_ARB && ctx->Extensions.ARB_vertex_program) {
       prog = ctx->VertexProgram.Current;
       _mesa_parse_arb_vertex_program(ctx, target, string, len, prog);
@@ -353,6 +386,8 @@ _mesa_ProgramStringARB(GLenum target, GLenum format, GLsizei len,
                      "glProgramStringARB(rejected by driver");
       }
    }
+
+   _mesa_update_vertex_processing_mode(ctx);
 
    if (ctx->_Shader->Flags & GLSL_DUMP) {
       const char *shader_type =
@@ -437,7 +472,7 @@ _mesa_ProgramEnvParameter4fARB(GLenum target, GLuint index,
 
    GET_CURRENT_CONTEXT(ctx);
 
-   FLUSH_VERTICES(ctx, _NEW_PROGRAM_CONSTANTS);
+   flush_vertices_for_program_constants(ctx, target);
 
    if (get_env_param_pointer(ctx, "glProgramEnvParameter",
 			     target, index, &param)) {
@@ -459,7 +494,7 @@ _mesa_ProgramEnvParameter4fvARB(GLenum target, GLuint index,
 
    GET_CURRENT_CONTEXT(ctx);
 
-   FLUSH_VERTICES(ctx, _NEW_PROGRAM_CONSTANTS);
+   flush_vertices_for_program_constants(ctx, target);
 
    if (get_env_param_pointer(ctx, "glProgramEnvParameter4fv",
 			      target, index, &param)) {
@@ -475,7 +510,7 @@ _mesa_ProgramEnvParameters4fvEXT(GLenum target, GLuint index, GLsizei count,
    GET_CURRENT_CONTEXT(ctx);
    GLfloat * dest;
 
-   FLUSH_VERTICES(ctx, _NEW_PROGRAM_CONSTANTS);
+   flush_vertices_for_program_constants(ctx, target);
 
    if (count <= 0) {
       _mesa_error(ctx, GL_INVALID_VALUE, "glProgramEnvParameters4fv(count)");
@@ -542,7 +577,7 @@ _mesa_ProgramLocalParameter4fARB(GLenum target, GLuint index,
    GET_CURRENT_CONTEXT(ctx);
    GLfloat *param;
 
-   FLUSH_VERTICES(ctx, _NEW_PROGRAM_CONSTANTS);
+   flush_vertices_for_program_constants(ctx, target);
 
    if (get_local_param_pointer(ctx, "glProgramLocalParameterARB",
 			       target, index, &param)) {
@@ -568,7 +603,7 @@ _mesa_ProgramLocalParameters4fvEXT(GLenum target, GLuint index, GLsizei count,
    GET_CURRENT_CONTEXT(ctx);
    GLfloat *dest;
 
-   FLUSH_VERTICES(ctx, _NEW_PROGRAM_CONSTANTS);
+   flush_vertices_for_program_constants(ctx, target);
 
    if (count <= 0) {
       _mesa_error(ctx, GL_INVALID_VALUE, "glProgramLocalParameters4fv(count)");

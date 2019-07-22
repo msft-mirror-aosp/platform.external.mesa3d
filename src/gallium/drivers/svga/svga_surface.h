@@ -72,6 +72,9 @@ struct svga_surface
     * original surface is the shader resource.
     */
    struct svga_surface *backed;
+   unsigned age;                   /* timestamp when the backed resource is
+                                    * synced with the original resource.
+                                    */
 };
 
 
@@ -79,7 +82,8 @@ void
 svga_mark_surfaces_dirty(struct svga_context *svga);
 
 extern void
-svga_propagate_surface(struct svga_context *svga, struct pipe_surface *surf);
+svga_propagate_surface(struct svga_context *svga, struct pipe_surface *surf,
+                       boolean reset);
 
 void
 svga_propagate_rendertargets(struct svga_context *svga);
@@ -91,15 +95,25 @@ struct svga_winsys_surface *
 svga_texture_view_surface(struct svga_context *svga,
                           struct svga_texture *tex,
                           unsigned bind_flags,
-                          SVGA3dSurfaceFlags flags,
+                          SVGA3dSurfaceAllFlags flags,
                           SVGA3dSurfaceFormat format,
                           unsigned start_mip,
                           unsigned num_mip,
                           int layer_pick,
                           unsigned num_layers,
                           int zslice_pick,
+                          boolean cacheable,
                           struct svga_host_surface_cache_key *key); /* OUT */
 
+void
+svga_texture_copy_region(struct svga_context *svga,
+                         struct svga_winsys_surface *src_handle,
+                         unsigned srcSubResource,
+                         unsigned src_x, unsigned src_y, unsigned src_z,
+                         struct svga_winsys_surface *dst_handle,
+                         unsigned dstSubResource,
+                         unsigned dst_x, unsigned dst_y, unsigned dst_z,
+                         unsigned width, unsigned height, unsigned depth);
 
 void
 svga_texture_copy_handle(struct svga_context *svga,
@@ -139,6 +153,7 @@ svga_resource_type(enum pipe_texture_target target)
    case PIPE_TEXTURE_2D:
    case PIPE_TEXTURE_2D_ARRAY:
    case PIPE_TEXTURE_CUBE:
+   case PIPE_TEXTURE_CUBE_ARRAY:
       /* drawing to cube map is treated as drawing to 2D array */
       return SVGA3D_RESOURCE_TEXTURE2D;
    case PIPE_TEXTURE_3D:

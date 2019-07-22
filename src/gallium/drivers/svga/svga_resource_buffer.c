@@ -42,16 +42,37 @@
 
 
 /**
- * Vertex and index buffers need hardware backing.  Constant buffers
- * do not.  No other types of buffers currently supported.
+ * Determine what buffers eventually need hardware backing.
+ *
+ * Vertex- and index buffers need hardware backing.  Constant buffers
+ * do on vgpu10. Staging texture-upload buffers do when they are
+ * supported.
  */
 static inline boolean
-svga_buffer_needs_hw_storage(unsigned usage)
+svga_buffer_needs_hw_storage(const struct svga_screen *ss,
+                             const struct pipe_resource *template)
 {
-   return (usage & (PIPE_BIND_VERTEX_BUFFER | PIPE_BIND_INDEX_BUFFER |
-                    PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_STREAM_OUTPUT)) != 0;
-}
+   unsigned bind_mask = (PIPE_BIND_VERTEX_BUFFER | PIPE_BIND_INDEX_BUFFER |
+                         PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_STREAM_OUTPUT);
 
+   if (ss->sws->have_vgpu10) {
+      /*
+       * Driver-created upload const0- and staging texture upload buffers
+       * tagged with PIPE_BIND_CUSTOM
+       */
+      bind_mask |= PIPE_BIND_CUSTOM;
+      /* Uniform buffer objects.
+       * Make sure we don't create hardware storage for state-tracker
+       * const0 buffers, because we frequently map them for reading.
+       * They are distinguished by having PIPE_USAGE_STREAM, but not
+       * PIPE_BIND_CUSTOM.
+       */
+      if (template->usage != PIPE_USAGE_STREAM)
+         bind_mask |= PIPE_BIND_CONSTANT_BUFFER;
+   }
+
+   return !!(template->bind & bind_mask);
+}
 
 /**
  * Create a buffer transfer.
@@ -114,10 +135,10 @@ svga_buffer_transfer_map(struct pipe_context *pipe,
       assert(svga_have_vgpu10(svga));
 
       if (!sbuf->user) {
-         (void) svga_buffer_handle(svga, resource);
+         (void) svga_buffer_handle(svga, resource, sbuf->bind_flags);
       }
 
-      if (sbuf->dma.pending > 0) {
+      if (sbuf->dma.pending) {
          svga_buffer_upload_flush(svga, sbuf);
          svga_context_finish(svga);
       }
@@ -224,7 +245,7 @@ svga_buffer_transfer_map(struct pipe_context *pipe,
    }
 
    if (!sbuf->swbuf && !svga_buffer_has_hw_storage(sbuf)) {
-      if (svga_buffer_create_hw_storage(ss, sbuf) != PIPE_OK) {
+      if (svga_buffer_create_hw_storage(ss, sbuf, sbuf->bind_flags) != PIPE_OK) {
          /*
           * We can't create a hardware buffer big enough, so create a malloc
           * buffer instead.
@@ -283,9 +304,9 @@ done:
 
 
 static void
-svga_buffer_transfer_flush_region( struct pipe_context *pipe,
-                                   struct pipe_transfer *transfer,
-                                   const struct pipe_box *box)
+svga_buffer_transfer_flush_region(struct pipe_context *pipe,
+                                  struct pipe_transfer *transfer,
+                                  const struct pipe_box *box)
 {
    struct svga_screen *ss = svga_screen(pipe->screen);
    struct svga_buffer *sbuf = svga_buffer(transfer->resource);
@@ -296,15 +317,15 @@ svga_buffer_transfer_flush_region( struct pipe_context *pipe,
    assert(transfer->usage & PIPE_TRANSFER_WRITE);
    assert(transfer->usage & PIPE_TRANSFER_FLUSH_EXPLICIT);
 
-   pipe_mutex_lock(ss->swc_mutex);
+   mtx_lock(&ss->swc_mutex);
    svga_buffer_add_range(sbuf, offset, offset + length);
-   pipe_mutex_unlock(ss->swc_mutex);
+   mtx_unlock(&ss->swc_mutex);
 }
 
 
 static void
-svga_buffer_transfer_unmap( struct pipe_context *pipe,
-                            struct pipe_transfer *transfer )
+svga_buffer_transfer_unmap(struct pipe_context *pipe,
+                           struct pipe_transfer *transfer)
 {
    struct svga_screen *ss = svga_screen(pipe->screen);
    struct svga_context *svga = svga_context(pipe);
@@ -312,7 +333,7 @@ svga_buffer_transfer_unmap( struct pipe_context *pipe,
 
    SVGA_STATS_TIME_PUSH(svga_sws(svga), SVGA_STATS_TIME_BUFFERTRANSFERUNMAP);
 
-   pipe_mutex_lock(ss->swc_mutex);
+   mtx_lock(&ss->swc_mutex);
 
    assert(sbuf->map.count);
    if (sbuf->map.count) {
@@ -320,6 +341,9 @@ svga_buffer_transfer_unmap( struct pipe_context *pipe,
    }
 
    if (svga_buffer_has_hw_storage(sbuf)) {
+      /* Note: we may wind up flushing here and unmapping other buffers
+       * which leads to recursively locking ss->swc_mutex.
+       */
       svga_buffer_hw_storage_unmap(svga, sbuf);
    }
 
@@ -339,18 +363,18 @@ svga_buffer_transfer_unmap( struct pipe_context *pipe,
       }
    }
 
-   pipe_mutex_unlock(ss->swc_mutex);
+   mtx_unlock(&ss->swc_mutex);
    FREE(transfer);
    SVGA_STATS_TIME_POP(svga_sws(svga));
 }
 
 
 static void
-svga_buffer_destroy( struct pipe_screen *screen,
-		     struct pipe_resource *buf )
+svga_buffer_destroy(struct pipe_screen *screen,
+                    struct pipe_resource *buf)
 {
-   struct svga_screen *ss = svga_screen(screen); 
-   struct svga_buffer *sbuf = svga_buffer( buf );
+   struct svga_screen *ss = svga_screen(screen);
+   struct svga_buffer *sbuf = svga_buffer(buf);
 
    assert(!p_atomic_read(&buf->reference.count));
 
@@ -392,10 +416,11 @@ struct u_resource_vtbl svga_buffer_vtbl =
 
 struct pipe_resource *
 svga_buffer_create(struct pipe_screen *screen,
-		   const struct pipe_resource *template)
+                   const struct pipe_resource *template)
 {
    struct svga_screen *ss = svga_screen(screen);
    struct svga_buffer *sbuf;
+   unsigned bind_flags;
 
    SVGA_STATS_TIME_PUSH(ss->sws, SVGA_STATS_TIME_CREATEBUFFER);
 
@@ -407,39 +432,47 @@ svga_buffer_create(struct pipe_screen *screen,
    sbuf->b.vtbl = &svga_buffer_vtbl;
    pipe_reference_init(&sbuf->b.b.reference, 1);
    sbuf->b.b.screen = screen;
-   sbuf->bind_flags = template->bind;
+   bind_flags = template->bind & ~PIPE_BIND_CUSTOM;
 
-   if (template->bind & PIPE_BIND_CONSTANT_BUFFER) {
+   LIST_INITHEAD(&sbuf->surfaces);
+
+   if (bind_flags & PIPE_BIND_CONSTANT_BUFFER) {
       /* Constant buffers can only have the PIPE_BIND_CONSTANT_BUFFER
        * flag set.
        */
       if (ss->sws->have_vgpu10) {
-         sbuf->bind_flags = PIPE_BIND_CONSTANT_BUFFER;
-
-         /* Constant buffer size needs to be in multiples of 16. */
-         sbuf->b.b.width0 = align(sbuf->b.b.width0, 16);
+         bind_flags = PIPE_BIND_CONSTANT_BUFFER;
       }
    }
 
-   if (svga_buffer_needs_hw_storage(template->bind)) {
+   /* Although svga device only requires constant buffer size to be
+    * in multiples of 16, in order to allow bind_flags promotion,
+    * we are mandating all buffer size to be in multiples of 16.
+    */
+   sbuf->b.b.width0 = align(sbuf->b.b.width0, 16);
 
-      /* If the buffer will be used for vertex/index/stream data, set all
-       * the flags so that the buffer will be accepted for all those uses.
+   if (svga_buffer_needs_hw_storage(ss, template)) {
+
+      /* If the buffer is not used for constant buffer, set
+       * the vertex/index bind flags as well so that the buffer will be
+       * accepted for those uses.
        * Note that the PIPE_BIND_ flags we get from the state tracker are
        * just a hint about how the buffer may be used.  And OpenGL buffer
        * object may be used for many different things.
+       * Also note that we do not unconditionally set the streamout
+       * bind flag since streamout buffer is an output buffer and
+       * might have performance implication.
        */
-      if (!(template->bind & PIPE_BIND_CONSTANT_BUFFER)) {
-         /* Not a constant buffer.  The buffer may be used for vertex data,
-          * indexes or stream-out.
+      if (!(template->bind & PIPE_BIND_CONSTANT_BUFFER) &&
+          !(template->bind & PIPE_BIND_CUSTOM)) {
+         /* Not a constant- or staging buffer.
+          * The buffer may be used for vertex data or indexes.
           */
-         sbuf->bind_flags |= (PIPE_BIND_VERTEX_BUFFER |
-                              PIPE_BIND_INDEX_BUFFER);
-         if (ss->sws->have_vgpu10)
-            sbuf->bind_flags |= PIPE_BIND_STREAM_OUTPUT;
+         bind_flags |= (PIPE_BIND_VERTEX_BUFFER |
+                        PIPE_BIND_INDEX_BUFFER);
       }
 
-      if (svga_buffer_create_host_surface(ss, sbuf) != PIPE_OK)
+      if (svga_buffer_create_host_surface(ss, sbuf, bind_flags) != PIPE_OK)
          goto error2;
    }
    else {
@@ -451,6 +484,7 @@ svga_buffer_create(struct pipe_screen *screen,
    debug_reference(&sbuf->b.b.reference,
                    (debug_reference_descriptor)debug_describe_resource, 0);
 
+   sbuf->bind_flags = bind_flags;
    sbuf->size = util_resource_size(&sbuf->b.b);
    ss->hud.total_resource_bytes += sbuf->size;
 
@@ -471,7 +505,7 @@ struct pipe_resource *
 svga_user_buffer_create(struct pipe_screen *screen,
                         void *ptr,
                         unsigned bytes,
-			unsigned bind)
+                        unsigned bind)
 {
    struct svga_buffer *sbuf;
    struct svga_screen *ss = svga_screen(screen);
@@ -505,6 +539,3 @@ svga_user_buffer_create(struct pipe_screen *screen,
 no_sbuf:
    return NULL;
 }
-
-
-

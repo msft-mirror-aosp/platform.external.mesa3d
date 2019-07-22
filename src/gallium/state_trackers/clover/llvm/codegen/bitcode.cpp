@@ -66,15 +66,9 @@ namespace {
    emit_code(const ::llvm::Module &mod) {
       ::llvm::SmallVector<char, 1024> data;
       ::llvm::raw_svector_ostream os { data };
-      WriteBitcodeToFile(&mod, os);
+      compat::write_bitcode_to_file(mod, os);
       return { os.str().begin(), os.str().end() };
    }
-}
-
-module
-clover::llvm::build_module_bitcode(const ::llvm::Module &mod,
-                                   const clang::CompilerInstance &c) {
-   return build_module_common(mod, emit_code(mod), get_symbol_offsets(mod), c);
 }
 
 std::string
@@ -94,7 +88,7 @@ clover::llvm::build_module_library(const ::llvm::Module &mod,
    return m;
 }
 
-std::unique_ptr<::llvm::Module>
+std::unique_ptr< ::llvm::Module>
 clover::llvm::parse_module_library(const module &m, ::llvm::LLVMContext &ctx,
                                    std::string &r_log) {
    auto mod = ::llvm::parseBitcodeFile(::llvm::MemoryBufferRef(
@@ -104,5 +98,5 @@ clover::llvm::parse_module_library(const module &m, ::llvm::LLVMContext &ctx,
          fail(r_log, error(CL_INVALID_PROGRAM), s);
       });
 
-   return std::unique_ptr<::llvm::Module>(std::move(*mod));
+   return std::unique_ptr< ::llvm::Module>(std::move(*mod));
 }

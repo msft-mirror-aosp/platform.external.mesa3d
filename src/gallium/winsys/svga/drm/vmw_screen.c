@@ -96,6 +96,7 @@ vmw_winsys_create( int fd )
    if (!vmw_ioctl_init(vws))
       goto out_no_ioctl;
 
+   vws->base.have_transfer_from_buffer_cmd = vws->base.have_vgpu10;
    vws->fence_ops = vmw_fence_ops_create(vws);
    if (!vws->fence_ops)
       goto out_no_fence_ops;
@@ -108,6 +109,9 @@ vmw_winsys_create( int fd )
 
    if (util_hash_table_set(dev_hash, &vws->device, vws) != PIPE_OK)
       goto out_no_hash_insert;
+
+   cnd_init(&vws->cs_cond);
+   mtx_init(&vws->cs_mutex, mtx_plain);
 
    return vws;
 out_no_hash_insert:
@@ -133,6 +137,8 @@ vmw_winsys_destroy(struct vmw_winsys_screen *vws)
       vws->fence_ops->destroy(vws->fence_ops);
       vmw_ioctl_cleanup(vws);
       close(vws->ioctl.drm_fd);
+      mtx_destroy(&vws->cs_mutex);
+      cnd_destroy(&vws->cs_cond);
       FREE(vws);
    }
 }

@@ -42,7 +42,11 @@ enum special_regs {
 	SV_EXEC_MASK,
 	SV_AR_INDEX,
 	SV_VALID_MASK,
-	SV_GEOMETRY_EMIT
+	SV_GEOMETRY_EMIT,
+	SV_LDS_RW,
+	SV_LDS_OQA,
+	SV_LDS_OQB,
+	SV_SCRATCH
 };
 
 class node;
@@ -435,26 +439,7 @@ sb_ostream& operator << (sb_ostream &o, value &v);
 
 typedef uint32_t value_hash;
 
-enum use_kind {
-	UK_SRC,
-	UK_SRC_REL,
-	UK_DST_REL,
-	UK_MAYDEF,
-	UK_MAYUSE,
-	UK_PRED,
-	UK_COND
-};
-
-struct use_info {
-	node *op;
-	use_kind kind;
-	int arg;
-
-	use_info(node *n, use_kind kind, int arg)
-		: op(n), kind(kind), arg(arg) {}
-};
-
-typedef std::list< use_info * > uselist;
+typedef std::list< node * > uselist;
 
 enum constraint_kind {
 	CK_SAME_REG,
@@ -514,6 +499,12 @@ public:
 	bool is_geometry_emit() {
 		return is_special_reg() && select == sel_chan(SV_GEOMETRY_EMIT, 0);
 	}
+	bool is_lds_access() {
+		return is_special_reg() && select == sel_chan(SV_LDS_RW, 0);
+	}
+	bool is_lds_oq() {
+		return is_special_reg() && (select == sel_chan(SV_LDS_OQA, 0) || select == sel_chan(SV_LDS_OQB, 0));
+	}
 
 	node* any_def() {
 		assert(!(def && adef));
@@ -526,6 +517,9 @@ public:
 			// FIXME we really shouldn't have such chains
 			v = v->gvn_source;
 		return v;
+	}
+	bool is_scratch() {
+		return is_special_reg() && select == sel_chan(SV_SCRATCH, 0);
 	}
 
 	bool is_float_0_or_1() {
@@ -585,7 +579,7 @@ public:
 				&& literal_value != literal(1.0);
 	}
 
-	void add_use(node *n, use_kind kind, int arg);
+	void add_use(node *n);
 	void remove_use(const node *n);
 
 	value_hash hash();
@@ -621,6 +615,12 @@ public:
 			return gpr.chan();
 		}
 	}
+
+	/* Check whether copy-propagation of src into this would create an access
+	 * conflict with relative addressing, i.e. an operation that tries to access
+	 * array elements with different address register values.
+	 */
+	bool no_reladdr_conflict_with(value *src);
 
 	val_set interferences;
 	unsigned uid;
@@ -682,6 +682,7 @@ enum node_subtype {
 	NST_FETCH_INST,
 	NST_TEX_CLAUSE,
 	NST_VTX_CLAUSE,
+	NST_GDS_CLAUSE,
 
 	NST_BB,
 
@@ -745,11 +746,12 @@ struct node_stats {
 	unsigned depart_count;
 	unsigned repeat_count;
 	unsigned if_count;
+       bool uses_ar;
 
 	node_stats() : alu_count(), alu_kill_count(), alu_copy_mov_count(),
 			cf_count(), fetch_count(), region_count(),
 			loop_count(), phi_count(), loop_phi_count(), depart_count(),
-			repeat_count(), if_count() {}
+                       repeat_count(), if_count(), uses_ar(false) {}
 
 	void dump();
 };
@@ -805,7 +807,7 @@ public:
 	bool is_alu_clause() { return subtype == NST_ALU_CLAUSE; }
 
 	bool is_fetch_clause() {
-		return subtype == NST_TEX_CLAUSE || subtype == NST_VTX_CLAUSE;
+		return subtype == NST_TEX_CLAUSE || subtype == NST_VTX_CLAUSE || subtype == NST_GDS_CLAUSE;
 	}
 
 	bool is_copy() { return subtype == NST_COPY; }
@@ -850,6 +852,22 @@ public:
 		return vec_uses_ar(dst) || vec_uses_ar(src);
 	}
 
+	bool vec_uses_lds_oq(vvec &vv) {
+		for (vvec::iterator I = vv.begin(), E = vv.end(); I != E; ++I) {
+			value *v = *I;
+			if (v && v->is_lds_oq())
+				return true;
+		}
+		return false;
+	}
+
+	bool consumes_lds_oq() {
+		return vec_uses_lds_oq(src);
+	}
+
+	bool produces_lds_oq() {
+		return vec_uses_lds_oq(dst);
+	}
 
 	region_node* get_parent_region();
 
@@ -994,7 +1012,7 @@ public:
 
 class alu_node : public node {
 protected:
-	alu_node() : node(NT_OP, NST_ALU_INST) { memset(&bc, 0, sizeof(bc_alu)); };
+	alu_node() : node(NT_OP, NST_ALU_INST) { memset(&bc, 0, sizeof(bc_alu)); }
 public:
 	bc_alu bc;
 

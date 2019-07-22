@@ -29,10 +29,10 @@ ir3_nir_trig_deps := \
 	$(MESA_TOP)/src/compiler/nir/nir_algebraic.py
 
 intermediates := $(call local-generated-sources-dir)
+prebuilt_intermediates := $(MESA_TOP)/prebuilt-intermediates
 
-$(intermediates)/ir3/ir3_nir_trig.c: $(ir3_nir_trig_deps)
-	@mkdir -p $(dir $@)
-	$(hide) PYTHONPATH=$(MESA_TOP)/src/compiler/nir $(MESA_PYTHON2) $< > $@
+$(intermediates)/ir3/ir3_nir_trig.c: $(prebuilt_intermediates)/ir3/ir3_nir_trig.c
+	cp -a $< $@
 
 LOCAL_GENERATED_SOURCES += $(addprefix $(intermediates)/, \
 	$(ir3_GENERATED_FILES))

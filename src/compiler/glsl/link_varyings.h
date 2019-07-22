@@ -21,7 +21,6 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
 #ifndef GLSL_LINK_VARYINGS_H
 #define GLSL_LINK_VARYINGS_H
 
@@ -34,7 +33,8 @@
 
 
 #include "main/glheader.h"
-
+#include "program/prog_parameter.h"
+#include "util/bitset.h"
 
 struct gl_shader_program;
 struct gl_shader;
@@ -99,7 +99,9 @@ public:
    bool store(struct gl_context *ctx, struct gl_shader_program *prog,
               struct gl_transform_feedback_info *info, unsigned buffer,
               unsigned buffer_index, const unsigned max_outputs,
-              bool *explicit_stride, bool has_xfb_qualifiers) const;
+              BITSET_WORD *used_components[MAX_FEEDBACK_BUFFERS],
+              bool *explicit_stride, bool has_xfb_qualifiers,
+              const void *mem_ctx) const;
    const tfeedback_candidate *find_candidate(gl_shader_program *prog,
                                              hash_table *tfeedback_candidates);
 
@@ -162,24 +164,7 @@ private:
 
    bool is_64bit() const
    {
-      switch (this->type) {
-      case GL_DOUBLE:
-      case GL_DOUBLE_VEC2:
-      case GL_DOUBLE_VEC3:
-      case GL_DOUBLE_VEC4:
-      case GL_DOUBLE_MAT2:
-      case GL_DOUBLE_MAT2x3:
-      case GL_DOUBLE_MAT2x4:
-      case GL_DOUBLE_MAT3:
-      case GL_DOUBLE_MAT3x2:
-      case GL_DOUBLE_MAT3x4:
-      case GL_DOUBLE_MAT4:
-      case GL_DOUBLE_MAT4x2:
-      case GL_DOUBLE_MAT4x3:
-         return true;
-      default:
-         return false;
-      }
+      return _mesa_gl_datatype_is_64bit(this->type);
    }
 
    /**
@@ -288,57 +273,20 @@ private:
    unsigned stream_id;
 };
 
+bool
+link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
+              struct gl_context *ctx, void *mem_ctx);
 
 void
-cross_validate_outputs_to_inputs(struct gl_shader_program *prog,
+validate_first_and_last_interface_explicit_locations(struct gl_context *ctx,
+                                                     struct gl_shader_program *prog,
+                                                     gl_shader_stage first,
+                                                     gl_shader_stage last);
+
+void
+cross_validate_outputs_to_inputs(struct gl_context *ctx,
+                                 struct gl_shader_program *prog,
                                  gl_linked_shader *producer,
                                  gl_linked_shader *consumer);
-
-bool
-parse_tfeedback_decls(struct gl_context *ctx, struct gl_shader_program *prog,
-                      const void *mem_ctx, unsigned num_names,
-                      char **varying_names, tfeedback_decl *decls);
-
-bool
-process_xfb_layout_qualifiers(void *mem_ctx, const gl_linked_shader *sh,
-                              unsigned *num_tfeedback_decls,
-                              char ***varying_names);
-
-void
-remove_unused_shader_inputs_and_outputs(bool is_separate_shader_object,
-                                        gl_linked_shader *sh,
-                                        enum ir_variable_mode mode);
-
-bool
-store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
-                     unsigned num_tfeedback_decls,
-                     tfeedback_decl *tfeedback_decls,
-                     bool has_xfb_qualifiers);
-
-bool
-assign_varying_locations(struct gl_context *ctx,
-			 void *mem_ctx,
-			 struct gl_shader_program *prog,
-                         gl_linked_shader *producer,
-                         gl_linked_shader *consumer,
-                         unsigned num_tfeedback_decls,
-                         tfeedback_decl *tfeedback_decls,
-                         const uint64_t reserved_slots);
-
-uint64_t
-reserved_varying_slot(struct gl_linked_shader *stage,
-                      ir_variable_mode io_mode);
-
-bool
-check_against_output_limit(struct gl_context *ctx,
-                           struct gl_shader_program *prog,
-                           gl_linked_shader *producer,
-                           unsigned num_explicit_locations);
-
-bool
-check_against_input_limit(struct gl_context *ctx,
-                          struct gl_shader_program *prog,
-                          gl_linked_shader *consumer,
-                          unsigned num_explicit_locations);
 
 #endif /* GLSL_LINK_VARYINGS_H */

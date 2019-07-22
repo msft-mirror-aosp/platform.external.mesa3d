@@ -33,7 +33,6 @@
 #define DRI_SCREEN_H
 
 #include "dri_util.h"
-#include "xmlconfig.h"
 
 #include "pipe/p_compiler.h"
 #include "pipe/p_context.h"
@@ -58,14 +57,7 @@ struct dri_screen
 
    /* dri */
    __DRIscreen *sPriv;
-   boolean throttling_enabled;
-   int default_throttle_frames;
-
-   /** Configuration cache with default values for all contexts */
-   driOptionCache optionCacheDefaults;
-
-   /** The screen's effective configuration options */
-   driOptionCache optionCache;
+   unsigned default_throttle_frames;
 
    struct st_config_options options;
 
@@ -85,11 +77,13 @@ struct dri_screen
    boolean has_reset_status_query;
    enum pipe_texture_target target;
 
+   boolean swrast_no_present;
+
    /* hooks filled in by dri2 & drisw */
    __DRIimage * (*lookup_egl_image)(struct dri_screen *ctx, void *handle);
 
    /* OpenCL interop */
-   pipe_mutex opencl_func_mutex;
+   mtx_t opencl_func_mutex;
    opencl_dri_event_add_ref_t opencl_dri_event_add_ref;
    opencl_dri_event_release_t opencl_dri_event_release;
    opencl_dri_event_wait_t opencl_dri_event_wait;
@@ -108,6 +102,7 @@ struct __DRIimageRec {
    unsigned level;
    unsigned layer;
    uint32_t dri_format;
+   uint32_t dri_fourcc;
    uint32_t dri_components;
    unsigned use;
 
@@ -134,13 +129,16 @@ dri_with_format(__DRIscreen * sPriv)
 }
 
 void
-dri_fill_st_visual(struct st_visual *stvis, struct dri_screen *screen,
+dri_fill_st_visual(struct st_visual *stvis,
+                   const struct dri_screen *screen,
                    const struct gl_config *mode);
+
+void
+dri_init_options(struct dri_screen *screen);
 
 const __DRIconfig **
 dri_init_screen_helper(struct dri_screen *screen,
-                       struct pipe_screen *pscreen,
-                       const char* driver_name);
+                       struct pipe_screen *pscreen);
 
 void
 dri_destroy_screen_helper(struct dri_screen * screen);

@@ -39,6 +39,7 @@ static struct pipe_query *r300_create_query(struct pipe_context *pipe,
 
     if (query_type != PIPE_QUERY_OCCLUSION_COUNTER &&
         query_type != PIPE_QUERY_OCCLUSION_PREDICATE &&
+        query_type != PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE &&
         query_type != PIPE_QUERY_GPU_FINISHED) {
         return NULL;
     }
@@ -61,7 +62,8 @@ static struct pipe_query *r300_create_query(struct pipe_context *pipe,
     q->buf = r300->rws->buffer_create(r300->rws,
                                       r300screen->info.gart_page_size,
                                       r300screen->info.gart_page_size,
-                                      RADEON_DOMAIN_GTT, 0);
+                                      RADEON_DOMAIN_GTT,
+                                      RADEON_FLAG_NO_INTERPROCESS_SHARING);
     if (!q->buf) {
         FREE(q);
         return NULL;
@@ -120,7 +122,7 @@ static bool r300_end_query(struct pipe_context* pipe,
 
     if (q->type == PIPE_QUERY_GPU_FINISHED) {
         pb_reference(&q->buf, NULL);
-        r300_flush(pipe, RADEON_FLUSH_ASYNC,
+        r300_flush(pipe, PIPE_FLUSH_ASYNC,
                    (struct pipe_fence_handle**)&q->buf);
         return true;
     }
@@ -171,7 +173,8 @@ static boolean r300_get_query_result(struct pipe_context* pipe,
         map++;
     }
 
-    if (q->type == PIPE_QUERY_OCCLUSION_PREDICATE) {
+    if (q->type == PIPE_QUERY_OCCLUSION_PREDICATE ||
+        q->type == PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE) {
         vresult->b = temp != 0;
     } else {
         vresult->u64 = temp;
@@ -182,7 +185,7 @@ static boolean r300_get_query_result(struct pipe_context* pipe,
 static void r300_render_condition(struct pipe_context *pipe,
                                   struct pipe_query *query,
                                   boolean condition,
-                                  uint mode)
+                                  enum pipe_render_cond_flag mode)
 {
     struct r300_context *r300 = r300_context(pipe);
     union pipe_query_result result;
@@ -195,7 +198,8 @@ static void r300_render_condition(struct pipe_context *pipe,
                mode == PIPE_RENDER_COND_BY_REGION_WAIT;
 
         if (r300_get_query_result(pipe, query, wait, &result)) {
-            if (r300_query(query)->type == PIPE_QUERY_OCCLUSION_PREDICATE) {
+            if (r300_query(query)->type == PIPE_QUERY_OCCLUSION_PREDICATE ||
+                r300_query(query)->type == PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE) {
                 r300->skip_rendering = condition == result.b;
             } else {
                 r300->skip_rendering = condition == !!result.u64;

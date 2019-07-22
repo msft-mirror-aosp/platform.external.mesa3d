@@ -27,14 +27,14 @@
 #define BRW_DRAW_H
 
 #include "main/mtypes.h"		/* for struct gl_context... */
-#include "intel_bufmgr.h"
+#include "brw_bufmgr.h"
 
 struct brw_context;
 
 uint32_t *
 brw_emit_vertex_buffer_state(struct brw_context *brw,
                              unsigned buffer_nr,
-                             drm_intel_bo *bo,
+                             struct brw_bo *bo,
                              unsigned start_offset,
                              unsigned end_offset,
                              unsigned stride,
@@ -55,6 +55,7 @@ void brw_draw_prims(struct gl_context *ctx,
                      unsigned stream,
 		     struct gl_buffer_object *indirect );
 
+void brw_init_draw_functions(struct dd_function_table *functions);
 void brw_draw_init( struct brw_context *brw );
 void brw_draw_destroy( struct brw_context *brw );
 
@@ -68,4 +69,14 @@ brw_handle_primitive_restart(struct gl_context *ctx,
                              const struct _mesa_index_buffer *ib,
                              struct gl_buffer_object *indirect);
 
+void
+brw_draw_indirect_prims(struct gl_context *ctx,
+                        GLuint mode,
+                        struct gl_buffer_object *indirect_data,
+                        GLsizeiptr indirect_offset,
+                        unsigned draw_count,
+                        unsigned stride,
+                        struct gl_buffer_object *indirect_params,
+                        GLsizeiptr indirect_params_offset,
+                        const struct _mesa_index_buffer *ib);
 #endif

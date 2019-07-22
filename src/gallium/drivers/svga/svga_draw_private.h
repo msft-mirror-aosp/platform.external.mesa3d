@@ -42,7 +42,7 @@ struct u_upload_mgr;
  * handled by the svga device.  Other types will be converted to
  * these types by the index/translation code.
  */
-static const unsigned svga_hw_prims = 
+static const unsigned svga_hw_prims =
    ((1 << PIPE_PRIM_POINTS) |
     (1 << PIPE_PRIM_LINES) |
     (1 << PIPE_PRIM_LINE_STRIP) |
@@ -73,23 +73,23 @@ svga_translate_prim(unsigned mode, unsigned vcount, unsigned *prim_count)
 
    case PIPE_PRIM_LINES:
       *prim_count = vcount / 2;
-      return SVGA3D_PRIMITIVE_LINELIST; 
+      return SVGA3D_PRIMITIVE_LINELIST;
 
    case PIPE_PRIM_LINE_STRIP:
       *prim_count = vcount - 1;
-      return SVGA3D_PRIMITIVE_LINESTRIP; 
+      return SVGA3D_PRIMITIVE_LINESTRIP;
 
    case PIPE_PRIM_TRIANGLES:
       *prim_count = vcount / 3;
-      return SVGA3D_PRIMITIVE_TRIANGLELIST; 
+      return SVGA3D_PRIMITIVE_TRIANGLELIST;
 
    case PIPE_PRIM_TRIANGLE_STRIP:
       *prim_count = vcount - 2;
-      return SVGA3D_PRIMITIVE_TRIANGLESTRIP; 
+      return SVGA3D_PRIMITIVE_TRIANGLESTRIP;
 
    case PIPE_PRIM_TRIANGLE_FAN:
       *prim_count = vcount - 2;
-      return SVGA3D_PRIMITIVE_TRIANGLEFAN; 
+      return SVGA3D_PRIMITIVE_TRIANGLEFAN;
 
    case PIPE_PRIM_LINES_ADJACENCY:
       *prim_count = vcount / 4;
@@ -119,8 +119,7 @@ struct index_cache {
    u_generate_func generate;
    unsigned gen_nr;
 
-   /* If non-null, this buffer is filled by calling 
-    *   generate(nr, map(buffer))
+   /* If non-null, this buffer is filled by calling generate(nr, map(buffer))
     */
    struct pipe_resource *buffer;
 };
@@ -160,7 +159,7 @@ struct svga_hwtnl {
     * vertex buffers.
     */
    int index_bias;
-   
+
    /* Provoking vertex information (for flat shading). */
    unsigned api_pv;  /**< app-requested PV mode (PV_FIRST or PV_LAST) */
    unsigned hw_pv;   /**< device-supported PV mode (PV_FIRST or PV_LAST) */
@@ -192,55 +191,46 @@ static inline boolean
 svga_need_unfilled_fallback(const struct svga_hwtnl *hwtnl,
                             enum pipe_prim_type prim)
 {
-   const struct svga_context *svga = hwtnl->svga;
-
    if (u_reduced_prim(prim) != PIPE_PRIM_TRIANGLES) {
       /* if we're drawing points or lines, no fallback needed */
       return FALSE;
    }
 
-   if (svga_have_vgpu10(svga)) {
-      /* vgpu10 supports polygon fill and line modes */
-      if ((prim == PIPE_PRIM_QUADS ||
-           prim == PIPE_PRIM_QUAD_STRIP ||
-           prim == PIPE_PRIM_POLYGON) &&
-          hwtnl->api_fillmode == PIPE_POLYGON_MODE_LINE) {
-         /* VGPU10 doesn't directly render quads or polygons.  They're
-          * converted to triangles.  If we let the device draw the triangle
-          * outlines we'll get an extra, stray lines in the interiors.
-          * So, to draw unfilled quads correctly, we need the fallback.
-          */
-         return true;
-      }
-      return hwtnl->api_fillmode == PIPE_POLYGON_MODE_POINT;
-   } else {
-      /* vgpu9 doesn't support line or point fill modes */
-      return hwtnl->api_fillmode != PIPE_POLYGON_MODE_FILL;
+   if ((prim == PIPE_PRIM_QUADS ||
+        prim == PIPE_PRIM_QUAD_STRIP ||
+        prim == PIPE_PRIM_POLYGON) &&
+       hwtnl->api_fillmode == PIPE_POLYGON_MODE_LINE) {
+      /* We can't directly render quads or polygons.  They're
+       * converted to triangles.  If we let the device draw the triangle
+       * outlines we'll get an extra, stray lines in the interiors.
+       * So, to draw unfilled quads correctly, we need the fallback.
+       */
+      return true;
    }
+   return false;
 }
 
 
-enum pipe_error 
-svga_hwtnl_prim( struct svga_hwtnl *hwtnl,
-                 const SVGA3dPrimitiveRange *range,
-                 unsigned vcount,
-                 unsigned min_index,
-                 unsigned max_index,
-                 struct pipe_resource *ib,
-                 unsigned start_instance, unsigned instance_count);
+enum pipe_error
+svga_hwtnl_prim(struct svga_hwtnl *hwtnl,
+                const SVGA3dPrimitiveRange *range,
+                unsigned vcount,
+                unsigned min_index,
+                unsigned max_index,
+                struct pipe_resource *ib,
+                unsigned start_instance, unsigned instance_count);
 
 enum pipe_error
-svga_hwtnl_simple_draw_range_elements( struct svga_hwtnl *hwtnl,
-                                       struct pipe_resource *indexBuffer,
-                                       unsigned index_size,
-                                       int index_bias,
-                                       unsigned min_index,
-                                       unsigned max_index,
-                                       enum pipe_prim_type prim,
-                                       unsigned start,
-                                       unsigned count,
-                                       unsigned start_instance,
-                                       unsigned instance_count);
-
+svga_hwtnl_simple_draw_range_elements(struct svga_hwtnl *hwtnl,
+                                      struct pipe_resource *indexBuffer,
+                                      unsigned index_size,
+                                      int index_bias,
+                                      unsigned min_index,
+                                      unsigned max_index,
+                                      enum pipe_prim_type prim,
+                                      unsigned start,
+                                      unsigned count,
+                                      unsigned start_instance,
+                                      unsigned instance_count);
 
 #endif

@@ -188,7 +188,7 @@ nv30_rasterizer_state_create(struct pipe_context *pipe,
    SB_DATA  (so, cso->flatshade_first);
 
    SB_MTHD30(so, DEPTH_CONTROL, 1);
-   SB_DATA  (so, cso->depth_clip ? 0x00000001 : 0x00000010);
+   SB_DATA  (so, cso->depth_clip_near ? 0x00000001 : 0x00000010);
    return so;
 }
 
@@ -326,7 +326,8 @@ nv30_set_sample_mask(struct pipe_context *pipe, unsigned sample_mask)
 }
 
 static void
-nv30_set_constant_buffer(struct pipe_context *pipe, uint shader, uint index,
+nv30_set_constant_buffer(struct pipe_context *pipe,
+                         enum pipe_shader_type shader, uint index,
                          const struct pipe_constant_buffer *cb)
 {
    struct nv30_context *nv30 = nv30_context(pipe);
@@ -437,23 +438,6 @@ nv30_set_vertex_buffers(struct pipe_context *pipe,
     nv30->dirty |= NV30_NEW_ARRAYS;
 }
 
-static void
-nv30_set_index_buffer(struct pipe_context *pipe,
-                      const struct pipe_index_buffer *ib)
-{
-    struct nv30_context *nv30 = nv30_context(pipe);
-
-    if (ib) {
-       pipe_resource_reference(&nv30->idxbuf.buffer, ib->buffer);
-       nv30->idxbuf.index_size = ib->index_size;
-       nv30->idxbuf.offset = ib->offset;
-       nv30->idxbuf.user_buffer = ib->user_buffer;
-    } else {
-       pipe_resource_reference(&nv30->idxbuf.buffer, NULL);
-       nv30->idxbuf.user_buffer = NULL;
-    }
-}
-
 void
 nv30_state_init(struct pipe_context *pipe)
 {
@@ -480,5 +464,4 @@ nv30_state_init(struct pipe_context *pipe)
    pipe->set_viewport_states = nv30_set_viewport_states;
 
    pipe->set_vertex_buffers = nv30_set_vertex_buffers;
-   pipe->set_index_buffer = nv30_set_index_buffer;
 }

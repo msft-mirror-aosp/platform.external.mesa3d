@@ -78,6 +78,7 @@ _mesa_parse_arb_fragment_program(struct gl_context* ctx, GLenum target,
    memset(&prog, 0, sizeof(prog));
    memset(&state, 0, sizeof(state));
    state.prog = &prog;
+   state.mem_ctx = program;
 
    if (!_mesa_parse_arb_program(ctx, target, (const GLubyte*) str, len,
 				&state)) {
@@ -116,8 +117,8 @@ _mesa_parse_arb_fragment_program(struct gl_context* ctx, GLenum target,
          program->SamplersUsed |= (1 << i);
    }
    program->ShadowSamplers = prog.ShadowSamplers;
-   program->OriginUpperLeft = state.option.OriginUpperLeft;
-   program->PixelCenterInteger = state.option.PixelCenterInteger;
+   program->info.fs.origin_upper_left = state.option.OriginUpperLeft;
+   program->info.fs.pixel_center_integer = state.option.PixelCenterInteger;
 
    program->info.fs.uses_discard = state.fragment.UsesKill;
 
@@ -180,8 +181,7 @@ _mesa_parse_arb_vertex_program(struct gl_context *ctx, GLenum target,
       return;
    }
 
-   if ((ctx->_Shader->Flags & GLSL_NO_OPT) == 0)
-      _mesa_optimize_program(ctx, &prog, program);
+   _mesa_optimize_program(&prog, program);
 
    ralloc_free(program->String);
 

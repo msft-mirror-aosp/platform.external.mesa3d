@@ -141,6 +141,12 @@ static void emit_tile(struct vc4_exec_info *exec,
 	}
 
 	if (setup->zs_read) {
+		if (setup->color_read) {
+			/* Exec previous load. */
+			vc4_tile_coordinates(setup, x, y);
+			vc4_store_before_load(setup);
+		}
+
 		if (args->zs_read.flags &
 		    VC4_SUBMIT_RCL_SURFACE_READ_IS_FULL_RES) {
 			rcl_u8(setup, VC4_PACKET_LOAD_FULL_RES_TILE_BUFFER);
@@ -149,12 +155,6 @@ static void emit_tile(struct vc4_exec_info *exec,
 						    &args->zs_read, x, y) |
 				VC4_LOADSTORE_FULL_RES_DISABLE_COLOR);
 		} else {
-			if (setup->color_read) {
-				/* Exec previous load. */
-				vc4_tile_coordinates(setup, x, y);
-				vc4_store_before_load(setup);
-			}
-
 			rcl_u8(setup, VC4_PACKET_LOAD_TILE_BUFFER_GENERAL);
 			rcl_u16(setup, args->zs_read.bits);
 			rcl_u32(setup, setup->zs_read->paddr +
@@ -255,8 +255,17 @@ static int vc4_create_rcl_bo(struct drm_device *dev, struct vc4_exec_info *exec,
 	uint8_t max_y_tile = args->max_y_tile;
 	uint8_t xtiles = max_x_tile - min_x_tile + 1;
 	uint8_t ytiles = max_y_tile - min_y_tile + 1;
-	uint8_t x, y;
+	uint8_t xi, yi;
 	uint32_t size, loop_body_size;
+	bool positive_x = true;
+	bool positive_y = true;
+
+	if (args->flags & VC4_SUBMIT_CL_FIXED_RCL_ORDER) {
+		if (!(args->flags & VC4_SUBMIT_CL_RCL_ORDER_INCREASING_X))
+			positive_x = false;
+		if (!(args->flags & VC4_SUBMIT_CL_RCL_ORDER_INCREASING_Y))
+			positive_y = false;
+	}
 
 	size = VC4_PACKET_TILE_RENDERING_MODE_CONFIG_SIZE;
 	loop_body_size = VC4_PACKET_TILE_COORDINATES_SIZE;
@@ -276,16 +285,15 @@ static int vc4_create_rcl_bo(struct drm_device *dev, struct vc4_exec_info *exec,
 		}
 	}
 	if (setup->zs_read) {
+		if (setup->color_read) {
+			loop_body_size += VC4_PACKET_TILE_COORDINATES_SIZE;
+			loop_body_size += VC4_PACKET_STORE_TILE_BUFFER_GENERAL_SIZE;
+		}
+
 		if (args->zs_read.flags &
 		    VC4_SUBMIT_RCL_SURFACE_READ_IS_FULL_RES) {
 			loop_body_size += VC4_PACKET_LOAD_FULL_RES_TILE_BUFFER_SIZE;
 		} else {
-			if (setup->color_read &&
-			    !(args->color_read.flags &
-			      VC4_SUBMIT_RCL_SURFACE_READ_IS_FULL_RES)) {
-				loop_body_size += VC4_PACKET_TILE_COORDINATES_SIZE;
-				loop_body_size += VC4_PACKET_STORE_TILE_BUFFER_GENERAL_SIZE;
-			}
 			loop_body_size += VC4_PACKET_LOAD_TILE_BUFFER_GENERAL_SIZE;
 		}
 	}
@@ -348,10 +356,12 @@ static int vc4_create_rcl_bo(struct drm_device *dev, struct vc4_exec_info *exec,
 		rcl_u32(setup, 0); /* no address, since we're in None mode */
 	}
 
-	for (y = min_y_tile; y <= max_y_tile; y++) {
-		for (x = min_x_tile; x <= max_x_tile; x++) {
-			bool first = (x == min_x_tile && y == min_y_tile);
-			bool last = (x == max_x_tile && y == max_y_tile);
+	for (yi = 0; yi < ytiles; yi++) {
+		int y = positive_y ? min_y_tile + yi : max_y_tile - yi;
+		for (xi = 0; xi < xtiles; xi++) {
+			int x = positive_x ? min_x_tile + xi : max_x_tile - xi;
+			bool first = (xi == 0 && yi == 0);
+			bool last = (xi == xtiles - 1 && yi == ytiles - 1);
 
 			emit_tile(exec, setup, x, y, first, last);
 		}

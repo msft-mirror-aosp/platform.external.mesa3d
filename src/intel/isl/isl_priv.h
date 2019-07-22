@@ -25,9 +25,10 @@
 #define ISL_PRIV_H
 
 #include <assert.h>
+#include <stddef.h>
 #include <strings.h>
 
-#include "common/gen_device_info.h"
+#include "dev/gen_device_info.h"
 #include "util/macros.h"
 
 #include "isl.h"
@@ -46,6 +47,8 @@ __isl_finishme(const char *file, int line, const char *fmt, ...);
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+
+typedef void *(*isl_mem_copy_fn)(void *dest, const void *src, size_t n);
 
 static inline bool
 isl_is_pow2(uintmax_t n)
@@ -78,6 +81,13 @@ isl_align_npot(uintmax_t n, uintmax_t a)
 {
    assert(a > 0);
    return ((n + a - 1) / a) * a;
+}
+
+static inline uintmax_t
+isl_assert_div(uintmax_t n, uintmax_t a)
+{
+   assert(n % a == 0);
+   return n / a;
 }
 
 /**
@@ -152,57 +162,76 @@ isl_extent3d_el_to_sa(enum isl_format fmt, struct isl_extent3d extent_el)
 }
 
 void
-isl_gen4_surf_fill_state_s(const struct isl_device *dev, void *state,
-                           const struct isl_surf_fill_state_info *restrict info);
+_isl_memcpy_linear_to_tiled(uint32_t xt1, uint32_t xt2,
+                            uint32_t yt1, uint32_t yt2,
+                            char *dst, const char *src,
+                            uint32_t dst_pitch, int32_t src_pitch,
+                            bool has_swizzling,
+                            enum isl_tiling tiling,
+                            isl_memcpy_type copy_type);
 
 void
-isl_gen5_surf_fill_state_s(const struct isl_device *dev, void *state,
-                           const struct isl_surf_fill_state_info *restrict info);
+_isl_memcpy_tiled_to_linear(uint32_t xt1, uint32_t xt2,
+                            uint32_t yt1, uint32_t yt2,
+                            char *dst, const char *src,
+                            int32_t dst_pitch, uint32_t src_pitch,
+                            bool has_swizzling,
+                            enum isl_tiling tiling,
+                            isl_memcpy_type copy_type);
 
 void
-isl_gen6_surf_fill_state_s(const struct isl_device *dev, void *state,
-                           const struct isl_surf_fill_state_info *restrict info);
+_isl_memcpy_linear_to_tiled_sse41(uint32_t xt1, uint32_t xt2,
+                                  uint32_t yt1, uint32_t yt2,
+                                  char *dst, const char *src,
+                                  uint32_t dst_pitch, int32_t src_pitch,
+                                  bool has_swizzling,
+                                  enum isl_tiling tiling,
+                                  isl_memcpy_type copy_type);
 
 void
-isl_gen7_surf_fill_state_s(const struct isl_device *dev, void *state,
-                           const struct isl_surf_fill_state_info *restrict info);
+_isl_memcpy_tiled_to_linear_sse41(uint32_t xt1, uint32_t xt2,
+                                  uint32_t yt1, uint32_t yt2,
+                                  char *dst, const char *src,
+                                  int32_t dst_pitch, uint32_t src_pitch,
+                                  bool has_swizzling,
+                                  enum isl_tiling tiling,
+                                  isl_memcpy_type copy_type);
 
-void
-isl_gen75_surf_fill_state_s(const struct isl_device *dev, void *state,
-                            const struct isl_surf_fill_state_info *restrict info);
-void
-isl_gen8_surf_fill_state_s(const struct isl_device *dev, void *state,
-                           const struct isl_surf_fill_state_info *restrict info);
-void
-isl_gen9_surf_fill_state_s(const struct isl_device *dev, void *state,
-                           const struct isl_surf_fill_state_info *restrict info);
+/* This is useful for adding the isl_prefix to genX functions */
+#define __PASTE2(x, y) x ## y
+#define __PASTE(x, y) __PASTE2(x, y)
+#define isl_genX(x) __PASTE(isl_, genX(x))
 
-void
-isl_gen4_buffer_fill_state_s(void *state,
-                             const struct isl_buffer_fill_state_info *restrict info);
-
-void
-isl_gen5_buffer_fill_state_s(void *state,
-                             const struct isl_buffer_fill_state_info *restrict info);
-
-void
-isl_gen6_buffer_fill_state_s(void *state,
-                             const struct isl_buffer_fill_state_info *restrict info);
-
-void
-isl_gen7_buffer_fill_state_s(void *state,
-                             const struct isl_buffer_fill_state_info *restrict info);
-
-void
-isl_gen75_buffer_fill_state_s(void *state,
-                              const struct isl_buffer_fill_state_info *restrict info);
-
-void
-isl_gen8_buffer_fill_state_s(void *state,
-                             const struct isl_buffer_fill_state_info *restrict info);
-
-void
-isl_gen9_buffer_fill_state_s(void *state,
-                             const struct isl_buffer_fill_state_info *restrict info);
+#ifdef genX
+#  include "isl_genX_priv.h"
+#else
+#  define genX(x) gen4_##x
+#  include "isl_genX_priv.h"
+#  undef genX
+#  define genX(x) gen5_##x
+#  include "isl_genX_priv.h"
+#  undef genX
+#  define genX(x) gen6_##x
+#  include "isl_genX_priv.h"
+#  undef genX
+#  define genX(x) gen7_##x
+#  include "isl_genX_priv.h"
+#  undef genX
+#  define genX(x) gen75_##x
+#  include "isl_genX_priv.h"
+#  undef genX
+#  define genX(x) gen8_##x
+#  include "isl_genX_priv.h"
+#  undef genX
+#  define genX(x) gen9_##x
+#  include "isl_genX_priv.h"
+#  undef genX
+#  define genX(x) gen10_##x
+#  include "isl_genX_priv.h"
+#  undef genX
+#  define genX(x) gen11_##x
+#  include "isl_genX_priv.h"
+#  undef genX
+#endif
 
 #endif /* ISL_PRIV_H */

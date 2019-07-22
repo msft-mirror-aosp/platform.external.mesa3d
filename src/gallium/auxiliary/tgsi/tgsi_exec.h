@@ -58,6 +58,15 @@ extern "C" {
    TGSI_FOR_EACH_CHANNEL( CHAN )\
       TGSI_IF_IS_DST0_CHANNEL_ENABLED( INST, CHAN )
 
+#define TGSI_IS_DST1_CHANNEL_ENABLED( INST, CHAN )\
+   ((INST)->Dst[1].Register.WriteMask & (1 << (CHAN)))
+
+#define TGSI_IF_IS_DST1_CHANNEL_ENABLED( INST, CHAN )\
+   if (TGSI_IS_DST1_CHANNEL_ENABLED( INST, CHAN ))
+
+#define TGSI_FOR_EACH_DST1_ENABLED_CHANNEL( INST, CHAN )\
+   TGSI_FOR_EACH_CHANNEL( CHAN )\
+      TGSI_IF_IS_DST1_CHANNEL_ENABLED( INST, CHAN )
 
 /**
   * Registers may be treated as float, signed int or unsigned int.
@@ -125,7 +134,7 @@ struct tgsi_image {
 
    void (*op)(const struct tgsi_image *image,
               const struct tgsi_image_params *params,
-              unsigned opcode,
+              enum tgsi_opcode opcode,
               const int s[TGSI_QUAD_SIZE],
               const int t[TGSI_QUAD_SIZE],
               const int r[TGSI_QUAD_SIZE],
@@ -158,7 +167,7 @@ struct tgsi_buffer {
 
    void (*op)(const struct tgsi_buffer *buffer,
               const struct tgsi_buffer_params *params,
-              unsigned opcode,
+              enum tgsi_opcode opcode,
               const int s[TGSI_QUAD_SIZE],
               float rgba[TGSI_NUM_CHANNELS][TGSI_QUAD_SIZE],
               float rgba2[TGSI_NUM_CHANNELS][TGSI_QUAD_SIZE]);
@@ -222,7 +231,6 @@ struct tgsi_sampler
 };
 
 #define TGSI_EXEC_NUM_TEMPS       4096
-#define TGSI_EXEC_NUM_IMMEDIATES  256
 
 /*
  * Locations of various utility registers (_I = Index, _C = Channel)
@@ -273,11 +281,14 @@ struct tgsi_sampler
 #define TGSI_EXEC_TEMP_ADDR         (TGSI_EXEC_NUM_TEMPS + 8)
 #define TGSI_EXEC_NUM_ADDRS         3
 
-/* predicate register */
-#define TGSI_EXEC_TEMP_P0           (TGSI_EXEC_NUM_TEMPS + 11)
-#define TGSI_EXEC_NUM_PREDS         1
+#define TGSI_EXEC_TEMP_PRIMITIVE_S1_I  (TGSI_EXEC_NUM_TEMPS + 11)
+#define TGSI_EXEC_TEMP_PRIMITIVE_S1_C  0
+#define TGSI_EXEC_TEMP_PRIMITIVE_S2_I  (TGSI_EXEC_NUM_TEMPS + 12)
+#define TGSI_EXEC_TEMP_PRIMITIVE_S2_C  1
+#define TGSI_EXEC_TEMP_PRIMITIVE_S3_I  (TGSI_EXEC_NUM_TEMPS + 13)
+#define TGSI_EXEC_TEMP_PRIMITIVE_S3_C  2
 
-#define TGSI_EXEC_NUM_TEMP_EXTRAS   12
+#define TGSI_EXEC_NUM_TEMP_EXTRAS   14
 
 
 
@@ -308,6 +319,8 @@ struct tgsi_sampler
 
 #define TGSI_MAX_MISC_INPUTS 8
 
+#define TGSI_MAX_VERTEX_STREAMS 4
+
 /** function call/activation record */
 struct tgsi_call_record
 {
@@ -336,6 +349,17 @@ enum tgsi_break_type {
 
 #define TGSI_EXEC_MAX_BREAK_STACK (TGSI_EXEC_MAX_LOOP_NESTING + TGSI_EXEC_MAX_SWITCH_NESTING)
 
+typedef float float4[4];
+
+struct tgsi_exec_machine;
+
+typedef void (* apply_sample_offset_func)(
+   const struct tgsi_exec_machine *mach,
+   unsigned attrib,
+   unsigned chan,
+   float ofs_x,
+   float ofs_y,
+   union tgsi_exec_channel *out_chan);
 
 /**
  * Run-time virtual machine state for executing TGSI shader.
@@ -347,19 +371,18 @@ struct tgsi_exec_machine
    struct tgsi_exec_vector       Temps[TGSI_EXEC_NUM_TEMPS +
                                        TGSI_EXEC_NUM_TEMP_EXTRAS];
 
-   float                         Imms[TGSI_EXEC_NUM_IMMEDIATES][4];
-
-   float                         ImmArray[TGSI_EXEC_NUM_IMMEDIATES][4];
+   unsigned                       ImmsReserved;
+   float4                         *Imms;
 
    struct tgsi_exec_vector       *Inputs;
    struct tgsi_exec_vector       *Outputs;
+   apply_sample_offset_func           *InputSampleOffsetApply;
 
    /* System values */
    unsigned                      SysSemanticToIndex[TGSI_SEMANTIC_COUNT];
    struct tgsi_exec_vector       SystemValue[TGSI_MAX_MISC_INPUTS];
 
    struct tgsi_exec_vector       *Addrs;
-   struct tgsi_exec_vector       *Predicates;
 
    struct tgsi_sampler           *Sampler;
 
@@ -374,7 +397,8 @@ struct tgsi_exec_machine
    enum pipe_shader_type         ShaderType; /**< PIPE_SHADER_x */
 
    /* GEOMETRY processor only. */
-   unsigned                      *Primitives;
+   unsigned                      *Primitives[TGSI_MAX_VERTEX_STREAMS];
+   unsigned                      *PrimitiveOffsets[TGSI_MAX_VERTEX_STREAMS];
    unsigned                       NumOutputs;
    unsigned                       MaxGeometryShaderOutputs;
    unsigned                       MaxOutputVertices;
@@ -505,8 +529,6 @@ tgsi_exec_get_shader_param(enum pipe_shader_cap param)
       return PIPE_MAX_CONSTANT_BUFFERS;
    case PIPE_SHADER_CAP_MAX_TEMPS:
       return TGSI_EXEC_NUM_TEMPS;
-   case PIPE_SHADER_CAP_MAX_PREDS:
-      return TGSI_EXEC_NUM_PREDS;
    case PIPE_SHADER_CAP_TGSI_CONT_SUPPORTED:
       return 1;
    case PIPE_SHADER_CAP_INDIRECT_INPUT_ADDR:
@@ -518,6 +540,9 @@ tgsi_exec_get_shader_param(enum pipe_shader_cap param)
       return 1;
    case PIPE_SHADER_CAP_INTEGERS:
       return 1;
+   case PIPE_SHADER_CAP_INT64_ATOMICS:
+   case PIPE_SHADER_CAP_FP16:
+      return 0;
    case PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS:
       return PIPE_MAX_SAMPLERS;
    case PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS:
@@ -528,14 +553,19 @@ tgsi_exec_get_shader_param(enum pipe_shader_cap param)
       return 1 << PIPE_SHADER_IR_TGSI;
    case PIPE_SHADER_CAP_TGSI_SQRT_SUPPORTED:
       return 1;
-   case PIPE_SHADER_CAP_DOUBLES:
    case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
+   case PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED:
    case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
       return 1;
    case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
    case PIPE_SHADER_CAP_TGSI_FMA_SUPPORTED:
    case PIPE_SHADER_CAP_LOWER_IF_THRESHOLD:
+   case PIPE_SHADER_CAP_TGSI_SKIP_MERGE_REGISTERS:
+   case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
+   case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
       return 0;
+   case PIPE_SHADER_CAP_SCALAR_ISA:
+      return 1;
    case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
       return PIPE_MAX_SHADER_BUFFERS;
    case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:

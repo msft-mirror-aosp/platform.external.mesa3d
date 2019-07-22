@@ -40,7 +40,6 @@
  * exec_list or any structure in which an \c exec_list is embedded.
  */
 
-#pragma once
 #ifndef LIST_CONTAINER_H
 #define LIST_CONTAINER_H
 
@@ -82,6 +81,12 @@ struct exec_node {
     * Insert a node in the list after the current node
     */
    void insert_after(exec_node *after);
+
+   /**
+    * Insert another list in the list after the current node
+    */
+   void insert_after(struct exec_list *after);
+
    /**
     * Insert a node in the list before the current node
     */
@@ -367,6 +372,13 @@ exec_list_is_empty(const struct exec_list *list)
    return list->head_sentinel.next == &list->tail_sentinel;
 }
 
+static inline bool
+exec_list_is_singular(const struct exec_list *list)
+{
+   return !exec_list_is_empty(list) &&
+          list->head_sentinel.next->next == &list->tail_sentinel;
+}
+
 static inline const struct exec_node *
 exec_list_get_head_const(const struct exec_list *list)
 {
@@ -509,6 +521,21 @@ exec_list_append(struct exec_list *list, struct exec_list *source)
 }
 
 static inline void
+exec_node_insert_list_after(struct exec_node *n, struct exec_list *after)
+{
+   if (exec_list_is_empty(after))
+      return;
+
+   after->tail_sentinel.prev->next = n->next;
+   after->head_sentinel.next->prev = n;
+
+   n->next->prev = after->tail_sentinel.prev;
+   n->next = after->head_sentinel.next;
+
+   exec_list_make_empty(after);
+}
+
+static inline void
 exec_list_prepend(struct exec_list *list, struct exec_list *source)
 {
    exec_list_append(source, list);
@@ -636,6 +663,11 @@ inline void exec_list::append_list(exec_list *source)
    exec_list_append(this, source);
 }
 
+inline void exec_node::insert_after(exec_list *after)
+{
+   exec_node_insert_list_after(this, after);
+}
+
 inline void exec_list::prepend_list(exec_list *source)
 {
    exec_list_prepend(this, source);
@@ -648,12 +680,12 @@ inline void exec_node::insert_before(exec_list *before)
 #endif
 
 #define foreach_in_list(__type, __inst, __list)      \
-   for (__type *(__inst) = (__type *)(__list)->head_sentinel.next; \
+   for (__type *__inst = (__type *)(__list)->head_sentinel.next; \
         !(__inst)->is_tail_sentinel();               \
         (__inst) = (__type *)(__inst)->next)
 
 #define foreach_in_list_reverse(__type, __inst, __list)   \
-   for (__type *(__inst) = (__type *)(__list)->tail_sentinel.prev; \
+   for (__type *__inst = (__type *)(__list)->tail_sentinel.prev; \
         !(__inst)->is_head_sentinel();                    \
         (__inst) = (__type *)(__inst)->prev)
 
@@ -673,7 +705,7 @@ inline void exec_node::insert_before(exec_list *before)
         __node = __prev, __prev = (__type *)__prev->prev)
 
 #define foreach_in_list_use_after(__type, __inst, __list) \
-   __type *(__inst);                                      \
+   __type *__inst;                                        \
    for ((__inst) = (__type *)(__list)->head_sentinel.next; \
         !(__inst)->is_tail_sentinel();                    \
         (__inst) = (__type *)(__inst)->next)
@@ -697,6 +729,11 @@ inline void exec_node::insert_before(exec_list *before)
    for (__type * __node =						\
          exec_node_data(__type, (__list)->head_sentinel.next, __field); \
 	(__node)->__field.next != NULL; 				\
+	(__node) = exec_node_data(__type, (__node)->__field.next, __field))
+
+#define foreach_list_typed_from(__type, __node, __field, __list, __start)  \
+   for (__type * __node = exec_node_data(__type, (__start), __field);      \
+	(__node)->__field.next != NULL;                                    \
 	(__node) = exec_node_data(__type, (__node)->__field.next, __field))
 
 #define foreach_list_typed_reverse(__type, __node, __field, __list)        \

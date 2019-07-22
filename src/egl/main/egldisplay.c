@@ -36,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "c11/threads.h"
+#include "util/u_atomic.h"
 
 #include "eglcontext.h"
 #include "eglcurrent.h"
@@ -48,10 +49,6 @@
 #include "eglsync.h"
 
 /* Includes for _eglNativePlatformDetectNativeDisplay */
-#ifdef HAVE_MINCORE
-#include <unistd.h>
-#include <sys/mman.h>
-#endif
 #ifdef HAVE_WAYLAND_PLATFORM
 #include <wayland-client.h>
 #endif
@@ -61,7 +58,7 @@
 
 
 /**
- * Map --with-egl-platforms names to platform types.
+ * Map build-system platform names to platform types.
  */
 static const struct {
    _EGLPlatformType platform;
@@ -105,35 +102,6 @@ _eglGetNativePlatformFromEnv(void)
 
 
 /**
- * Perform validity checks on a generic pointer.
- */
-static EGLBoolean
-_eglPointerIsDereferencable(void *p)
-{
-#ifdef HAVE_MINCORE
-   uintptr_t addr = (uintptr_t) p;
-   unsigned char valid = 0;
-   const long page_size = getpagesize();
-
-   if (p == NULL)
-      return EGL_FALSE;
-
-   /* align addr to page_size */
-   addr &= ~(page_size - 1);
-
-   if (mincore((void *) addr, page_size, &valid) < 0) {
-      _eglLog(_EGL_DEBUG, "mincore failed: %m");
-      return EGL_FALSE;
-   }
-
-   return (valid & 0x01) == 0x01;
-#else
-   return p != NULL;
-#endif
-}
-
-
-/**
  * Try detecting native platform with the help of native display characteristcs.
  */
 static _EGLPlatformType
@@ -166,7 +134,7 @@ _eglNativePlatformDetectNativeDisplay(void *nativeDisplay)
 #endif
 
 #ifdef HAVE_HAIKU_PLATFORM
-	return _EGL_PLATFORM_HAIKU;
+      return _EGL_PLATFORM_HAIKU;
 #endif
    }
 
@@ -180,24 +148,31 @@ _eglNativePlatformDetectNativeDisplay(void *nativeDisplay)
 _EGLPlatformType
 _eglGetNativePlatform(void *nativeDisplay)
 {
-   static _EGLPlatformType native_platform;
-   char *detection_method;
+   static _EGLPlatformType native_platform = _EGL_INVALID_PLATFORM;
+   _EGLPlatformType detected_platform = native_platform;
 
-   native_platform = _eglGetNativePlatformFromEnv();
-   detection_method = "environment overwrite";
+   if (detected_platform == _EGL_INVALID_PLATFORM) {
+      const char *detection_method;
 
-   if (native_platform == _EGL_INVALID_PLATFORM) {
-      native_platform = _eglNativePlatformDetectNativeDisplay(nativeDisplay);
-      detection_method = "autodetected";
+      detected_platform = _eglGetNativePlatformFromEnv();
+      detection_method = "environment overwrite";
+
+      if (detected_platform == _EGL_INVALID_PLATFORM) {
+         detected_platform = _eglNativePlatformDetectNativeDisplay(nativeDisplay);
+         detection_method = "autodetected";
+      }
+
+      if (detected_platform == _EGL_INVALID_PLATFORM) {
+         detected_platform = _EGL_NATIVE_PLATFORM;
+         detection_method = "build-time configuration";
+      }
+
+      _eglLog(_EGL_DEBUG, "Native platform type: %s (%s)",
+              egl_platforms[detected_platform].name, detection_method);
+
+      p_atomic_cmpxchg(&native_platform, _EGL_INVALID_PLATFORM,
+                       detected_platform);
    }
-
-   if (native_platform == _EGL_INVALID_PLATFORM) {
-      native_platform = _EGL_NATIVE_PLATFORM;
-      detection_method = "build-time configuration";
-   }
-
-   _eglLog(_EGL_DEBUG, "Native platform type: %s (%s)",
-           egl_platforms[native_platform].name, detection_method);
 
    return native_platform;
 }
@@ -209,25 +184,25 @@ _eglGetNativePlatform(void *nativeDisplay)
 void
 _eglFiniDisplay(void)
 {
-   _EGLDisplay *dpyList, *dpy;
+   _EGLDisplay *dispList, *disp;
 
    /* atexit function is called with global mutex locked */
-   dpyList = _eglGlobal.DisplayList;
-   while (dpyList) {
+   dispList = _eglGlobal.DisplayList;
+   while (dispList) {
       EGLint i;
 
       /* pop list head */
-      dpy = dpyList;
-      dpyList = dpyList->Next;
+      disp = dispList;
+      dispList = dispList->Next;
 
       for (i = 0; i < _EGL_NUM_RESOURCES; i++) {
-         if (dpy->ResourceLists[i]) {
-            _eglLog(_EGL_DEBUG, "Display %p is destroyed with resources", dpy);
+         if (disp->ResourceLists[i]) {
+            _eglLog(_EGL_DEBUG, "Display %p is destroyed with resources", disp);
             break;
          }
       }
 
-      free(dpy);
+      free(disp);
    }
    _eglGlobal.DisplayList = NULL;
 }
@@ -240,7 +215,7 @@ _eglFiniDisplay(void)
 _EGLDisplay *
 _eglFindDisplay(_EGLPlatformType plat, void *plat_dpy)
 {
-   _EGLDisplay *dpy;
+   _EGLDisplay *disp;
 
    if (plat == _EGL_INVALID_PLATFORM)
       return NULL;
@@ -248,30 +223,30 @@ _eglFindDisplay(_EGLPlatformType plat, void *plat_dpy)
    mtx_lock(_eglGlobal.Mutex);
 
    /* search the display list first */
-   dpy = _eglGlobal.DisplayList;
-   while (dpy) {
-      if (dpy->Platform == plat && dpy->PlatformDisplay == plat_dpy)
+   disp = _eglGlobal.DisplayList;
+   while (disp) {
+      if (disp->Platform == plat && disp->PlatformDisplay == plat_dpy)
          break;
-      dpy = dpy->Next;
+      disp = disp->Next;
    }
 
    /* create a new display */
-   if (!dpy) {
-      dpy = calloc(1, sizeof(_EGLDisplay));
-      if (dpy) {
-         mtx_init(&dpy->Mutex, mtx_plain);
-         dpy->Platform = plat;
-         dpy->PlatformDisplay = plat_dpy;
+   if (!disp) {
+      disp = calloc(1, sizeof(_EGLDisplay));
+      if (disp) {
+         mtx_init(&disp->Mutex, mtx_plain);
+         disp->Platform = plat;
+         disp->PlatformDisplay = plat_dpy;
 
          /* add to the display list */ 
-         dpy->Next = _eglGlobal.DisplayList;
-         _eglGlobal.DisplayList = dpy;
+         disp->Next = _eglGlobal.DisplayList;
+         _eglGlobal.DisplayList = disp;
       }
    }
 
    mtx_unlock(_eglGlobal.Mutex);
 
-   return dpy;
+   return disp;
 }
 
 
@@ -366,16 +341,16 @@ _eglCheckDisplayHandle(EGLDisplay dpy)
  * own the resource.
  */
 EGLBoolean
-_eglCheckResource(void *res, _EGLResourceType type, _EGLDisplay *dpy)
+_eglCheckResource(void *res, _EGLResourceType type, _EGLDisplay *disp)
 {
-   _EGLResource *list = dpy->ResourceLists[type];
+   _EGLResource *list = disp->ResourceLists[type];
    
    if (!res)
       return EGL_FALSE;
 
    while (list) {
       if (res == (void *) list) {
-         assert(list->Display == dpy);
+         assert(list->Display == disp);
          break;
       }
       list = list->Next;
@@ -393,10 +368,10 @@ _eglCheckResource(void *res, _EGLResourceType type, _EGLDisplay *dpy)
  * _eglInitContext or _eglInitSurface.
  */
 void
-_eglInitResource(_EGLResource *res, EGLint size, _EGLDisplay *dpy)
+_eglInitResource(_EGLResource *res, EGLint size, _EGLDisplay *disp)
 {
    memset(res, 0, size);
-   res->Display = dpy;
+   res->Display = disp;
    res->RefCount = 1;
 }
 
@@ -472,7 +447,8 @@ _eglUnlinkResource(_EGLResource *res, _EGLResourceType type)
 
 #ifdef HAVE_X11_PLATFORM
 static EGLBoolean
-_eglParseX11DisplayAttribList(const EGLint *attrib_list)
+_eglParseX11DisplayAttribList(_EGLDisplay *display,
+                              const EGLAttrib *attrib_list)
 {
    int i;
 
@@ -481,19 +457,16 @@ _eglParseX11DisplayAttribList(const EGLint *attrib_list)
    }
 
    for (i = 0; attrib_list[i] != EGL_NONE; i += 2) {
-      EGLint attrib = attrib_list[i];
-      EGLint value = attrib_list[i + 1];
+      EGLAttrib attrib = attrib_list[i];
+      EGLAttrib value = attrib_list[i + 1];
 
       /* EGL_EXT_platform_x11 recognizes exactly one attribute,
        * EGL_PLATFORM_X11_SCREEN_EXT, which is optional.
-       * 
-       * Mesa supports connecting to only the default screen, so we reject
-       * screen != 0.
        */
-      if (attrib != EGL_PLATFORM_X11_SCREEN_EXT || value != 0) {
-         _eglError(EGL_BAD_ATTRIBUTE, "eglGetPlatformDisplay");
-         return EGL_FALSE;
-      }
+      if (attrib != EGL_PLATFORM_X11_SCREEN_EXT)
+         return _eglError(EGL_BAD_ATTRIBUTE, "eglGetPlatformDisplay");
+
+      display->Options.Platform = (void *)(uintptr_t)value;
    }
 
    return EGL_TRUE;
@@ -501,20 +474,28 @@ _eglParseX11DisplayAttribList(const EGLint *attrib_list)
 
 _EGLDisplay*
 _eglGetX11Display(Display *native_display,
-                  const EGLint *attrib_list)
+                  const EGLAttrib *attrib_list)
 {
-   if (!_eglParseX11DisplayAttribList(attrib_list)) {
+   _EGLDisplay *display = _eglFindDisplay(_EGL_PLATFORM_X11,
+                                          native_display);
+
+   if (!display) {
+      _eglError(EGL_BAD_ALLOC, "eglGetPlatformDisplay");
       return NULL;
    }
 
-   return _eglFindDisplay(_EGL_PLATFORM_X11, native_display);
+   if (!_eglParseX11DisplayAttribList(display, attrib_list)) {
+      return NULL;
+   }
+
+   return display;
 }
 #endif /* HAVE_X11_PLATFORM */
 
 #ifdef HAVE_DRM_PLATFORM
 _EGLDisplay*
 _eglGetGbmDisplay(struct gbm_device *native_display,
-                  const EGLint *attrib_list)
+                  const EGLAttrib *attrib_list)
 {
    /* EGL_MESA_platform_gbm recognizes no attributes. */
    if (attrib_list != NULL && attrib_list[0] != EGL_NONE) {
@@ -529,7 +510,7 @@ _eglGetGbmDisplay(struct gbm_device *native_display,
 #ifdef HAVE_WAYLAND_PLATFORM
 _EGLDisplay*
 _eglGetWaylandDisplay(struct wl_display *native_display,
-                      const EGLint *attrib_list)
+                      const EGLAttrib *attrib_list)
 {
    /* EGL_EXT_platform_wayland recognizes no attributes. */
    if (attrib_list != NULL && attrib_list[0] != EGL_NONE) {
@@ -544,7 +525,7 @@ _eglGetWaylandDisplay(struct wl_display *native_display,
 #ifdef HAVE_SURFACELESS_PLATFORM
 _EGLDisplay*
 _eglGetSurfacelessDisplay(void *native_display,
-                          const EGLint *attrib_list)
+                          const EGLAttrib *attrib_list)
 {
    /* This platform has no native display. */
    if (native_display != NULL) {

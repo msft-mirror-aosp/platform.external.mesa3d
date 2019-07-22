@@ -675,7 +675,7 @@ static void i915_delete_vs_state(struct pipe_context *pipe, void *shader)
 }
 
 static void i915_set_constant_buffer(struct pipe_context *pipe,
-                                     uint shader, uint index,
+                                     enum pipe_shader_type shader, uint index,
                                      const struct pipe_constant_buffer *cb)
 {
    struct i915_context *i915 = i915_context(pipe);
@@ -745,17 +745,11 @@ static void i915_set_fragment_sampler_views(struct pipe_context *pipe,
       return;
 
    for (i = 0; i < num; i++) {
-      /* Note: we're using pipe_sampler_view_release() here to work around
-       * a possible crash when the old view belongs to another context that
-       * was already destroyed.
-       */
-      pipe_sampler_view_release(pipe, &i915->fragment_sampler_views[i]);
-      pipe_sampler_view_reference(&i915->fragment_sampler_views[i],
-                                  views[i]);
+      pipe_sampler_view_reference(&i915->fragment_sampler_views[i], views[i]);
    }
 
    for (i = num; i < i915->num_fragment_sampler_views; i++)
-      pipe_sampler_view_release(pipe, &i915->fragment_sampler_views[i]);
+      pipe_sampler_view_reference(&i915->fragment_sampler_views[i], NULL);
 
    i915->num_fragment_sampler_views = num;
 
@@ -1060,17 +1054,6 @@ i915_delete_vertex_elements_state(struct pipe_context *pipe, void *velems)
    FREE( velems );
 }
 
-static void i915_set_index_buffer(struct pipe_context *pipe,
-                                  const struct pipe_index_buffer *ib)
-{
-   struct i915_context *i915 = i915_context(pipe);
-
-   if (ib)
-      memcpy(&i915->index_buffer, ib, sizeof(i915->index_buffer));
-   else
-      memset(&i915->index_buffer, 0, sizeof(i915->index_buffer));
-}
-
 static void
 i915_set_sample_mask(struct pipe_context *pipe,
                      unsigned sample_mask)
@@ -1119,5 +1102,4 @@ i915_init_state_functions( struct i915_context *i915 )
    i915->base.sampler_view_destroy = i915_sampler_view_destroy;
    i915->base.set_viewport_states = i915_set_viewport_states;
    i915->base.set_vertex_buffers = i915_set_vertex_buffers;
-   i915->base.set_index_buffer = i915_set_index_buffer;
 }

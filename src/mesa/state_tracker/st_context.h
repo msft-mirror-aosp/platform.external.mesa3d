@@ -28,11 +28,16 @@
 #ifndef ST_CONTEXT_H
 #define ST_CONTEXT_H
 
+#include "main/arrayobj.h"
 #include "main/mtypes.h"
-#include "pipe/p_state.h"
 #include "state_tracker/st_api.h"
 #include "main/fbobject.h"
 #include "state_tracker/st_atom.h"
+#include "util/u_helpers.h"
+#include "util/u_inlines.h"
+#include "util/list.h"
+#include "vbo/vbo.h"
+#include "util/list.h"
 
 
 #ifdef __cplusplus
@@ -40,7 +45,6 @@ extern "C" {
 #endif
 
 
-struct bitmap_cache;
 struct dd_function_table;
 struct draw_context;
 struct draw_stage;
@@ -51,12 +55,65 @@ struct st_perf_monitor_group;
 struct u_upload_mgr;
 
 
-/** For drawing quads for glClear, glDraw/CopyPixels, glBitmap, etc. */
-struct st_util_vertex
+struct st_bitmap_cache
 {
-   float x, y, z;
-   float r, g, b, a;
-   float s, t;
+   /** Window pos to render the cached image */
+   GLint xpos, ypos;
+   /** Bounds of region used in window coords */
+   GLint xmin, ymin, xmax, ymax;
+
+   GLfloat color[4];
+
+   /** Bitmap's Z position */
+   GLfloat zpos;
+
+   struct pipe_resource *texture;
+   struct pipe_transfer *trans;
+
+   GLboolean empty;
+
+   /** An I8 texture image: */
+   ubyte *buffer;
+};
+
+struct st_bound_handles
+{
+   unsigned num_handles;
+   uint64_t *handles;
+};
+
+
+#define NUM_DRAWPIX_CACHE_ENTRIES 4
+
+struct drawpix_cache_entry
+{
+   GLsizei width, height;
+   GLenum format, type;
+   const void *user_pointer;  /**< Last user 'pixels' pointer */
+   void *image;               /**< Copy of the glDrawPixels image data */
+   struct pipe_resource *texture;
+   unsigned age;
+};
+
+
+/*
+ * Node for a linked list of dead sampler views.
+ */
+struct st_zombie_sampler_view_node
+{
+   struct pipe_sampler_view *view;
+   struct list_head node;
+};
+
+
+/*
+ * Node for a linked list of dead shaders.
+ */
+struct st_zombie_shader_node
+{
+   void *shader;
+   enum pipe_shader_type type;
+   struct list_head node;
 };
 
 
@@ -67,8 +124,6 @@ struct st_context
    struct gl_context *ctx;
 
    struct pipe_context *pipe;
-
-   struct u_upload_mgr *uploader, *indexbuf_uploader, *constbuf_uploader;
 
    struct draw_context *draw;  /**< For selection/feedback/rastpos only */
    struct draw_stage *feedback_stage;  /**< For GL_FEEDBACK rendermode */
@@ -81,11 +136,16 @@ struct st_context
    boolean has_shader_model3;
    boolean has_etc1;
    boolean has_etc2;
+   boolean has_astc_2d_ldr;
    boolean prefer_blit_based_texture_transfer;
    boolean force_persample_in_shader;
    boolean has_shareable_shaders;
    boolean has_half_float_packing;
    boolean has_multi_draw_indirect;
+   boolean has_single_pipe_stat;
+   boolean has_indep_blend_func;
+   boolean needs_rgb_dst_alpha_override;
+   boolean can_bind_const_buffer_as_vertex;
 
    /**
     * If a shader can be created when we get its source.
@@ -101,8 +161,8 @@ struct st_context
     * on glViewpport calls, this is set via a option.
     */
    boolean invalidate_on_gl_viewport;
-
-   boolean vertex_array_out_of_memory;
+   boolean draw_needs_minmax_index;
+   boolean has_hw_atomics;
 
    /* Some state is contained in constant objects.
     * Other state is just parameter values.
@@ -111,16 +171,21 @@ struct st_context
       struct pipe_blend_state               blend;
       struct pipe_depth_stencil_alpha_state depth_stencil;
       struct pipe_rasterizer_state          rasterizer;
-      struct pipe_sampler_state samplers[PIPE_SHADER_TYPES][PIPE_MAX_SAMPLERS];
-      GLuint num_samplers[PIPE_SHADER_TYPES];
-      struct pipe_sampler_view *sampler_views[PIPE_SHADER_TYPES][PIPE_MAX_SAMPLERS];
+      struct pipe_sampler_state frag_samplers[PIPE_MAX_SAMPLERS];
+      GLuint num_frag_samplers;
+      struct pipe_sampler_view *frag_sampler_views[PIPE_MAX_SAMPLERS];
       GLuint num_sampler_views[PIPE_SHADER_TYPES];
       struct pipe_clip_state clip;
       struct {
          void *ptr;
          unsigned size;
       } constants[PIPE_SHADER_TYPES];
-      struct pipe_framebuffer_state framebuffer;
+      unsigned fb_width;
+      unsigned fb_height;
+      unsigned fb_num_samples;
+      unsigned fb_num_layers;
+      unsigned fb_num_cb;
+      unsigned num_viewports;
       struct pipe_scissor_state scissor[PIPE_MAX_VIEWPORTS];
       struct pipe_viewport_state viewport[PIPE_MAX_VIEWPORTS];
       struct {
@@ -128,20 +193,24 @@ struct st_context
          boolean include;
          struct pipe_scissor_state rects[PIPE_MAX_WINDOW_RECTANGLES];
       } window_rects;
-      unsigned sample_mask;
 
       GLuint poly_stipple[32];  /**< In OpenGL's bottom-to-top order */
 
       GLuint fb_orientation;
-   } state;
 
-   char vendor[100];
-   char renderer[100];
+      bool enable_sample_locations;
+      unsigned sample_locations_samples;
+      uint8_t sample_locations[
+         PIPE_MAX_SAMPLE_LOCATION_GRID_SIZE *
+         PIPE_MAX_SAMPLE_LOCATION_GRID_SIZE * 32];
+   } state;
 
    uint64_t dirty; /**< dirty states */
 
    /** This masks out unused shader resources. Only valid in draw calls. */
    uint64_t active_states;
+
+   unsigned pin_thread_counter; /* for L3 thread pinning on AMD Zen */
 
    /* If true, further analysis of states is required to know if something
     * has changed. Used mainly for shaders.
@@ -152,22 +221,14 @@ struct st_context
    GLboolean vertdata_edgeflags;
    GLboolean edgeflag_culls_prims;
 
-   /** Mapping from VARYING_SLOT_x to post-transformed vertex slot */
-   const GLuint *vertex_result_to_slot;
-
    struct st_vertex_program *vp;    /**< Currently bound vertex program */
    struct st_fragment_program *fp;  /**< Currently bound fragment program */
-   struct st_geometry_program *gp;  /**< Currently bound geometry program */
-   struct st_tessctrl_program *tcp; /**< Currently bound tess control program */
-   struct st_tesseval_program *tep; /**< Currently bound tess eval program */
+   struct st_common_program *gp;  /**< Currently bound geometry program */
+   struct st_common_program *tcp; /**< Currently bound tess control program */
+   struct st_common_program *tep; /**< Currently bound tess eval program */
    struct st_compute_program *cp;   /**< Currently bound compute program */
 
    struct st_vp_variant *vp_variant;
-   struct st_fp_variant *fp_variant;
-   struct st_basic_variant *gp_variant;
-   struct st_basic_variant *tcp_variant;
-   struct st_basic_variant *tep_variant;
-   struct st_basic_variant *cp_variant;
 
    struct {
       struct pipe_resource *pixelmap_texture;
@@ -180,22 +241,18 @@ struct st_context
       struct pipe_sampler_state sampler;
       struct pipe_sampler_state atlas_sampler;
       enum pipe_format tex_format;
-      void *vs;
-      struct bitmap_cache *cache;
+      struct st_bitmap_cache cache;
    } bitmap;
 
    /** for glDraw/CopyPixels */
    struct {
       void *zs_shaders[4];
-      void *vert_shaders[2];   /**< ureg shaders */
    } drawpix;
 
+   /** Cache of glDrawPixels images */
    struct {
-      GLsizei width, height;
-      GLenum format, type;
-      const void *user_pointer;  /**< Last user 'pixels' pointer */
-      void *image;               /**< Copy of the glDrawPixels image data */
-      struct pipe_resource *texture;
+      struct drawpix_cache_entry entries[NUM_DRAWPIX_CACHE_ENTRIES];
+      unsigned age;
    } drawpix_cache;
 
    /** for glReadPixels */
@@ -236,7 +293,8 @@ struct st_context
    /** for drawing with st_util_vertex */
    struct pipe_vertex_element util_velems[3];
 
-   void *passthrough_fs;  /**< simple pass-through frag shader */
+   /** passthrough vertex shader matching the util_velem attributes */
+   void *passthrough_vs;
 
    enum pipe_texture_target internal_target;
 
@@ -255,15 +313,72 @@ struct st_context
    struct st_perf_monitor_group *perfmon;
 
    enum pipe_reset_status reset_status;
+
+   /* Array of bound texture/image handles which are resident in the context.
+    */
+   struct st_bound_handles bound_texture_handles[PIPE_SHADER_TYPES];
+   struct st_bound_handles bound_image_handles[PIPE_SHADER_TYPES];
+
+   /* Winsys buffers */
+   struct list_head winsys_buffers;
+
+   /* Throttling for texture uploads and similar operations to limit memory
+    * usage by limiting the number of in-flight operations based on
+    * the estimated allocated size needed to execute those operations.
+    */
+   struct util_throttle throttle;
+
+   struct {
+      struct st_zombie_sampler_view_node list;
+      mtx_t mutex;
+   } zombie_sampler_views;
+
+   struct {
+      struct st_zombie_shader_node list;
+      mtx_t mutex;
+   } zombie_shaders;
+
 };
 
 
-/* Need this so that we can implement Mesa callbacks in this module.
+/*
+ * Get the state tracker context for the given Mesa context.
  */
-static inline struct st_context *st_context(struct gl_context *ctx)
+static inline struct st_context *
+st_context(struct gl_context *ctx)
 {
    return ctx->st;
 }
+
+
+extern struct st_context *
+st_create_context(gl_api api, struct pipe_context *pipe,
+                  const struct gl_config *visual,
+                  struct st_context *share,
+                  const struct st_config_options *options,
+                  bool no_error);
+
+extern void
+st_destroy_context(struct st_context *st);
+
+
+extern void
+st_invalidate_buffers(struct st_context *st);
+
+
+extern void
+st_save_zombie_sampler_view(struct st_context *st,
+                            struct pipe_sampler_view *view);
+
+extern void
+st_save_zombie_shader(struct st_context *st,
+                      enum pipe_shader_type type,
+                      struct pipe_shader_state *shader);
+
+
+void
+st_context_free_zombie_objects(struct st_context *st);
+
 
 
 /**
@@ -273,97 +388,17 @@ static inline struct st_context *st_context(struct gl_context *ctx)
 struct st_framebuffer
 {
    struct gl_framebuffer Base;
-   void *Private;
 
    struct st_framebuffer_iface *iface;
    enum st_attachment_type statts[ST_ATTACHMENT_COUNT];
    unsigned num_statts;
    int32_t stamp;
    int32_t iface_stamp;
+   uint32_t iface_ID;
+
+   /* list of framebuffer objects */
+   struct list_head head;
 };
-
-
-extern void st_init_driver_functions(struct pipe_screen *screen,
-                                     struct dd_function_table *functions);
-
-void st_invalidate_state(struct gl_context * ctx, GLbitfield new_state);
-
-void st_invalidate_readpix_cache(struct st_context *st);
-
-
-#define Y_0_TOP 1
-#define Y_0_BOTTOM 2
-
-static inline GLuint
-st_fb_orientation(const struct gl_framebuffer *fb)
-{
-   if (fb && _mesa_is_winsys_fbo(fb)) {
-      /* Drawing into a window (on-screen buffer).
-       *
-       * Negate Y scale to flip image vertically.
-       * The NDC Y coords prior to viewport transformation are in the range
-       * [y=-1=bottom, y=1=top]
-       * Hardware window coords are in the range [y=0=top, y=H-1=bottom] where
-       * H is the window height.
-       * Use the viewport transformation to invert Y.
-       */
-      return Y_0_TOP;
-   }
-   else {
-      /* Drawing into user-created FBO (very likely a texture).
-       *
-       * For textures, T=0=Bottom, so by extension Y=0=Bottom for rendering.
-       */
-      return Y_0_BOTTOM;
-   }
-}
-
-
-static inline enum pipe_shader_type
-st_shader_stage_to_ptarget(gl_shader_stage stage)
-{
-   switch (stage) {
-   case MESA_SHADER_VERTEX:
-      return PIPE_SHADER_VERTEX;
-   case MESA_SHADER_FRAGMENT:
-      return PIPE_SHADER_FRAGMENT;
-   case MESA_SHADER_GEOMETRY:
-      return PIPE_SHADER_GEOMETRY;
-   case MESA_SHADER_TESS_CTRL:
-      return PIPE_SHADER_TESS_CTRL;
-   case MESA_SHADER_TESS_EVAL:
-      return PIPE_SHADER_TESS_EVAL;
-   case MESA_SHADER_COMPUTE:
-      return PIPE_SHADER_COMPUTE;
-   }
-
-   assert(!"should not be reached");
-   return PIPE_SHADER_VERTEX;
-}
-
-static inline bool
-st_user_clip_planes_enabled(struct gl_context *ctx)
-{
-   return (ctx->API == API_OPENGL_COMPAT ||
-           ctx->API == API_OPENGLES) && /* only ES 1.x */
-          ctx->Transform.ClipPlanesEnabled;
-}
-
-/** clear-alloc a struct-sized object, with casting */
-#define ST_CALLOC_STRUCT(T)   (struct T *) calloc(1, sizeof(struct T))
-
-
-extern struct st_context *
-st_create_context(gl_api api, struct pipe_context *pipe,
-                  const struct gl_config *visual,
-                  struct st_context *share,
-                  const struct st_config_options *options);
-
-extern void
-st_destroy_context(struct st_context *st);
-
-uint64_t
-st_get_active_states(struct gl_context *ctx);
 
 
 #ifdef __cplusplus

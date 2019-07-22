@@ -24,40 +24,56 @@
  */
 /* based on pieces from si_pipe.c and radeon_llvm_emit.c */
 #include "ac_llvm_util.h"
-
+#include "ac_llvm_build.h"
+#include "util/bitscan.h"
 #include <llvm-c/Core.h>
-
+#include <llvm-c/Support.h>
+#include <llvm-c/Transforms/IPO.h>
+#include <llvm-c/Transforms/Scalar.h>
+#include <llvm-c/Transforms/Utils.h>
 #include "c11/threads.h"
+#include "gallivm/lp_bld_misc.h"
+#include "util/u_math.h"
 
 #include <assert.h>
 #include <stdio.h>
-
-#include "util/bitscan.h"
-#include "util/macros.h"
+#include <string.h>
 
 static void ac_init_llvm_target()
 {
-#if HAVE_LLVM < 0x0307
-	LLVMInitializeR600TargetInfo();
-	LLVMInitializeR600Target();
-	LLVMInitializeR600TargetMC();
-	LLVMInitializeR600AsmPrinter();
-#else
 	LLVMInitializeAMDGPUTargetInfo();
 	LLVMInitializeAMDGPUTarget();
 	LLVMInitializeAMDGPUTargetMC();
 	LLVMInitializeAMDGPUAsmPrinter();
-#endif
+
+	/* For inline assembly. */
+	LLVMInitializeAMDGPUAsmParser();
+
+	/* Workaround for bug in llvm 4.0 that causes image intrinsics
+	 * to disappear.
+	 * https://reviews.llvm.org/D26348
+	 *
+	 * "mesa" is the prefix for error messages.
+	 *
+	 * -global-isel-abort=2 is a no-op unless global isel has been enabled.
+	 * This option tells the backend to fall-back to SelectionDAG and print
+	 * a diagnostic message if global isel fails.
+	 */
+	const char *argv[3] = { "mesa", "-simplifycfg-sink-common=false", "-global-isel-abort=2" };
+	LLVMParseCommandLineOptions(3, argv, NULL);
 }
 
 static once_flag ac_init_llvm_target_once_flag = ONCE_FLAG_INIT;
+
+void ac_init_llvm_once(void)
+{
+	call_once(&ac_init_llvm_target_once_flag, ac_init_llvm_target);
+}
 
 static LLVMTargetRef ac_get_llvm_target(const char *triple)
 {
 	LLVMTargetRef target = NULL;
 	char *err_message = NULL;
-
-	call_once(&ac_init_llvm_target_once_flag, ac_init_llvm_target);
 
 	if (LLVMGetTargetFromTriple(triple, &target, &err_message)) {
 		fprintf(stderr, "Cannot find target for triple %s ", triple);
@@ -70,7 +86,7 @@ static LLVMTargetRef ac_get_llvm_target(const char *triple)
 	return target;
 }
 
-static const char *ac_get_llvm_processor_name(enum radeon_family family)
+const char *ac_get_llvm_processor_name(enum radeon_family family)
 {
 	switch (family) {
 	case CHIP_TAHITI:
@@ -99,408 +115,238 @@ static const char *ac_get_llvm_processor_name(enum radeon_family family)
 		return "iceland";
 	case CHIP_CARRIZO:
 		return "carrizo";
-#if HAVE_LLVM <= 0x0307
-	case CHIP_FIJI:
-		return "tonga";
-	case CHIP_STONEY:
-		return "carrizo";
-#else
 	case CHIP_FIJI:
 		return "fiji";
 	case CHIP_STONEY:
 		return "stoney";
-#endif
-#if HAVE_LLVM <= 0x0308
-	case CHIP_POLARIS10:
-		return "tonga";
-	case CHIP_POLARIS11:
-		return "tonga";
-#else
 	case CHIP_POLARIS10:
 		return "polaris10";
 	case CHIP_POLARIS11:
+	case CHIP_POLARIS12:
+	case CHIP_VEGAM:
 		return "polaris11";
-#endif
+	case CHIP_VEGA10:
+		return "gfx900";
+	case CHIP_RAVEN:
+		return "gfx902";
+	case CHIP_VEGA12:
+		return "gfx904";
+	case CHIP_VEGA20:
+		return "gfx906";
+	case CHIP_RAVEN2:
+		return HAVE_LLVM >= 0x0800 ? "gfx909" : "gfx902";
 	default:
 		return "";
 	}
 }
 
-LLVMTargetMachineRef ac_create_target_machine(enum radeon_family family)
+static LLVMTargetMachineRef ac_create_target_machine(enum radeon_family family,
+						     enum ac_target_machine_options tm_options,
+						     LLVMCodeGenOptLevel level,
+						     const char **out_triple)
 {
 	assert(family >= CHIP_TAHITI);
-
-	const char *triple = "amdgcn--";
+	char features[256];
+	const char *triple = (tm_options & AC_TM_SUPPORTS_SPILL) ? "amdgcn-mesa-mesa3d" : "amdgcn--";
 	LLVMTargetRef target = ac_get_llvm_target(triple);
+
+	snprintf(features, sizeof(features),
+		 "+DumpCode,-fp32-denormals,+fp64-denormals%s%s%s%s%s%s",
+		 HAVE_LLVM >= 0x0800 ? "" : ",+vgpr-spilling",
+		 tm_options & AC_TM_SISCHED ? ",+si-scheduler" : "",
+		 tm_options & AC_TM_FORCE_ENABLE_XNACK ? ",+xnack" : "",
+		 tm_options & AC_TM_FORCE_DISABLE_XNACK ? ",-xnack" : "",
+		 tm_options & AC_TM_PROMOTE_ALLOCA_TO_SCRATCH ? ",-promote-alloca" : "",
+		 tm_options & AC_TM_NO_LOAD_STORE_OPT ? ",-load-store-opt" : "");
+
 	LLVMTargetMachineRef tm = LLVMCreateTargetMachine(
 	                             target,
 	                             triple,
 	                             ac_get_llvm_processor_name(family),
-	                             "+DumpCode,+vgpr-spilling",
-	                             LLVMCodeGenLevelDefault,
+				     features,
+	                             level,
 	                             LLVMRelocDefault,
 	                             LLVMCodeModelDefault);
 
+	if (out_triple)
+		*out_triple = triple;
+	if (tm_options & AC_TM_ENABLE_GLOBAL_ISEL)
+		ac_enable_global_isel(tm);
 	return tm;
 }
 
-/* Initialize module-independent parts of the context.
- *
- * The caller is responsible for initializing ctx::module and ctx::builder.
- */
-void
-ac_llvm_context_init(struct ac_llvm_context *ctx, LLVMContextRef context)
+static LLVMPassManagerRef ac_create_passmgr(LLVMTargetLibraryInfoRef target_library_info,
+					    bool check_ir)
 {
-	LLVMValueRef args[1];
+	LLVMPassManagerRef passmgr = LLVMCreatePassManager();
+	if (!passmgr)
+		return NULL;
 
-	ctx->context = context;
-	ctx->module = NULL;
-	ctx->builder = NULL;
+	if (target_library_info)
+		LLVMAddTargetLibraryInfo(target_library_info,
+					 passmgr);
 
-	ctx->i32 = LLVMIntTypeInContext(ctx->context, 32);
-	ctx->f32 = LLVMFloatTypeInContext(ctx->context);
-
-	ctx->fpmath_md_kind = LLVMGetMDKindIDInContext(ctx->context, "fpmath", 6);
-
-	args[0] = LLVMConstReal(ctx->f32, 2.5);
-	ctx->fpmath_md_2p5_ulp = LLVMMDNodeInContext(ctx->context, args, 1);
+	if (check_ir)
+		LLVMAddVerifierPass(passmgr);
+	LLVMAddAlwaysInlinerPass(passmgr);
+	/* Normally, the pass manager runs all passes on one function before
+	 * moving onto another. Adding a barrier no-op pass forces the pass
+	 * manager to run the inliner on all functions first, which makes sure
+	 * that the following passes are only run on the remaining non-inline
+	 * function, so it removes useless work done on dead inline functions.
+	 */
+	ac_llvm_add_barrier_noop_pass(passmgr);
+	/* This pass should eliminate all the load and store instructions. */
+	LLVMAddPromoteMemoryToRegisterPass(passmgr);
+	LLVMAddScalarReplAggregatesPass(passmgr);
+	LLVMAddLICMPass(passmgr);
+	LLVMAddAggressiveDCEPass(passmgr);
+	LLVMAddCFGSimplificationPass(passmgr);
+	/* This is recommended by the instruction combining pass. */
+	LLVMAddEarlyCSEMemSSAPass(passmgr);
+	LLVMAddInstructionCombiningPass(passmgr);
+	return passmgr;
 }
-
-#if HAVE_LLVM < 0x0400
-static LLVMAttribute ac_attr_to_llvm_attr(enum ac_func_attr attr)
-{
-   switch (attr) {
-   case AC_FUNC_ATTR_ALWAYSINLINE: return LLVMAlwaysInlineAttribute;
-   case AC_FUNC_ATTR_BYVAL: return LLVMByValAttribute;
-   case AC_FUNC_ATTR_INREG: return LLVMInRegAttribute;
-   case AC_FUNC_ATTR_NOALIAS: return LLVMNoAliasAttribute;
-   case AC_FUNC_ATTR_NOUNWIND: return LLVMNoUnwindAttribute;
-   case AC_FUNC_ATTR_READNONE: return LLVMReadNoneAttribute;
-   case AC_FUNC_ATTR_READONLY: return LLVMReadOnlyAttribute;
-   default:
-	   fprintf(stderr, "Unhandled function attribute: %x\n", attr);
-	   return 0;
-   }
-}
-
-#else
 
 static const char *attr_to_str(enum ac_func_attr attr)
 {
    switch (attr) {
    case AC_FUNC_ATTR_ALWAYSINLINE: return "alwaysinline";
-   case AC_FUNC_ATTR_BYVAL: return "byval";
    case AC_FUNC_ATTR_INREG: return "inreg";
    case AC_FUNC_ATTR_NOALIAS: return "noalias";
    case AC_FUNC_ATTR_NOUNWIND: return "nounwind";
    case AC_FUNC_ATTR_READNONE: return "readnone";
    case AC_FUNC_ATTR_READONLY: return "readonly";
+   case AC_FUNC_ATTR_WRITEONLY: return "writeonly";
+   case AC_FUNC_ATTR_INACCESSIBLE_MEM_ONLY: return "inaccessiblememonly";
+   case AC_FUNC_ATTR_CONVERGENT: return "convergent";
    default:
 	   fprintf(stderr, "Unhandled function attribute: %x\n", attr);
 	   return 0;
    }
 }
 
-#endif
-
 void
-ac_add_function_attr(LLVMValueRef function,
-                     int attr_idx,
-                     enum ac_func_attr attr)
+ac_add_function_attr(LLVMContextRef ctx, LLVMValueRef function,
+                     int attr_idx, enum ac_func_attr attr)
 {
-
-#if HAVE_LLVM < 0x0400
-   LLVMAttribute llvm_attr = ac_attr_to_llvm_attr(attr);
-   if (attr_idx == -1) {
-      LLVMAddFunctionAttr(function, llvm_attr);
-   } else {
-      LLVMAddAttribute(LLVMGetParam(function, attr_idx - 1), llvm_attr);
-   }
-#else
-   LLVMContextRef context = LLVMGetModuleContext(LLVMGetGlobalParent(function));
    const char *attr_name = attr_to_str(attr);
    unsigned kind_id = LLVMGetEnumAttributeKindForName(attr_name,
                                                       strlen(attr_name));
-   LLVMAttributeRef llvm_attr = LLVMCreateEnumAttribute(context, kind_id, 0);
-   LLVMAddAttributeAtIndex(function, attr_idx, llvm_attr);
-#endif
+   LLVMAttributeRef llvm_attr = LLVMCreateEnumAttribute(ctx, kind_id, 0);
+
+   if (LLVMIsAFunction(function))
+      LLVMAddAttributeAtIndex(function, attr_idx, llvm_attr);
+   else
+      LLVMAddCallSiteAttribute(function, attr_idx, llvm_attr);
 }
 
-LLVMValueRef
-ac_emit_llvm_intrinsic(struct ac_llvm_context *ctx, const char *name,
-		       LLVMTypeRef return_type, LLVMValueRef *params,
-		       unsigned param_count, unsigned attrib_mask)
+void ac_add_func_attributes(LLVMContextRef ctx, LLVMValueRef function,
+			    unsigned attrib_mask)
 {
-	LLVMValueRef function;
+	attrib_mask |= AC_FUNC_ATTR_NOUNWIND;
+	attrib_mask &= ~AC_FUNC_ATTR_LEGACY;
 
-	function = LLVMGetNamedFunction(ctx->module, name);
-	if (!function) {
-		LLVMTypeRef param_types[32], function_type;
-		unsigned i;
-
-		assert(param_count <= 32);
-
-		for (i = 0; i < param_count; ++i) {
-			assert(params[i]);
-			param_types[i] = LLVMTypeOf(params[i]);
-		}
-		function_type =
-		    LLVMFunctionType(return_type, param_types, param_count, 0);
-		function = LLVMAddFunction(ctx->module, name, function_type);
-
-		LLVMSetFunctionCallConv(function, LLVMCCallConv);
-		LLVMSetLinkage(function, LLVMExternalLinkage);
-
-		attrib_mask |= AC_FUNC_ATTR_NOUNWIND;
-		while (attrib_mask) {
-			enum ac_func_attr attr = 1u << u_bit_scan(&attrib_mask);
-			ac_add_function_attr(function, -1, attr);
-		}
+	while (attrib_mask) {
+		enum ac_func_attr attr = 1u << u_bit_scan(&attrib_mask);
+		ac_add_function_attr(ctx, function, -1, attr);
 	}
-	return LLVMBuildCall(ctx->builder, function, params, param_count, "");
-}
-
-LLVMValueRef
-ac_build_gather_values_extended(struct ac_llvm_context *ctx,
-				LLVMValueRef *values,
-				unsigned value_count,
-				unsigned value_stride,
-				bool load)
-{
-	LLVMBuilderRef builder = ctx->builder;
-	LLVMValueRef vec;
-	unsigned i;
-
-
-	if (value_count == 1) {
-		if (load)
-			return LLVMBuildLoad(builder, values[0], "");
-		return values[0];
-	} else if (!value_count)
-		unreachable("value_count is 0");
-
-	for (i = 0; i < value_count; i++) {
-		LLVMValueRef value = values[i * value_stride];
-		if (load)
-			value = LLVMBuildLoad(builder, value, "");
-
-		if (!i)
-			vec = LLVMGetUndef( LLVMVectorType(LLVMTypeOf(value), value_count));
-		LLVMValueRef index = LLVMConstInt(ctx->i32, i, false);
-		vec = LLVMBuildInsertElement(builder, vec, value, index, "");
-	}
-	return vec;
-}
-
-LLVMValueRef
-ac_build_gather_values(struct ac_llvm_context *ctx,
-		       LLVMValueRef *values,
-		       unsigned value_count)
-{
-	return ac_build_gather_values_extended(ctx, values, value_count, 1, false);
-}
-
-LLVMValueRef
-ac_emit_fdiv(struct ac_llvm_context *ctx,
-	     LLVMValueRef num,
-	     LLVMValueRef den)
-{
-	LLVMValueRef ret = LLVMBuildFDiv(ctx->builder, num, den, "");
-
-	if (!LLVMIsConstant(ret))
-		LLVMSetMetadata(ret, ctx->fpmath_md_kind, ctx->fpmath_md_2p5_ulp);
-	return ret;
-}
-
-/* Coordinates for cube map selection. sc, tc, and ma are as in Table 8.27
- * of the OpenGL 4.5 (Compatibility Profile) specification, except ma is
- * already multiplied by two. id is the cube face number.
- */
-struct cube_selection_coords {
-	LLVMValueRef stc[2];
-	LLVMValueRef ma;
-	LLVMValueRef id;
-};
-
-static void
-build_cube_intrinsic(struct ac_llvm_context *ctx,
-		     LLVMValueRef in[3],
-		     struct cube_selection_coords *out)
-{
-	LLVMBuilderRef builder = ctx->builder;
-
-	if (HAVE_LLVM >= 0x0309) {
-		LLVMTypeRef f32 = ctx->f32;
-
-		out->stc[1] = ac_emit_llvm_intrinsic(ctx, "llvm.amdgcn.cubetc",
-					f32, in, 3, AC_FUNC_ATTR_READNONE);
-		out->stc[0] = ac_emit_llvm_intrinsic(ctx, "llvm.amdgcn.cubesc",
-					f32, in, 3, AC_FUNC_ATTR_READNONE);
-		out->ma = ac_emit_llvm_intrinsic(ctx, "llvm.amdgcn.cubema",
-					f32, in, 3, AC_FUNC_ATTR_READNONE);
-		out->id = ac_emit_llvm_intrinsic(ctx, "llvm.amdgcn.cubeid",
-					f32, in, 3, AC_FUNC_ATTR_READNONE);
-	} else {
-		LLVMValueRef c[4] = {
-			in[0],
-			in[1],
-			in[2],
-			LLVMGetUndef(LLVMTypeOf(in[0]))
-		};
-		LLVMValueRef vec = ac_build_gather_values(ctx, c, 4);
-
-		LLVMValueRef tmp =
-			ac_emit_llvm_intrinsic(ctx, "llvm.AMDGPU.cube",
-					  LLVMTypeOf(vec), &vec, 1,
-					  AC_FUNC_ATTR_READNONE);
-
-		out->stc[1] = LLVMBuildExtractElement(builder, tmp,
-				LLVMConstInt(ctx->i32, 0, 0), "");
-		out->stc[0] = LLVMBuildExtractElement(builder, tmp,
-				LLVMConstInt(ctx->i32, 1, 0), "");
-		out->ma = LLVMBuildExtractElement(builder, tmp,
-				LLVMConstInt(ctx->i32, 2, 0), "");
-		out->id = LLVMBuildExtractElement(builder, tmp,
-				LLVMConstInt(ctx->i32, 3, 0), "");
-	}
-}
-
-/**
- * Build a manual selection sequence for cube face sc/tc coordinates and
- * major axis vector (multiplied by 2 for consistency) for the given
- * vec3 \p coords, for the face implied by \p selcoords.
- *
- * For the major axis, we always adjust the sign to be in the direction of
- * selcoords.ma; i.e., a positive out_ma means that coords is pointed towards
- * the selcoords major axis.
- */
-static void build_cube_select(LLVMBuilderRef builder,
-			      const struct cube_selection_coords *selcoords,
-			      const LLVMValueRef *coords,
-			      LLVMValueRef *out_st,
-			      LLVMValueRef *out_ma)
-{
-	LLVMTypeRef f32 = LLVMTypeOf(coords[0]);
-	LLVMValueRef is_ma_positive;
-	LLVMValueRef sgn_ma;
-	LLVMValueRef is_ma_z, is_not_ma_z;
-	LLVMValueRef is_ma_y;
-	LLVMValueRef is_ma_x;
-	LLVMValueRef sgn;
-	LLVMValueRef tmp;
-
-	is_ma_positive = LLVMBuildFCmp(builder, LLVMRealUGE,
-		selcoords->ma, LLVMConstReal(f32, 0.0), "");
-	sgn_ma = LLVMBuildSelect(builder, is_ma_positive,
-		LLVMConstReal(f32, 1.0), LLVMConstReal(f32, -1.0), "");
-
-	is_ma_z = LLVMBuildFCmp(builder, LLVMRealUGE, selcoords->id, LLVMConstReal(f32, 4.0), "");
-	is_not_ma_z = LLVMBuildNot(builder, is_ma_z, "");
-	is_ma_y = LLVMBuildAnd(builder, is_not_ma_z,
-		LLVMBuildFCmp(builder, LLVMRealUGE, selcoords->id, LLVMConstReal(f32, 2.0), ""), "");
-	is_ma_x = LLVMBuildAnd(builder, is_not_ma_z, LLVMBuildNot(builder, is_ma_y, ""), "");
-
-	/* Select sc */
-	tmp = LLVMBuildSelect(builder, is_ma_z, coords[2], coords[0], "");
-	sgn = LLVMBuildSelect(builder, is_ma_y, LLVMConstReal(f32, 1.0),
-		LLVMBuildSelect(builder, is_ma_x, sgn_ma,
-			LLVMBuildFNeg(builder, sgn_ma, ""), ""), "");
-	out_st[0] = LLVMBuildFMul(builder, tmp, sgn, "");
-
-	/* Select tc */
-	tmp = LLVMBuildSelect(builder, is_ma_y, coords[2], coords[1], "");
-	sgn = LLVMBuildSelect(builder, is_ma_y, LLVMBuildFNeg(builder, sgn_ma, ""),
-		LLVMConstReal(f32, -1.0), "");
-	out_st[1] = LLVMBuildFMul(builder, tmp, sgn, "");
-
-	/* Select ma */
-	tmp = LLVMBuildSelect(builder, is_ma_z, coords[2],
-		LLVMBuildSelect(builder, is_ma_y, coords[1], coords[0], ""), "");
-	sgn = LLVMBuildSelect(builder, is_ma_positive,
-		LLVMConstReal(f32, 2.0), LLVMConstReal(f32, -2.0), "");
-	*out_ma = LLVMBuildFMul(builder, tmp, sgn, "");
 }
 
 void
-ac_prepare_cube_coords(struct ac_llvm_context *ctx,
-		       bool is_deriv, bool is_array,
-		       LLVMValueRef *coords_arg,
-		       LLVMValueRef *derivs_arg)
+ac_dump_module(LLVMModuleRef module)
 {
+	char *str = LLVMPrintModuleToString(module);
+	fprintf(stderr, "%s", str);
+	LLVMDisposeMessage(str);
+}
 
-	LLVMBuilderRef builder = ctx->builder;
-	struct cube_selection_coords selcoords;
-	LLVMValueRef coords[3];
-	LLVMValueRef invma;
+void
+ac_llvm_add_target_dep_function_attr(LLVMValueRef F,
+				     const char *name, unsigned value)
+{
+	char str[16];
 
-	build_cube_intrinsic(ctx, coords_arg, &selcoords);
+	snprintf(str, sizeof(str), "0x%x", value);
+	LLVMAddTargetDependentFunctionAttr(F, name, str);
+}
 
-	invma = ac_emit_llvm_intrinsic(ctx, "llvm.fabs.f32",
-			ctx->f32, &selcoords.ma, 1, AC_FUNC_ATTR_READNONE);
-	invma = ac_emit_fdiv(ctx, LLVMConstReal(ctx->f32, 1.0), invma);
+unsigned
+ac_count_scratch_private_memory(LLVMValueRef function)
+{
+	unsigned private_mem_vgprs = 0;
 
-	for (int i = 0; i < 2; ++i)
-		coords[i] = LLVMBuildFMul(builder, selcoords.stc[i], invma, "");
+	/* Process all LLVM instructions. */
+	LLVMBasicBlockRef bb = LLVMGetFirstBasicBlock(function);
+	while (bb) {
+		LLVMValueRef next = LLVMGetFirstInstruction(bb);
 
-	coords[2] = selcoords.id;
+		while (next) {
+			LLVMValueRef inst = next;
+			next = LLVMGetNextInstruction(next);
 
-	if (is_deriv && derivs_arg) {
-		LLVMValueRef derivs[4];
-		int axis;
+			if (LLVMGetInstructionOpcode(inst) != LLVMAlloca)
+				continue;
 
-		/* Convert cube derivatives to 2D derivatives. */
-		for (axis = 0; axis < 2; axis++) {
-			LLVMValueRef deriv_st[2];
-			LLVMValueRef deriv_ma;
-
-			/* Transform the derivative alongside the texture
-			 * coordinate. Mathematically, the correct formula is
-			 * as follows. Assume we're projecting onto the +Z face
-			 * and denote by dx/dh the derivative of the (original)
-			 * X texture coordinate with respect to horizontal
-			 * window coordinates. The projection onto the +Z face
-			 * plane is:
-			 *
-			 *   f(x,z) = x/z
-			 *
-			 * Then df/dh = df/dx * dx/dh + df/dz * dz/dh
-			 *            = 1/z * dx/dh - x/z * 1/z * dz/dh.
-			 *
-			 * This motivatives the implementation below.
-			 *
-			 * Whether this actually gives the expected results for
-			 * apps that might feed in derivatives obtained via
-			 * finite differences is anyone's guess. The OpenGL spec
-			 * seems awfully quiet about how textureGrad for cube
-			 * maps should be handled.
-			 */
-			build_cube_select(builder, &selcoords, &derivs_arg[axis * 3],
-					  deriv_st, &deriv_ma);
-
-			deriv_ma = LLVMBuildFMul(builder, deriv_ma, invma, "");
-
-			for (int i = 0; i < 2; ++i)
-				derivs[axis * 2 + i] =
-					LLVMBuildFSub(builder,
-						LLVMBuildFMul(builder, deriv_st[i], invma, ""),
-						LLVMBuildFMul(builder, deriv_ma, coords[i], ""), "");
+			LLVMTypeRef type = LLVMGetElementType(LLVMTypeOf(inst));
+			/* No idea why LLVM aligns allocas to 4 elements. */
+			unsigned alignment = LLVMGetAlignment(inst);
+			unsigned dw_size = align(ac_get_type_size(type) / 4, alignment);
+			private_mem_vgprs += dw_size;
 		}
-
-		memcpy(derivs_arg, derivs, sizeof(derivs));
+		bb = LLVMGetNextBasicBlock(bb);
 	}
 
-	/* Shift the texture coordinate. This must be applied after the
-	 * derivative calculation.
-	 */
-	for (int i = 0; i < 2; ++i)
-		coords[i] = LLVMBuildFAdd(builder, coords[i], LLVMConstReal(ctx->f32, 1.5), "");
+	return private_mem_vgprs;
+}
 
-	if (is_array) {
-		/* for cube arrays coord.z = coord.w(array_index) * 8 + face */
-		/* coords_arg.w component - array_index for cube arrays */
-		LLVMValueRef tmp = LLVMBuildFMul(ctx->builder, coords_arg[3], LLVMConstReal(ctx->f32, 8.0), "");
-		coords[2] = LLVMBuildFAdd(ctx->builder, tmp, coords[2], "");
+bool
+ac_init_llvm_compiler(struct ac_llvm_compiler *compiler,
+		      enum radeon_family family,
+		      enum ac_target_machine_options tm_options)
+{
+	const char *triple;
+	memset(compiler, 0, sizeof(*compiler));
+
+	compiler->tm = ac_create_target_machine(family, tm_options,
+						LLVMCodeGenLevelDefault,
+						&triple);
+	if (!compiler->tm)
+		return false;
+
+	if (tm_options & AC_TM_CREATE_LOW_OPT) {
+		compiler->low_opt_tm =
+			ac_create_target_machine(family, tm_options,
+						 LLVMCodeGenLevelLess, NULL);
+		if (!compiler->low_opt_tm)
+			goto fail;
 	}
 
-	memcpy(coords_arg, coords, sizeof(coords));
+	compiler->target_library_info =
+		ac_create_target_library_info(triple);
+	if (!compiler->target_library_info)
+		goto fail;
+
+	compiler->passmgr = ac_create_passmgr(compiler->target_library_info,
+					      tm_options & AC_TM_CHECK_IR);
+	if (!compiler->passmgr)
+		goto fail;
+
+	return true;
+fail:
+	ac_destroy_llvm_compiler(compiler);
+	return false;
+}
+
+void
+ac_destroy_llvm_compiler(struct ac_llvm_compiler *compiler)
+{
+	if (compiler->passmgr)
+		LLVMDisposePassManager(compiler->passmgr);
+	if (compiler->target_library_info)
+		ac_dispose_target_library_info(compiler->target_library_info);
+	if (compiler->low_opt_tm)
+		LLVMDisposeTargetMachine(compiler->low_opt_tm);
+	if (compiler->tm)
+		LLVMDisposeTargetMachine(compiler->tm);
 }

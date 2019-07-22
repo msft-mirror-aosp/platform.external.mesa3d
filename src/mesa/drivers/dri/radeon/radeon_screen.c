@@ -62,12 +62,42 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 /* Radeon configuration
  */
-#include "xmlpool.h"
+#include "util/xmlpool.h"
 
 #define DRI_CONF_COMMAND_BUFFER_SIZE(def,min,max) \
 DRI_CONF_OPT_BEGIN_V(command_buffer_size,int,def, # min ":" # max ) \
         DRI_CONF_DESC(en,"Size of command buffer (in KB)") \
         DRI_CONF_DESC(de,"Grösse des Befehlspuffers (in KB)") \
+DRI_CONF_OPT_END
+
+#define DRI_CONF_MAX_TEXTURE_UNITS(def,min,max) \
+DRI_CONF_OPT_BEGIN_V(texture_units,int,def, # min ":" # max ) \
+        DRI_CONF_DESC(en,"Number of texture units used") \
+DRI_CONF_OPT_END
+
+#define DRI_CONF_HYPERZ(def) \
+DRI_CONF_OPT_BEGIN_B(hyperz, def) \
+        DRI_CONF_DESC(en,"Use HyperZ to boost performance") \
+DRI_CONF_OPT_END
+
+#define DRI_CONF_TCL_MODE(def) \
+DRI_CONF_OPT_BEGIN_V(tcl_mode,enum,def,"0:3") \
+        DRI_CONF_DESC_BEGIN(en,"TCL mode (Transformation, Clipping, Lighting)") \
+                DRI_CONF_ENUM(0,"Use software TCL pipeline") \
+                DRI_CONF_ENUM(1,"Use hardware TCL as first TCL pipeline stage") \
+                DRI_CONF_ENUM(2,"Bypass the TCL pipeline") \
+                DRI_CONF_ENUM(3,"Bypass the TCL pipeline with state-based machine code generated on-the-fly") \
+        DRI_CONF_DESC_END \
+DRI_CONF_OPT_END
+
+#define DRI_CONF_NO_NEG_LOD_BIAS(def) \
+DRI_CONF_OPT_BEGIN_B(no_neg_lod_bias, def) \
+        DRI_CONF_DESC(en,"Forbid negative texture LOD bias") \
+DRI_CONF_OPT_END
+
+#define DRI_CONF_DEF_MAX_ANISOTROPY(def,range) \
+DRI_CONF_OPT_BEGIN_V(def_max_anisotropy,float,def,range) \
+        DRI_CONF_DESC(en,"Initial maximum value for anisotropic texture filtering") \
 DRI_CONF_OPT_END
 
 #if defined(RADEON_R100)	/* R100 */
@@ -78,7 +108,6 @@ DRI_CONF_BEGIN
     DRI_CONF_SECTION_PERFORMANCE
         DRI_CONF_TCL_MODE(DRI_CONF_TCL_CODEGEN)
         DRI_CONF_FTHROTTLE_MODE(DRI_CONF_FTHROTTLE_IRQS)
-        DRI_CONF_VBLANK_MODE(DRI_CONF_VBLANK_DEF_INTERVAL_0)
         DRI_CONF_MAX_TEXTURE_UNITS(3,2,3)
         DRI_CONF_HYPERZ("false")
         DRI_CONF_COMMAND_BUFFER_SIZE(8, 8, 32)
@@ -87,18 +116,20 @@ DRI_CONF_BEGIN
         DRI_CONF_TEXTURE_DEPTH(DRI_CONF_TEXTURE_DEPTH_FB)
         DRI_CONF_DEF_MAX_ANISOTROPY(1.0,"1.0,2.0,4.0,8.0,16.0")
         DRI_CONF_NO_NEG_LOD_BIAS("false")
-        DRI_CONF_FORCE_S3TC_ENABLE("false")
         DRI_CONF_COLOR_REDUCTION(DRI_CONF_COLOR_REDUCTION_DITHER)
         DRI_CONF_ROUND_MODE(DRI_CONF_ROUND_TRUNC)
         DRI_CONF_DITHER_MODE(DRI_CONF_DITHER_XERRORDIFF)
-    DRI_CONF_SECTION_END
-    DRI_CONF_SECTION_DEBUG
-        DRI_CONF_NO_RAST("false")
     DRI_CONF_SECTION_END
 DRI_CONF_END
 };
 
 #elif defined(RADEON_R200)
+
+#define DRI_CONF_TEXTURE_BLEND_QUALITY(def,range) \
+DRI_CONF_OPT_BEGIN_V(texture_blend_quality,float,def,range) \
+       DRI_CONF_DESC(en,"Texture filtering quality vs. speed, AKA “brilinear” texture filtering") \
+DRI_CONF_OPT_END
+
 static const __DRIconfigOptionsExtension radeon_config_options = {
    .base = { __DRI_CONFIG_OPTIONS, 1 },
    .xml =
@@ -106,7 +137,6 @@ DRI_CONF_BEGIN
     DRI_CONF_SECTION_PERFORMANCE
         DRI_CONF_TCL_MODE(DRI_CONF_TCL_CODEGEN)
         DRI_CONF_FTHROTTLE_MODE(DRI_CONF_FTHROTTLE_IRQS)
-        DRI_CONF_VBLANK_MODE(DRI_CONF_VBLANK_DEF_INTERVAL_0)
         DRI_CONF_MAX_TEXTURE_UNITS(6,2,6)
         DRI_CONF_HYPERZ("false")
         DRI_CONF_COMMAND_BUFFER_SIZE(8, 8, 32)
@@ -115,21 +145,13 @@ DRI_CONF_BEGIN
         DRI_CONF_TEXTURE_DEPTH(DRI_CONF_TEXTURE_DEPTH_FB)
         DRI_CONF_DEF_MAX_ANISOTROPY(1.0,"1.0,2.0,4.0,8.0,16.0")
         DRI_CONF_NO_NEG_LOD_BIAS("false")
-        DRI_CONF_FORCE_S3TC_ENABLE("false")
         DRI_CONF_COLOR_REDUCTION(DRI_CONF_COLOR_REDUCTION_DITHER)
         DRI_CONF_ROUND_MODE(DRI_CONF_ROUND_TRUNC)
         DRI_CONF_DITHER_MODE(DRI_CONF_DITHER_XERRORDIFF)
         DRI_CONF_TEXTURE_BLEND_QUALITY(1.0,"0.0:1.0")
     DRI_CONF_SECTION_END
-    DRI_CONF_SECTION_DEBUG
-        DRI_CONF_NO_RAST("false")
-    DRI_CONF_SECTION_END
 DRI_CONF_END
 };
-#endif
-
-#ifndef RADEON_INFO_TILE_CONFIG
-#define RADEON_INFO_TILE_CONFIG 0x6
 #endif
 
 static int
@@ -148,8 +170,8 @@ radeonGetParam(__DRIscreen *sPriv, int param, void *value)
   case RADEON_PARAM_NUM_Z_PIPES:
     info.request = RADEON_INFO_NUM_Z_PIPES;
     break;
-  case RADEON_INFO_TILE_CONFIG:
-    info.request = RADEON_INFO_TILE_CONFIG;
+  case RADEON_INFO_TILING_CONFIG:
+    info.request = RADEON_INFO_TILING_CONFIG;
     break;
   default:
     return -EINVAL;
@@ -548,6 +570,7 @@ static const __DRIextension *radeon_screen_extensions[] = {
     &radeonFlushExtension.base,
     &radeonImageExtension.base,
     &radeonRendererQueryExtension.base,
+    &dri2NoErrorExtension.base,
     NULL
 };
 
@@ -681,13 +704,13 @@ radeonCreateBuffer( __DRIscreen *driScrnPriv,
 
     /* front color renderbuffer */
     rfb->color_rb[0] = radeon_create_renderbuffer(rgbFormat, driDrawPriv);
-    _mesa_add_renderbuffer(&rfb->base, BUFFER_FRONT_LEFT, &rfb->color_rb[0]->base.Base);
+    _mesa_attach_and_own_rb(&rfb->base, BUFFER_FRONT_LEFT, &rfb->color_rb[0]->base.Base);
     rfb->color_rb[0]->has_surface = 1;
 
     /* back color renderbuffer */
     if (mesaVis->doubleBufferMode) {
       rfb->color_rb[1] = radeon_create_renderbuffer(rgbFormat, driDrawPriv);
-	_mesa_add_renderbuffer(&rfb->base, BUFFER_BACK_LEFT, &rfb->color_rb[1]->base.Base);
+	_mesa_attach_and_own_rb(&rfb->base, BUFFER_BACK_LEFT, &rfb->color_rb[1]->base.Base);
 	rfb->color_rb[1]->has_surface = 1;
     }
 
@@ -695,21 +718,21 @@ radeonCreateBuffer( __DRIscreen *driScrnPriv,
       if (mesaVis->stencilBits == 8) {
 	struct radeon_renderbuffer *depthStencilRb =
            radeon_create_renderbuffer(MESA_FORMAT_Z24_UNORM_S8_UINT, driDrawPriv);
-	_mesa_add_renderbuffer(&rfb->base, BUFFER_DEPTH, &depthStencilRb->base.Base);
-	_mesa_add_renderbuffer(&rfb->base, BUFFER_STENCIL, &depthStencilRb->base.Base);
+	_mesa_attach_and_own_rb(&rfb->base, BUFFER_DEPTH, &depthStencilRb->base.Base);
+	_mesa_attach_and_reference_rb(&rfb->base, BUFFER_STENCIL, &depthStencilRb->base.Base);
 	depthStencilRb->has_surface = screen->depthHasSurface;
       } else {
 	/* depth renderbuffer */
 	struct radeon_renderbuffer *depth =
            radeon_create_renderbuffer(MESA_FORMAT_Z24_UNORM_X8_UINT, driDrawPriv);
-	_mesa_add_renderbuffer(&rfb->base, BUFFER_DEPTH, &depth->base.Base);
+	_mesa_attach_and_own_rb(&rfb->base, BUFFER_DEPTH, &depth->base.Base);
 	depth->has_surface = screen->depthHasSurface;
       }
     } else if (mesaVis->depthBits == 16) {
         /* just 16-bit depth buffer, no hw stencil */
 	struct radeon_renderbuffer *depth =
            radeon_create_renderbuffer(MESA_FORMAT_Z_UNORM16, driDrawPriv);
-	_mesa_add_renderbuffer(&rfb->base, BUFFER_DEPTH, &depth->base.Base);
+	_mesa_attach_and_own_rb(&rfb->base, BUFFER_DEPTH, &depth->base.Base);
 	depth->has_surface = screen->depthHasSurface;
     }
 
@@ -775,11 +798,9 @@ __DRIconfig **radeonInitScreen2(__DRIscreen *psp)
       MESA_FORMAT_B8G8R8X8_UNORM,
       MESA_FORMAT_B8G8R8A8_UNORM
    };
-   /* GLX_SWAP_COPY_OML is only supported because the Intel driver doesn't
-    * support pageflipping at all.
-    */
+
    static const GLenum back_buffer_modes[] = {
-     GLX_NONE, GLX_SWAP_UNDEFINED_OML, /*, GLX_SWAP_COPY_OML*/
+      __DRI_ATTRIB_SWAP_NONE, __DRI_ATTRIB_SWAP_UNDEFINED
    };
    uint8_t depth_bits[4], stencil_bits[4], msaa_samples_array[1];
    int color;
@@ -813,7 +834,7 @@ __DRIconfig **radeonInitScreen2(__DRIscreen *psp)
 				     ARRAY_SIZE(back_buffer_modes),
 				     msaa_samples_array,
 				     ARRAY_SIZE(msaa_samples_array),
-				     GL_TRUE, GL_FALSE);
+				     GL_TRUE, GL_FALSE, GL_FALSE);
       configs = driConcatConfigs(configs, new_configs);
    }
 

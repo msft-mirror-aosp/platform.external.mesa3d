@@ -34,9 +34,9 @@
 
 #include "pipe/p_compiler.h"
 #include "os/os_thread.h"
-#include "u_string.h"
+#include "util/u_string.h"
 
-#include "u_debug.h"
+#include "util/u_debug.h"
 #include "u_debug_symbol.h"
 #include "u_hash_table.h"
 
@@ -219,7 +219,7 @@ debug_symbol_name_dbghelp(const void *addr, char* buf, unsigned size)
 #endif /* PIPE_OS_WINDOWS */
 
 
-#if defined(__GLIBC__) && !defined(__UCLIBC__)
+#if defined(HAVE_EXECINFO_H)
 
 #include <execinfo.h>
 
@@ -240,7 +240,7 @@ debug_symbol_name_glibc(const void *addr, char* buf, unsigned size)
    return TRUE;
 }
 
-#endif /* defined(__GLIBC__) && !defined(__UCLIBC__) */
+#endif /* defined(HAVE_EXECINFO_H) */
 
 
 void
@@ -252,11 +252,11 @@ debug_symbol_name(const void *addr, char* buf, unsigned size)
    }
 #endif
 
-#if defined(__GLIBC__) && !defined(__UCLIBC__)
+#if defined(HAVE_EXECINFO_H)
    if (debug_symbol_name_glibc(addr, buf, size)) {
        return;
    }
-#endif
+#endif /* defined(HAVE_EXECINFO_H) */
 
    util_snprintf(buf, size, "%p", addr);
    buf[size - 1] = 0;
@@ -271,7 +271,7 @@ debug_symbol_print(const void *addr)
 }
 
 struct util_hash_table* symbols_hash;
-pipe_static_mutex(symbols_mutex);
+static mtx_t symbols_mutex = _MTX_INITIALIZER_NP;
 
 static unsigned hash_ptr(void* p)
 {
@@ -296,12 +296,12 @@ debug_symbol_name_cached(const void *addr)
    static boolean first = TRUE;
 
    if (first) {
-      pipe_mutex_init(symbols_mutex);
+      (void) mtx_init(&symbols_mutex, mtx_plain);
       first = FALSE;
    }
 #endif
 
-   pipe_mutex_lock(symbols_mutex);
+   mtx_lock(&symbols_mutex);
    if(!symbols_hash)
       symbols_hash = util_hash_table_create(hash_ptr, compare_ptr);
    name = util_hash_table_get(symbols_hash, (void*)addr);
@@ -309,10 +309,10 @@ debug_symbol_name_cached(const void *addr)
    {
       char buf[1024];
       debug_symbol_name(addr, buf, sizeof(buf));
-      name = strdup(buf);
+      name = util_strdup(buf);
 
       util_hash_table_set(symbols_hash, (void*)addr, (void*)name);
    }
-   pipe_mutex_unlock(symbols_mutex);
+   mtx_unlock(&symbols_mutex);
    return name;
 }

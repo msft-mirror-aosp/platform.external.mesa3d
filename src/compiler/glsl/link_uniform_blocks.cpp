@@ -21,23 +21,26 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include "main/core.h"
 #include "ir.h"
 #include "linker.h"
 #include "ir_uniform.h"
 #include "link_uniform_block_active_visitor.h"
 #include "util/hash_table.h"
 #include "program.h"
+#include "main/errors.h"
+#include "main/mtypes.h"
 
 namespace {
 
 class ubo_visitor : public program_resource_visitor {
 public:
    ubo_visitor(void *mem_ctx, gl_uniform_buffer_variable *variables,
-               unsigned num_variables, struct gl_shader_program *prog)
+               unsigned num_variables, struct gl_shader_program *prog,
+               bool use_std430_as_default)
       : index(0), offset(0), buffer_size(0), variables(variables),
         num_variables(num_variables), mem_ctx(mem_ctx),
-        is_array_instance(false), prog(prog)
+        is_array_instance(false), prog(prog),
+        use_std430_as_default(use_std430_as_default)
    {
       /* empty */
    }
@@ -47,7 +50,8 @@ public:
       this->offset = 0;
       this->buffer_size = 0;
       this->is_array_instance = strchr(name, ']') != NULL;
-      this->program_resource_visitor::process(type, name);
+      this->program_resource_visitor::process(type, name,
+                                              use_std430_as_default);
    }
 
    unsigned index;
@@ -64,7 +68,7 @@ private:
                              bool row_major,
                              const enum glsl_interface_packing packing)
    {
-      assert(type->is_record());
+      assert(type->is_struct());
       if (packing == GLSL_INTERFACE_PACKING_STD430)
          this->offset = glsl_align(
             this->offset, type->std430_base_alignment(row_major));
@@ -77,7 +81,7 @@ private:
                              bool row_major,
                              const enum glsl_interface_packing packing)
    {
-      assert(type->is_record());
+      assert(type->is_struct());
 
       /* If this is the last field of a structure, apply rule #9.  The
        * ARB_uniform_buffer_object spec says:
@@ -146,7 +150,13 @@ private:
        */
       const glsl_type *type_for_size = type;
       if (type->is_unsized_array()) {
-         assert(last_field);
+         if (!last_field) {
+            linker_error(prog, "unsized array `%s' definition: "
+                         "only last member of a shader storage block "
+                         "can be defined as unsized array",
+                         name);
+         }
+
          type_for_size = type->without_array();
       }
 
@@ -175,6 +185,8 @@ private:
        */
       this->buffer_size = glsl_align(this->offset, 16);
    }
+
+   bool use_std430_as_default;
 };
 
 class count_block_size : public program_resource_visitor {
@@ -274,7 +286,7 @@ process_block_array_leaf(const char *name,
    blocks[i].Binding = (b->has_binding) ? b->binding + *binding_offset : 0;
 
    blocks[i].UniformBufferSize = 0;
-   blocks[i]._Packing = gl_uniform_block_packing(type->interface_packing);
+   blocks[i]._Packing = glsl_interface_packing(type->interface_packing);
    blocks[i]._RowMajor = type->get_interface_row_major();
    blocks[i].linearized_array_index = linearized_index;
 
@@ -286,7 +298,7 @@ process_block_array_leaf(const char *name,
    if (b->is_shader_storage &&
        parcel->buffer_size > ctx->Const.MaxShaderStorageBlockSize) {
       linker_error(prog, "shader storage block `%s' has size %d, "
-                   "which is larger than than the maximum allowed (%d)",
+                   "which is larger than the maximum allowed (%d)",
                    b->type->name,
                    parcel->buffer_size,
                    ctx->Const.MaxShaderStorageBlockSize);
@@ -346,19 +358,10 @@ create_buffer_blocks(void *mem_ctx, struct gl_context *ctx,
    /* Add each variable from each uniform block to the API tracking
     * structures.
     */
-   ubo_visitor parcel(blocks, variables, num_variables, prog);
-
-   STATIC_ASSERT(unsigned(GLSL_INTERFACE_PACKING_STD140)
-                 == unsigned(ubo_packing_std140));
-   STATIC_ASSERT(unsigned(GLSL_INTERFACE_PACKING_SHARED)
-                 == unsigned(ubo_packing_shared));
-   STATIC_ASSERT(unsigned(GLSL_INTERFACE_PACKING_PACKED)
-                 == unsigned(ubo_packing_packed));
-   STATIC_ASSERT(unsigned(GLSL_INTERFACE_PACKING_STD430)
-                 == unsigned(ubo_packing_std430));
+   ubo_visitor parcel(blocks, variables, num_variables, prog,
+                      ctx->Const.UseSTD430AsDefaultPacking);
 
    unsigned i = 0;
-   struct hash_entry *entry;
    hash_table_foreach (block_hash, entry) {
       const struct link_uniform_block_active *const b =
          (const struct link_uniform_block_active *) entry->data;
@@ -425,7 +428,6 @@ link_uniform_blocks(void *mem_ctx,
    unsigned num_ubo_variables = 0;
    unsigned num_ssbo_variables = 0;
    count_block_size block_size;
-   struct hash_entry *entry;
 
    hash_table_foreach (block_hash, entry) {
       struct link_uniform_block_active *const b =
@@ -441,7 +443,8 @@ link_uniform_blocks(void *mem_ctx,
       }
 
       block_size.num_active_uniforms = 0;
-      block_size.process(b->type->without_array(), "");
+      block_size.process(b->type->without_array(), "",
+                         ctx->Const.UseSTD430AsDefaultPacking);
 
       if (b->array != NULL) {
          unsigned aoa_size = b->type->arrays_of_arrays_size();
@@ -496,6 +499,9 @@ link_uniform_blocks_are_compatible(const gl_uniform_block *a,
       return false;
 
    if (a->_RowMajor != b->_RowMajor)
+      return false;
+
+   if (a->Binding != b->Binding)
       return false;
 
    for (unsigned i = 0; i < a->NumUniforms; i++) {

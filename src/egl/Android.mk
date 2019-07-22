@@ -40,33 +40,53 @@ LOCAL_SRC_FILES := \
 
 LOCAL_CFLAGS := \
 	-D_EGL_NATIVE_PLATFORM=_EGL_PLATFORM_ANDROID \
-	-D_EGL_BUILT_IN_DRIVER_DRI2 \
 	-DHAVE_ANDROID_PLATFORM
 
 LOCAL_C_INCLUDES := \
+	$(MESA_TOP)/include \
 	$(MESA_TOP)/src/egl/main \
-	$(MESA_TOP)/src/egl/drivers/dri2 \
+	$(MESA_TOP)/src/egl/drivers/dri2
 
 LOCAL_STATIC_LIBRARIES := \
+	libmesa_util \
 	libmesa_loader
 
 LOCAL_SHARED_LIBRARIES := \
 	libdl \
+	libglapi \
 	libhardware \
 	liblog \
 	libcutils \
 	libsync
 
-ifeq ($(strip $(MESA_BUILD_CLASSIC)),true)
-# require i915_dri and/or i965_dri
-LOCAL_REQUIRED_MODULES += \
-	$(addsuffix _dri, $(filter i915 i965, $(MESA_GPU_DRIVERS)))
-endif # MESA_BUILD_CLASSIC
+ifeq ($(shell test $(PLATFORM_SDK_VERSION) -ge 27; echo $$?), 0)
+LOCAL_C_INCLUDES += \
+	frameworks/native/libs/nativewindow/include \
+	frameworks/native/libs/arect/include
+LOCAL_HEADER_LIBRARIES += libnativebase_headers
+endif
 
-ifeq ($(strip $(MESA_BUILD_GALLIUM)),true)
+ifeq ($(BOARD_USES_DRM_GRALLOC),true)
+	LOCAL_CFLAGS += -DHAVE_DRM_GRALLOC
+	LOCAL_SHARED_LIBRARIES += libgralloc_drm
+endif
+
+ifeq ($(filter $(MESA_ANDROID_MAJOR_VERSION), 4 5 6 7),)
+LOCAL_HEADER_LIBRARIES += libnativebase_headers
+LOCAL_STATIC_LIBRARIES += libarect
+LOCAL_SHARED_LIBRARIES += libnativewindow
+endif
+
+# This controls enabling building of driver libraries
+ifneq ($(HAVE_I915_DRI),)
+LOCAL_REQUIRED_MODULES += i915_dri
+endif
+ifneq ($(HAVE_I965_DRI),)
+LOCAL_REQUIRED_MODULES += i965_dri
+endif
+ifneq ($(MESA_BUILD_GALLIUM),)
 LOCAL_REQUIRED_MODULES += gallium_dri
-endif # MESA_BUILD_GALLIUM
-
+endif
 
 LOCAL_MODULE := libGLES_mesa
 LOCAL_MODULE_RELATIVE_PATH := egl

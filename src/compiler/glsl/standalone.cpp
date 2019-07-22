@@ -36,20 +36,20 @@
 #include "loop_analysis.h"
 #include "standalone_scaffolding.h"
 #include "standalone.h"
-#include "util/string_to_uint_map.h"
+#include "string_to_uint_map.h"
 #include "util/set.h"
 #include "linker.h"
 #include "glsl_parser_extras.h"
 #include "ir_builder_print_visitor.h"
+#include "builtin_functions.h"
 #include "opt_add_neg_to_sub.h"
+#include "main/mtypes.h"
 
 class dead_variable_visitor : public ir_hierarchical_visitor {
 public:
    dead_variable_visitor()
    {
-      variables = _mesa_set_create(NULL,
-                                   _mesa_hash_pointer,
-                                   _mesa_key_pointer_equal);
+      variables = _mesa_pointer_set_create(NULL);
    }
 
    virtual ~dead_variable_visitor()
@@ -85,8 +85,6 @@ public:
 
    void remove_dead_variables()
    {
-      struct set_entry *entry;
-
       set_foreach(variables, entry) {
          ir_variable *ir = (ir_variable *) entry->key;
 
@@ -99,18 +97,17 @@ private:
    set *variables;
 };
 
-void
-init_gl_program(struct gl_program *prog, GLenum target, bool is_arb_asm)
+static void
+init_gl_program(struct gl_program *prog, bool is_arb_asm)
 {
-   mtx_init(&prog->Mutex, mtx_plain);
-
    prog->RefCount = 1;
    prog->Format = GL_PROGRAM_FORMAT_ASCII_ARB;
    prog->is_arb_asm = is_arb_asm;
 }
 
-struct gl_program *
-new_program(struct gl_context *ctx, GLenum target, GLuint id, bool is_arb_asm)
+static struct gl_program *
+new_program(UNUSED struct gl_context *ctx, GLenum target,
+            UNUSED GLuint id, bool is_arb_asm)
 {
    switch (target) {
    case GL_VERTEX_PROGRAM_ARB: /* == GL_VERTEX_PROGRAM_NV */
@@ -120,7 +117,7 @@ new_program(struct gl_context *ctx, GLenum target, GLuint id, bool is_arb_asm)
    case GL_FRAGMENT_PROGRAM_ARB:
    case GL_COMPUTE_PROGRAM_NV: {
       struct gl_program *prog = rzalloc(NULL, struct gl_program);
-      init_gl_program(prog, target, is_arb_asm);
+      init_gl_program(prog, is_arb_asm);
       return prog;
    }
    default:
@@ -135,12 +132,15 @@ static void
 initialize_context(struct gl_context *ctx, gl_api api)
 {
    initialize_context_to_defaults(ctx, api);
+   glsl_type_singleton_init_or_ref();
 
    /* The standalone compiler needs to claim support for almost
     * everything in order to compile the built-in functions.
     */
    ctx->Const.GLSLVersion = options->glsl_version;
    ctx->Extensions.ARB_ES3_compatibility = true;
+   ctx->Extensions.ARB_ES3_1_compatibility = true;
+   ctx->Extensions.ARB_ES3_2_compatibility = true;
    ctx->Const.MaxComputeWorkGroupCount[0] = 65535;
    ctx->Const.MaxComputeWorkGroupCount[1] = 65535;
    ctx->Const.MaxComputeWorkGroupCount[2] = 65535;
@@ -229,6 +229,9 @@ initialize_context(struct gl_context *ctx, gl_api api)
       ctx->Const.MaxLights = 8;
       ctx->Const.MaxTextureCoordUnits = 8;
       ctx->Const.MaxTextureUnits = 2;
+      ctx->Const.MaxUniformBufferBindings = 84;
+      ctx->Const.MaxVertexStreams = 4;
+      ctx->Const.MaxTransformFeedbackBuffers = 4;
 
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxAttribs = 16;
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxTextureImageUnits = 16;
@@ -254,6 +257,7 @@ initialize_context(struct gl_context *ctx, gl_api api)
    case 430:
    case 440:
    case 450:
+   case 460:
       ctx->Const.MaxClipPlanes = 8;
       ctx->Const.MaxDrawBuffers = 8;
       ctx->Const.MinProgramTexelOffset = -8;
@@ -261,6 +265,12 @@ initialize_context(struct gl_context *ctx, gl_api api)
       ctx->Const.MaxLights = 8;
       ctx->Const.MaxTextureCoordUnits = 8;
       ctx->Const.MaxTextureUnits = 2;
+      ctx->Const.MaxUniformBufferBindings = 84;
+      ctx->Const.MaxVertexStreams = 4;
+      ctx->Const.MaxTransformFeedbackBuffers = 4;
+      ctx->Const.MaxShaderStorageBufferBindings = 4;
+      ctx->Const.MaxShaderStorageBlockSize = 4096;
+      ctx->Const.MaxAtomicBufferBindings = 4;
 
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxAttribs = 16;
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxTextureImageUnits = 16;
@@ -302,6 +312,9 @@ initialize_context(struct gl_context *ctx, gl_api api)
       ctx->Const.MaxLights = 0;
       ctx->Const.MaxTextureCoordUnits = 0;
       ctx->Const.MaxTextureUnits = 0;
+      ctx->Const.MaxUniformBufferBindings = 84;
+      ctx->Const.MaxVertexStreams = 4;
+      ctx->Const.MaxTransformFeedbackBuffers = 4;
 
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxAttribs = 16;
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxTextureImageUnits = 16;
@@ -374,13 +387,14 @@ load_text_file(void *ctx, const char *file_name)
    return text;
 }
 
-void
+static void
 compile_shader(struct gl_context *ctx, struct gl_shader *shader)
 {
    struct _mesa_glsl_parse_state *state =
       new(shader) _mesa_glsl_parse_state(ctx, shader->Stage, shader);
 
-   _mesa_glsl_compile_shader(ctx, shader, options->dump_ast, options->dump_hir);
+   _mesa_glsl_compile_shader(ctx, shader, options->dump_ast,
+                             options->dump_hir, true);
 
    /* Print out the resulting IR */
    if (!state->error && options->dump_lir) {
@@ -392,11 +406,9 @@ compile_shader(struct gl_context *ctx, struct gl_shader *shader)
 
 extern "C" struct gl_shader_program *
 standalone_compile_shader(const struct standalone_options *_options,
-      unsigned num_files, char* const* files)
+      unsigned num_files, char* const* files, struct gl_context *ctx)
 {
    int status = EXIT_SUCCESS;
-   static struct gl_context local_ctx;
-   struct gl_context *ctx = &local_ctx;
    bool glsl_es = false;
 
    options = _options;
@@ -418,6 +430,7 @@ standalone_compile_shader(const struct standalone_options *_options,
    case 430:
    case 440:
    case 450:
+   case 460:
       glsl_es = false;
       break;
    default:
@@ -508,7 +521,7 @@ standalone_compile_shader(const struct standalone_options *_options,
       } else {
          const gl_shader_stage stage = whole_program->Shaders[0]->Stage;
 
-         whole_program->data->LinkStatus = GL_TRUE;
+         whole_program->data->LinkStatus = LINKING_SUCCESS;
          whole_program->_LinkedShaders[stage] =
             link_intrastage_shaders(whole_program /* mem_ctx */,
                                     ctx,
@@ -605,6 +618,6 @@ standalone_compiler_cleanup(struct gl_shader_program *whole_program)
    delete whole_program->FragDataIndexBindings;
 
    ralloc_free(whole_program);
-   _mesa_glsl_release_types();
+   glsl_type_singleton_decref();
    _mesa_glsl_release_builtin_functions();
 }

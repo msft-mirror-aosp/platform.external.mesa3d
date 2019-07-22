@@ -206,9 +206,8 @@ void draw_destroy( struct draw_context *draw )
       }
    }
 
-   for (i = 0; i < draw->pt.nr_vertex_buffers; i++) {
-      pipe_resource_reference(&draw->pt.vertex_buffer[i].buffer, NULL);
-   }
+   for (i = 0; i < draw->pt.nr_vertex_buffers; i++)
+      pipe_vertex_buffer_unreference(&draw->pt.vertex_buffer[i]);
 
    /* Not so fast -- we're just borrowing this at the moment.
     * 
@@ -276,7 +275,7 @@ draw_update_clip_flags(struct draw_context *draw)
    draw->guard_band_xy = (!draw->driver.bypass_clip_xy &&
                           draw->driver.guard_band_xy);
    draw->clip_z = (!draw->driver.bypass_clip_z &&
-                   draw->rasterizer && draw->rasterizer->depth_clip) &&
+                   draw->rasterizer && draw->rasterizer->depth_clip_near) &&
                   !window_space;
    draw->clip_user = draw->rasterizer &&
                      draw->rasterizer->clip_plane_enable != 0 &&
@@ -440,7 +439,7 @@ draw_set_mapped_vertex_buffer(struct draw_context *draw,
 
 void
 draw_set_mapped_constant_buffer(struct draw_context *draw,
-                                unsigned shader_type,
+                                enum pipe_shader_type shader_type,
                                 unsigned slot,
                                 const void *buffer,
                                 unsigned size )
@@ -720,7 +719,7 @@ draw_total_gs_outputs(const struct draw_context *draw)
  */
 void
 draw_texture_sampler(struct draw_context *draw,
-                     uint shader,
+                     enum pipe_shader_type shader,
                      struct tgsi_sampler *sampler)
 {
    if (shader == PIPE_SHADER_VERTEX) {
@@ -738,7 +737,7 @@ draw_texture_sampler(struct draw_context *draw,
  */
 void
 draw_image(struct draw_context *draw,
-           uint shader,
+           enum pipe_shader_type shader,
            struct tgsi_image *image)
 {
    if (shader == PIPE_SHADER_VERTEX) {
@@ -756,7 +755,7 @@ draw_image(struct draw_context *draw,
  */
 void
 draw_buffer(struct draw_context *draw,
-            uint shader,
+            enum pipe_shader_type shader,
             struct tgsi_buffer *buffer)
 {
    if (shader == PIPE_SHADER_VERTEX) {
@@ -778,9 +777,6 @@ void draw_set_render( struct draw_context *draw,
 /**
  * Tell the draw module where vertex indexes/elements are located, and
  * their size (in bytes).
- *
- * Note: the caller must apply the pipe_index_buffer::offset value to
- * the address.  The draw module doesn't do that.
  */
 void
 draw_set_indexes(struct draw_context *draw,
@@ -954,6 +950,8 @@ draw_set_mapped_so_targets(struct draw_context *draw,
 {
    int i;
 
+   draw_do_flush( draw, DRAW_FLUSH_STATE_CHANGE );
+
    for (i = 0; i < num_targets; i++)
       draw->so.targets[i] = targets[i];
    for (i = num_targets; i < PIPE_MAX_SO_BUFFERS; i++)
@@ -977,7 +975,7 @@ draw_set_sampler_views(struct draw_context *draw,
 
    for (i = 0; i < num; ++i)
       draw->sampler_views[shader_stage][i] = views[i];
-   for (i = num; i < PIPE_MAX_SHADER_SAMPLER_VIEWS; ++i)
+   for (i = num; i < draw->num_sampler_views[shader_stage]; ++i)
       draw->sampler_views[shader_stage][i] = NULL;
 
    draw->num_sampler_views[shader_stage] = num;
@@ -1011,7 +1009,7 @@ draw_set_samplers(struct draw_context *draw,
 
 void
 draw_set_mapped_texture(struct draw_context *draw,
-                        unsigned shader_stage,
+                        enum pipe_shader_type shader_stage,
                         unsigned sview_idx,
                         uint32_t width, uint32_t height, uint32_t depth,
                         uint32_t first_level, uint32_t last_level,
@@ -1036,7 +1034,8 @@ draw_set_mapped_texture(struct draw_context *draw,
  * different ways of setting textures, and drivers typically only support one.
  */
 int
-draw_get_shader_param_no_llvm(unsigned shader, enum pipe_shader_cap param)
+draw_get_shader_param_no_llvm(enum pipe_shader_type shader,
+                              enum pipe_shader_cap param)
 {
    switch(shader) {
    case PIPE_SHADER_VERTEX:
@@ -1054,7 +1053,7 @@ draw_get_shader_param_no_llvm(unsigned shader, enum pipe_shader_cap param)
  * draw_get_shader_param_no_llvm instead.
  */
 int
-draw_get_shader_param(unsigned shader, enum pipe_shader_cap param)
+draw_get_shader_param(enum pipe_shader_type shader, enum pipe_shader_cap param)
 {
 
 #ifdef HAVE_LLVM

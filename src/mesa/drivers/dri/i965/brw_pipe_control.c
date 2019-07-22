@@ -23,69 +23,9 @@
 
 #include "brw_context.h"
 #include "brw_defines.h"
+#include "brw_state.h"
 #include "intel_batchbuffer.h"
 #include "intel_fbo.h"
-
-/**
- * According to the latest documentation, any PIPE_CONTROL with the
- * "Command Streamer Stall" bit set must also have another bit set,
- * with five different options:
- *
- *  - Render Target Cache Flush
- *  - Depth Cache Flush
- *  - Stall at Pixel Scoreboard
- *  - Post-Sync Operation
- *  - Depth Stall
- *  - DC Flush Enable
- *
- * I chose "Stall at Pixel Scoreboard" since we've used it effectively
- * in the past, but the choice is fairly arbitrary.
- */
-static void
-gen8_add_cs_stall_workaround_bits(uint32_t *flags)
-{
-   uint32_t wa_bits = PIPE_CONTROL_RENDER_TARGET_FLUSH |
-                      PIPE_CONTROL_DEPTH_CACHE_FLUSH |
-                      PIPE_CONTROL_WRITE_IMMEDIATE |
-                      PIPE_CONTROL_WRITE_DEPTH_COUNT |
-                      PIPE_CONTROL_WRITE_TIMESTAMP |
-                      PIPE_CONTROL_STALL_AT_SCOREBOARD |
-                      PIPE_CONTROL_DEPTH_STALL |
-                      PIPE_CONTROL_DATA_CACHE_FLUSH;
-
-   /* If we're doing a CS stall, and don't already have one of the
-    * workaround bits set, add "Stall at Pixel Scoreboard."
-    */
-   if ((*flags & PIPE_CONTROL_CS_STALL) != 0 && (*flags & wa_bits) == 0)
-      *flags |= PIPE_CONTROL_STALL_AT_SCOREBOARD;
-}
-
-/* Implement the WaCsStallAtEveryFourthPipecontrol workaround on IVB, BYT:
- *
- * "Every 4th PIPE_CONTROL command, not counting the PIPE_CONTROL with
- *  only read-cache-invalidate bit(s) set, must have a CS_STALL bit set."
- *
- * Note that the kernel does CS stalls between batches, so we only need
- * to count them within a batch.
- */
-static uint32_t
-gen7_cs_stall_every_four_pipe_controls(struct brw_context *brw, uint32_t flags)
-{
-   if (brw->gen == 7 && !brw->is_haswell) {
-      if (flags & PIPE_CONTROL_CS_STALL) {
-         /* If we're doing a CS stall, reset the counter and carry on. */
-         brw->pipe_controls_since_last_cs_stall = 0;
-         return 0;
-      }
-
-      /* If this is the fourth pipe control without a CS stall, do one now. */
-      if (++brw->pipe_controls_since_last_cs_stall == 4) {
-         brw->pipe_controls_since_last_cs_stall = 0;
-         return PIPE_CONTROL_CS_STALL;
-      }
-   }
-   return 0;
-}
 
 /**
  * Emit a PIPE_CONTROL with various flushing flags.
@@ -96,7 +36,9 @@ gen7_cs_stall_every_four_pipe_controls(struct brw_context *brw, uint32_t flags)
 void
 brw_emit_pipe_control_flush(struct brw_context *brw, uint32_t flags)
 {
-   if (brw->gen >= 6 &&
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
+
+   if (devinfo->gen >= 6 &&
        (flags & PIPE_CONTROL_CACHE_FLUSH_BITS) &&
        (flags & PIPE_CONTROL_CACHE_INVALIDATE_BITS)) {
       /* A pipe control command with flush and invalidate bits set
@@ -107,64 +49,14 @@ brw_emit_pipe_control_flush(struct brw_context *brw, uint32_t flags)
        * caches are coherent with memory once the specified R/O caches are
        * invalidated.  On pre-Gen6 hardware the (implicit) R/O cache
        * invalidation seems to happen at the bottom of the pipeline together
-       * with any write cache flush, so this shouldn't be a concern.
+       * with any write cache flush, so this shouldn't be a concern.  In order
+       * to ensure a full stall, we do an end-of-pipe sync.
        */
-      brw_emit_pipe_control_flush(brw, (flags & PIPE_CONTROL_CACHE_FLUSH_BITS) |
-                                       PIPE_CONTROL_CS_STALL);
+      brw_emit_end_of_pipe_sync(brw, (flags & PIPE_CONTROL_CACHE_FLUSH_BITS));
       flags &= ~(PIPE_CONTROL_CACHE_FLUSH_BITS | PIPE_CONTROL_CS_STALL);
    }
 
-   if (brw->gen >= 8) {
-      if (brw->gen == 8)
-         gen8_add_cs_stall_workaround_bits(&flags);
-
-      if (brw->gen == 9 &&
-          (flags & PIPE_CONTROL_VF_CACHE_INVALIDATE)) {
-         /* Hardware workaround: SKL
-          *
-          * Emit Pipe Control with all bits set to zero before emitting
-          * a Pipe Control with VF Cache Invalidate set.
-          */
-         brw_emit_pipe_control_flush(brw, 0);
-      }
-
-      BEGIN_BATCH(6);
-      OUT_BATCH(_3DSTATE_PIPE_CONTROL | (6 - 2));
-      OUT_BATCH(flags);
-      OUT_BATCH(0);
-      OUT_BATCH(0);
-      OUT_BATCH(0);
-      OUT_BATCH(0);
-      ADVANCE_BATCH();
-   } else if (brw->gen >= 6) {
-      if (brw->gen == 6 &&
-          (flags & PIPE_CONTROL_RENDER_TARGET_FLUSH)) {
-         /* Hardware workaround: SNB B-Spec says:
-          *
-          *   [Dev-SNB{W/A}]: Before a PIPE_CONTROL with Write Cache Flush
-          *   Enable = 1, a PIPE_CONTROL with any non-zero post-sync-op is
-          *   required.
-          */
-         brw_emit_post_sync_nonzero_flush(brw);
-      }
-
-      flags |= gen7_cs_stall_every_four_pipe_controls(brw, flags);
-
-      BEGIN_BATCH(5);
-      OUT_BATCH(_3DSTATE_PIPE_CONTROL | (5 - 2));
-      OUT_BATCH(flags);
-      OUT_BATCH(0);
-      OUT_BATCH(0);
-      OUT_BATCH(0);
-      ADVANCE_BATCH();
-   } else {
-      BEGIN_BATCH(4);
-      OUT_BATCH(_3DSTATE_PIPE_CONTROL | flags | (4 - 2));
-      OUT_BATCH(0);
-      OUT_BATCH(0);
-      OUT_BATCH(0);
-      ADVANCE_BATCH();
-   }
+   brw->vtbl.emit_raw_pipe_control(brw, flags, NULL, 0, 0);
 }
 
 /**
@@ -177,46 +69,10 @@ brw_emit_pipe_control_flush(struct brw_context *brw, uint32_t flags)
  */
 void
 brw_emit_pipe_control_write(struct brw_context *brw, uint32_t flags,
-                            drm_intel_bo *bo, uint32_t offset,
-                            uint32_t imm_lower, uint32_t imm_upper)
+                            struct brw_bo *bo, uint32_t offset,
+                            uint64_t imm)
 {
-   if (brw->gen >= 8) {
-      if (brw->gen == 8)
-         gen8_add_cs_stall_workaround_bits(&flags);
-
-      BEGIN_BATCH(6);
-      OUT_BATCH(_3DSTATE_PIPE_CONTROL | (6 - 2));
-      OUT_BATCH(flags);
-      OUT_RELOC64(bo, I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
-                  offset);
-      OUT_BATCH(imm_lower);
-      OUT_BATCH(imm_upper);
-      ADVANCE_BATCH();
-   } else if (brw->gen >= 6) {
-      flags |= gen7_cs_stall_every_four_pipe_controls(brw, flags);
-
-      /* PPGTT/GGTT is selected by DW2 bit 2 on Sandybridge, but DW1 bit 24
-       * on later platforms.  We always use PPGTT on Gen7+.
-       */
-      unsigned gen6_gtt = brw->gen == 6 ? PIPE_CONTROL_GLOBAL_GTT_WRITE : 0;
-
-      BEGIN_BATCH(5);
-      OUT_BATCH(_3DSTATE_PIPE_CONTROL | (5 - 2));
-      OUT_BATCH(flags);
-      OUT_RELOC(bo, I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
-                gen6_gtt | offset);
-      OUT_BATCH(imm_lower);
-      OUT_BATCH(imm_upper);
-      ADVANCE_BATCH();
-   } else {
-      BEGIN_BATCH(4);
-      OUT_BATCH(_3DSTATE_PIPE_CONTROL | flags | (4 - 2));
-      OUT_RELOC(bo, I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
-                PIPE_CONTROL_GLOBAL_GTT_WRITE | offset);
-      OUT_BATCH(imm_lower);
-      OUT_BATCH(imm_upper);
-      ADVANCE_BATCH();
-   }
+   brw->vtbl.emit_raw_pipe_control(brw, flags, bo, offset, imm);
 }
 
 /**
@@ -234,14 +90,16 @@ brw_emit_pipe_control_write(struct brw_context *brw, uint32_t flags,
 void
 brw_emit_depth_stall_flushes(struct brw_context *brw)
 {
-   assert(brw->gen >= 6);
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
+
+   assert(devinfo->gen >= 6);
 
    /* Starting on BDW, these pipe controls are unnecessary.
     *
     *   WM HW will internally manage the draining pipe and flushing of the caches
     *   when this command is issued. The PIPE_CONTROL restrictions are removed.
     */
-   if (brw->gen >= 8)
+   if (devinfo->gen >= 8)
       return;
 
    brw_emit_pipe_control_flush(brw, PIPE_CONTROL_DEPTH_STALL);
@@ -260,14 +118,70 @@ brw_emit_depth_stall_flushes(struct brw_context *brw)
 void
 gen7_emit_vs_workaround_flush(struct brw_context *brw)
 {
-   assert(brw->gen == 7);
+   MAYBE_UNUSED const struct gen_device_info *devinfo = &brw->screen->devinfo;
+
+   assert(devinfo->gen == 7);
    brw_emit_pipe_control_write(brw,
                                PIPE_CONTROL_WRITE_IMMEDIATE
                                | PIPE_CONTROL_DEPTH_STALL,
-                               brw->workaround_bo, 0,
-                               0, 0);
+                               brw->workaround_bo, 0, 0);
 }
 
+/**
+ * From the PRM, Volume 2a:
+ *
+ *    "Indirect State Pointers Disable
+ *
+ *    At the completion of the post-sync operation associated with this pipe
+ *    control packet, the indirect state pointers in the hardware are
+ *    considered invalid; the indirect pointers are not saved in the context.
+ *    If any new indirect state commands are executed in the command stream
+ *    while the pipe control is pending, the new indirect state commands are
+ *    preserved.
+ *
+ *    [DevIVB+]: Using Invalidate State Pointer (ISP) only inhibits context
+ *    restoring of Push Constant (3DSTATE_CONSTANT_*) commands. Push Constant
+ *    commands are only considered as Indirect State Pointers. Once ISP is
+ *    issued in a context, SW must initialize by programming push constant
+ *    commands for all the shaders (at least to zero length) before attempting
+ *    any rendering operation for the same context."
+ *
+ * 3DSTATE_CONSTANT_* packets are restored during a context restore,
+ * even though they point to a BO that has been already unreferenced at
+ * the end of the previous batch buffer. This has been fine so far since
+ * we are protected by these scratch page (every address not covered by
+ * a BO should be pointing to the scratch page). But on CNL, it is
+ * causing a GPU hang during context restore at the 3DSTATE_CONSTANT_*
+ * instruction.
+ *
+ * The flag "Indirect State Pointers Disable" in PIPE_CONTROL tells the
+ * hardware to ignore previous 3DSTATE_CONSTANT_* packets during a
+ * context restore, so the mentioned hang doesn't happen. However,
+ * software must program push constant commands for all stages prior to
+ * rendering anything, so we flag them as dirty.
+ *
+ * Finally, we also make sure to stall at pixel scoreboard to make sure the
+ * constants have been loaded into the EUs prior to disable the push constants
+ * so that it doesn't hang a previous 3DPRIMITIVE.
+ */
+void
+gen10_emit_isp_disable(struct brw_context *brw)
+{
+   brw->vtbl.emit_raw_pipe_control(brw,
+                                   PIPE_CONTROL_STALL_AT_SCOREBOARD |
+                                   PIPE_CONTROL_CS_STALL,
+                                   NULL, 0, 0);
+   brw->vtbl.emit_raw_pipe_control(brw,
+                                   PIPE_CONTROL_INDIRECT_STATE_POINTERS_DISABLE |
+                                   PIPE_CONTROL_CS_STALL,
+                                   NULL, 0, 0);
+
+   brw->vs.base.push_constants_dirty = true;
+   brw->tcs.base.push_constants_dirty = true;
+   brw->tes.base.push_constants_dirty = true;
+   brw->gs.base.push_constants_dirty = true;
+   brw->wm.base.push_constants_dirty = true;
+}
 
 /**
  * Emit a PIPE_CONTROL command for gen7 with the CS Stall bit set.
@@ -278,10 +192,8 @@ gen7_emit_cs_stall_flush(struct brw_context *brw)
    brw_emit_pipe_control_write(brw,
                                PIPE_CONTROL_CS_STALL
                                | PIPE_CONTROL_WRITE_IMMEDIATE,
-                               brw->workaround_bo, 0,
-                               0, 0);
+                               brw->workaround_bo, 0, 0);
 }
-
 
 /**
  * Emits a PIPE_CONTROL with a non-zero post-sync operation, for
@@ -328,7 +240,107 @@ brw_emit_post_sync_nonzero_flush(struct brw_context *brw)
                                PIPE_CONTROL_STALL_AT_SCOREBOARD);
 
    brw_emit_pipe_control_write(brw, PIPE_CONTROL_WRITE_IMMEDIATE,
-                               brw->workaround_bo, 0, 0, 0);
+                               brw->workaround_bo, 0, 0);
+}
+
+/*
+ * From Sandybridge PRM, volume 2, "1.7.2 End-of-Pipe Synchronization":
+ *
+ *  Write synchronization is a special case of end-of-pipe
+ *  synchronization that requires that the render cache and/or depth
+ *  related caches are flushed to memory, where the data will become
+ *  globally visible. This type of synchronization is required prior to
+ *  SW (CPU) actually reading the result data from memory, or initiating
+ *  an operation that will use as a read surface (such as a texture
+ *  surface) a previous render target and/or depth/stencil buffer
+ *
+ *
+ * From Haswell PRM, volume 2, part 1, "End-of-Pipe Synchronization":
+ *
+ *  Exercising the write cache flush bits (Render Target Cache Flush
+ *  Enable, Depth Cache Flush Enable, DC Flush) in PIPE_CONTROL only
+ *  ensures the write caches are flushed and doesn't guarantee the data
+ *  is globally visible.
+ *
+ *  SW can track the completion of the end-of-pipe-synchronization by
+ *  using "Notify Enable" and "PostSync Operation - Write Immediate
+ *  Data" in the PIPE_CONTROL command.
+ */
+void
+brw_emit_end_of_pipe_sync(struct brw_context *brw, uint32_t flags)
+{
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
+
+   if (devinfo->gen >= 6) {
+      /* From Sandybridge PRM, volume 2, "1.7.3.1 Writing a Value to Memory":
+       *
+       *    "The most common action to perform upon reaching a synchronization
+       *    point is to write a value out to memory. An immediate value
+       *    (included with the synchronization command) may be written."
+       *
+       *
+       * From Broadwell PRM, volume 7, "End-of-Pipe Synchronization":
+       *
+       *    "In case the data flushed out by the render engine is to be read
+       *    back in to the render engine in coherent manner, then the render
+       *    engine has to wait for the fence completion before accessing the
+       *    flushed data. This can be achieved by following means on various
+       *    products: PIPE_CONTROL command with CS Stall and the required
+       *    write caches flushed with Post-Sync-Operation as Write Immediate
+       *    Data.
+       *
+       *    Example:
+       *       - Workload-1 (3D/GPGPU/MEDIA)
+       *       - PIPE_CONTROL (CS Stall, Post-Sync-Operation Write Immediate
+       *         Data, Required Write Cache Flush bits set)
+       *       - Workload-2 (Can use the data produce or output by Workload-1)
+       */
+      brw_emit_pipe_control_write(brw,
+                                  flags | PIPE_CONTROL_CS_STALL |
+                                  PIPE_CONTROL_WRITE_IMMEDIATE,
+                                  brw->workaround_bo, 0, 0);
+
+      if (devinfo->is_haswell) {
+         /* Haswell needs addition work-arounds:
+          *
+          * From Haswell PRM, volume 2, part 1, "End-of-Pipe Synchronization":
+          *
+          *    Option 1:
+          *    PIPE_CONTROL command with the CS Stall and the required write
+          *    caches flushed with Post-SyncOperation as Write Immediate Data
+          *    followed by eight dummy MI_STORE_DATA_IMM (write to scratch
+          *    spce) commands.
+          *
+          *    Example:
+          *       - Workload-1
+          *       - PIPE_CONTROL (CS Stall, Post-Sync-Operation Write
+          *         Immediate Data, Required Write Cache Flush bits set)
+          *       - MI_STORE_DATA_IMM (8 times) (Dummy data, Scratch Address)
+          *       - Workload-2 (Can use the data produce or output by
+          *         Workload-1)
+          *
+          * Unfortunately, both the PRMs and the internal docs are a bit
+          * out-of-date in this regard.  What the windows driver does (and
+          * this appears to actually work) is to emit a register read from the
+          * memory address written by the pipe control above.
+          *
+          * What register we load into doesn't matter.  We choose an indirect
+          * rendering register because we know it always exists and it's one
+          * of the first registers the command parser allows us to write.  If
+          * you don't have command parser support in your kernel (pre-4.2),
+          * this will get turned into MI_NOOP and you won't get the
+          * workaround.  Unfortunately, there's just not much we can do in
+          * that case.  This register is perfectly safe to write since we
+          * always re-load all of the indirect draw registers right before
+          * 3DPRIMITIVE when needed anyway.
+          */
+         brw_load_register_mem(brw, GEN7_3DPRIM_START_INSTANCE,
+                               brw->workaround_bo, 0);
+      }
+   } else {
+      /* On gen4-5, a regular pipe control seems to suffice. */
+      brw_emit_pipe_control_flush(brw, flags);
+   }
 }
 
 /* Emit a pipelined flush to either flush render and texture cache for
@@ -340,31 +352,56 @@ brw_emit_post_sync_nonzero_flush(struct brw_context *brw)
 void
 brw_emit_mi_flush(struct brw_context *brw)
 {
-   if (brw->batch.ring == BLT_RING && brw->gen >= 6) {
-      BEGIN_BATCH_BLT(4);
-      OUT_BATCH(MI_FLUSH_DW);
-      OUT_BATCH(0);
-      OUT_BATCH(0);
-      OUT_BATCH(0);
-      ADVANCE_BATCH();
-   } else {
-      int flags = PIPE_CONTROL_NO_WRITE | PIPE_CONTROL_RENDER_TARGET_FLUSH;
-      if (brw->gen >= 6) {
-         flags |= PIPE_CONTROL_INSTRUCTION_INVALIDATE |
-                  PIPE_CONTROL_CONST_CACHE_INVALIDATE |
-                  PIPE_CONTROL_DEPTH_CACHE_FLUSH |
-                  PIPE_CONTROL_VF_CACHE_INVALIDATE |
-                  PIPE_CONTROL_TEXTURE_CACHE_INVALIDATE |
-                  PIPE_CONTROL_CS_STALL;
-      }
-      brw_emit_pipe_control_flush(brw, flags);
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
+
+   int flags = PIPE_CONTROL_RENDER_TARGET_FLUSH;
+   if (devinfo->gen >= 6) {
+      flags |= PIPE_CONTROL_INSTRUCTION_INVALIDATE |
+               PIPE_CONTROL_CONST_CACHE_INVALIDATE |
+               PIPE_CONTROL_DATA_CACHE_FLUSH |
+               PIPE_CONTROL_DEPTH_CACHE_FLUSH |
+               PIPE_CONTROL_VF_CACHE_INVALIDATE |
+               PIPE_CONTROL_TEXTURE_CACHE_INVALIDATE |
+               PIPE_CONTROL_CS_STALL;
    }
+   brw_emit_pipe_control_flush(brw, flags);
 }
 
 int
 brw_init_pipe_control(struct brw_context *brw,
                       const struct gen_device_info *devinfo)
 {
+   switch (devinfo->gen) {
+   case 11:
+      brw->vtbl.emit_raw_pipe_control = gen11_emit_raw_pipe_control;
+      break;
+   case 10:
+      brw->vtbl.emit_raw_pipe_control = gen10_emit_raw_pipe_control;
+      break;
+   case 9:
+      brw->vtbl.emit_raw_pipe_control = gen9_emit_raw_pipe_control;
+      break;
+   case 8:
+      brw->vtbl.emit_raw_pipe_control = gen8_emit_raw_pipe_control;
+      break;
+   case 7:
+      brw->vtbl.emit_raw_pipe_control =
+         devinfo->is_haswell ? gen75_emit_raw_pipe_control
+                             : gen7_emit_raw_pipe_control;
+      break;
+   case 6:
+      brw->vtbl.emit_raw_pipe_control = gen6_emit_raw_pipe_control;
+      break;
+   case 5:
+      brw->vtbl.emit_raw_pipe_control = gen5_emit_raw_pipe_control;
+      break;
+   case 4:
+      brw->vtbl.emit_raw_pipe_control =
+         devinfo->is_g4x ? gen45_emit_raw_pipe_control
+                         : gen4_emit_raw_pipe_control;
+      break;
+   }
+
    if (devinfo->gen < 6)
       return 0;
 
@@ -372,9 +409,8 @@ brw_init_pipe_control(struct brw_context *brw,
     * the gen6 workaround because it involves actually writing to
     * the buffer, and the kernel doesn't let us write to the batch.
     */
-   brw->workaround_bo = drm_intel_bo_alloc(brw->bufmgr,
-                                           "pipe_control workaround",
-                                           4096, 4096);
+   brw->workaround_bo = brw_bo_alloc(brw->bufmgr, "workaround", 4096,
+                                     BRW_MEMZONE_OTHER);
    if (brw->workaround_bo == NULL)
       return -ENOMEM;
 
@@ -386,5 +422,5 @@ brw_init_pipe_control(struct brw_context *brw,
 void
 brw_fini_pipe_control(struct brw_context *brw)
 {
-   drm_intel_bo_unreference(brw->workaround_bo);
+   brw_bo_unreference(brw->workaround_bo);
 }

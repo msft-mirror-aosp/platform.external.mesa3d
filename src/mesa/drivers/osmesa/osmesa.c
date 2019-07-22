@@ -117,15 +117,22 @@ get_string( struct gl_context *ctx, GLenum name )
 
 
 static void
-osmesa_update_state( struct gl_context *ctx, GLuint new_state )
+osmesa_update_state(struct gl_context *ctx, GLuint new_state)
 {
+   if (new_state & (_NEW_SCISSOR | _NEW_BUFFERS | _NEW_VIEWPORT))
+      _mesa_update_draw_buffer_bounds(ctx, ctx->DrawBuffer);
+
    /* easy - just propogate */
    _swrast_InvalidateState( ctx, new_state );
    _swsetup_InvalidateState( ctx, new_state );
    _tnl_InvalidateState( ctx, new_state );
-   _vbo_InvalidateState( ctx, new_state );
 }
 
+static void
+osmesa_update_state_wrapper(struct gl_context *ctx)
+{
+   osmesa_update_state(ctx, ctx->NewState);
+}
 
 
 /**
@@ -207,7 +214,6 @@ osmesa_choose_line_function( struct gl_context *ctx )
    }
 
    if (ctx->RenderMode != GL_RENDER ||
-       ctx->Line.SmoothFlag ||
        ctx->Texture._MaxEnabledTexImageUnit == -1 ||
        ctx->Light.ShadeModel != GL_FLAT ||
        ctx->Line.Width != 1.0F ||
@@ -549,7 +555,6 @@ new_osmesa_renderbuffer(struct gl_context *ctx, GLenum format, GLenum type)
       _mesa_init_renderbuffer(&srb->Base, name);
 
       srb->Base.ClassID = OSMESA_RENDERBUFFER_CLASS;
-      srb->Base.RefCount = 1;
       srb->Base.Delete = osmesa_delete_renderbuffer;
       srb->Base.AllocStorage = osmesa_renderbuffer_storage;
 
@@ -568,7 +573,8 @@ osmesa_MapRenderbuffer(struct gl_context *ctx,
                        struct gl_renderbuffer *rb,
                        GLuint x, GLuint y, GLuint w, GLuint h,
                        GLbitfield mode,
-                       GLubyte **mapOut, GLint *rowStrideOut)
+                       GLubyte **mapOut, GLint *rowStrideOut,
+                       bool flip_y)
 {
    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
 
@@ -596,7 +602,7 @@ osmesa_MapRenderbuffer(struct gl_context *ctx,
    }
    else {
       _swrast_map_soft_renderbuffer(ctx, rb, x, y, w, h, mode,
-                                    mapOut, rowStrideOut);
+                                    mapOut, rowStrideOut, flip_y);
    }
 }
 
@@ -827,9 +833,10 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
 
       /* Initialize device driver function table */
       _mesa_init_driver_functions(&functions);
+      _tnl_init_driver_draw_function(&functions);
       /* override with our functions */
       functions.GetString = get_string;
-      functions.UpdateState = osmesa_update_state;
+      functions.UpdateState = osmesa_update_state_wrapper;
 
       if (!_mesa_initialize_context(&osmesa->mesa,
                                     api_profile,
@@ -847,7 +854,7 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
       osmesa->gl_buffer = _mesa_create_framebuffer(osmesa->gl_visual);
       if (!osmesa->gl_buffer) {
          _mesa_destroy_visual( osmesa->gl_visual );
-         _mesa_free_context_data( &osmesa->mesa );
+         _mesa_free_context_data(&osmesa->mesa, true);
          free(osmesa);
          return NULL;
       }
@@ -884,7 +891,7 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
              !_tnl_CreateContext( ctx ) ||
              !_swsetup_CreateContext( ctx )) {
             _mesa_destroy_visual(osmesa->gl_visual);
-            _mesa_free_context_data(ctx);
+            _mesa_free_context_data(ctx, true);
             free(osmesa);
             return NULL;
          }
@@ -907,11 +914,12 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
          swrast->choose_line = osmesa_choose_line;
          swrast->choose_triangle = osmesa_choose_triangle;
 
+         _mesa_override_extensions(ctx);
          _mesa_compute_version(ctx);
 
          if (ctx->Version < version_major * 10 + version_minor) {
             _mesa_destroy_visual(osmesa->gl_visual);
-            _mesa_free_context_data(ctx);
+            _mesa_free_context_data(ctx, true);
             free(osmesa);
             return NULL;
          }
@@ -947,7 +955,7 @@ OSMesaDestroyContext( OSMesaContext osmesa )
       _mesa_destroy_visual( osmesa->gl_visual );
       _mesa_reference_framebuffer( &osmesa->gl_buffer, NULL );
 
-      _mesa_free_context_data( &osmesa->mesa );
+      _mesa_free_context_data(&osmesa->mesa, true);
       free( osmesa );
    }
 }
@@ -1011,25 +1019,19 @@ OSMesaMakeCurrent( OSMesaContext osmesa, void *buffer, GLenum type,
 
    osmesa_update_state( &osmesa->mesa, 0 );
 
-   /* Call this periodically to detect when the user has begun using
-    * GL rendering from multiple threads.
-    */
-   _glapi_check_multithread();
-
-
    /* Create a front/left color buffer which wraps the user-provided buffer.
     * There is no back color buffer.
     * If the user tries to use a 8, 16 or 32-bit/channel buffer that
     * doesn't match what Mesa was compiled for (CHAN_BITS) the
-    * _mesa_add_renderbuffer() function will create a "wrapper" renderbuffer
-    * that converts rendering from CHAN_BITS to the user-requested channel
-    * size.
+    * _mesa_attach_and_reference_rb() function will create a "wrapper"
+    * renderbuffer that converts rendering from CHAN_BITS to the
+    * user-requested channel size.
     */
    if (!osmesa->srb) {
       osmesa->srb = new_osmesa_renderbuffer(&osmesa->mesa, osmesa->format, type);
       _mesa_remove_renderbuffer(osmesa->gl_buffer, BUFFER_FRONT_LEFT);
-      _mesa_add_renderbuffer(osmesa->gl_buffer, BUFFER_FRONT_LEFT,
-                             &osmesa->srb->Base);
+      _mesa_attach_and_reference_rb(osmesa->gl_buffer, BUFFER_FRONT_LEFT,
+                                    &osmesa->srb->Base);
       assert(osmesa->srb->Base.RefCount == 2);
    }
 
@@ -1052,8 +1054,8 @@ OSMesaMakeCurrent( OSMesaContext osmesa, void *buffer, GLenum type,
     * renderbuffer adaptor/wrapper if needed (for bpp conversion).
     */
    _mesa_remove_renderbuffer(osmesa->gl_buffer, BUFFER_FRONT_LEFT);
-   _mesa_add_renderbuffer(osmesa->gl_buffer, BUFFER_FRONT_LEFT,
-                          &osmesa->srb->Base);
+   _mesa_attach_and_reference_rb(osmesa->gl_buffer, BUFFER_FRONT_LEFT,
+                                 &osmesa->srb->Base);
 
 
    /* this updates the visual's red/green/blue/alphaBits fields */
@@ -1285,7 +1287,7 @@ OSMesaPostprocess(OSMesaContext osmesa, const char *filter,
 #define GL_GLEXT_PROTOTYPES
 #include "GL/gl.h"
 #include "glapi/glapi.h"
-#include "glapi/glapitable.h"
+#include "glapitable.h"
 
 #if defined(USE_MGL_NAMESPACE)
 #define NAME(func)  mgl##func
@@ -1301,6 +1303,6 @@ OSMesaPostprocess(OSMesaContext osmesa, const char *filter,
 
 /* skip normal ones */
 #define _GLAPI_SKIP_NORMAL_ENTRY_POINTS
-#include "glapi/glapitemp.h"
+#include "glapitemp.h"
 
 #endif /* GLX_INDIRECT_RENDERING */

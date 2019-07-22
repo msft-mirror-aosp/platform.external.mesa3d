@@ -37,6 +37,7 @@
 #include "util/u_math.h"
 #include "util/u_memory.h"
 #include "util/u_transfer.h"
+#include "util/u_surface.h"
 
 #include "sp_context.h"
 #include "sp_flush.h"
@@ -165,9 +166,9 @@ softpipe_resource_create_front(struct pipe_screen *screen,
    pipe_reference_init(&spr->base.reference, 1);
    spr->base.screen = screen;
 
-   spr->pot = (util_is_power_of_two(templat->width0) &&
-               util_is_power_of_two(templat->height0) &&
-               util_is_power_of_two(templat->depth0));
+   spr->pot = (util_is_power_of_two_or_zero(templat->width0) &&
+               util_is_power_of_two_or_zero(templat->height0) &&
+               util_is_power_of_two_or_zero(templat->depth0));
 
    if (spr->base.bind & (PIPE_BIND_DISPLAY_TARGET |
 			 PIPE_BIND_SCANOUT |
@@ -230,9 +231,9 @@ softpipe_resource_from_handle(struct pipe_screen *screen,
    pipe_reference_init(&spr->base.reference, 1);
    spr->base.screen = screen;
 
-   spr->pot = (util_is_power_of_two(templat->width0) &&
-               util_is_power_of_two(templat->height0) &&
-               util_is_power_of_two(templat->depth0));
+   spr->pot = (util_is_power_of_two_or_zero(templat->width0) &&
+               util_is_power_of_two_or_zero(templat->height0) &&
+               util_is_power_of_two_or_zero(templat->depth0));
 
    spr->dt = winsys->displaytarget_from_handle(winsys,
                                                templat,
@@ -520,6 +521,7 @@ softpipe_init_texture_funcs(struct pipe_context *pipe)
 
    pipe->create_surface = softpipe_create_surface;
    pipe->surface_destroy = softpipe_surface_destroy;
+   pipe->clear_texture = util_clear_texture;
 }
 
 

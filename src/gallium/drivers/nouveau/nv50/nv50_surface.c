@@ -672,10 +672,7 @@ nv50_clear_buffer_push(struct pipe_context *pipe,
       count -= nr;
    }
 
-   if (buf->mm) {
-      nouveau_fence_ref(nv50->screen->base.fence.current, &buf->fence);
-      nouveau_fence_ref(nv50->screen->base.fence.current, &buf->fence_wr);
-   }
+   nv50_resource_validate(buf, NOUVEAU_BO_WR);
 
    nouveau_bufctx_reset(nv50->bufctx, 0);
 }
@@ -727,6 +724,8 @@ nv50_clear_buffer(struct pipe_context *pipe,
       return;
    }
 
+   util_range_add(&buf->valid_buffer_range, offset, offset + size);
+
    assert(size % data_size == 0);
 
    if (offset & 0xff) {
@@ -747,10 +746,10 @@ nv50_clear_buffer(struct pipe_context *pipe,
    assert(width > 0);
 
    BEGIN_NV04(push, NV50_3D(CLEAR_COLOR(0)), 4);
-   PUSH_DATAf(push, color.f[0]);
-   PUSH_DATAf(push, color.f[1]);
-   PUSH_DATAf(push, color.f[2]);
-   PUSH_DATAf(push, color.f[3]);
+   PUSH_DATA (push, color.ui[0]);
+   PUSH_DATA (push, color.ui[1]);
+   PUSH_DATA (push, color.ui[2]);
+   PUSH_DATA (push, color.ui[3]);
 
    if (nouveau_pushbuf_space(push, 64, 1, 0))
       return;
@@ -796,10 +795,7 @@ nv50_clear_buffer(struct pipe_context *pipe,
    BEGIN_NV04(push, NV50_3D(COND_MODE), 1);
    PUSH_DATA (push, nv50->cond_condmode);
 
-   if (buf->mm) {
-      nouveau_fence_ref(nv50->screen->base.fence.current, &buf->fence);
-      nouveau_fence_ref(nv50->screen->base.fence.current, &buf->fence_wr);
-   }
+   nv50_resource_validate(buf, NOUVEAU_BO_WR);
 
    if (width * height != elements) {
       offset += width * height * data_size;
@@ -821,7 +817,7 @@ struct nv50_blitter
 
    struct nv50_tsc_entry sampler[2]; /* nearest, bilinear */
 
-   pipe_mutex mutex;
+   mtx_t mutex;
 };
 
 struct nv50_blitctx
@@ -896,6 +892,10 @@ nv50_blitter_make_fp(struct pipe_context *pipe,
    bool tex_s = false;
    bool cvt_un8 = false;
 
+   bool int_clamp = mode == NV50_BLIT_MODE_INT_CLAMP;
+   if (int_clamp)
+      mode = NV50_BLIT_MODE_PASS;
+
    if (mode != NV50_BLIT_MODE_PASS &&
        mode != NV50_BLIT_MODE_Z24X8 &&
        mode != NV50_BLIT_MODE_X8Z24)
@@ -939,6 +939,10 @@ nv50_blitter_make_fp(struct pipe_context *pipe,
       ureg_TEX(ureg, ureg_writemask(data, mask),
                target, tc, ureg_DECL_sampler(ureg, 0));
    }
+
+   /* handle signed to unsigned integer conversions */
+   if (int_clamp)
+      ureg_UMIN(ureg, data, ureg_src(data), ureg_imm1u(ureg, 0x7fffffff));
 
    if (cvt_un8) {
       struct ureg_src mask;
@@ -1062,6 +1066,9 @@ nv50_blit_select_mode(const struct pipe_blit_info *info)
          return NV50_BLIT_MODE_XS;
       }
    default:
+      if (util_format_is_pure_uint(info->src.format) &&
+          util_format_is_pure_sint(info->dst.format))
+         return NV50_BLIT_MODE_INT_CLAMP;
       return NV50_BLIT_MODE_PASS;
    }
 }
@@ -1078,11 +1085,11 @@ nv50_blit_select_fp(struct nv50_blitctx *ctx, const struct pipe_blit_info *info)
    const unsigned mode = ctx->mode;
 
    if (!blitter->fp[targ][mode]) {
-      pipe_mutex_lock(blitter->mutex);
+      mtx_lock(&blitter->mutex);
       if (!blitter->fp[targ][mode])
          blitter->fp[targ][mode] =
             nv50_blitter_make_fp(&ctx->nv50->base.pipe, mode, ptarg);
-      pipe_mutex_unlock(blitter->mutex);
+      mtx_unlock(&blitter->mutex);
    }
    ctx->fp = blitter->fp[targ][mode];
 }
@@ -1662,6 +1669,13 @@ nv50_blit(struct pipe_context *pipe, const struct pipe_blit_info *info)
    struct nouveau_pushbuf *push = nv50->base.pushbuf;
    bool eng3d = FALSE;
 
+   if (info->src.box.width == 0 || info->src.box.height == 0 ||
+       info->dst.box.width == 0 || info->dst.box.height == 0) {
+      pipe_debug_message(&nv50->base.debug, ERROR,
+                         "Blit with zero-size src or dst box");
+      return;
+   }
+
    if (util_format_is_depth_or_stencil(info->dst.resource->format)) {
       if (!(info->mask & PIPE_MASK_ZS))
          return;
@@ -1755,7 +1769,7 @@ nv50_blitter_create(struct nv50_screen *screen)
       return false;
    }
 
-   pipe_mutex_init(screen->blitter->mutex);
+   (void) mtx_init(&screen->blitter->mutex, mtx_plain);
 
    nv50_blitter_make_vp(screen->blitter);
    nv50_blitter_make_sampler(screen->blitter);
@@ -1780,7 +1794,7 @@ nv50_blitter_destroy(struct nv50_screen *screen)
       }
    }
 
-   pipe_mutex_destroy(blitter->mutex);
+   mtx_destroy(&blitter->mutex);
    FREE(blitter);
 }
 

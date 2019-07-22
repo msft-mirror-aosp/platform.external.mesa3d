@@ -22,7 +22,9 @@
  * of the Software.
  *
  */
-#pragma once
+
+#ifndef AC_LLVM_UTIL_H
+#define AC_LLVM_UTIL_H
 
 #include <stdbool.h>
 #include <llvm-c/TargetMachine.h>
@@ -33,68 +35,119 @@
 extern "C" {
 #endif
 
+struct ac_shader_binary;
+struct ac_compiler_passes;
+
 enum ac_func_attr {
 	AC_FUNC_ATTR_ALWAYSINLINE = (1 << 0),
-	AC_FUNC_ATTR_BYVAL        = (1 << 1),
 	AC_FUNC_ATTR_INREG        = (1 << 2),
 	AC_FUNC_ATTR_NOALIAS      = (1 << 3),
 	AC_FUNC_ATTR_NOUNWIND     = (1 << 4),
 	AC_FUNC_ATTR_READNONE     = (1 << 5),
 	AC_FUNC_ATTR_READONLY     = (1 << 6),
-	AC_FUNC_ATTR_LAST         = (1 << 7)
+	AC_FUNC_ATTR_WRITEONLY    = (1 << 7),
+	AC_FUNC_ATTR_INACCESSIBLE_MEM_ONLY = (1 << 8),
+	AC_FUNC_ATTR_CONVERGENT = (1 << 9),
+
+	/* Legacy intrinsic that needs attributes on function declarations
+	 * and they must match the internal LLVM definition exactly, otherwise
+	 * intrinsic selection fails.
+	 */
+	AC_FUNC_ATTR_LEGACY       = (1u << 31),
 };
 
-struct ac_llvm_context {
-	LLVMContextRef context;
-	LLVMModuleRef module;
-	LLVMBuilderRef builder;
-
-	LLVMTypeRef i32;
-	LLVMTypeRef f32;
-
-	unsigned fpmath_md_kind;
-	LLVMValueRef fpmath_md_2p5_ulp;
+enum ac_target_machine_options {
+	AC_TM_SUPPORTS_SPILL = (1 << 0),
+	AC_TM_SISCHED = (1 << 1),
+	AC_TM_FORCE_ENABLE_XNACK = (1 << 2),
+	AC_TM_FORCE_DISABLE_XNACK = (1 << 3),
+	AC_TM_PROMOTE_ALLOCA_TO_SCRATCH = (1 << 4),
+	AC_TM_CHECK_IR = (1 << 5),
+	AC_TM_ENABLE_GLOBAL_ISEL = (1 << 6),
+	AC_TM_CREATE_LOW_OPT = (1 << 7),
+	AC_TM_NO_LOAD_STORE_OPT = (1 << 8),
 };
 
-LLVMTargetMachineRef ac_create_target_machine(enum radeon_family family);
+enum ac_float_mode {
+	AC_FLOAT_MODE_DEFAULT,
+	AC_FLOAT_MODE_NO_SIGNED_ZEROS_FP_MATH,
+	AC_FLOAT_MODE_UNSAFE_FP_MATH,
+};
 
+/* Per-thread persistent LLVM objects. */
+struct ac_llvm_compiler {
+	LLVMTargetLibraryInfoRef	target_library_info;
+	LLVMPassManagerRef		passmgr;
+
+	/* Default compiler. */
+	LLVMTargetMachineRef		tm;
+	struct ac_compiler_passes	*passes;
+
+	/* Optional compiler for faster compilation with fewer optimizations.
+	 * LLVM modules can be created with "tm" too. There is no difference.
+	 */
+	LLVMTargetMachineRef		low_opt_tm; /* uses -O1 instead of -O2 */
+	struct ac_compiler_passes	*low_opt_passes;
+};
+
+const char *ac_get_llvm_processor_name(enum radeon_family family);
 void ac_add_attr_dereferenceable(LLVMValueRef val, uint64_t bytes);
 bool ac_is_sgpr_param(LLVMValueRef param);
+void ac_add_function_attr(LLVMContextRef ctx, LLVMValueRef function,
+                          int attr_idx, enum ac_func_attr attr);
+void ac_add_func_attributes(LLVMContextRef ctx, LLVMValueRef function,
+			    unsigned attrib_mask);
+void ac_dump_module(LLVMModuleRef module);
+
+LLVMValueRef ac_llvm_get_called_value(LLVMValueRef call);
+bool ac_llvm_is_function(LLVMValueRef v);
+LLVMModuleRef ac_create_module(LLVMTargetMachineRef tm, LLVMContextRef ctx);
+
+LLVMBuilderRef ac_create_builder(LLVMContextRef ctx,
+				 enum ac_float_mode float_mode);
 
 void
-ac_llvm_context_init(struct ac_llvm_context *ctx, LLVMContextRef context);
+ac_llvm_add_target_dep_function_attr(LLVMValueRef F,
+				     const char *name, unsigned value);
 
-void
-ac_add_function_attr(LLVMValueRef function,
-                     int attr_idx,
-                     enum ac_func_attr attr);
-LLVMValueRef
-ac_emit_llvm_intrinsic(struct ac_llvm_context *ctx, const char *name,
-		       LLVMTypeRef return_type, LLVMValueRef *params,
-		       unsigned param_count, unsigned attrib_mask);
+static inline unsigned
+ac_get_load_intr_attribs(bool can_speculate)
+{
+	/* READNONE means writes can't affect it, while READONLY means that
+	 * writes can affect it. */
+	return can_speculate ? AC_FUNC_ATTR_READNONE :
+			       AC_FUNC_ATTR_READONLY;
+}
 
-LLVMValueRef
-ac_build_gather_values_extended(struct ac_llvm_context *ctx,
-				LLVMValueRef *values,
-				unsigned value_count,
-				unsigned value_stride,
-				bool load);
-LLVMValueRef
-ac_build_gather_values(struct ac_llvm_context *ctx,
-		       LLVMValueRef *values,
-		       unsigned value_count);
+static inline unsigned
+ac_get_store_intr_attribs(bool writeonly_memory)
+{
+	return writeonly_memory ? AC_FUNC_ATTR_INACCESSIBLE_MEM_ONLY :
+				  AC_FUNC_ATTR_WRITEONLY;
+}
 
-LLVMValueRef
-ac_emit_fdiv(struct ac_llvm_context *ctx,
-	     LLVMValueRef num,
-	     LLVMValueRef den);
+unsigned
+ac_count_scratch_private_memory(LLVMValueRef function);
 
-void
-ac_prepare_cube_coords(struct ac_llvm_context *ctx,
-		       bool is_deriv, bool is_array,
-		       LLVMValueRef *coords_arg,
-		       LLVMValueRef *derivs_arg);
+LLVMTargetLibraryInfoRef ac_create_target_library_info(const char *triple);
+void ac_dispose_target_library_info(LLVMTargetLibraryInfoRef library_info);
+void ac_init_llvm_once(void);
+
+
+bool ac_init_llvm_compiler(struct ac_llvm_compiler *compiler,
+			   enum radeon_family family,
+			   enum ac_target_machine_options tm_options);
+void ac_destroy_llvm_compiler(struct ac_llvm_compiler *compiler);
+
+struct ac_compiler_passes *ac_create_llvm_passes(LLVMTargetMachineRef tm);
+void ac_destroy_llvm_passes(struct ac_compiler_passes *p);
+bool ac_compile_module_to_binary(struct ac_compiler_passes *p, LLVMModuleRef module,
+				 struct ac_shader_binary *binary);
+void ac_llvm_add_barrier_noop_pass(LLVMPassManagerRef passmgr);
+void ac_enable_global_isel(LLVMTargetMachineRef tm);
 
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* AC_LLVM_UTIL_H */

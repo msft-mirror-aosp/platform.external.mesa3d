@@ -29,9 +29,10 @@
 #include "util/u_memory.h"
 #include "util/u_format.h"
 #include "util/u_format_s3tc.h"
+#include "util/u_screen.h"
 #include "util/u_video.h"
-#include "os/os_misc.h"
-#include "os/os_time.h"
+#include "util/os_misc.h"
+#include "util/os_time.h"
 #include "pipe/p_defines.h"
 #include "pipe/p_screen.h"
 #include "draw/draw_context.h"
@@ -64,12 +65,11 @@ softpipe_get_name(struct pipe_screen *screen)
 static int
 softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
 {
+   struct softpipe_screen *sp_screen = softpipe_screen(screen);
    switch (param) {
    case PIPE_CAP_NPOT_TEXTURES:
    case PIPE_CAP_MIXED_FRAMEBUFFER_SIZES:
    case PIPE_CAP_MIXED_COLOR_DEPTH_BITS:
-      return 1;
-   case PIPE_CAP_TWO_SIDED_STENCIL:
       return 1;
    case PIPE_CAP_SM3:
       return 1;
@@ -88,12 +88,12 @@ softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_QUERY_PIPELINE_STATISTICS:
       return 1;
    case PIPE_CAP_TEXTURE_MIRROR_CLAMP:
-      return 1;
-   case PIPE_CAP_TEXTURE_SHADOW_MAP:
+   case PIPE_CAP_TEXTURE_MIRROR_CLAMP_TO_EDGE:
       return 1;
    case PIPE_CAP_TEXTURE_SWIZZLE:
       return 1;
    case PIPE_CAP_TEXTURE_BORDER_COLOR_QUIRK:
+   case PIPE_CAP_MAX_TEXTURE_UPLOAD_MEMORY_BUDGET:
       return 0;
    case PIPE_CAP_MAX_TEXTURE_2D_LEVELS:
       return SP_MAX_TEXTURE_2D_LEVELS;
@@ -123,13 +123,17 @@ softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_MAX_GEOMETRY_TOTAL_OUTPUT_COMPONENTS:
       return 1024;
    case PIPE_CAP_MAX_VERTEX_STREAMS:
-      return 1;
+      if (sp_screen->use_llvm)
+         return 1;
+      else
+         return PIPE_MAX_VERTEX_STREAMS;
    case PIPE_CAP_MAX_VERTEX_ATTRIB_STRIDE:
       return 2048;
    case PIPE_CAP_PRIMITIVE_RESTART:
       return 1;
    case PIPE_CAP_SHADER_STENCIL_EXPORT:
       return 1;
+   case PIPE_CAP_TGSI_ATOMFADD:
    case PIPE_CAP_TGSI_INSTANCEID:
    case PIPE_CAP_VERTEX_ELEMENT_INSTANCE_DIVISOR:
    case PIPE_CAP_START_INSTANCE:
@@ -146,25 +150,31 @@ softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_CONDITIONAL_RENDER:
       return 1;
    case PIPE_CAP_TEXTURE_BARRIER:
+   case PIPE_CAP_DEPTH_CLIP_DISABLE_SEPARATE:
       return 0;
    case PIPE_CAP_FRAGMENT_COLOR_CLAMPED:
    case PIPE_CAP_VERTEX_COLOR_UNCLAMPED: /* draw module */
    case PIPE_CAP_VERTEX_COLOR_CLAMPED: /* draw module */
       return 1;
    case PIPE_CAP_MIXED_COLORBUFFER_FORMATS:
-      return 0;
+      return 1;
    case PIPE_CAP_GLSL_FEATURE_LEVEL:
-      return 330;
+      return 400;
+   case PIPE_CAP_GLSL_FEATURE_LEVEL_COMPATIBILITY:
+      return 140;
    case PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION:
+   case PIPE_CAP_TGSI_TEX_TXF_LZ:
       return 0;
    case PIPE_CAP_COMPUTE:
       return 1;
    case PIPE_CAP_USER_VERTEX_BUFFERS:
-   case PIPE_CAP_USER_INDEX_BUFFERS:
-   case PIPE_CAP_USER_CONSTANT_BUFFERS:
    case PIPE_CAP_STREAM_OUTPUT_PAUSE_RESUME:
    case PIPE_CAP_STREAM_OUTPUT_INTERLEAVE_BUFFERS:
    case PIPE_CAP_TGSI_VS_LAYER_VIEWPORT:
+   case PIPE_CAP_DOUBLES:
+   case PIPE_CAP_INT64:
+   case PIPE_CAP_INT64_DIVMOD:
+   case PIPE_CAP_TGSI_DIV:
       return 1;
    case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
       return 16;
@@ -186,7 +196,7 @@ softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_MAX_TEXTURE_BUFFER_SIZE:
       return 65536;
    case PIPE_CAP_TEXTURE_BUFFER_OFFSET_ALIGNMENT:
-      return 0;
+      return 16;
    case PIPE_CAP_TGSI_TEXCOORD:
    case PIPE_CAP_PREFER_BLIT_BASED_TEXTURE_TRANSFER:
       return 0;
@@ -216,6 +226,8 @@ softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_MAX_TEXTURE_GATHER_OFFSET:
       return 31;
    case PIPE_CAP_DRAW_INDIRECT:
+      return 1;
+   case PIPE_CAP_QUERY_SO_OVERFLOW:
       return 1;
 
    case PIPE_CAP_VENDOR_ID:
@@ -257,6 +269,10 @@ softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_COPY_BETWEEN_COMPRESSED_AND_PLAIN_FORMATS:
    case PIPE_CAP_TGSI_ARRAY_COMPONENTS:
       return 1;
+   case PIPE_CAP_CLEAR_TEXTURE:
+      return 1;
+   case PIPE_CAP_MAX_VARYINGS:
+      return TGSI_EXEC_MAX_INPUT_ATTRIBS;
    case PIPE_CAP_MULTISAMPLE_Z_RESOLVE:
    case PIPE_CAP_RESOURCE_FROM_USER_MEMORY:
    case PIPE_CAP_DEVICE_RESET_STATUS_QUERY:
@@ -265,7 +281,6 @@ softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_TGSI_TXQS:
    case PIPE_CAP_FORCE_PERSAMPLE_INTERP:
    case PIPE_CAP_SHAREABLE_SHADERS:
-   case PIPE_CAP_CLEAR_TEXTURE:
    case PIPE_CAP_DRAW_PARAMETERS:
    case PIPE_CAP_TGSI_PACK_HALF_FLOAT:
    case PIPE_CAP_MULTI_DRAW_INDIRECT:
@@ -292,17 +307,51 @@ softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_NATIVE_FENCE_FD:
    case PIPE_CAP_GLSL_OPTIMIZE_CONSERVATIVELY:
    case PIPE_CAP_TGSI_FS_FBFETCH:
+   case PIPE_CAP_TGSI_MUL_ZERO_WINS:
+   case PIPE_CAP_TGSI_CLOCK:
+   case PIPE_CAP_POLYGON_MODE_FILL_RECTANGLE:
+   case PIPE_CAP_SPARSE_BUFFER_PAGE_SIZE:
+   case PIPE_CAP_TGSI_BALLOT:
+   case PIPE_CAP_TGSI_TES_LAYER_VIEWPORT:
+   case PIPE_CAP_CAN_BIND_CONST_BUFFER_AS_VERTEX:
+   case PIPE_CAP_ALLOW_MAPPED_BUFFERS_DURING_EXECUTION:
+   case PIPE_CAP_POST_DEPTH_COVERAGE:
+   case PIPE_CAP_BINDLESS_TEXTURE:
+   case PIPE_CAP_NIR_SAMPLERS_AS_DEREF:
+   case PIPE_CAP_MEMOBJ:
+   case PIPE_CAP_LOAD_CONSTBUF:
+   case PIPE_CAP_TGSI_ANY_REG_AS_ADDRESS:
+   case PIPE_CAP_TILE_RASTER_ORDER:
+   case PIPE_CAP_MAX_COMBINED_SHADER_OUTPUT_RESOURCES:
+   case PIPE_CAP_FRAMEBUFFER_MSAA_CONSTRAINTS:
+   case PIPE_CAP_SIGNED_VERTEX_BUFFER_OFFSET:
+   case PIPE_CAP_CONTEXT_PRIORITY_MASK:
+   case PIPE_CAP_FENCE_SIGNAL:
+   case PIPE_CAP_CONSTBUF0_FLAGS:
+   case PIPE_CAP_PACKED_UNIFORMS:
+   case PIPE_CAP_CONSERVATIVE_RASTER_POST_SNAP_TRIANGLES:
+   case PIPE_CAP_CONSERVATIVE_RASTER_POST_SNAP_POINTS_LINES:
+   case PIPE_CAP_CONSERVATIVE_RASTER_PRE_SNAP_TRIANGLES:
+   case PIPE_CAP_CONSERVATIVE_RASTER_PRE_SNAP_POINTS_LINES:
+   case PIPE_CAP_CONSERVATIVE_RASTER_POST_DEPTH_COVERAGE:
+   case PIPE_CAP_MAX_CONSERVATIVE_RASTER_SUBPIXEL_PRECISION_BIAS:
+   case PIPE_CAP_PROGRAMMABLE_SAMPLE_LOCATIONS:
       return 0;
+   case PIPE_CAP_MAX_GS_INVOCATIONS:
+      return 32;
+   case PIPE_CAP_MAX_SHADER_BUFFER_SIZE:
+      return 1 << 27;
    case PIPE_CAP_SHADER_BUFFER_OFFSET_ALIGNMENT:
       return 4;
+   default:
+      return u_pipe_screen_get_param_defaults(screen, param);
    }
-   /* should only get here on unhandled cases */
-   debug_printf("Unexpected PIPE_CAP %d query\n", param);
-   return 0;
 }
 
 static int
-softpipe_get_shader_param(struct pipe_screen *screen, unsigned shader, enum pipe_shader_cap param)
+softpipe_get_shader_param(struct pipe_screen *screen,
+                          enum pipe_shader_type shader,
+                          enum pipe_shader_cap param)
 {
    struct softpipe_screen *sp_screen = softpipe_screen(screen);
    switch(shader)
@@ -338,10 +387,11 @@ softpipe_get_paramf(struct pipe_screen *screen, enum pipe_capf param)
       return 16.0;
    case PIPE_CAPF_MAX_TEXTURE_LOD_BIAS:
       return 16.0; /* arbitrary */
-   case PIPE_CAPF_GUARD_BAND_LEFT:
-   case PIPE_CAPF_GUARD_BAND_TOP:
-   case PIPE_CAPF_GUARD_BAND_RIGHT:
-   case PIPE_CAPF_GUARD_BAND_BOTTOM:
+   case PIPE_CAPF_MIN_CONSERVATIVE_RASTER_DILATE:
+      return 0.0;
+   case PIPE_CAPF_MAX_CONSERVATIVE_RASTER_DILATE:
+      return 0.0;
+   case PIPE_CAPF_CONSERVATIVE_RASTER_DILATE_GRANULARITY:
       return 0.0;
    }
    /* should only get here on unhandled cases */
@@ -359,6 +409,7 @@ softpipe_is_format_supported( struct pipe_screen *screen,
                               enum pipe_format format,
                               enum pipe_texture_target target,
                               unsigned sample_count,
+                              unsigned storage_sample_count,
                               unsigned bind)
 {
    struct sw_winsys *winsys = softpipe_screen(screen)->winsys;
@@ -373,6 +424,9 @@ softpipe_is_format_supported( struct pipe_screen *screen,
           target == PIPE_TEXTURE_3D ||
           target == PIPE_TEXTURE_CUBE ||
           target == PIPE_TEXTURE_CUBE_ARRAY);
+
+   if (MAX2(1, sample_count) != MAX2(1, storage_sample_count))
+      return false;
 
    format_desc = util_format_description(format);
    if (!format_desc)
@@ -407,8 +461,8 @@ softpipe_is_format_supported( struct pipe_screen *screen,
          return FALSE;
    }
 
-   if (format_desc->layout == UTIL_FORMAT_LAYOUT_BPTC ||
-       format_desc->layout == UTIL_FORMAT_LAYOUT_ASTC) {
+   if (format_desc->layout == UTIL_FORMAT_LAYOUT_ASTC ||
+       format_desc->layout == UTIL_FORMAT_LAYOUT_ATC) {
       /* Software decoding is not hooked up. */
       return FALSE;
    }
@@ -438,10 +492,6 @@ softpipe_is_format_supported( struct pipe_screen *screen,
    /*
     * All other operations (sampling, transfer, etc).
     */
-
-   if (format_desc->layout == UTIL_FORMAT_LAYOUT_S3TC) {
-      return util_format_s3tc_enabled;
-   }
 
    /*
     * Everything else should be supported by u_format.
@@ -568,8 +618,6 @@ softpipe_create_screen(struct sw_winsys *winsys)
    screen->base.flush_frontbuffer = softpipe_flush_frontbuffer;
    screen->base.get_compute_param = softpipe_get_compute_param;
    screen->use_llvm = debug_get_option_use_llvm();
-
-   util_format_s3tc_init();
 
    softpipe_init_screen_texture_funcs(&screen->base);
    softpipe_init_screen_fence_funcs(&screen->base);

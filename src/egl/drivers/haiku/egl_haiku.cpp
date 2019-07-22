@@ -29,6 +29,7 @@
 
 #include "eglconfig.h"
 #include "eglcontext.h"
+#include "egldevice.h"
 #include "egldisplay.h"
 #include "egldriver.h"
 #include "eglcurrent.h"
@@ -53,11 +54,6 @@
 
 _EGL_DRIVER_STANDARD_TYPECASTS(haiku_egl)
 
-
-struct haiku_egl_driver
-{
-	_EGLDriver base;
-};
 
 struct haiku_egl_config
 {
@@ -144,18 +140,16 @@ haiku_destroy_surface(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf)
 
 
 static EGLBoolean
-haiku_add_configs_for_visuals(_EGLDisplay *dpy)
+haiku_add_configs_for_visuals(_EGLDisplay *disp)
 {
 	CALLED();
 
 	struct haiku_egl_config* conf;
 	conf = (struct haiku_egl_config*) calloc(1, sizeof (*conf));
-	if (!conf) {
-		_eglError(EGL_BAD_ALLOC, "haiku_add_configs_for_visuals");
-		return EGL_FALSE;
-	}
+	if (!conf)
+		return _eglError(EGL_BAD_ALLOC, "haiku_add_configs_for_visuals");
 
-	_eglInitConfig(&conf->base, dpy, 1);
+	_eglInitConfig(&conf->base, disp, 1);
 	TRACE("Config inited\n");
 
 	_eglSetConfigKey(&conf->base, EGL_RED_SIZE, 8);
@@ -196,7 +190,7 @@ haiku_add_configs_for_visuals(_EGLDisplay *dpy)
 	TRACE("Validated config\n");
 
 	_eglLinkConfig(&conf->base);
-	if (!_eglGetArraySize(dpy->Configs)) {
+	if (!_eglGetArraySize(disp->Configs)) {
 		_eglLog(_EGL_WARNING, "Haiku: failed to create any config");
 		goto cleanup;
 	}
@@ -212,15 +206,23 @@ cleanup:
 
 extern "C"
 EGLBoolean
-init_haiku(_EGLDriver *drv, _EGLDisplay *dpy)
+init_haiku(_EGLDriver *drv, _EGLDisplay *disp)
 {
+	_EGLDevice *dev;
 	CALLED();
 
+	dev = _eglAddDevice(-1, true);
+	if (!dev) {
+		_eglError(EGL_NOT_INITIALIZED, "DRI2: failed to find EGLDevice");
+		return EGL_FALSE;
+	}
+	disp->Device = dev;
+
 	TRACE("Add configs\n");
-	if (!haiku_add_configs_for_visuals(dpy))
+	if (!haiku_add_configs_for_visuals(disp))
 		return EGL_FALSE;
 
-	dpy->Version = 14;
+	disp->Version = 14;
 
 	TRACE("Initialization finished\n");
 
@@ -230,7 +232,7 @@ init_haiku(_EGLDriver *drv, _EGLDisplay *dpy)
 
 extern "C"
 EGLBoolean
-haiku_terminate(_EGLDriver* drv,_EGLDisplay* dpy)
+haiku_terminate(_EGLDriver* drv,_EGLDisplay *disp)
 {
 	return EGL_TRUE;
 }
@@ -279,7 +281,7 @@ haiku_destroy_context(_EGLDriver* drv, _EGLDisplay *disp, _EGLContext* ctx)
 
 extern "C"
 EGLBoolean
-haiku_make_current(_EGLDriver* drv, _EGLDisplay* dpy, _EGLSurface *dsurf,
+haiku_make_current(_EGLDriver* drv, _EGLDisplay *disp, _EGLSurface *dsurf,
 	_EGLSurface *rsurf, _EGLContext *ctx)
 {
 	CALLED();
@@ -300,7 +302,7 @@ haiku_make_current(_EGLDriver* drv, _EGLDisplay* dpy, _EGLSurface *dsurf,
 
 extern "C"
 EGLBoolean
-haiku_swap_buffers(_EGLDriver *drv, _EGLDisplay *dpy, _EGLSurface *surf)
+haiku_swap_buffers(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf)
 {
 	struct haiku_egl_surface* surface = haiku_egl_surface(surf);
 
@@ -310,48 +312,27 @@ haiku_swap_buffers(_EGLDriver *drv, _EGLDisplay *dpy, _EGLSurface *surf)
 }
 
 
-extern "C"
-void
-haiku_unload(_EGLDriver* drv)
-{
-
-}
-
-
 /**
  * This is the main entrypoint into the driver, called by libEGL.
- * Create a new _EGLDriver object and init its dispatch table.
+ * Gets an _EGLDriver object and init its dispatch table.
  */
 extern "C"
-_EGLDriver*
-_eglBuiltInDriverHaiku(const char *args)
+void
+_eglInitDriver(_EGLDriver *driver)
 {
 	CALLED();
 
-	struct haiku_egl_driver* driver;
-	driver = (struct haiku_egl_driver*) calloc(1, sizeof(*driver));
-	if (!driver) {
-		_eglError(EGL_BAD_ALLOC, "_eglBuiltInDriverHaiku");
-		return NULL;
-	}
+	driver->API.Initialize = init_haiku;
+	driver->API.Terminate = haiku_terminate;
+	driver->API.CreateContext = haiku_create_context;
+	driver->API.DestroyContext = haiku_destroy_context;
+	driver->API.MakeCurrent = haiku_make_current;
+	driver->API.CreateWindowSurface = haiku_create_window_surface;
+	driver->API.CreatePixmapSurface = haiku_create_pixmap_surface;
+	driver->API.CreatePbufferSurface = haiku_create_pbuffer_surface;
+	driver->API.DestroySurface = haiku_destroy_surface;
 
-	_eglInitDriverFallbacks(&driver->base);
-	driver->base.API.Initialize = init_haiku;
-	driver->base.API.Terminate = haiku_terminate;
-	driver->base.API.CreateContext = haiku_create_context;
-	driver->base.API.DestroyContext = haiku_destroy_context;
-	driver->base.API.MakeCurrent = haiku_make_current;
-	driver->base.API.CreateWindowSurface = haiku_create_window_surface;
-	driver->base.API.CreatePixmapSurface = haiku_create_pixmap_surface;
-	driver->base.API.CreatePbufferSurface = haiku_create_pbuffer_surface;
-	driver->base.API.DestroySurface = haiku_destroy_surface;
-
-	driver->base.API.SwapBuffers = haiku_swap_buffers;
-
-	driver->base.Name = "Haiku";
-	driver->base.Unload = haiku_unload;
+	driver->API.SwapBuffers = haiku_swap_buffers;
 
 	TRACE("API Calls defined\n");
-
-	return &driver->base;
 }
