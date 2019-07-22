@@ -52,7 +52,6 @@ get_dummy_vertex_shader(void)
    const struct tgsi_token *tokens;
    struct ureg_src src;
    struct ureg_dst dst;
-   unsigned num_tokens;
 
    ureg = ureg_create(PIPE_SHADER_VERTEX);
    if (!ureg)
@@ -63,7 +62,7 @@ get_dummy_vertex_shader(void)
    ureg_MOV(ureg, dst, src);
    ureg_END(ureg);
 
-   tokens = ureg_get_tokens(ureg, &num_tokens);
+   tokens = ureg_get_tokens(ureg, NULL);
 
    ureg_destroy(ureg);
 
@@ -106,6 +105,9 @@ get_compiled_dummy_vertex_shader(struct svga_context *svga,
    FREE((void *) vs->base.tokens);
    vs->base.tokens = dummy;
 
+   tgsi_scan_shader(vs->base.tokens, &vs->base.info);
+   vs->generic_outputs = svga_get_generic_outputs_mask(&vs->base.info);
+
    variant = translate_vertex_program(svga, vs, key);
    return variant;
 }
@@ -136,7 +138,7 @@ compile_vs(struct svga_context *svga,
                    (unsigned) (variant->nr_tokens
                                * sizeof(variant->tokens[0])));
       /* Free the too-large variant */
-      svga_destroy_shader_variant(svga, SVGA3D_SHADERTYPE_VS, variant);
+      svga_destroy_shader_variant(svga, variant);
       /* Use simple pass-through shader instead */
       variant = get_compiled_dummy_vertex_shader(svga, vs, key);
    }
@@ -145,9 +147,9 @@ compile_vs(struct svga_context *svga,
       return PIPE_ERROR;
    }
 
-   ret = svga_define_shader(svga, SVGA3D_SHADERTYPE_VS, variant);
+   ret = svga_define_shader(svga, variant);
    if (ret != PIPE_OK) {
-      svga_destroy_shader_variant(svga, SVGA3D_SHADERTYPE_VS, variant);
+      svga_destroy_shader_variant(svga, variant);
       return ret;
    }
 
@@ -225,16 +227,15 @@ svga_reemit_vs_bindings(struct svga_context *svga)
    if (!svga_need_to_rebind_resources(svga)) {
       ret =  svga->swc->resource_rebind(svga->swc, NULL, gbshader,
                                         SVGA_RELOC_READ);
-      goto out;
+   }
+   else {
+      if (svga_have_vgpu10(svga))
+         ret = SVGA3D_vgpu10_SetShader(svga->swc, SVGA3D_SHADERTYPE_VS,
+                                       gbshader, shaderId);
+      else
+         ret = SVGA3D_SetGBShader(svga->swc, SVGA3D_SHADERTYPE_VS, gbshader);
    }
 
-   if (svga_have_vgpu10(svga))
-      ret = SVGA3D_vgpu10_SetShader(svga->swc, SVGA3D_SHADERTYPE_VS,
-                                    gbshader, shaderId);
-   else
-      ret = SVGA3D_SetGBShader(svga->swc, SVGA3D_SHADERTYPE_VS, gbshader);
-
- out:
    if (ret != PIPE_OK)
       return ret;
 
@@ -264,7 +265,6 @@ compile_passthrough_vs(struct svga_context *svga,
    struct ureg_src src[PIPE_MAX_SHADER_INPUTS];
    struct ureg_dst dst[PIPE_MAX_SHADER_OUTPUTS];
    struct ureg_program *ureg;
-   unsigned num_tokens;
    struct svga_compile_key key;
    enum pipe_error ret;
 
@@ -313,7 +313,7 @@ compile_passthrough_vs(struct svga_context *svga,
    ureg_END(ureg);
 
    memset(&new_vs, 0, sizeof(new_vs));
-   new_vs.base.tokens = ureg_get_tokens(ureg, &num_tokens);
+   new_vs.base.tokens = ureg_get_tokens(ureg, NULL);
    tgsi_scan_shader(new_vs.base.tokens, &new_vs.base.info);
 
    memset(&key, 0, sizeof(key));
@@ -355,11 +355,14 @@ emit_hw_vs(struct svga_context *svga, unsigned dirty)
       /* No GS stream out */
       if (svga_have_vs_streamout(svga)) {
          /* Set VS stream out */
-         svga_set_stream_output(svga, vs->base.stream_output);
+         ret = svga_set_stream_output(svga, vs->base.stream_output);
       }
       else {
          /* turn off stream out */
-         svga_set_stream_output(svga, NULL);
+         ret = svga_set_stream_output(svga, NULL);
+      }
+      if (ret != PIPE_OK) {
+         goto done;
       }
    }
 

@@ -40,6 +40,8 @@
 #include <array>
 #include <sstream>
 
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
+
 // Function pointer to different storing functions for color, depth, and stencil based on incoming formats.
 typedef void(*PFN_STORE_TILES)(uint8_t*, SWR_SURFACE_STATE*, uint32_t, uint32_t, uint32_t);
 
@@ -102,7 +104,6 @@ struct StorePixels<8, 2>
     }
 };
 
-#if USE_8x2_TILE_BACKEND
 template <>
 struct StorePixels<8, 4>
 {
@@ -128,7 +129,6 @@ struct StorePixels<8, 4>
     }
 };
 
-#endif
 //////////////////////////////////////////////////////////////////////////
 /// StorePixels (32-bit pixel specialization)
 /// @brief Stores a 4x2 (AVX) raster-tile to two rows.
@@ -157,7 +157,6 @@ struct StorePixels<16, 2>
     }
 };
 
-#if USE_8x2_TILE_BACKEND
 template <>
 struct StorePixels<16, 4>
 {
@@ -183,7 +182,6 @@ struct StorePixels<16, 4>
     }
 };
 
-#endif
 //////////////////////////////////////////////////////////////////////////
 /// StorePixels (32-bit pixel specialization)
 /// @brief Stores a 4x2 (AVX) raster-tile to two rows.
@@ -199,43 +197,41 @@ struct StorePixels<32, 2>
     static void Store(const uint8_t* pSrc, uint8_t* (&ppDsts)[2])
     {
         // Each 4-pixel row is 16-bytes
-        __m128i *pZRow01 = (__m128i*)pSrc;
-        __m128i vQuad00 = _mm_load_si128(pZRow01);
-        __m128i vQuad01 = _mm_load_si128(pZRow01 + 1);
+        simd4scalari *pZRow01 = (simd4scalari*)pSrc;
+        simd4scalari vQuad00 = SIMD128::load_si(pZRow01);
+        simd4scalari vQuad01 = SIMD128::load_si(pZRow01 + 1);
 
-        __m128i vRow00 = _mm_unpacklo_epi64(vQuad00, vQuad01);
-        __m128i vRow10 = _mm_unpackhi_epi64(vQuad00, vQuad01);
+        simd4scalari vRow00 = SIMD128::unpacklo_epi64(vQuad00, vQuad01);
+        simd4scalari vRow10 = SIMD128::unpackhi_epi64(vQuad00, vQuad01);
 
-        _mm_storeu_si128((__m128i*)ppDsts[0], vRow00);
-        _mm_storeu_si128((__m128i*)ppDsts[1], vRow10);
+        SIMD128::storeu_si((simd4scalari*)ppDsts[0], vRow00);
+        SIMD128::storeu_si((simd4scalari*)ppDsts[1], vRow10);
     }
 };
 
-#if USE_8x2_TILE_BACKEND
 template <>
 struct StorePixels<32, 4>
 {
     static void Store(const uint8_t* pSrc, uint8_t* (&ppDsts)[4])
     {
         // 4 x 16 bytes = 64 bytes, 16 pixels
-        const __m128i *pSrc128 = reinterpret_cast<const __m128i *>(pSrc);
+        const simd4scalari *pSrc128 = reinterpret_cast<const simd4scalari *>(pSrc);
 
-        __m128i **ppDsts128 = reinterpret_cast<__m128i **>(ppDsts);
+        simd4scalari **ppDsts128 = reinterpret_cast<simd4scalari **>(ppDsts);
 
         // Unswizzle from SWR-Z order
-        __m128i quad0 = _mm_load_si128(&pSrc128[0]);                        // 0 1 2 3
-        __m128i quad1 = _mm_load_si128(&pSrc128[1]);                        // 4 5 6 7
-        __m128i quad2 = _mm_load_si128(&pSrc128[2]);                        // 8 9 A B
-        __m128i quad3 = _mm_load_si128(&pSrc128[3]);                        // C D E F
+        simd4scalari quad0 = SIMD128::load_si(&pSrc128[0]);                        // 0 1 2 3
+        simd4scalari quad1 = SIMD128::load_si(&pSrc128[1]);                        // 4 5 6 7
+        simd4scalari quad2 = SIMD128::load_si(&pSrc128[2]);                        // 8 9 A B
+        simd4scalari quad3 = SIMD128::load_si(&pSrc128[3]);                        // C D E F
 
-        _mm_storeu_si128(ppDsts128[0], _mm_unpacklo_epi64(quad0, quad1));   // 0 1 4 5
-        _mm_storeu_si128(ppDsts128[1], _mm_unpackhi_epi64(quad0, quad1));   // 2 3 6 7
-        _mm_storeu_si128(ppDsts128[2], _mm_unpacklo_epi64(quad2, quad3));   // 8 9 C D
-        _mm_storeu_si128(ppDsts128[3], _mm_unpackhi_epi64(quad2, quad3));   // A B E F
+        SIMD128::storeu_si(ppDsts128[0], SIMD128::unpacklo_epi64(quad0, quad1));   // 0 1 4 5
+        SIMD128::storeu_si(ppDsts128[1], SIMD128::unpackhi_epi64(quad0, quad1));   // 2 3 6 7
+        SIMD128::storeu_si(ppDsts128[2], SIMD128::unpacklo_epi64(quad2, quad3));   // 8 9 C D
+        SIMD128::storeu_si(ppDsts128[3], SIMD128::unpackhi_epi64(quad2, quad3));   // A B E F
     }
 };
 
-#endif
 //////////////////////////////////////////////////////////////////////////
 /// StorePixels (32-bit pixel specialization)
 /// @brief Stores a 4x2 (AVX) raster-tile to two rows.
@@ -251,10 +247,10 @@ struct StorePixels<64, 4>
     static void Store(const uint8_t* pSrc, uint8_t* (&ppDsts)[4])
     {
         // Each 4-pixel row is 32 bytes.
-        const __m128i* pPixSrc = (const __m128i*)pSrc;
+        const simd4scalari* pPixSrc = (const simd4scalari*)pSrc;
 
         // order of pointers match SWR-Z layout
-        __m128i** pvDsts = (__m128i**)&ppDsts[0];
+        simd4scalari** pvDsts = (simd4scalari**)&ppDsts[0];
         *pvDsts[0] = pPixSrc[0];
         *pvDsts[1] = pPixSrc[1];
         *pvDsts[2] = pPixSrc[2];
@@ -262,16 +258,15 @@ struct StorePixels<64, 4>
     }
 };
 
-#if USE_8x2_TILE_BACKEND
 template <>
 struct StorePixels<64, 8>
 {
     static void Store(const uint8_t* pSrc, uint8_t* (&ppDsts)[8])
     {
         // 8 x 16 bytes = 128 bytes, 16 pixels
-        const __m128i *pSrc128 = reinterpret_cast<const __m128i *>(pSrc);
+        const simd4scalari *pSrc128 = reinterpret_cast<const simd4scalari *>(pSrc);
 
-        __m128i **ppDsts128 = reinterpret_cast<__m128i **>(ppDsts);
+        simd4scalari **ppDsts128 = reinterpret_cast<simd4scalari **>(ppDsts);
 
         // order of pointers match SWR-Z layout
         *ppDsts128[0] = pSrc128[0];     // 0 1
@@ -285,7 +280,6 @@ struct StorePixels<64, 8>
     }
 };
 
-#endif
 //////////////////////////////////////////////////////////////////////////
 /// StorePixels (32-bit pixel specialization)
 /// @brief Stores a 4x2 (AVX) raster-tile to two rows.
@@ -301,10 +295,10 @@ struct StorePixels<128, 8>
     static void Store(const uint8_t* pSrc, uint8_t* (&ppDsts)[8])
     {
         // Each 4-pixel row is 64 bytes.
-        const __m128i* pPixSrc = (const __m128i*)pSrc;
+        const simd4scalari* pPixSrc = (const simd4scalari*)pSrc;
 
         // Unswizzle from SWR-Z order
-        __m128i** pvDsts = (__m128i**)&ppDsts[0];
+        simd4scalari** pvDsts = (simd4scalari**)&ppDsts[0];
         *pvDsts[0] = pPixSrc[0];
         *pvDsts[1] = pPixSrc[2];
         *pvDsts[2] = pPixSrc[1];
@@ -316,16 +310,15 @@ struct StorePixels<128, 8>
     }
 };
 
-#if USE_8x2_TILE_BACKEND
 template <>
 struct StorePixels<128, 16>
 {
     static void Store(const uint8_t* pSrc, uint8_t* (&ppDsts)[16])
     {
         // 16 x 16 bytes = 256 bytes, 16 pixels
-        const __m128i *pSrc128 = reinterpret_cast<const __m128i *>(pSrc);
+        const simd4scalari *pSrc128 = reinterpret_cast<const simd4scalari *>(pSrc);
 
-        __m128i **ppDsts128 = reinterpret_cast<__m128i **>(ppDsts);
+        simd4scalari **ppDsts128 = reinterpret_cast<simd4scalari **>(ppDsts);
 
         for (uint32_t i = 0; i < 16; i += 4)
         {
@@ -337,7 +330,6 @@ struct StorePixels<128, 16>
     }
 };
 
-#endif
 //////////////////////////////////////////////////////////////////////////
 /// ConvertPixelsSOAtoAOS - Conversion for SIMD pixel (4x2 or 2x2)
 //////////////////////////////////////////////////////////////////////////
@@ -352,7 +344,6 @@ struct ConvertPixelsSOAtoAOS
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         static const uint32_t MAX_RASTER_TILE_BYTES = 16 * 16; // 16 pixels * 16 bytes per pixel
 
         OSALIGNSIMD16(uint8_t) soaTile[MAX_RASTER_TILE_BYTES];
@@ -364,23 +355,8 @@ struct ConvertPixelsSOAtoAOS
         StoreSOA<DstFormat>(src, soaTile);
 
         // Convert from SOA --> AOS
-        FormatTraits<DstFormat>::TransposeT::Transpose_16(soaTile, aosTile);
+        FormatTraits<DstFormat>::TransposeT::Transpose_simd16(soaTile, aosTile);
 
-#else
-        static const uint32_t MAX_RASTER_TILE_BYTES = 128; // 8 pixels * 16 bytes per pixel
-
-        OSALIGNSIMD(uint8_t) soaTile[MAX_RASTER_TILE_BYTES];
-        OSALIGNSIMD(uint8_t) aosTile[MAX_RASTER_TILE_BYTES];
-
-        // Convert from SrcFormat --> DstFormat
-        simdvector src;
-        LoadSOA<SrcFormat>(pSrc, src);
-        StoreSOA<DstFormat>(src, soaTile);
-
-        // Convert from SOA --> AOS
-        FormatTraits<DstFormat>::TransposeT::Transpose(soaTile, aosTile);
-
-#endif
         // Store data into destination
         StorePixels<FormatTraits<DstFormat>::bpp, NumDests>::Store(aosTile, ppDsts);
     }
@@ -401,23 +377,13 @@ struct ConvertPixelsSOAtoAOS<Format, Format>
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         static const uint32_t MAX_RASTER_TILE_BYTES = 16 * 16; // 16 pixels * 16 bytes per pixel
 
         OSALIGNSIMD16(uint8_t) aosTile[MAX_RASTER_TILE_BYTES];
 
         // Convert from SOA --> AOS
-        FormatTraits<Format>::TransposeT::Transpose_16(pSrc, aosTile);
+        FormatTraits<Format>::TransposeT::Transpose_simd16(pSrc, aosTile);
 
-#else
-        static const uint32_t MAX_RASTER_TILE_BYTES = 128; // 8 pixels * 16 bytes per pixel
-
-        OSALIGNSIMD(uint8_t) aosTile[MAX_RASTER_TILE_BYTES];
-
-        // Convert from SOA --> AOS
-        FormatTraits<Format>::TransposeT::Transpose(pSrc, aosTile);
-
-#endif
         // Store data into destination
         StorePixels<FormatTraits<Format>::bpp, NumDests>::Store(aosTile, ppDsts);
     }
@@ -437,7 +403,6 @@ struct ConvertPixelsSOAtoAOS < R32G32B32A32_FLOAT, B5G6R5_UNORM >
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         static const SWR_FORMAT SrcFormat = R32G32B32A32_FLOAT;
         static const SWR_FORMAT DstFormat = B5G6R5_UNORM;
 
@@ -481,47 +446,6 @@ struct ConvertPixelsSOAtoAOS < R32G32B32A32_FLOAT, B5G6R5_UNORM >
             *pAosTile++ = *pPacked++;
         }
 
-#else
-        static const SWR_FORMAT SrcFormat = R32G32B32A32_FLOAT;
-        static const SWR_FORMAT DstFormat = B5G6R5_UNORM;
-        static const uint32_t MAX_RASTER_TILE_BYTES = 128; // 8 pixels * 16 bytes per pixel
-
-        OSALIGNSIMD(uint8_t) aosTile[MAX_RASTER_TILE_BYTES];
-
-        // Load hot-tile
-        simdvector src, dst;
-        LoadSOA<SrcFormat>(pSrc, src);
-
-        // deswizzle
-        dst.x = src[FormatTraits<DstFormat>::swizzle(0)];
-        dst.y = src[FormatTraits<DstFormat>::swizzle(1)];
-        dst.z = src[FormatTraits<DstFormat>::swizzle(2)];
-
-        // clamp
-        dst.x = Clamp<DstFormat>(dst.x, 0);
-        dst.y = Clamp<DstFormat>(dst.y, 1);
-        dst.z = Clamp<DstFormat>(dst.z, 2);
-
-        // normalize
-        dst.x = Normalize<DstFormat>(dst.x, 0);
-        dst.y = Normalize<DstFormat>(dst.y, 1);
-        dst.z = Normalize<DstFormat>(dst.z, 2);
-
-        // pack
-        simdscalari packed = _simd_castps_si(dst.x);
-        packed = _simd_or_si(packed, _simd_slli_epi32(_simd_castps_si(dst.y), FormatTraits<DstFormat>::GetBPC(0)));
-        packed = _simd_or_si(packed, _simd_slli_epi32(_simd_castps_si(dst.z), FormatTraits<DstFormat>::GetBPC(0) +
-                                                                              FormatTraits<DstFormat>::GetBPC(1)));
-
-        // pack low 16 bits of each 32 bit lane to low 128 bits of dst
-        uint32_t *pPacked = (uint32_t*)&packed;
-        uint16_t *pAosTile = (uint16_t*)&aosTile[0];
-        for (uint32_t t = 0; t < KNOB_SIMD_WIDTH; ++t)
-        {
-            *pAosTile++ = *pPacked++;
-        }
-
-#endif
         // Store data into destination
         StorePixels<FormatTraits<DstFormat>::bpp, NumDests>::Store(aosTile, ppDsts);
     }
@@ -544,7 +468,6 @@ struct ConvertPixelsSOAtoAOS<R32_FLOAT, R24_UNORM_X8_TYPELESS>
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         simd16scalar comp = _simd16_load_ps(reinterpret_cast<const float *>(pSrc));
 
         // clamp
@@ -563,8 +486,8 @@ struct ConvertPixelsSOAtoAOS<R32_FLOAT, R24_UNORM_X8_TYPELESS>
         temp = _simd16_permute_epi32(temp, _simd16_set_epi32(15, 14, 11, 10, 13, 12, 9, 8, 7, 6, 3, 2, 5, 4, 1, 0));
 
         // merge/store data into destination but don't overwrite the X8 bits
-        simdscalari destlo = _simd_loadu2_si(reinterpret_cast<__m128i *>(ppDsts[1]), reinterpret_cast<__m128i *>(ppDsts[0]));
-        simdscalari desthi = _simd_loadu2_si(reinterpret_cast<__m128i *>(ppDsts[3]), reinterpret_cast<__m128i *>(ppDsts[2]));
+        simdscalari destlo = _simd_loadu2_si(reinterpret_cast<simd4scalari *>(ppDsts[1]), reinterpret_cast<simd4scalari *>(ppDsts[0]));
+        simdscalari desthi = _simd_loadu2_si(reinterpret_cast<simd4scalari *>(ppDsts[3]), reinterpret_cast<simd4scalari *>(ppDsts[2]));
 
         simd16scalari dest = _simd16_setzero_si();
 
@@ -575,48 +498,11 @@ struct ConvertPixelsSOAtoAOS<R32_FLOAT, R24_UNORM_X8_TYPELESS>
 
         dest = _simd16_or_si(_simd16_andnot_si(mask, dest), _simd16_and_si(mask, temp));
 
-        _simd_storeu2_si(reinterpret_cast<__m128i *>(ppDsts[1]), reinterpret_cast<__m128i *>(ppDsts[0]), _simd16_extract_si(dest, 0));
-        _simd_storeu2_si(reinterpret_cast<__m128i *>(ppDsts[3]), reinterpret_cast<__m128i *>(ppDsts[2]), _simd16_extract_si(dest, 1));
-#else
-        static const uint32_t MAX_RASTER_TILE_BYTES = 128; // 8 pixels * 16 bytes per pixel
-
-        OSALIGNSIMD(uint8_t) soaTile[MAX_RASTER_TILE_BYTES];
-        OSALIGNSIMD(uint8_t) aosTile[MAX_RASTER_TILE_BYTES];
-
-        // Convert from SrcFormat --> DstFormat
-        simdvector src;
-        LoadSOA<SrcFormat>(pSrc, src);
-        StoreSOA<DstFormat>(src, soaTile);
-
-        // Convert from SOA --> AOS
-        FormatTraits<DstFormat>::TransposeT::Transpose(soaTile, aosTile);
-
-        // Store data into destination but don't overwrite the X8 bits
-        // Each 4-pixel row is 16-bytes
-        __m128i *pZRow01 = (__m128i*)aosTile;
-        __m128i vQuad00 = _mm_load_si128(pZRow01);
-        __m128i vQuad01 = _mm_load_si128(pZRow01 + 1);
-
-        __m128i vRow00 = _mm_unpacklo_epi64(vQuad00, vQuad01);
-        __m128i vRow10 = _mm_unpackhi_epi64(vQuad00, vQuad01);
-
-        __m128i vDst0 = _mm_loadu_si128((const __m128i*)ppDsts[0]);
-        __m128i vDst1 = _mm_loadu_si128((const __m128i*)ppDsts[1]);
-
-        __m128i vMask = _mm_set1_epi32(0xFFFFFF);
-
-        vDst0 = _mm_andnot_si128(vMask, vDst0);
-        vDst0 = _mm_or_si128(vDst0, _mm_and_si128(vRow00, vMask));
-        vDst1 = _mm_andnot_si128(vMask, vDst1);
-        vDst1 = _mm_or_si128(vDst1, _mm_and_si128(vRow10, vMask));
-
-        _mm_storeu_si128((__m128i*)ppDsts[0], vDst0);
-        _mm_storeu_si128((__m128i*)ppDsts[1], vDst1);
-#endif
+        _simd_storeu2_si(reinterpret_cast<simd4scalari *>(ppDsts[1]), reinterpret_cast<simd4scalari *>(ppDsts[0]), _simd16_extract_si(dest, 0));
+        _simd_storeu2_si(reinterpret_cast<simd4scalari *>(ppDsts[3]), reinterpret_cast<simd4scalari *>(ppDsts[2]), _simd16_extract_si(dest, 1));
     }
 };
 
-#if USE_8x2_TILE_BACKEND
 template<SWR_FORMAT DstFormat>
 INLINE static void FlatConvert(const uint8_t* pSrc, uint8_t* pDst0, uint8_t* pDst1, uint8_t* pDst2, uint8_t* pDst3)
 {
@@ -683,11 +569,10 @@ INLINE static void FlatConvert(const uint8_t* pSrc, uint8_t* pDst0, uint8_t* pDs
     // store 8x2 memory order:
     //  row0: [ pDst0, pDst2 ] = { 0 1 4 5 }, { 8 9 C D }
     //  row1: [ pDst1, pDst3 ] = { 2 3 6 7 }, { A B E F }
-    _simd_storeu2_si(reinterpret_cast<__m128i *>(pDst1), reinterpret_cast<__m128i *>(pDst0), _simd16_extract_si(final, 0));
-    _simd_storeu2_si(reinterpret_cast<__m128i *>(pDst3), reinterpret_cast<__m128i *>(pDst2), _simd16_extract_si(final, 1));
+    _simd_storeu2_si(reinterpret_cast<simd4scalari *>(pDst1), reinterpret_cast<simd4scalari *>(pDst0), _simd16_extract_si(final, 0));
+    _simd_storeu2_si(reinterpret_cast<simd4scalari *>(pDst3), reinterpret_cast<simd4scalari *>(pDst2), _simd16_extract_si(final, 1));
 }
 
-#endif
 template<SWR_FORMAT DstFormat>
 INLINE static void FlatConvert(const uint8_t* pSrc, uint8_t* pDst, uint8_t* pDst1)
 {
@@ -727,24 +612,24 @@ INLINE static void FlatConvert(const uint8_t* pSrc, uint8_t* pDst, uint8_t* pDst
     vComp3 = _simd_mul_ps(vComp3, _simd_set1_ps(FormatTraits<DstFormat>::fromFloat(3)));
 
     // moving to 8 wide integer vector types
-    __m256i src0 = _simd_cvtps_epi32(vComp0); // padded byte rrrrrrrr
-    __m256i src1 = _simd_cvtps_epi32(vComp1); // padded byte gggggggg 
-    __m256i src2 = _simd_cvtps_epi32(vComp2); // padded byte bbbbbbbb 
-    __m256i src3 = _simd_cvtps_epi32(vComp3); // padded byte aaaaaaaa
+    simdscalari src0 = _simd_cvtps_epi32(vComp0); // padded byte rrrrrrrr
+    simdscalari src1 = _simd_cvtps_epi32(vComp1); // padded byte gggggggg 
+    simdscalari src2 = _simd_cvtps_epi32(vComp2); // padded byte bbbbbbbb 
+    simdscalari src3 = _simd_cvtps_epi32(vComp3); // padded byte aaaaaaaa
 
-#if KNOB_ARCH == KNOB_ARCH_AVX
+#if KNOB_ARCH <= KNOB_ARCH_AVX
 
     // splitting into two sets of 4 wide integer vector types
     // because AVX doesn't have instructions to support this operation at 8 wide
-    __m128i srcLo0 = _mm256_castsi256_si128(src0); // 000r000r000r000r
-    __m128i srcLo1 = _mm256_castsi256_si128(src1); // 000g000g000g000g
-    __m128i srcLo2 = _mm256_castsi256_si128(src2); // 000b000b000b000b
-    __m128i srcLo3 = _mm256_castsi256_si128(src3); // 000a000a000a000a
+    simd4scalari srcLo0 = _mm256_castsi256_si128(src0); // 000r000r000r000r
+    simd4scalari srcLo1 = _mm256_castsi256_si128(src1); // 000g000g000g000g
+    simd4scalari srcLo2 = _mm256_castsi256_si128(src2); // 000b000b000b000b
+    simd4scalari srcLo3 = _mm256_castsi256_si128(src3); // 000a000a000a000a
 
-    __m128i srcHi0 = _mm256_extractf128_si256(src0, 1); // 000r000r000r000r
-    __m128i srcHi1 = _mm256_extractf128_si256(src1, 1); // 000g000g000g000g
-    __m128i srcHi2 = _mm256_extractf128_si256(src2, 1); // 000b000b000b000b
-    __m128i srcHi3 = _mm256_extractf128_si256(src3, 1); // 000a000a000a000a
+    simd4scalari srcHi0 = _mm256_extractf128_si256(src0, 1); // 000r000r000r000r
+    simd4scalari srcHi1 = _mm256_extractf128_si256(src1, 1); // 000g000g000g000g
+    simd4scalari srcHi2 = _mm256_extractf128_si256(src2, 1); // 000b000b000b000b
+    simd4scalari srcHi3 = _mm256_extractf128_si256(src3, 1); // 000a000a000a000a
 
     srcLo1 = _mm_slli_si128(srcLo1, 1); // 00g000g000g000g0
     srcHi1 = _mm_slli_si128(srcHi1, 1); // 00g000g000g000g0
@@ -753,23 +638,23 @@ INLINE static void FlatConvert(const uint8_t* pSrc, uint8_t* pDst, uint8_t* pDst
     srcLo3 = _mm_slli_si128(srcLo3, 3); // a000a000a000a000
     srcHi3 = _mm_slli_si128(srcHi3, 3); // a000a000a000a000
 
-    srcLo0 = _mm_or_si128(srcLo0, srcLo1); // 00gr00gr00gr00gr
-    srcLo2 = _mm_or_si128(srcLo2, srcLo3); // ab00ab00ab00ab00
+    srcLo0 = SIMD128::or_si(srcLo0, srcLo1); // 00gr00gr00gr00gr
+    srcLo2 = SIMD128::or_si(srcLo2, srcLo3); // ab00ab00ab00ab00
 
-    srcHi0 = _mm_or_si128(srcHi0, srcHi1); // 00gr00gr00gr00gr
-    srcHi2 = _mm_or_si128(srcHi2, srcHi3); // ab00ab00ab00ab00
+    srcHi0 = SIMD128::or_si(srcHi0, srcHi1); // 00gr00gr00gr00gr
+    srcHi2 = SIMD128::or_si(srcHi2, srcHi3); // ab00ab00ab00ab00
 
-    srcLo0 = _mm_or_si128(srcLo0, srcLo2); // abgrabgrabgrabgr
-    srcHi0 = _mm_or_si128(srcHi0, srcHi2); // abgrabgrabgrabgr
+    srcLo0 = SIMD128::or_si(srcLo0, srcLo2); // abgrabgrabgrabgr
+    srcHi0 = SIMD128::or_si(srcHi0, srcHi2); // abgrabgrabgrabgr
 
     // unpack into rows that get the tiling order correct
-    __m128i vRow00 = _mm_unpacklo_epi64(srcLo0, srcHi0);  // abgrabgrabgrabgrabgrabgrabgrabgr
-    __m128i vRow10 = _mm_unpackhi_epi64(srcLo0, srcHi0);
+    simd4scalari vRow00 = SIMD128::unpacklo_epi64(srcLo0, srcHi0);  // abgrabgrabgrabgrabgrabgrabgrabgr
+    simd4scalari vRow10 = SIMD128::unpackhi_epi64(srcLo0, srcHi0);
 
-    __m256i final = _mm256_castsi128_si256(vRow00);
+    simdscalari final = _mm256_castsi128_si256(vRow00);
     final = _mm256_insertf128_si256(final, vRow10, 1);
 
-#elif KNOB_ARCH >= KNOB_ARCH_AVX2
+#else
 
     // logic is as above, only wider
     src1 = _mm256_slli_si256(src1, 1);
@@ -779,23 +664,15 @@ INLINE static void FlatConvert(const uint8_t* pSrc, uint8_t* pDst, uint8_t* pDst
     src0 = _mm256_or_si256(src0, src1);
     src2 = _mm256_or_si256(src2, src3);
 
-    __m256i final = _mm256_or_si256(src0, src2);
-#if 0
-
-    __m256i perm = _mm256_set_epi32(7, 6, 3, 2, 5, 4, 1, 0);
-
-    final = _mm256_permutevar8x32_epi32(final, perm);
-#else
+    simdscalari final = _mm256_or_si256(src0, src2);
 
     // adjust the data to get the tiling order correct 0 1 2 3 -> 0 2 1 3
     final = _mm256_permute4x64_epi64(final, 0xD8);
 #endif
-#endif
 
-    _simd_storeu2_si((__m128i*)pDst1, (__m128i*)pDst, final);
+    _simd_storeu2_si((simd4scalari*)pDst1, (simd4scalari*)pDst, final);
 }
 
-#if USE_8x2_TILE_BACKEND
 template<SWR_FORMAT DstFormat>
 INLINE static void FlatConvertNoAlpha(const uint8_t* pSrc, uint8_t* pDst0, uint8_t* pDst1, uint8_t* pDst2, uint8_t* pDst3)
 {
@@ -855,11 +732,10 @@ INLINE static void FlatConvertNoAlpha(const uint8_t* pSrc, uint8_t* pDst0, uint8
     // store 8x2 memory order:
     //  row0: [ pDst0, pDst2 ] = { 0 1 4 5 }, { 8 9 C D }
     //  row1: [ pDst1, pDst3 ] = { 2 3 6 7 }, { A B E F }
-    _simd_storeu2_si(reinterpret_cast<__m128i *>(pDst1), reinterpret_cast<__m128i *>(pDst0), _simd16_extract_si(final, 0));
-    _simd_storeu2_si(reinterpret_cast<__m128i *>(pDst3), reinterpret_cast<__m128i *>(pDst2), _simd16_extract_si(final, 1));
+    _simd_storeu2_si(reinterpret_cast<simd4scalari *>(pDst1), reinterpret_cast<simd4scalari *>(pDst0), _simd16_extract_si(final, 0));
+    _simd_storeu2_si(reinterpret_cast<simd4scalari *>(pDst3), reinterpret_cast<simd4scalari *>(pDst2), _simd16_extract_si(final, 1));
 }
 
-#endif
 template<SWR_FORMAT DstFormat>
 INLINE static void FlatConvertNoAlpha(const uint8_t* pSrc, uint8_t* pDst, uint8_t* pDst1)
 {
@@ -893,42 +769,42 @@ INLINE static void FlatConvertNoAlpha(const uint8_t* pSrc, uint8_t* pDst, uint8_
     vComp2 = _simd_mul_ps(vComp2, _simd_set1_ps(FormatTraits<DstFormat>::fromFloat(2)));
 
     // moving to 8 wide integer vector types
-    __m256i src0 = _simd_cvtps_epi32(vComp0); // padded byte rrrrrrrr
-    __m256i src1 = _simd_cvtps_epi32(vComp1); // padded byte gggggggg 
-    __m256i src2 = _simd_cvtps_epi32(vComp2); // padded byte bbbbbbbb 
+    simdscalari src0 = _simd_cvtps_epi32(vComp0); // padded byte rrrrrrrr
+    simdscalari src1 = _simd_cvtps_epi32(vComp1); // padded byte gggggggg 
+    simdscalari src2 = _simd_cvtps_epi32(vComp2); // padded byte bbbbbbbb 
 
-#if KNOB_ARCH == KNOB_ARCH_AVX
+#if KNOB_ARCH <= KNOB_ARCH_AVX
 
     // splitting into two sets of 4 wide integer vector types
     // because AVX doesn't have instructions to support this operation at 8 wide
-    __m128i srcLo0 = _mm256_castsi256_si128(src0); // 000r000r000r000r
-    __m128i srcLo1 = _mm256_castsi256_si128(src1); // 000g000g000g000g
-    __m128i srcLo2 = _mm256_castsi256_si128(src2); // 000b000b000b000b
+    simd4scalari srcLo0 = _mm256_castsi256_si128(src0); // 000r000r000r000r
+    simd4scalari srcLo1 = _mm256_castsi256_si128(src1); // 000g000g000g000g
+    simd4scalari srcLo2 = _mm256_castsi256_si128(src2); // 000b000b000b000b
 
-    __m128i srcHi0 = _mm256_extractf128_si256(src0, 1); // 000r000r000r000r
-    __m128i srcHi1 = _mm256_extractf128_si256(src1, 1); // 000g000g000g000g
-    __m128i srcHi2 = _mm256_extractf128_si256(src2, 1); // 000b000b000b000b
+    simd4scalari srcHi0 = _mm256_extractf128_si256(src0, 1); // 000r000r000r000r
+    simd4scalari srcHi1 = _mm256_extractf128_si256(src1, 1); // 000g000g000g000g
+    simd4scalari srcHi2 = _mm256_extractf128_si256(src2, 1); // 000b000b000b000b
 
     srcLo1 = _mm_slli_si128(srcLo1, 1); // 00g000g000g000g0
     srcHi1 = _mm_slli_si128(srcHi1, 1); // 00g000g000g000g0
     srcLo2 = _mm_slli_si128(srcLo2, 2); // 0b000b000b000b00
     srcHi2 = _mm_slli_si128(srcHi2, 2); // 0b000b000b000b00
 
-    srcLo0 = _mm_or_si128(srcLo0, srcLo1); // 00gr00gr00gr00gr
+    srcLo0 = SIMD128::or_si(srcLo0, srcLo1); // 00gr00gr00gr00gr
 
-    srcHi0 = _mm_or_si128(srcHi0, srcHi1); // 00gr00gr00gr00gr
+    srcHi0 = SIMD128::or_si(srcHi0, srcHi1); // 00gr00gr00gr00gr
 
-    srcLo0 = _mm_or_si128(srcLo0, srcLo2); // 0bgr0bgr0bgr0bgr
-    srcHi0 = _mm_or_si128(srcHi0, srcHi2); // 0bgr0bgr0bgr0bgr
+    srcLo0 = SIMD128::or_si(srcLo0, srcLo2); // 0bgr0bgr0bgr0bgr
+    srcHi0 = SIMD128::or_si(srcHi0, srcHi2); // 0bgr0bgr0bgr0bgr
 
     // unpack into rows that get the tiling order correct
-    __m128i vRow00 = _mm_unpacklo_epi64(srcLo0, srcHi0);  // 0bgr0bgr0bgr0bgr0bgr0bgr0bgr0bgr
-    __m128i vRow10 = _mm_unpackhi_epi64(srcLo0, srcHi0);
+    simd4scalari vRow00 = SIMD128::unpacklo_epi64(srcLo0, srcHi0);  // 0bgr0bgr0bgr0bgr0bgr0bgr0bgr0bgr
+    simd4scalari vRow10 = SIMD128::unpackhi_epi64(srcLo0, srcHi0);
 
-    __m256i final = _mm256_castsi128_si256(vRow00);
+    simdscalari final = _mm256_castsi128_si256(vRow00);
     final = _mm256_insertf128_si256(final, vRow10, 1);
 
-#elif KNOB_ARCH >= KNOB_ARCH_AVX2
+#else
 
                                               // logic is as above, only wider
     src1 = _mm256_slli_si256(src1, 1);
@@ -936,14 +812,14 @@ INLINE static void FlatConvertNoAlpha(const uint8_t* pSrc, uint8_t* pDst, uint8_
 
     src0 = _mm256_or_si256(src0, src1);
 
-    __m256i final = _mm256_or_si256(src0, src2);
+    simdscalari final = _mm256_or_si256(src0, src2);
 
     // adjust the data to get the tiling order correct 0 1 2 3 -> 0 2 1 3
     final = _mm256_permute4x64_epi64(final, 0xD8);
 
 #endif
 
-    _simd_storeu2_si((__m128i*)pDst1, (__m128i*)pDst, final);
+    _simd_storeu2_si((simd4scalari*)pDst1, (simd4scalari*)pDst, final);
 }
 
 template<>
@@ -952,11 +828,7 @@ struct ConvertPixelsSOAtoAOS<R32G32B32A32_FLOAT, B8G8R8A8_UNORM>
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         FlatConvert<B8G8R8A8_UNORM>(pSrc, ppDsts[0], ppDsts[1], ppDsts[2], ppDsts[3]);
-#else
-        FlatConvert<B8G8R8A8_UNORM>(pSrc, ppDsts[0], ppDsts[1]);
-#endif
     }
 };
 
@@ -966,11 +838,7 @@ struct ConvertPixelsSOAtoAOS<R32G32B32A32_FLOAT, B8G8R8X8_UNORM>
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         FlatConvertNoAlpha<B8G8R8X8_UNORM>(pSrc, ppDsts[0], ppDsts[1], ppDsts[2], ppDsts[3]);
-#else
-        FlatConvertNoAlpha<B8G8R8X8_UNORM>(pSrc, ppDsts[0], ppDsts[1]);
-#endif
     }
 };
 
@@ -980,11 +848,7 @@ struct ConvertPixelsSOAtoAOS < R32G32B32A32_FLOAT, B8G8R8A8_UNORM_SRGB >
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         FlatConvert<B8G8R8A8_UNORM_SRGB>(pSrc, ppDsts[0], ppDsts[1], ppDsts[2], ppDsts[3]);
-#else
-        FlatConvert<B8G8R8A8_UNORM_SRGB>(pSrc, ppDsts[0], ppDsts[1]);
-#endif
     }
 };
 
@@ -994,11 +858,7 @@ struct ConvertPixelsSOAtoAOS < R32G32B32A32_FLOAT, B8G8R8X8_UNORM_SRGB >
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         FlatConvertNoAlpha<B8G8R8X8_UNORM_SRGB>(pSrc, ppDsts[0], ppDsts[1], ppDsts[2], ppDsts[3]);
-#else
-        FlatConvertNoAlpha<B8G8R8X8_UNORM_SRGB>(pSrc, ppDsts[0], ppDsts[1]);
-#endif
     }
 };
 
@@ -1008,11 +868,7 @@ struct ConvertPixelsSOAtoAOS < R32G32B32A32_FLOAT, R8G8B8A8_UNORM >
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         FlatConvert<R8G8B8A8_UNORM>(pSrc, ppDsts[0], ppDsts[1], ppDsts[2], ppDsts[3]);
-#else
-        FlatConvert<R8G8B8A8_UNORM>(pSrc, ppDsts[0], ppDsts[1]);
-#endif
     }
 };
 
@@ -1022,11 +878,7 @@ struct ConvertPixelsSOAtoAOS < R32G32B32A32_FLOAT, R8G8B8X8_UNORM >
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         FlatConvertNoAlpha<R8G8B8X8_UNORM>(pSrc, ppDsts[0], ppDsts[1], ppDsts[2], ppDsts[3]);
-#else
-        FlatConvertNoAlpha<R8G8B8X8_UNORM>(pSrc, ppDsts[0], ppDsts[1]);
-#endif
     }
 };
 
@@ -1036,11 +888,7 @@ struct ConvertPixelsSOAtoAOS < R32G32B32A32_FLOAT, R8G8B8A8_UNORM_SRGB >
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         FlatConvert<R8G8B8A8_UNORM_SRGB>(pSrc, ppDsts[0], ppDsts[1], ppDsts[2], ppDsts[3]);
-#else
-        FlatConvert<R8G8B8A8_UNORM_SRGB>(pSrc, ppDsts[0], ppDsts[1]);
-#endif
     }
 };
 
@@ -1050,11 +898,7 @@ struct ConvertPixelsSOAtoAOS < R32G32B32A32_FLOAT, R8G8B8X8_UNORM_SRGB >
     template <size_t NumDests>
     INLINE static void Convert(const uint8_t* pSrc, uint8_t* (&ppDsts)[NumDests])
     {
-#if USE_8x2_TILE_BACKEND
         FlatConvertNoAlpha<R8G8B8X8_UNORM_SRGB>(pSrc, ppDsts[0], ppDsts[1], ppDsts[2], ppDsts[3]);
-#else
-        FlatConvertNoAlpha<R8G8B8X8_UNORM_SRGB>(pSrc, ppDsts[0], ppDsts[1]);
-#endif
     }
 };
 
@@ -1074,7 +918,6 @@ struct StoreRasterTile
         uint32_t x, uint32_t y,
         float outputColor[4])
     {
-#if USE_8x2_TILE_BACKEND
         typedef SimdTile_16<SrcFormat, DstFormat> SimdT;
 
         SimdT *pSrcSimdTiles = reinterpret_cast<SimdT *>(pSrc);
@@ -1088,21 +931,6 @@ struct StoreRasterTile
         uint32_t simdOffset = (y % SIMD16_TILE_Y_DIM) * SIMD16_TILE_X_DIM + (x % SIMD16_TILE_X_DIM);
 
         pSimdTile->GetSwizzledColor(simdOffset, outputColor);
-#else
-        typedef SimdTile<SrcFormat, DstFormat> SimdT;
-
-        SimdT* pSrcSimdTiles = (SimdT*)pSrc;
-
-        // Compute which simd tile we're accessing within 8x8 tile.
-        //   i.e. Compute linear simd tile coordinate given (x, y) in pixel coordinates.
-        uint32_t simdIndex = (y / SIMD_TILE_Y_DIM) * (KNOB_TILE_X_DIM / SIMD_TILE_X_DIM) + (x / SIMD_TILE_X_DIM);
-
-        SimdT* pSimdTile = &pSrcSimdTiles[simdIndex];
-
-        uint32_t simdOffset = (y % SIMD_TILE_Y_DIM) * SIMD_TILE_X_DIM + (x % SIMD_TILE_X_DIM);
-
-        pSimdTile->GetSwizzledColor(simdOffset, outputColor);
-#endif
     }
 
     //////////////////////////////////////////////////////////////////////////
@@ -1140,6 +968,64 @@ struct StoreRasterTile
             }
         }
     }
+
+    //////////////////////////////////////////////////////////////////////////
+    /// @brief Resolves an 8x8 raster tile to the resolve destination surface.
+    /// @param pSrc - Pointer to raster tile.
+    /// @param pDstSurface - Destination surface state
+    /// @param x, y - Coordinates to raster tile.
+    /// @param sampleOffset - Offset between adjacent multisamples
+    INLINE static void Resolve(
+        uint8_t *pSrc,
+        SWR_SURFACE_STATE* pDstSurface,
+        uint32_t x, uint32_t y, uint32_t sampleOffset, uint32_t renderTargetArrayIndex) // (x, y) pixel coordinate to start of raster tile.
+    {
+        uint32_t lodWidth = std::max(pDstSurface->width >> pDstSurface->lod, 1U);
+        uint32_t lodHeight = std::max(pDstSurface->height >> pDstSurface->lod, 1U);
+
+        float oneOverNumSamples = 1.0f / pDstSurface->numSamples;
+
+        // For each raster tile pixel (rx, ry)
+        for (uint32_t ry = 0; ry < KNOB_TILE_Y_DIM; ++ry)
+        {
+            for (uint32_t rx = 0; rx < KNOB_TILE_X_DIM; ++rx)
+            {
+                // Perform bounds checking.
+                if (((x + rx) < lodWidth) &&
+                        ((y + ry) < lodHeight))
+                {
+                    // Sum across samples
+                    float resolveColor[4] = {0};
+                    for (uint32_t sampleNum = 0; sampleNum < pDstSurface->numSamples; sampleNum++)
+                    {
+                        float sampleColor[4] = {0};
+                        uint8_t *pSampleSrc = pSrc + sampleOffset * sampleNum;
+                        GetSwizzledSrcColor(pSampleSrc, rx, ry, sampleColor);
+                        resolveColor[0] += sampleColor[0];
+                        resolveColor[1] += sampleColor[1];
+                        resolveColor[2] += sampleColor[2];
+                        resolveColor[3] += sampleColor[3];
+                    }
+
+                    // Divide by numSamples to average
+                    resolveColor[0] *= oneOverNumSamples;
+                    resolveColor[1] *= oneOverNumSamples;
+                    resolveColor[2] *= oneOverNumSamples;
+                    resolveColor[3] *= oneOverNumSamples;
+
+                    // Use the resolve surface state
+                    SWR_SURFACE_STATE* pResolveSurface = (SWR_SURFACE_STATE*)pDstSurface->xpAuxBaseAddress;
+                    uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>((x + rx), (y + ry),
+                        pResolveSurface->arrayIndex + renderTargetArrayIndex, pResolveSurface->arrayIndex + renderTargetArrayIndex,
+                        0, pResolveSurface->lod, pResolveSurface);
+                    {
+                        ConvertPixelFromFloat<DstFormat>(pDst, resolveColor);
+                    }
+                }
+            }
+        }
+    }
+
 };
 
 template<typename TTraits, SWR_FORMAT SrcFormat, SWR_FORMAT DstFormat>
@@ -1177,7 +1063,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 8>, SrcFormat, DstFormat>
 
         uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex, 
             pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
-#if USE_8x2_TILE_BACKEND
 
         const uint32_t dx = SIMD16_TILE_X_DIM * DST_BYTES_PER_PIXEL;
         const uint32_t dy = SIMD16_TILE_Y_DIM * pDstSurface->pitch - KNOB_TILE_X_DIM * DST_BYTES_PER_PIXEL;
@@ -1209,27 +1094,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 8>, SrcFormat, DstFormat>
             ppDsts[2] += dy;
             ppDsts[3] += dy;
         }
-#else
-        uint8_t* ppRows[] = { pDst, pDst + pDstSurface->pitch };
-
-        for (uint32_t row = 0; row < KNOB_TILE_Y_DIM / SIMD_TILE_Y_DIM; ++row)
-        {
-            uint8_t* ppStartRows[] = { ppRows[0], ppRows[1] };
-
-            for (uint32_t col = 0; col < KNOB_TILE_X_DIM / SIMD_TILE_X_DIM; ++col)
-            {
-                // Format conversion and convert from SOA to AOS, and store the rows.
-                ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppRows);
-
-                ppRows[0] += KNOB_SIMD_WIDTH * DST_BYTES_PER_PIXEL / 2;
-                ppRows[1] += KNOB_SIMD_WIDTH * DST_BYTES_PER_PIXEL / 2;
-                pSrc += SRC_BYTES_PER_PIXEL * KNOB_SIMD_WIDTH;
-            }
-
-            ppRows[0] = ppStartRows[0] + 2 * pDstSurface->pitch;
-            ppRows[1] = ppStartRows[1] + 2 * pDstSurface->pitch;
-        }
-#endif
     }
 };
 
@@ -1264,7 +1128,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 16>, SrcFormat, DstFormat
 
         uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex, 
             pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
-#if USE_8x2_TILE_BACKEND
 
         const uint32_t dx = SIMD16_TILE_X_DIM * DST_BYTES_PER_PIXEL;
         const uint32_t dy = SIMD16_TILE_Y_DIM * pDstSurface->pitch - KNOB_TILE_X_DIM * DST_BYTES_PER_PIXEL;
@@ -1296,27 +1159,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 16>, SrcFormat, DstFormat
             ppDsts[2] += dy;
             ppDsts[3] += dy;
         }
-#else
-        uint8_t* ppRows[] = { pDst, pDst + pDstSurface->pitch };
-
-        for (uint32_t row = 0; row < KNOB_TILE_Y_DIM / SIMD_TILE_Y_DIM; ++row)
-        {
-            uint8_t* ppStartRows[] = { ppRows[0], ppRows[1] };
-
-            for (uint32_t col = 0; col < KNOB_TILE_X_DIM / SIMD_TILE_X_DIM; ++col)
-            {
-                // Format conversion and convert from SOA to AOS, and store the rows.
-                ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppRows);
-
-                ppRows[0] += KNOB_SIMD_WIDTH * DST_BYTES_PER_PIXEL / 2;
-                ppRows[1] += KNOB_SIMD_WIDTH * DST_BYTES_PER_PIXEL / 2;
-                pSrc += SRC_BYTES_PER_PIXEL * KNOB_SIMD_WIDTH;
-            }
-
-            ppRows[0] = ppStartRows[0] + 2 * pDstSurface->pitch;
-            ppRows[1] = ppStartRows[1] + 2 * pDstSurface->pitch;
-        }
-#endif
     }
 };
 
@@ -1351,7 +1193,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 32>, SrcFormat, DstFormat
 
         uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
             pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
-#if USE_8x2_TILE_BACKEND
 
         const uint32_t dx = SIMD16_TILE_X_DIM * DST_BYTES_PER_PIXEL;
         const uint32_t dy = SIMD16_TILE_Y_DIM * pDstSurface->pitch - KNOB_TILE_X_DIM * DST_BYTES_PER_PIXEL;
@@ -1383,27 +1224,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 32>, SrcFormat, DstFormat
             ppDsts[2] += dy;
             ppDsts[3] += dy;
         }
-#else
-        uint8_t* ppRows[] = { pDst, pDst + pDstSurface->pitch };
-
-        for (uint32_t row = 0; row < KNOB_TILE_Y_DIM / SIMD_TILE_Y_DIM; ++row)
-        {
-            uint8_t* ppStartRows[] = { ppRows[0], ppRows[1] };
-
-            for (uint32_t col = 0; col < KNOB_TILE_X_DIM / SIMD_TILE_X_DIM; ++col)
-            {
-                // Format conversion and convert from SOA to AOS, and store the rows.
-                ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppRows);
-
-                ppRows[0] += KNOB_SIMD_WIDTH * DST_BYTES_PER_PIXEL / 2;
-                ppRows[1] += KNOB_SIMD_WIDTH * DST_BYTES_PER_PIXEL / 2;
-                pSrc += SRC_BYTES_PER_PIXEL * KNOB_SIMD_WIDTH;
-            }
-
-            ppRows[0] = ppStartRows[0] + 2 * pDstSurface->pitch;
-            ppRows[1] = ppStartRows[1] + 2 * pDstSurface->pitch;
-        }
-#endif
     }
 };
 
@@ -1417,10 +1237,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 64>, SrcFormat, DstFormat
     static const size_t SRC_BYTES_PER_PIXEL = FormatTraits<SrcFormat>::bpp / 8;
     static const size_t DST_BYTES_PER_PIXEL = FormatTraits<DstFormat>::bpp / 8;
     static const size_t MAX_DST_COLUMN_BYTES = 16;
-#if !USE_8x2_TILE_BACKEND
-    static const size_t SRC_COLUMN_BYTES = KNOB_SIMD_WIDTH * SRC_BYTES_PER_PIXEL;
-    static const size_t DST_COLUMN_BYTES_PER_SRC = KNOB_SIMD_WIDTH * DST_BYTES_PER_PIXEL / 2;
-#endif
 
     //////////////////////////////////////////////////////////////////////////
     /// @brief Stores an 8x8 raster tile to the destination surface.
@@ -1443,7 +1259,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 64>, SrcFormat, DstFormat
 
         uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
             pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
-#if USE_8x2_TILE_BACKEND
 
         const uint32_t dx = SIMD16_TILE_X_DIM * DST_BYTES_PER_PIXEL;
         const uint32_t dy = SIMD16_TILE_Y_DIM * pDstSurface->pitch;
@@ -1472,48 +1287,11 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 64>, SrcFormat, DstFormat
 
             pSrc += KNOB_SIMD16_WIDTH * SRC_BYTES_PER_PIXEL;
 
-            for (uint32_t i = 0; i < sizeof(ppDsts) / sizeof(ppDsts[0]); i += 1)
+            for (uint32_t i = 0; i < ARRAY_SIZE(ppDsts); i += 1)
             {
                 ppDsts[i] += dy;
             }
         }
-#else
-        uint8_t* ppDsts[] =
-        {
-            pDst,                                               // row 0, col 0
-            pDst + pDstSurface->pitch,                          // row 1, col 0
-            pDst + MAX_DST_COLUMN_BYTES,                        // row 0, col 1
-            pDst + pDstSurface->pitch + MAX_DST_COLUMN_BYTES,   // row 1, col 1
-        };
-
-        for (uint32_t row = 0; row < KNOB_TILE_Y_DIM / SIMD_TILE_Y_DIM; ++row)
-        {
-            uint8_t* ppStartRows[] =
-            {
-                ppDsts[0],
-                ppDsts[1],
-                ppDsts[2],
-                ppDsts[3],
-            };
-
-            for (uint32_t col = 0; col < KNOB_TILE_X_DIM / SIMD_TILE_X_DIM; ++col)
-            {
-                // Format conversion and convert from SOA to AOS, and store the rows.
-                ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppDsts);
-
-                ppDsts[0] += DST_COLUMN_BYTES_PER_SRC;
-                ppDsts[1] += DST_COLUMN_BYTES_PER_SRC;
-                ppDsts[2] += DST_COLUMN_BYTES_PER_SRC;
-                ppDsts[3] += DST_COLUMN_BYTES_PER_SRC;
-                pSrc += SRC_COLUMN_BYTES;
-            }
-
-            ppDsts[0] = ppStartRows[0] + 2 * pDstSurface->pitch;
-            ppDsts[1] = ppStartRows[1] + 2 * pDstSurface->pitch;
-            ppDsts[2] = ppStartRows[2] + 2 * pDstSurface->pitch;
-            ppDsts[3] = ppStartRows[3] + 2 * pDstSurface->pitch;
-        }
-#endif
     }
 };
 
@@ -1527,10 +1305,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 128>, SrcFormat, DstForma
     static const size_t SRC_BYTES_PER_PIXEL = FormatTraits<SrcFormat>::bpp / 8;
     static const size_t DST_BYTES_PER_PIXEL = FormatTraits<DstFormat>::bpp / 8;
     static const size_t MAX_DST_COLUMN_BYTES = 16;
-#if !USE_8x2_TILE_BACKEND
-    static const size_t SRC_COLUMN_BYTES = KNOB_SIMD_WIDTH * SRC_BYTES_PER_PIXEL;
-    static const size_t DST_COLUMN_BYTES_PER_SRC = KNOB_SIMD_WIDTH * DST_BYTES_PER_PIXEL / 2;
-#endif
 
     //////////////////////////////////////////////////////////////////////////
     /// @brief Stores an 8x8 raster tile to the destination surface.
@@ -1553,7 +1327,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 128>, SrcFormat, DstForma
 
         uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
             pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
-#if USE_8x2_TILE_BACKEND
 
         const uint32_t dx = SIMD16_TILE_X_DIM * DST_BYTES_PER_PIXEL;
         const uint32_t dy = SIMD16_TILE_Y_DIM * pDstSurface->pitch;
@@ -1590,56 +1363,11 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_NONE, 128>, SrcFormat, DstForma
 
             pSrc += KNOB_SIMD16_WIDTH * SRC_BYTES_PER_PIXEL;
 
-            for (uint32_t i = 0; i < sizeof(ppDsts) / sizeof(ppDsts[0]); i += 1)
+            for (uint32_t i = 0; i < ARRAY_SIZE(ppDsts); i += 1)
             {
                 ppDsts[i] += dy;
             }
         }
-#else
-        struct DstPtrs
-        {
-            uint8_t* ppDsts[8];
-        } ptrs;
-
-        // Need 8 pointers, 4 columns of 2 rows each
-        for (uint32_t y = 0; y < 2; ++y)
-        {
-            for (uint32_t x = 0; x < 4; ++x)
-            {
-                ptrs.ppDsts[x * 2 + y] = pDst + y * pDstSurface->pitch + x * MAX_DST_COLUMN_BYTES;
-            }
-        }
-
-        for (uint32_t row = 0; row < KNOB_TILE_Y_DIM / SIMD_TILE_Y_DIM; ++row)
-        {
-            DstPtrs startPtrs = ptrs;
-
-            for (uint32_t col = 0; col < KNOB_TILE_X_DIM / SIMD_TILE_X_DIM; ++col)
-            {
-                // Format conversion and convert from SOA to AOS, and store the rows.
-                ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ptrs.ppDsts);
-
-                ptrs.ppDsts[0] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[1] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[2] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[3] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[4] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[5] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[6] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[7] += DST_COLUMN_BYTES_PER_SRC;
-                pSrc += SRC_COLUMN_BYTES;
-            }
-
-            ptrs.ppDsts[0] = startPtrs.ppDsts[0] + 2 * pDstSurface->pitch;
-            ptrs.ppDsts[1] = startPtrs.ppDsts[1] + 2 * pDstSurface->pitch;
-            ptrs.ppDsts[2] = startPtrs.ppDsts[2] + 2 * pDstSurface->pitch;
-            ptrs.ppDsts[3] = startPtrs.ppDsts[3] + 2 * pDstSurface->pitch;
-            ptrs.ppDsts[4] = startPtrs.ppDsts[4] + 2 * pDstSurface->pitch;
-            ptrs.ppDsts[5] = startPtrs.ppDsts[5] + 2 * pDstSurface->pitch;
-            ptrs.ppDsts[6] = startPtrs.ppDsts[6] + 2 * pDstSurface->pitch;
-            ptrs.ppDsts[7] = startPtrs.ppDsts[7] + 2 * pDstSurface->pitch;
-        }
-#endif
     }
 };
 
@@ -1675,7 +1403,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 8>, SrcFormat, Dst
 
         // TileY is a column-major tiling mode where each 4KB tile consist of 8 columns of 32 x 16B rows.
         // We can compute the offsets to each column within the raster tile once and increment from these.
-#if USE_8x2_TILE_BACKEND
         // There will be 4 8x2 simd tiles in an 8x8 raster tile.
         uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
             pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
@@ -1705,32 +1432,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 8>, SrcFormat, Dst
             ppDsts[2] += dy;
             ppDsts[3] += dy;
         }
-#else
-        // There will be 8 4x2 simd tiles in an 8x8 raster tile.
-        uint8_t* pCol0 = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
-            pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
-
-        // Increment by a whole SIMD. 4x2 for AVX. 2x2 for SSE.
-        uint32_t pSrcInc = (FormatTraits<SrcFormat>::bpp * KNOB_SIMD_WIDTH) / 8;
-
-        // The Hot Tile uses a row-major tiling mode and has a larger memory footprint. So we iterate in a row-major pattern.
-        for (uint32_t row = 0; row < KNOB_TILE_Y_DIM; row += SIMD_TILE_Y_DIM)
-        {
-            uint32_t rowOffset = row * DestRowWidthBytes;
-
-            uint8_t* pRow = pCol0 + rowOffset;
-            uint8_t* ppDsts[] = { pRow, pRow + DestRowWidthBytes };
-
-            ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppDsts);
-            pSrc += pSrcInc;
-
-            ppDsts[0] += DestRowWidthBytes / 4;
-            ppDsts[1] += DestRowWidthBytes / 4;
-
-            ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppDsts);
-            pSrc += pSrcInc;
-        }
-#endif
     }
 };
 
@@ -1766,7 +1467,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 16>, SrcFormat, Ds
 
         // TileY is a column-major tiling mode where each 4KB tile consist of 8 columns of 32 x 16B rows.
         // We can compute the offsets to each column within the raster tile once and increment from these.
-#if USE_8x2_TILE_BACKEND
         // There will be 4 8x2 simd tiles in an 8x8 raster tile.
         uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
             pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
@@ -1796,32 +1496,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 16>, SrcFormat, Ds
             ppDsts[2] += dy;
             ppDsts[3] += dy;
         }
-#else
-        // There will be 8 4x2 simd tiles in an 8x8 raster tile.
-        uint8_t* pCol0 = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
-            pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
-
-        // Increment by a whole SIMD. 4x2 for AVX. 2x2 for SSE.
-        uint32_t pSrcInc = (FormatTraits<SrcFormat>::bpp * KNOB_SIMD_WIDTH) / 8;
-
-        // The Hot Tile uses a row-major tiling mode and has a larger memory footprint. So we iterate in a row-major pattern.
-        for (uint32_t row = 0; row < KNOB_TILE_Y_DIM; row += SIMD_TILE_Y_DIM)
-        {
-            uint32_t rowOffset = row * DestRowWidthBytes;
-
-            uint8_t* pRow = pCol0 + rowOffset;
-            uint8_t* ppDsts[] = { pRow, pRow + DestRowWidthBytes };
-
-            ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppDsts);
-            pSrc += pSrcInc;
-
-            ppDsts[0] += DestRowWidthBytes / 2;
-            ppDsts[1] += DestRowWidthBytes / 2;
-
-            ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppDsts);
-            pSrc += pSrcInc;
-        }
-#endif
     }
 };
 
@@ -1858,7 +1532,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_XMAJOR, 32>, SrcFormat, Ds
 
         // TileX is a row-major tiling mode where each 4KB tile consist of 8 x 512B rows.
         // We can compute the offsets to each column within the raster tile once and increment from these.
-#if USE_8x2_TILE_BACKEND
         uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
             pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
 
@@ -1892,28 +1565,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_XMAJOR, 32>, SrcFormat, Ds
             ppDsts[2] += dy;
             ppDsts[3] += dy;
         }
-#else
-        uint8_t *pRow0 = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
-            pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
-        uint8_t* pRow1 = pRow0 + DestRowWidthBytes;
-
-        for (uint32_t row = 0; row < KNOB_TILE_Y_DIM; row += SIMD_TILE_Y_DIM)
-        {
-            for (uint32_t col = 0; col < KNOB_TILE_X_DIM; col += SIMD_TILE_X_DIM)
-            {
-                uint32_t xRowOffset = col * (FormatTraits<DstFormat>::bpp / 8);
-
-                uint8_t* ppDsts[] = { pRow0 + xRowOffset, pRow1 + xRowOffset };
-                ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppDsts);
-
-                // Increment by a whole SIMD. 4x2 for AVX. 2x2 for SSE.
-                pSrc += (FormatTraits<SrcFormat>::bpp * KNOB_SIMD_WIDTH) / 8;
-            }
-
-            pRow0 += (DestRowWidthBytes * 2);
-            pRow1 += (DestRowWidthBytes * 2);
-        }
-#endif
     }
 };
 
@@ -1950,7 +1601,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 32>, SrcFormat, Ds
 
         // TileY is a column-major tiling mode where each 4KB tile consist of 8 columns of 32 x 16B rows.
         // We can compute the offsets to each column within the raster tile once and increment from these.
-#if USE_8x2_TILE_BACKEND
         // There will be 4 8x2 simd tiles in an 8x8 raster tile.
         uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
             pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
@@ -1981,32 +1631,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 32>, SrcFormat, Ds
             ppDsts[2] += dy;
             ppDsts[3] += dy;
         }
-#else
-        // There will be 8 4x2 simd tiles in an 8x8 raster tile.
-        uint8_t* pCol0 = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
-            pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
-
-        // Increment by a whole SIMD. 4x2 for AVX. 2x2 for SSE.
-        uint32_t pSrcInc = (FormatTraits<SrcFormat>::bpp * KNOB_SIMD_WIDTH) / 8;
-
-        // The Hot Tile uses a row-major tiling mode and has a larger memory footprint. So we iterate in a row-major pattern.
-        for (uint32_t row = 0; row < KNOB_TILE_Y_DIM; row += SIMD_TILE_Y_DIM)
-        {
-            uint32_t rowOffset = row * DestRowWidthBytes;
-
-            uint8_t* pRow = pCol0 + rowOffset;
-            uint8_t* ppDsts[] = { pRow, pRow + DestRowWidthBytes };
-
-            ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppDsts);
-            pSrc += pSrcInc;
-
-            ppDsts[0] += DestColumnBytes;
-            ppDsts[1] += DestColumnBytes;
-
-            ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppDsts);
-            pSrc += pSrcInc;
-        }
-#endif
     }
 };
 
@@ -2043,7 +1667,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 64>, SrcFormat, Ds
 
         // TileY is a column-major tiling mode where each 4KB tile consist of 8 columns of 32 x 16B rows.
         // We can compute the offsets to each column within the raster tile once and increment from these.
-#if USE_8x2_TILE_BACKEND
         // There will be 4 8x2 simd tiles in an 8x8 raster tile.
         uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
             pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
@@ -2073,45 +1696,11 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 64>, SrcFormat, Ds
 
             pSrc += KNOB_SIMD16_WIDTH * SRC_BYTES_PER_PIXEL;
 
-            for (uint32_t i = 0; i < sizeof(ppDsts) / sizeof(ppDsts[0]); i += 1)
+            for (uint32_t i = 0; i < ARRAY_SIZE(ppDsts); i += 1)
             {
                 ppDsts[i] += dy;
             }
         }
-#else
-        // There will be 8 4x2 simd tiles in an 8x8 raster tile.
-        uint8_t* pCol0 = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
-            pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
-        uint8_t* pCol1 = pCol0 + DestColumnBytes;
-
-        // There are 4 columns, each 2 pixels wide when we have 64bpp pixels.
-        // Increment by a whole SIMD. 4x2 for AVX. 2x2 for SSE.
-        uint32_t pSrcInc = (FormatTraits<SrcFormat>::bpp * KNOB_SIMD_WIDTH) / 8;
-
-        // The Hot Tile uses a row-major tiling mode and has a larger memory footprint. So we iterate in a row-major pattern.
-        for (uint32_t row = 0; row < KNOB_TILE_Y_DIM; row += SIMD_TILE_Y_DIM)
-        {
-            uint32_t rowOffset = row * DestRowWidthBytes;
-            uint8_t* ppDsts[] =
-            {
-                pCol0 + rowOffset,
-                pCol0 + rowOffset + DestRowWidthBytes,
-                pCol1 + rowOffset,
-                pCol1 + rowOffset + DestRowWidthBytes,
-            };
-
-            ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppDsts);
-            pSrc += pSrcInc;
-
-            ppDsts[0] += DestColumnBytes * 2;
-            ppDsts[1] += DestColumnBytes * 2;
-            ppDsts[2] += DestColumnBytes * 2;
-            ppDsts[3] += DestColumnBytes * 2;
-
-            ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ppDsts);
-            pSrc += pSrcInc;
-        }
-#endif
     }
 };
 
@@ -2122,22 +1711,8 @@ template<SWR_FORMAT SrcFormat, SWR_FORMAT DstFormat>
 struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 128>, SrcFormat, DstFormat>
 {
     typedef StoreRasterTile<TilingTraits<SWR_TILE_MODE_YMAJOR, 128>, SrcFormat, DstFormat> GenericStoreTile;
-#if USE_8x2_TILE_BACKEND
     static const size_t SRC_BYTES_PER_PIXEL = FormatTraits<SrcFormat>::bpp / 8;
 
-#else
-    static const size_t TILE_Y_COL_WIDTH_BYTES = 16;
-    static const size_t TILE_Y_ROWS = 32;
-    static const size_t TILE_Y_COL_BYTES = TILE_Y_ROWS * TILE_Y_COL_WIDTH_BYTES;
-
-    static const size_t DST_BYTES_PER_PIXEL = FormatTraits<DstFormat>::bpp / 8;
-    static const size_t SRC_BYTES_PER_PIXEL = FormatTraits<SrcFormat>::bpp / 8;
-    static const size_t MAX_DST_COLUMN_BYTES = 16;
-
-    static const size_t SRC_COLUMN_BYTES = KNOB_SIMD_WIDTH * SRC_BYTES_PER_PIXEL;
-    static const size_t DST_COLUMN_BYTES_PER_SRC = TILE_Y_COL_BYTES * 4;
-
-#endif
     //////////////////////////////////////////////////////////////////////////
     /// @brief Stores an 8x8 raster tile to the destination surface.
     /// @param pSrc - Pointer to raster tile.
@@ -2148,10 +1723,8 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 128>, SrcFormat, D
         SWR_SURFACE_STATE* pDstSurface,
         uint32_t x, uint32_t y, uint32_t sampleNum, uint32_t renderTargetArrayIndex)
     {
-#if USE_8x2_TILE_BACKEND
         static const uint32_t DestRowWidthBytes = 16;                    // 16B rows
         static const uint32_t DestColumnBytes = DestRowWidthBytes * 32;  // 16B x 32 rows.
-#endif
 
         // Punt non-full tiles to generic store
         uint32_t lodWidth = std::max(pDstSurface->width >> pDstSurface->lod, 1U);
@@ -2164,7 +1737,6 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 128>, SrcFormat, D
 
         // TileY is a column-major tiling mode where each 4KB tile consist of 8 columns of 32 x 16B rows.
         // We can compute the offsets to each column within the raster tile once and increment from these.
-#if USE_8x2_TILE_BACKEND
         // There will be 4 8x2 simd tiles in an 8x8 raster tile.
         uint8_t *pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
             pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
@@ -2202,59 +1774,11 @@ struct OptStoreRasterTile< TilingTraits<SWR_TILE_MODE_YMAJOR, 128>, SrcFormat, D
 
             pSrc += KNOB_SIMD16_WIDTH * SRC_BYTES_PER_PIXEL;
 
-            for (uint32_t i = 0; i < sizeof(ppDsts) / sizeof(ppDsts[0]); i += 1)
+            for (uint32_t i = 0; i < ARRAY_SIZE(ppDsts); i += 1)
             {
                 ppDsts[i] += dy;
             }
         }
-#else
-        // There will be 8 4x2 simd tiles in an 8x8 raster tile.
-        uint8_t* pDst = (uint8_t*)ComputeSurfaceAddress<false, false>(x, y, pDstSurface->arrayIndex + renderTargetArrayIndex,
-            pDstSurface->arrayIndex + renderTargetArrayIndex, sampleNum, pDstSurface->lod, pDstSurface);
-        struct DstPtrs
-        {
-            uint8_t* ppDsts[8];
-        } ptrs;
-
-        // Need 8 pointers, 4 columns of 2 rows each
-        for (uint32_t y = 0; y < 2; ++y)
-        {
-            for (uint32_t x = 0; x < 4; ++x)
-            {
-                ptrs.ppDsts[x * 2 + y] = pDst + y * TILE_Y_COL_WIDTH_BYTES + x * TILE_Y_COL_BYTES;
-            }
-        }
-
-        for (uint32_t row = 0; row < KNOB_TILE_Y_DIM / SIMD_TILE_Y_DIM; ++row)
-        {
-            DstPtrs startPtrs = ptrs;
-
-            for (uint32_t col = 0; col < KNOB_TILE_X_DIM / SIMD_TILE_X_DIM; ++col)
-            {
-                // Format conversion and convert from SOA to AOS, and store the rows.
-                ConvertPixelsSOAtoAOS<SrcFormat, DstFormat>::Convert(pSrc, ptrs.ppDsts);
-
-                ptrs.ppDsts[0] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[1] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[2] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[3] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[4] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[5] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[6] += DST_COLUMN_BYTES_PER_SRC;
-                ptrs.ppDsts[7] += DST_COLUMN_BYTES_PER_SRC;
-                pSrc += SRC_COLUMN_BYTES;
-            }
-
-            ptrs.ppDsts[0] = startPtrs.ppDsts[0] + 2 * TILE_Y_COL_WIDTH_BYTES;
-            ptrs.ppDsts[1] = startPtrs.ppDsts[1] + 2 * TILE_Y_COL_WIDTH_BYTES;
-            ptrs.ppDsts[2] = startPtrs.ppDsts[2] + 2 * TILE_Y_COL_WIDTH_BYTES;
-            ptrs.ppDsts[3] = startPtrs.ppDsts[3] + 2 * TILE_Y_COL_WIDTH_BYTES;
-            ptrs.ppDsts[4] = startPtrs.ppDsts[4] + 2 * TILE_Y_COL_WIDTH_BYTES;
-            ptrs.ppDsts[5] = startPtrs.ppDsts[5] + 2 * TILE_Y_COL_WIDTH_BYTES;
-            ptrs.ppDsts[6] = startPtrs.ppDsts[6] + 2 * TILE_Y_COL_WIDTH_BYTES;
-            ptrs.ppDsts[7] = startPtrs.ppDsts[7] + 2 * TILE_Y_COL_WIDTH_BYTES;
-        }
-#endif
     }
 };
 
@@ -2323,6 +1847,9 @@ struct StoreMacroTile
             pfnStore[sampleNum] = (bForceGeneric || KNOB_USE_GENERIC_STORETILE) ? StoreRasterTile<TTraits, SrcFormat, DstFormat>::Store : OptStoreRasterTile<TTraits, SrcFormat, DstFormat>::Store;
         }
 
+        // Save original for pSrcHotTile resolve.
+        uint8_t *pResolveSrcHotTile = pSrcHotTile;
+
         // Store each raster tile from the hot tile to the destination surface.
         for(uint32_t row = 0; row < KNOB_MACROTILE_Y_DIM; row += KNOB_TILE_Y_DIM)
         {
@@ -2332,6 +1859,20 @@ struct StoreMacroTile
                 {
                     pfnStore[sampleNum](pSrcHotTile, pDstSurface, (x + col), (y + row), sampleNum, renderTargetArrayIndex);
                     pSrcHotTile += KNOB_TILE_X_DIM * KNOB_TILE_Y_DIM * (FormatTraits<SrcFormat>::bpp / 8);
+                }
+            }
+        }
+
+        if (pDstSurface->xpAuxBaseAddress)
+        {
+            uint32_t sampleOffset = KNOB_TILE_X_DIM * KNOB_TILE_Y_DIM * (FormatTraits<SrcFormat>::bpp / 8);
+            // Store each raster tile from the hot tile to the destination surface.
+            for(uint32_t row = 0; row < KNOB_MACROTILE_Y_DIM; row += KNOB_TILE_Y_DIM)
+            {
+                for(uint32_t col = 0; col < KNOB_MACROTILE_X_DIM; col += KNOB_TILE_X_DIM)
+                {
+                    StoreRasterTile<TTraits, SrcFormat, DstFormat>::Resolve(pResolveSrcHotTile, pDstSurface, (x + col), (y + row), sampleOffset, renderTargetArrayIndex);
+                    pResolveSrcHotTile += sampleOffset * pDstSurface->numSamples;
                 }
             }
         }

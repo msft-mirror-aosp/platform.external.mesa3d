@@ -34,6 +34,7 @@
 #include <string.h>
 #include "util/ralloc.h"
 #include "util/strtod.h"
+#include "main/mtypes.h"
 
 void
 _mesa_warning(struct gl_context *ctx, const char *fmt, ...)
@@ -47,6 +48,24 @@ _mesa_warning(struct gl_context *ctx, const char *fmt, ...)
      * standalone compiler.
      */
     fprintf(stderr, "Mesa warning: ");
+    vfprintf(stderr, fmt, vargs);
+    fprintf(stderr, "\n");
+
+    va_end(vargs);
+}
+
+void
+_mesa_problem(struct gl_context *ctx, const char *fmt, ...)
+{
+    va_list vargs;
+    (void) ctx;
+
+    va_start(vargs, fmt);
+
+    /* This output is not thread-safe, but that's good enough for the
+     * standalone compiler.
+     */
+    fprintf(stderr, "Mesa problem: ");
     vfprintf(stderr, fmt, vargs);
     fprintf(stderr, "\n");
 
@@ -100,19 +119,19 @@ _mesa_new_shader(GLuint name, gl_shader_stage stage)
 }
 
 GLbitfield
-_mesa_program_state_flags(const gl_state_index state[STATE_LENGTH])
+_mesa_program_state_flags(UNUSED const gl_state_index16 state[STATE_LENGTH])
 {
    return 0;
 }
 
 char *
-_mesa_program_state_string(const gl_state_index state[STATE_LENGTH])
+_mesa_program_state_string(UNUSED const gl_state_index16 state[STATE_LENGTH])
 {
    return NULL;
 }
 
 void
-_mesa_delete_shader(struct gl_context *ctx, struct gl_shader *sh)
+_mesa_delete_shader(struct gl_context *, struct gl_shader *sh)
 {
    free((void *)sh->Source);
    free(sh->Label);
@@ -120,7 +139,7 @@ _mesa_delete_shader(struct gl_context *ctx, struct gl_shader *sh)
 }
 
 void
-_mesa_delete_linked_shader(struct gl_context *ctx,
+_mesa_delete_linked_shader(struct gl_context *,
                            struct gl_linked_shader *sh)
 {
    ralloc_free(sh);
@@ -178,11 +197,11 @@ void initialize_context_to_defaults(struct gl_context *ctx, gl_api api)
    ctx->Extensions.ARB_fragment_layer_viewport = true;
    ctx->Extensions.ARB_gpu_shader5 = true;
    ctx->Extensions.ARB_gpu_shader_fp64 = true;
+   ctx->Extensions.ARB_gpu_shader_int64 = true;
    ctx->Extensions.ARB_sample_shading = true;
    ctx->Extensions.ARB_shader_bit_encoding = true;
    ctx->Extensions.ARB_shader_draw_parameters = true;
    ctx->Extensions.ARB_shader_stencil_export = true;
-   ctx->Extensions.ARB_shader_subroutine = true;
    ctx->Extensions.ARB_shader_texture_lod = true;
    ctx->Extensions.ARB_shading_language_420pack = true;
    ctx->Extensions.ARB_shading_language_packing = true;
@@ -195,10 +214,12 @@ void initialize_context_to_defaults(struct gl_context *ctx, gl_api api)
    ctx->Extensions.ARB_uniform_buffer_object = true;
    ctx->Extensions.ARB_viewport_array = true;
    ctx->Extensions.ARB_cull_distance = true;
+   ctx->Extensions.ARB_bindless_texture = true;
 
    ctx->Extensions.OES_EGL_image_external = true;
    ctx->Extensions.OES_standard_derivatives = true;
 
+   ctx->Extensions.EXT_gpu_shader4 = true;
    ctx->Extensions.EXT_shader_integer_mix = true;
    ctx->Extensions.EXT_texture_array = true;
 

@@ -199,13 +199,13 @@ NineDevice9_ctor( struct NineDevice9 *This,
     This->pipe_sw = This->screen_sw->context_create(This->screen_sw, NULL, 0);
     if (!This->pipe_sw) { return E_OUTOFMEMORY; }
 
-    This->context.cso = cso_create_context(This->context.pipe);
+    This->context.cso = cso_create_context(This->context.pipe, 0);
     if (!This->context.cso) { return E_OUTOFMEMORY; } /* also a guess */
-    This->cso_sw = cso_create_context(This->pipe_sw);
+    This->cso_sw = cso_create_context(This->pipe_sw, 0);
     if (!This->cso_sw) { return E_OUTOFMEMORY; }
 
     /* Create first, it messes up our state. */
-    This->hud = hud_create(This->context.pipe, This->context.cso); /* NULL result is fine */
+    This->hud = hud_create(This->context.cso, NULL); /* NULL result is fine */
 
     /* Available memory counter. Updated only for allocations with this device
      * instance. This is the Win 7 behavior.
@@ -266,13 +266,15 @@ NineDevice9_ctor( struct NineDevice9 *This,
     }
 
     /* Initialize CSMT */
+    /* r600, radeonsi and iris are thread safe. */
     if (pCTX->csmt_force == 1)
         This->csmt_active = true;
     else if (pCTX->csmt_force == 0)
         This->csmt_active = false;
-    else
-        /* r600 and radeonsi are thread safe. */
-        This->csmt_active = strstr(pScreen->get_name(pScreen), "AMD") != NULL;
+    else if (strstr(pScreen->get_name(pScreen), "AMD") != NULL)
+        This->csmt_active = true;
+    else if (strstr(pScreen->get_name(pScreen), "Intel") != NULL)
+        This->csmt_active = true;
 
     /* We rely on u_upload_mgr using persistent coherent buffers (which don't
      * require flush to work in multi-pipe_context scenario) for vertex and
@@ -288,6 +290,8 @@ NineDevice9_ctor( struct NineDevice9 *This,
 
     if (This->csmt_active)
         DBG("\033[1;32mCSMT is active\033[0m\n");
+
+    This->workarounds.dynamic_texture_workaround = pCTX->dynamic_texture_workaround;
 
     This->buffer_upload = nine_upload_create(This->pipe_secondary, 4 * 1024 * 1024, 4);
 
@@ -331,6 +335,13 @@ NineDevice9_ctor( struct NineDevice9 *This,
     This->cursor.software = FALSE;
     This->cursor.hotspot.x = -1;
     This->cursor.hotspot.y = -1;
+    This->cursor.w = This->cursor.h = 0;
+    This->cursor.visible = FALSE;
+    if (ID3DPresent_GetCursorPos(This->swapchains[0]->present, &This->cursor.pos) != S_OK) {
+        This->cursor.pos.x = 0;
+        This->cursor.pos.y = 0;
+    }
+
     {
         struct pipe_resource tmpl;
         memset(&tmpl, 0, sizeof(tmpl));
@@ -473,39 +484,17 @@ NineDevice9_ctor( struct NineDevice9 *This,
     /* Allocate upload helper for drivers that suck (from st pov ;). */
 
     This->driver_caps.user_vbufs = GET_PCAP(USER_VERTEX_BUFFERS) && !This->csmt_active;
-    This->driver_caps.user_ibufs = GET_PCAP(USER_INDEX_BUFFERS) && !This->csmt_active;
-    This->driver_caps.user_cbufs = GET_PCAP(USER_CONSTANT_BUFFERS);
     This->driver_caps.user_sw_vbufs = This->screen_sw->get_param(This->screen_sw, PIPE_CAP_USER_VERTEX_BUFFERS);
-    This->driver_caps.user_sw_cbufs = This->screen_sw->get_param(This->screen_sw, PIPE_CAP_USER_CONSTANT_BUFFERS);
-
-    /* Implicit use of context pipe for vertex and index uploaded when
-     * csmt is not active. Does not need to sync since csmt is unactive,
-     * thus no need to call NineDevice9_GetPipe at each upload. */
-    if (!This->driver_caps.user_vbufs)
-        This->vertex_uploader = u_upload_create(This->csmt_active ?
-                                                    This->pipe_secondary : This->context.pipe,
-                                                65536,
-                                                PIPE_BIND_VERTEX_BUFFER, PIPE_USAGE_STREAM);
-    This->vertex_sw_uploader = u_upload_create(This->pipe_sw, 65536,
-                                            PIPE_BIND_VERTEX_BUFFER, PIPE_USAGE_STREAM);
-    if (!This->driver_caps.user_ibufs)
-        This->index_uploader = u_upload_create(This->csmt_active ?
-                                                    This->pipe_secondary : This->context.pipe,
-                                               128 * 1024,
-                                               PIPE_BIND_INDEX_BUFFER, PIPE_USAGE_STREAM);
-    if (!This->driver_caps.user_cbufs) {
-        This->constbuf_alignment = GET_PCAP(CONSTANT_BUFFER_OFFSET_ALIGNMENT);
-        This->constbuf_uploader = u_upload_create(This->context.pipe, This->vs_const_size,
-                                                  PIPE_BIND_CONSTANT_BUFFER, PIPE_USAGE_STREAM);
-    }
-
-    This->constbuf_sw_uploader = u_upload_create(This->pipe_sw, 128 * 1024,
-                                                 PIPE_BIND_CONSTANT_BUFFER, PIPE_USAGE_STREAM);
-
+    This->vertex_uploader = This->csmt_active ? This->pipe_secondary->stream_uploader : This->context.pipe->stream_uploader;
     This->driver_caps.window_space_position_support = GET_PCAP(TGSI_VS_WINDOW_SPACE_POSITION);
     This->driver_caps.vs_integer = pScreen->get_shader_param(pScreen, PIPE_SHADER_VERTEX, PIPE_SHADER_CAP_INTEGERS);
     This->driver_caps.ps_integer = pScreen->get_shader_param(pScreen, PIPE_SHADER_FRAGMENT, PIPE_SHADER_CAP_INTEGERS);
     This->driver_caps.offset_units_unscaled = GET_PCAP(POLYGON_OFFSET_UNITS_UNSCALED);
+
+    This->context.inline_constants = pCTX->shader_inline_constants;
+    /* Code would be needed when integers are not available to correctly
+     * handle the conversion of integer constants */
+    This->context.inline_constants &= This->driver_caps.vs_integer && This->driver_caps.ps_integer;
 
     nine_ff_init(This); /* initialize fixed function code */
 
@@ -549,19 +538,8 @@ NineDevice9_dtor( struct NineDevice9 *This )
 
     nine_ff_fini(This);
     nine_state_destroy_sw(This);
-    nine_state_clear(&This->state, TRUE);
+    nine_device_state_clear(This);
     nine_context_clear(This);
-
-    if (This->vertex_uploader)
-        u_upload_destroy(This->vertex_uploader);
-    if (This->index_uploader)
-        u_upload_destroy(This->index_uploader);
-    if (This->constbuf_uploader)
-        u_upload_destroy(This->constbuf_uploader);
-    if (This->vertex_sw_uploader)
-        u_upload_destroy(This->vertex_sw_uploader);
-    if (This->constbuf_sw_uploader)
-        u_upload_destroy(This->constbuf_sw_uploader);
 
     nine_bind(&This->record, NULL);
 
@@ -822,6 +800,12 @@ NineDevice9_SetCursorPosition( struct NineDevice9 *This,
 
     DBG("This=%p X=%d Y=%d Flags=%d\n", This, X, Y, Flags);
 
+    /* present >= v1.4 handles this itself */
+    if (This->minor_version_num < 4) {
+        if (This->cursor.pos.x == X && This->cursor.pos.y == Y)
+            return;
+    }
+
     This->cursor.pos.x = X;
     This->cursor.pos.y = Y;
 
@@ -837,7 +821,14 @@ NineDevice9_ShowCursor( struct NineDevice9 *This,
 
     DBG("This=%p bShow=%d\n", This, (int) bShow);
 
-    This->cursor.visible = bShow && (This->cursor.hotspot.x != -1);
+    /* No-op until a cursor is set in d3d */
+    if (This->cursor.hotspot.x == -1)
+        return old;
+
+    This->cursor.visible = bShow;
+    /* Note: Don't optimize by avoiding the call if This->cursor.visible
+     * hasn't changed. One has to keep in mind the app may do SetCursor
+     * calls outside d3d, thus such an optimization affects behaviour. */
     if (!This->cursor.software)
         This->cursor.software = ID3DPresent_SetCursor(This->swapchains[0]->present, NULL, NULL, bShow) != D3D_OK;
 
@@ -923,7 +914,7 @@ NineDevice9_Reset( struct NineDevice9 *This,
     }
 
     nine_csmt_process(This);
-    nine_state_clear(&This->state, TRUE);
+    nine_device_state_clear(This);
     nine_context_clear(This);
 
     NineDevice9_SetDefaultState(This, TRUE);
@@ -1618,6 +1609,7 @@ NineDevice9_StretchRect( struct NineDevice9 *This,
     user_assert(screen->is_format_supported(screen, src_res->format,
                                             src_res->target,
                                             src_res->nr_samples,
+                                            src_res->nr_storage_samples,
                                             PIPE_BIND_SAMPLER_VIEW),
                 D3DERR_INVALIDCALL);
 
@@ -1743,6 +1735,7 @@ NineDevice9_StretchRect( struct NineDevice9 *This,
         user_assert(screen->is_format_supported(screen, dst_res->format,
                                                 dst_res->target,
                                                 dst_res->nr_samples,
+                                                dst_res->nr_storage_samples,
                                                 zs ? PIPE_BIND_DEPTH_STENCIL :
                                                 PIPE_BIND_RENDER_TARGET),
                     D3DERR_INVALIDCALL);
@@ -2003,6 +1996,19 @@ NineDevice9_Clear( struct NineDevice9 *This,
     return D3D_OK;
 }
 
+static void
+nine_D3DMATRIX_print(const D3DMATRIX *M)
+{
+    DBG("\n(%f %f %f %f)\n"
+        "(%f %f %f %f)\n"
+        "(%f %f %f %f)\n"
+        "(%f %f %f %f)\n",
+        M->m[0][0], M->m[0][1], M->m[0][2], M->m[0][3],
+        M->m[1][0], M->m[1][1], M->m[1][2], M->m[1][3],
+        M->m[2][0], M->m[2][1], M->m[2][2], M->m[2][3],
+        M->m[3][0], M->m[3][1], M->m[3][2], M->m[3][3]);
+}
+
 HRESULT NINE_WINAPI
 NineDevice9_SetTransform( struct NineDevice9 *This,
                           D3DTRANSFORMSTATETYPE State,
@@ -2014,11 +2020,12 @@ NineDevice9_SetTransform( struct NineDevice9 *This,
     DBG("This=%p State=%d pMatrix=%p\n", This, State, pMatrix);
 
     user_assert(M, D3DERR_INVALIDCALL);
+    nine_D3DMATRIX_print(pMatrix);
 
     *M = *pMatrix;
     if (unlikely(This->is_recording)) {
         state->ff.changed.transform[State / 32] |= 1 << (State % 32);
-        state->changed.group |= NINE_STATE_FF;
+        state->changed.group |= NINE_STATE_FF_VSTRANSF;
     } else
         nine_context_set_transform(This, State, pMatrix);
 
@@ -2182,9 +2189,11 @@ NineDevice9_LightEnable( struct NineDevice9 *This,
         NineDevice9_SetLight(This, Index, &light);
     }
 
-    nine_state_light_enable(&state->ff, &state->changed.group, Index, Enable);
+    nine_state_light_enable(&state->ff, Index, Enable);
     if (likely(!This->is_recording))
         nine_context_light_enable(This, Index, Enable);
+    else
+        state->changed.group |= NINE_STATE_FF_LIGHTING;
 
     return D3D_OK;
 }
@@ -2263,7 +2272,6 @@ NineDevice9_SetRenderState( struct NineDevice9 *This,
         state->rs_advertised[State] = Value;
         /* only need to record changed render states for stateblocks */
         state->changed.rs[State / 32] |= 1 << (State % 32);
-        state->changed.group |= nine_render_state_group[State];
         return D3D_OK;
     }
 
@@ -2318,9 +2326,7 @@ NineDevice9_CreateStateBlock( struct NineDevice9 *This,
     *ppSB = (IDirect3DStateBlock9 *)nsb;
     dst = &nsb->state;
 
-    dst->changed.group =
-       NINE_STATE_TEXTURE |
-       NINE_STATE_SAMPLER;
+    dst->changed.group = NINE_STATE_SAMPLER;
 
     if (Type == D3DSBT_ALL || Type == D3DSBT_VERTEXSTATE) {
        dst->changed.group |=
@@ -2353,10 +2359,7 @@ NineDevice9_CreateStateBlock( struct NineDevice9 *This,
     }
     if (Type == D3DSBT_ALL || Type == D3DSBT_PIXELSTATE) {
        dst->changed.group |=
-          NINE_STATE_PS | NINE_STATE_PS_CONST | NINE_STATE_BLEND |
-          NINE_STATE_FF_OTHER | NINE_STATE_FF_PSSTAGES | NINE_STATE_PS_CONST |
-          NINE_STATE_FB | NINE_STATE_DSA | NINE_STATE_MULTISAMPLE |
-          NINE_STATE_RASTERIZER | NINE_STATE_STENCIL_REF;
+          NINE_STATE_PS | NINE_STATE_PS_CONST | NINE_STATE_FF_PS_CONSTS;
        memcpy(dst->changed.rs,
               nine_render_states_pixel, sizeof(dst->changed.rs));
        nine_ranges_insert(&dst->changed.ps_const_f, 0, This->max_ps_const_f,
@@ -2374,19 +2377,25 @@ NineDevice9_CreateStateBlock( struct NineDevice9 *This,
        dst->changed.group |=
           NINE_STATE_VIEWPORT |
           NINE_STATE_SCISSOR |
-          NINE_STATE_RASTERIZER |
-          NINE_STATE_BLEND |
-          NINE_STATE_DSA |
           NINE_STATE_IDXBUF |
-          NINE_STATE_MATERIAL |
-          NINE_STATE_BLEND_COLOR |
-          NINE_STATE_SAMPLE_MASK;
+          NINE_STATE_FF_MATERIAL |
+          NINE_STATE_FF_VSTRANSF;
        memset(dst->changed.rs, ~0, (D3DRS_COUNT / 32) * sizeof(uint32_t));
        dst->changed.rs[D3DRS_LAST / 32] |= (1 << (D3DRS_COUNT % 32)) - 1;
        dst->changed.vtxbuf = (1ULL << This->caps.MaxStreams) - 1;
        dst->changed.stream_freq = dst->changed.vtxbuf;
        dst->changed.ucp = (1 << PIPE_MAX_CLIP_PLANES) - 1;
        dst->changed.texture = (1 << NINE_MAX_SAMPLERS) - 1;
+       /* The doc says the projection, world, view and texture matrices
+        * are saved, which would translate to:
+        * dst->ff.changed.transform[0] = 0x00FF000C;
+        * dst->ff.changed.transform[D3DTS_WORLD / 32] |= 1 << (D3DTS_WORLD % 32);
+        * However we assume they meant save everything (which is basically just the
+        * above plus the other world matrices).
+        */
+       dst->ff.changed.transform[0] = 0x00FF000C;
+       for (s = 0; s < 8; s++)
+           dst->ff.changed.transform[8+s] = ~0;
     }
     NineStateBlock9_Capture(NineStateBlock9(*ppSB));
 
@@ -2453,7 +2462,7 @@ NineDevice9_GetTexture( struct NineDevice9 *This,
                         DWORD Stage,
                         IDirect3DBaseTexture9 **ppTexture )
 {
-    user_assert(Stage < This->caps.MaxSimultaneousTextures ||
+    user_assert(Stage < NINE_MAX_SAMPLERS_PS ||
                 Stage == D3DDMAPSAMPLER ||
                 (Stage >= D3DVERTEXTEXTURESAMPLER0 &&
                  Stage <= D3DVERTEXTEXTURESAMPLER3), D3DERR_INVALIDCALL);
@@ -2480,7 +2489,7 @@ NineDevice9_SetTexture( struct NineDevice9 *This,
 
     DBG("This=%p Stage=%u pTexture=%p\n", This, Stage, pTexture);
 
-    user_assert(Stage < This->caps.MaxSimultaneousTextures ||
+    user_assert(Stage < NINE_MAX_SAMPLERS_PS ||
                 Stage == D3DDMAPSAMPLER ||
                 (Stage >= D3DVERTEXTEXTURESAMPLER0 &&
                  Stage <= D3DVERTEXTEXTURESAMPLER3), D3DERR_INVALIDCALL);
@@ -2492,7 +2501,6 @@ NineDevice9_SetTexture( struct NineDevice9 *This,
 
     if (This->is_recording) {
         state->changed.texture |= 1 << Stage;
-        state->changed.group |= NINE_STATE_TEXTURE;
         nine_bind(&state->texture[Stage], pTexture);
         return D3D_OK;
     }
@@ -2541,9 +2549,7 @@ NineDevice9_SetTextureStageState( struct NineDevice9 *This,
     state->ff.tex_stage[Stage][Type] = Value;
 
     if (unlikely(This->is_recording)) {
-        if (Type == D3DTSS_TEXTURETRANSFORMFLAGS)
-            state->changed.group |= NINE_STATE_PS1X_SHADER;
-        state->changed.group |= NINE_STATE_FF_PSSTAGES;
+        state->changed.group |= NINE_STATE_FF_PS_CONSTS;
         state->ff.changed.tex_stage[Stage][Type / 32] |= 1 << (Type % 32);
     } else
         nine_context_set_texture_stage_state(This, Stage, Type, Value);
@@ -2557,7 +2563,7 @@ NineDevice9_GetSamplerState( struct NineDevice9 *This,
                              D3DSAMPLERSTATETYPE Type,
                              DWORD *pValue )
 {
-    user_assert(Sampler < This->caps.MaxSimultaneousTextures ||
+    user_assert(Sampler < NINE_MAX_SAMPLERS_PS ||
                 Sampler == D3DDMAPSAMPLER ||
                 (Sampler >= D3DVERTEXTEXTURESAMPLER0 &&
                  Sampler <= D3DVERTEXTEXTURESAMPLER3), D3DERR_INVALIDCALL);
@@ -2580,7 +2586,7 @@ NineDevice9_SetSamplerState( struct NineDevice9 *This,
     DBG("This=%p Sampler=%u Type=%s Value=%08x\n", This,
         Sampler, nine_D3DSAMP_to_str(Type), Value);
 
-    user_assert(Sampler < This->caps.MaxSimultaneousTextures ||
+    user_assert(Sampler < NINE_MAX_SAMPLERS_PS ||
                 Sampler == D3DDMAPSAMPLER ||
                 (Sampler >= D3DVERTEXTEXTURESAMPLER0 &&
                  Sampler <= D3DVERTEXTEXTURESAMPLER3), D3DERR_INVALIDCALL);
@@ -2717,7 +2723,7 @@ NineDevice9_SetSoftwareVertexProcessing( struct NineDevice9 *This,
         nine_context_set_swvp(This, bSoftware);
         return D3D_OK;
     } else
-        return D3DERR_INVALIDCALL; /* msdn. TODO: check in practice */
+        return D3D_OK; /* msdn seems to indicate INVALIDCALL, but at least Halo expects OK */
 }
 
 BOOL NINE_WINAPI
@@ -2849,26 +2855,27 @@ NineDevice9_DrawPrimitiveUP( struct NineDevice9 *This,
 
     vtxbuf.stride = VertexStreamZeroStride;
     vtxbuf.buffer_offset = 0;
-    vtxbuf.buffer = NULL;
-    vtxbuf.user_buffer = pVertexStreamZeroData;
+    vtxbuf.is_user_buffer = true;
+    vtxbuf.buffer.user = pVertexStreamZeroData;
 
     if (!This->driver_caps.user_vbufs) {
+        vtxbuf.is_user_buffer = false;
+        vtxbuf.buffer.resource = NULL;
         u_upload_data(This->vertex_uploader,
                       0,
                       (prim_count_to_vertex_count(PrimitiveType, PrimitiveCount)) * VertexStreamZeroStride, /* XXX */
                       4,
-                      vtxbuf.user_buffer,
+                      pVertexStreamZeroData,
                       &vtxbuf.buffer_offset,
-                      &vtxbuf.buffer);
+                      &vtxbuf.buffer.resource);
         u_upload_unmap(This->vertex_uploader);
-        vtxbuf.user_buffer = NULL;
     }
 
     NineBeforeDraw(This);
     nine_context_draw_primitive_from_vtxbuf(This, PrimitiveType, PrimitiveCount, &vtxbuf);
     NineAfterDraw(This);
 
-    pipe_resource_reference(&vtxbuf.buffer, NULL);
+    pipe_vertex_buffer_unreference(&vtxbuf);
 
     NineDevice9_PauseRecording(This);
     NineDevice9_SetStreamSource(This, 0, NULL, 0, 0);
@@ -2889,7 +2896,6 @@ NineDevice9_DrawIndexedPrimitiveUP( struct NineDevice9 *This,
                                     UINT VertexStreamZeroStride )
 {
     struct pipe_vertex_buffer vbuf;
-    struct pipe_index_buffer ibuf;
 
     DBG("iface %p, PrimitiveType %u, MinVertexIndex %u, NumVertices %u "
         "PrimitiveCount %u, pIndexData %p, IndexDataFormat %u "
@@ -2906,38 +2912,38 @@ NineDevice9_DrawIndexedPrimitiveUP( struct NineDevice9 *This,
 
     vbuf.stride = VertexStreamZeroStride;
     vbuf.buffer_offset = 0;
-    vbuf.buffer = NULL;
-    vbuf.user_buffer = pVertexStreamZeroData;
+    vbuf.is_user_buffer = true;
+    vbuf.buffer.user = pVertexStreamZeroData;
 
-    ibuf.index_size = (IndexDataFormat == D3DFMT_INDEX16) ? 2 : 4;
-    ibuf.offset = 0;
-    ibuf.buffer = NULL;
-    ibuf.user_buffer = pIndexData;
+    unsigned index_size = (IndexDataFormat == D3DFMT_INDEX16) ? 2 : 4;
+    struct pipe_resource *ibuf = NULL;
 
     if (!This->driver_caps.user_vbufs) {
         const unsigned base = MinVertexIndex * VertexStreamZeroStride;
+        vbuf.is_user_buffer = false;
+        vbuf.buffer.resource = NULL;
         u_upload_data(This->vertex_uploader,
                       base,
                       NumVertices * VertexStreamZeroStride, /* XXX */
                       4,
-                      (const uint8_t *)vbuf.user_buffer + base,
+                      (const uint8_t *)pVertexStreamZeroData + base,
                       &vbuf.buffer_offset,
-                      &vbuf.buffer);
+                      &vbuf.buffer.resource);
         u_upload_unmap(This->vertex_uploader);
         /* Won't be used: */
         vbuf.buffer_offset -= base;
-        vbuf.user_buffer = NULL;
     }
-    if (!This->driver_caps.user_ibufs) {
-        u_upload_data(This->index_uploader,
+
+    unsigned index_offset = 0;
+    if (This->csmt_active) {
+        u_upload_data(This->pipe_secondary->stream_uploader,
                       0,
-                      (prim_count_to_vertex_count(PrimitiveType, PrimitiveCount)) * ibuf.index_size,
+                      (prim_count_to_vertex_count(PrimitiveType, PrimitiveCount)) * index_size,
                       4,
-                      ibuf.user_buffer,
-                      &ibuf.offset,
-                      &ibuf.buffer);
-        u_upload_unmap(This->index_uploader);
-        ibuf.user_buffer = NULL;
+                      pIndexData,
+                      &index_offset,
+                      &ibuf);
+        u_upload_unmap(This->pipe_secondary->stream_uploader);
     }
 
     NineBeforeDraw(This);
@@ -2946,11 +2952,14 @@ NineDevice9_DrawIndexedPrimitiveUP( struct NineDevice9 *This,
                                                            NumVertices,
                                                            PrimitiveCount,
                                                            &vbuf,
-                                                           &ibuf);
+                                                           ibuf,
+                                                           ibuf ? NULL : (void*)pIndexData,
+                                                           index_offset,
+                                                           index_size);
     NineAfterDraw(This);
 
-    pipe_resource_reference(&vbuf.buffer, NULL);
-    pipe_resource_reference(&ibuf.buffer, NULL);
+    pipe_vertex_buffer_unreference(&vbuf);
+    pipe_resource_reference(&ibuf, NULL);
 
     NineDevice9_PauseRecording(This);
     NineDevice9_SetIndices(This, NULL);
@@ -3043,7 +3052,7 @@ NineDevice9_ProcessVertices( struct NineDevice9 *This,
         templ.bind = PIPE_BIND_STREAM_OUTPUT;
         templ.usage = PIPE_USAGE_STREAM;
         templ.height0 = templ.depth0 = templ.array_size = 1;
-        templ.last_level = templ.nr_samples = 0;
+        templ.last_level = templ.nr_samples = templ.nr_storage_samples = 0;
 
         resource = screen_sw->resource_create(screen_sw, &templ);
         if (!resource)
@@ -3063,9 +3072,8 @@ NineDevice9_ProcessVertices( struct NineDevice9 *This,
     draw.restart_index = 0;
     draw.count_from_stream_output = NULL;
     draw.indirect = NULL;
-    draw.indirect_params = NULL;
     draw.instance_count = 1;
-    draw.indexed = FALSE;
+    draw.index_size = 0;
     draw.start = 0;
     draw.index_bias = 0;
     draw.min_index = 0;
@@ -3534,8 +3542,6 @@ NineDevice9_SetStreamSourceFreq( struct NineDevice9 *This,
     if (unlikely(This->is_recording)) {
         state->stream_freq[StreamNumber] = Setting;
         state->changed.stream_freq |= 1 << StreamNumber;
-        if (StreamNumber != 0)
-            state->changed.group |= NINE_STATE_STREAMFREQ;
         return D3D_OK;
     }
 
@@ -3624,11 +3630,8 @@ NineDevice9_SetPixelShader( struct NineDevice9 *This,
     DBG("This=%p pShader=%p\n", This, pShader);
 
     if (unlikely(This->is_recording)) {
-        /* Technically we need NINE_STATE_FB only
-         * if the ps mask changes, but put it always
-         * to be safe */
         nine_bind(&state->ps, pShader);
-        state->changed.group |= NINE_STATE_PS | NINE_STATE_FB;
+        state->changed.group |= NINE_STATE_PS;
         return D3D_OK;
     }
 

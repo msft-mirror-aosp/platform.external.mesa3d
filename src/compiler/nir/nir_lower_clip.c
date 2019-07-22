@@ -31,7 +31,7 @@
 
 /* Generates the lowering code for user-clip-planes, generating CLIPDIST
  * from UCP[n] + CLIPVERTEX or POSITION.  Additionally, an optional pass
- * for fragment shaders to insert conditional kill's based on the inter-
+ * for fragment shaders to insert conditional kills based on the inter-
  * polated CLIPDIST
  *
  * NOTE: should be run after nir_lower_outputs_to_temporaries() (or at
@@ -107,7 +107,7 @@ find_output_in_block(nir_block *block, unsigned drvloc)
          if ((intr->intrinsic == nir_intrinsic_store_output) &&
              nir_intrinsic_base(intr) == drvloc) {
             assert(intr->src[0].is_ssa);
-            assert(nir_src_as_const_value(intr->src[1]));
+            assert(nir_src_is_const(intr->src[1]));
             return intr->src[0].ssa;
          }
       }
@@ -150,12 +150,26 @@ find_output(nir_shader *shader, unsigned drvloc)
  * VS lowering
  */
 
-static void
-lower_clip_vs(nir_function_impl *impl, unsigned ucp_enables,
-              nir_ssa_def *cv, nir_variable **out)
+/* ucp_enables is bitmask of enabled ucps.  Actual ucp values are
+ * passed in to shader via user_clip_plane system-values
+ *
+ * If use_vars is true, the pass will use variable loads and stores instead
+ * of working with store_output intrinsics.
+ */
+bool
+nir_lower_clip_vs(nir_shader *shader, unsigned ucp_enables, bool use_vars)
 {
+   nir_function_impl *impl = nir_shader_get_entrypoint(shader);
    nir_ssa_def *clipdist[MAX_CLIP_PLANES];
    nir_builder b;
+   int maxloc = -1;
+   nir_variable *position = NULL;
+   nir_variable *clipvertex = NULL;
+   nir_ssa_def *cv;
+   nir_variable *out[2] = { NULL };
+
+   if (!ucp_enables)
+      return false;
 
    nir_builder_init(&b, impl);
 
@@ -163,7 +177,7 @@ lower_clip_vs(nir_function_impl *impl, unsigned ucp_enables,
     * should be only a single predecessor block to end_block, which
     * makes the perfect place to insert the clipdist calculations.
     *
-    * NOTE: in case of early return's, these would have to be lowered
+    * NOTE: in case of early returns, these would have to be lowered
     * to jumps to end_block predecessor in a previous pass.  Not sure
     * if there is a good way to sanity check this, but for now the
     * users of this pass don't support sub-routines.
@@ -171,76 +185,44 @@ lower_clip_vs(nir_function_impl *impl, unsigned ucp_enables,
    assert(impl->end_block->predecessors->entries == 1);
    b.cursor = nir_after_cf_list(&impl->body);
 
-   for (int plane = 0; plane < MAX_CLIP_PLANES; plane++) {
-      if (ucp_enables & (1 << plane)) {
-         nir_ssa_def *ucp =
-            nir_load_system_value(&b, nir_intrinsic_load_user_clip_plane, plane);
-
-         /* calculate clipdist[plane] - dot(ucp, cv): */
-         clipdist[plane] = nir_fdot4(&b, ucp, cv);
-      }
-      else {
-         /* 0.0 == don't-clip == disabled: */
-         clipdist[plane] = nir_imm_float(&b, 0.0);
-      }
-   }
-
-   if (ucp_enables & 0x0f)
-      store_clipdist_output(&b, out[0], &clipdist[0]);
-   if (ucp_enables & 0xf0)
-      store_clipdist_output(&b, out[1], &clipdist[4]);
-
-   nir_metadata_preserve(impl, nir_metadata_dominance);
-}
-
-/* ucp_enables is bitmask of enabled ucp's.  Actual ucp values are
- * passed in to shader via user_clip_plane system-values
- */
-void
-nir_lower_clip_vs(nir_shader *shader, unsigned ucp_enables)
-{
-   int clipvertex = -1;
-   int position = -1;
-   int maxloc = -1;
-   nir_ssa_def *cv;
-   nir_variable *out[2] = { NULL };
-
-   if (!ucp_enables)
-      return;
-
    /* find clipvertex/position outputs: */
    nir_foreach_variable(var, &shader->outputs) {
-      int loc = var->data.driver_location;
-
-      /* keep track of last used driver-location.. we'll be
-       * appending CLIP_DIST0/CLIP_DIST1 after last existing
-       * output:
-       */
-      maxloc = MAX2(maxloc, loc);
-
       switch (var->data.location) {
       case VARYING_SLOT_POS:
-         position = loc;
+         position = var;
          break;
       case VARYING_SLOT_CLIP_VERTEX:
-         clipvertex = loc;
+         clipvertex = var;
          break;
       case VARYING_SLOT_CLIP_DIST0:
       case VARYING_SLOT_CLIP_DIST1:
          /* if shader is already writing CLIPDIST, then
           * there should be no user-clip-planes to deal
           * with.
+          *
+          * We assume nir_remove_dead_variables has removed the clipdist
+          * variables if they're not written.
           */
-         return;
+         return false;
       }
    }
 
-   if (clipvertex != -1)
-      cv = find_output(shader, clipvertex);
-   else if (position != -1)
-      cv = find_output(shader, position);
-   else
-      return;
+   if (use_vars) {
+      cv = nir_load_var(&b, clipvertex ? clipvertex : position);
+
+      if (clipvertex) {
+         exec_node_remove(&clipvertex->node);
+         clipvertex->data.mode = nir_var_shader_temp;
+         exec_list_push_tail(&shader->globals, &clipvertex->node);
+      }
+   } else {
+      if (clipvertex)
+         cv = find_output(shader, clipvertex->data.driver_location);
+      else if (position)
+         cv = find_output(shader, position->data.driver_location);
+      else
+         return false;
+   }
 
    /* insert CLIPDIST outputs: */
    if (ucp_enables & 0x0f)
@@ -250,10 +232,33 @@ nir_lower_clip_vs(nir_shader *shader, unsigned ucp_enables)
       out[1] =
          create_clipdist_var(shader, ++maxloc, true, VARYING_SLOT_CLIP_DIST1);
 
-   nir_foreach_function(function, shader) {
-      if (!strcmp(function->name, "main"))
-         lower_clip_vs(function->impl, ucp_enables, cv, out);
+   for (int plane = 0; plane < MAX_CLIP_PLANES; plane++) {
+      if (ucp_enables & (1 << plane)) {
+         nir_ssa_def *ucp = nir_load_user_clip_plane(&b, plane);
+
+         /* calculate clipdist[plane] - dot(ucp, cv): */
+         clipdist[plane] = nir_fdot4(&b, ucp, cv);
+      } else {
+         /* 0.0 == don't-clip == disabled: */
+         clipdist[plane] = nir_imm_float(&b, 0.0);
+      }
    }
+
+   if (use_vars) {
+      if (ucp_enables & 0x0f)
+         nir_store_var(&b, out[0], nir_vec(&b, clipdist, 4), 0xf);
+      if (ucp_enables & 0xf0)
+         nir_store_var(&b, out[1], nir_vec(&b, &clipdist[4], 4), 0xf);
+   } else {
+      if (ucp_enables & 0x0f)
+         store_clipdist_output(&b, out[0], &clipdist[0]);
+      if (ucp_enables & 0xf0)
+         store_clipdist_output(&b, out[1], &clipdist[4]);
+   }
+
+   nir_metadata_preserve(impl, nir_metadata_dominance);
+
+   return true;
 }
 
 /*
@@ -287,21 +292,23 @@ lower_clip_fs(nir_function_impl *impl, unsigned ucp_enables,
          discard->src[0] = nir_src_for_ssa(cond);
          nir_builder_instr_insert(&b, &discard->instr);
 
-         b.shader->info->fs.uses_discard = true;
+         b.shader->info.fs.uses_discard = true;
       }
    }
+
+   nir_metadata_preserve(impl, nir_metadata_dominance);
 }
 
 /* insert conditional kill based on interpolated CLIPDIST
  */
-void
+bool
 nir_lower_clip_fs(nir_shader *shader, unsigned ucp_enables)
 {
    nir_variable *in[2];
    int maxloc = -1;
 
    if (!ucp_enables)
-      return;
+      return false;
 
    nir_foreach_variable(var, &shader->inputs) {
       int loc = var->data.driver_location;
@@ -330,4 +337,6 @@ nir_lower_clip_fs(nir_shader *shader, unsigned ucp_enables)
       if (!strcmp(function->name, "main"))
          lower_clip_fs(function->impl, ucp_enables, in);
    }
+
+   return true;
 }

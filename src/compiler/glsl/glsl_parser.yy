@@ -97,6 +97,7 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
 
 %union {
    int n;
+   int64_t n64;
    float real;
    double dreal;
    const char *identifier;
@@ -131,40 +132,17 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
       ast_node *then_statement;
       ast_node *else_statement;
    } selection_rest_statement;
+
+   const glsl_type *type;
 }
 
-%token ATTRIBUTE CONST_TOK BOOL_TOK FLOAT_TOK INT_TOK UINT_TOK DOUBLE_TOK
+%token ATTRIBUTE CONST_TOK
+%token <type> BASIC_TYPE_TOK
 %token BREAK BUFFER CONTINUE DO ELSE FOR IF DISCARD RETURN SWITCH CASE DEFAULT
-%token BVEC2 BVEC3 BVEC4 IVEC2 IVEC3 IVEC4 UVEC2 UVEC3 UVEC4 VEC2 VEC3 VEC4 DVEC2 DVEC3 DVEC4
 %token CENTROID IN_TOK OUT_TOK INOUT_TOK UNIFORM VARYING SAMPLE
 %token NOPERSPECTIVE FLAT SMOOTH
-%token MAT2X2 MAT2X3 MAT2X4
-%token MAT3X2 MAT3X3 MAT3X4
-%token MAT4X2 MAT4X3 MAT4X4
-%token DMAT2X2 DMAT2X3 DMAT2X4
-%token DMAT3X2 DMAT3X3 DMAT3X4
-%token DMAT4X2 DMAT4X3 DMAT4X4
-%token SAMPLER1D SAMPLER2D SAMPLER3D SAMPLERCUBE SAMPLER1DSHADOW SAMPLER2DSHADOW
-%token SAMPLERCUBESHADOW SAMPLER1DARRAY SAMPLER2DARRAY SAMPLER1DARRAYSHADOW
-%token SAMPLER2DARRAYSHADOW SAMPLERCUBEARRAY SAMPLERCUBEARRAYSHADOW
-%token ISAMPLER1D ISAMPLER2D ISAMPLER3D ISAMPLERCUBE
-%token ISAMPLER1DARRAY ISAMPLER2DARRAY ISAMPLERCUBEARRAY
-%token USAMPLER1D USAMPLER2D USAMPLER3D USAMPLERCUBE USAMPLER1DARRAY
-%token USAMPLER2DARRAY USAMPLERCUBEARRAY
-%token SAMPLER2DRECT ISAMPLER2DRECT USAMPLER2DRECT SAMPLER2DRECTSHADOW
-%token SAMPLERBUFFER ISAMPLERBUFFER USAMPLERBUFFER
-%token SAMPLER2DMS ISAMPLER2DMS USAMPLER2DMS
-%token SAMPLER2DMSARRAY ISAMPLER2DMSARRAY USAMPLER2DMSARRAY
-%token SAMPLEREXTERNALOES
-%token IMAGE1D IMAGE2D IMAGE3D IMAGE2DRECT IMAGECUBE IMAGEBUFFER
-%token IMAGE1DARRAY IMAGE2DARRAY IMAGECUBEARRAY IMAGE2DMS IMAGE2DMSARRAY
-%token IIMAGE1D IIMAGE2D IIMAGE3D IIMAGE2DRECT IIMAGECUBE IIMAGEBUFFER
-%token IIMAGE1DARRAY IIMAGE2DARRAY IIMAGECUBEARRAY IIMAGE2DMS IIMAGE2DMSARRAY
-%token UIMAGE1D UIMAGE2D UIMAGE3D UIMAGE2DRECT UIMAGECUBE UIMAGEBUFFER
-%token UIMAGE1DARRAY UIMAGE2DARRAY UIMAGECUBEARRAY UIMAGE2DMS UIMAGE2DMSARRAY
 %token IMAGE1DSHADOW IMAGE2DSHADOW IMAGE1DARRAYSHADOW IMAGE2DARRAYSHADOW
 %token COHERENT VOLATILE RESTRICT READONLY WRITEONLY
-%token ATOMIC_UINT
 %token SHARED
 %token STRUCT VOID_TOK WHILE
 %token <identifier> IDENTIFIER TYPE_IDENTIFIER NEW_IDENTIFIER
@@ -173,6 +151,7 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
 %token <real> FLOATCONSTANT
 %token <dreal> DOUBLECONSTANT
 %token <n> INTCONSTANT UINTCONSTANT BOOLCONSTANT
+%token <n64> INT64CONSTANT UINT64CONSTANT
 %token <identifier> FIELD_SELECTION
 %token LEFT_OP RIGHT_OP
 %token INC_OP DEC_OP LE_OP GE_OP EQ_OP NE_OP
@@ -185,6 +164,7 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
 %token VERSION_TOK EXTENSION LINE COLON EOL INTERFACE OUTPUT
 %token PRAGMA_DEBUG_ON PRAGMA_DEBUG_OFF
 %token PRAGMA_OPTIMIZE_ON PRAGMA_OPTIMIZE_OFF
+%token PRAGMA_WARNING_ON PRAGMA_WARNING_OFF
 %token PRAGMA_INVARIANT_ALL
 %token LAYOUT_TOK
 %token DOT_TOK
@@ -222,7 +202,7 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
 %type <type_specifier> type_specifier
 %type <type_specifier> type_specifier_nonarray
 %type <array_specifier> array_specifier
-%type <identifier> basic_type_specifier_nonarray
+%type <type> basic_type_specifier_nonarray
 %type <fully_specified_type> fully_specified_type
 %type <function> function_prototype
 %type <function> function_header
@@ -267,6 +247,7 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
 %type <n> unary_operator
 %type <expression> function_identifier
 %type <node> external_declaration
+%type <node> pragma_statement
 %type <declarator_list> init_declarator_list
 %type <declarator_list> single_declaration
 %type <expression> initializer
@@ -349,10 +330,10 @@ version_statement:
    ;
 
 pragma_statement:
-   PRAGMA_DEBUG_ON EOL
-   | PRAGMA_DEBUG_OFF EOL
-   | PRAGMA_OPTIMIZE_ON EOL
-   | PRAGMA_OPTIMIZE_OFF EOL
+   PRAGMA_DEBUG_ON EOL { $$ = NULL; }
+   | PRAGMA_DEBUG_OFF EOL { $$ = NULL; }
+   | PRAGMA_OPTIMIZE_ON EOL { $$ = NULL; }
+   | PRAGMA_OPTIMIZE_OFF EOL { $$ = NULL; }
    | PRAGMA_INVARIANT_ALL EOL
    {
       /* Pragma invariant(all) cannot be used in a fragment shader.
@@ -374,6 +355,18 @@ pragma_statement:
       } else {
          state->all_invariant = true;
       }
+
+      $$ = NULL;
+   }
+   | PRAGMA_WARNING_ON EOL
+   {
+      void *mem_ctx = state->linalloc;
+      $$ = new(mem_ctx) ast_warnings_toggle(true);
+   }
+   | PRAGMA_WARNING_OFF EOL
+   {
+      void *mem_ctx = state->linalloc;
+      $$ = new(mem_ctx) ast_warnings_toggle(false);
    }
    ;
 
@@ -450,6 +443,20 @@ primary_expression:
       $$ = new(ctx) ast_expression(ast_uint_constant, NULL, NULL, NULL);
       $$->set_location(@1);
       $$->primary_expression.uint_constant = $1;
+   }
+   | INT64CONSTANT
+   {
+      void *ctx = state->linalloc;
+      $$ = new(ctx) ast_expression(ast_int64_constant, NULL, NULL, NULL);
+      $$->set_location(@1);
+      $$->primary_expression.int64_constant = $1;
+   }
+   | UINT64CONSTANT
+   {
+      void *ctx = state->linalloc;
+      $$ = new(ctx) ast_expression(ast_uint64_constant, NULL, NULL, NULL);
+      $$->set_location(@1);
+      $$->primary_expression.uint64_constant = $1;
    }
    | FLOATCONSTANT
    {
@@ -883,7 +890,7 @@ function_header:
       $$->return_type = $1;
       $$->identifier = $2;
 
-      if ($1->qualifier.flags.q.subroutine) {
+      if ($1->qualifier.is_subroutine_decl()) {
          /* add type for IDENTIFIER search */
          state->symbols->add_type($2, glsl_type::get_subroutine_instance($2));
       } else
@@ -903,6 +910,23 @@ parameter_declarator:
       $$->type->specifier = $1;
       $$->identifier = $2;
       state->symbols->add_variable(new(state) ir_variable(NULL, $2, ir_var_auto));
+   }
+   | layout_qualifier type_specifier any_identifier
+   {
+      if (state->allow_layout_qualifier_on_function_parameter) {
+         void *ctx = state->linalloc;
+         $$ = new(ctx) ast_parameter_declarator();
+         $$->set_location_range(@2, @3);
+         $$->type = new(ctx) ast_fully_specified_type();
+         $$->type->set_location(@2);
+         $$->type->specifier = $2;
+         $$->identifier = $3;
+         state->symbols->add_variable(new(state) ir_variable(NULL, $3, ir_var_auto));
+      } else {
+         _mesa_glsl_error(&@1, state,
+                          "is is not allowed on function parameter");
+         YYERROR;
+      }
    }
    | type_specifier any_identifier array_specifier
    {
@@ -1210,14 +1234,18 @@ layout_qualifier_id:
            state->ARB_conservative_depth_enable ||
            state->is_version(420, 0))) {
          if (match_layout_qualifier($1, "depth_any", state) == 0) {
-            $$.flags.q.depth_any = 1;
+            $$.flags.q.depth_type = 1;
+            $$.depth_type = ast_depth_any;
          } else if (match_layout_qualifier($1, "depth_greater", state) == 0) {
-            $$.flags.q.depth_greater = 1;
+            $$.flags.q.depth_type = 1;
+            $$.depth_type = ast_depth_greater;
          } else if (match_layout_qualifier($1, "depth_less", state) == 0) {
-            $$.flags.q.depth_less = 1;
+            $$.flags.q.depth_type = 1;
+            $$.depth_type = ast_depth_less;
          } else if (match_layout_qualifier($1, "depth_unchanged",
                                            state) == 0) {
-            $$.flags.q.depth_unchanged = 1;
+            $$.flags.q.depth_type = 1;
+            $$.depth_type = ast_depth_unchanged;
          }
 
          if ($$.flags.i && state->AMD_conservative_depth_warn) {
@@ -1301,8 +1329,7 @@ layout_qualifier_id:
       }
 
       /* Layout qualifiers for ARB_shader_image_load_store. */
-      if (state->ARB_shader_image_load_store_enable ||
-          state->is_version(420, 310)) {
+      if (state->has_shader_image_load_store()) {
          if (!$$.flags.i) {
             static const struct {
                const char *name;
@@ -1344,18 +1371,18 @@ layout_qualifier_id:
                { "r32i", GL_R32I, GLSL_TYPE_INT, 130, 310, false },
                { "r16i", GL_R16I, GLSL_TYPE_INT, 130, 0, true },
                { "r8i", GL_R8I, GLSL_TYPE_INT, 130, 0, true },
-               { "rgba16", GL_RGBA16, GLSL_TYPE_FLOAT, 130, 0, false },
+               { "rgba16", GL_RGBA16, GLSL_TYPE_FLOAT, 130, 0, true },
                { "rgb10_a2", GL_RGB10_A2, GLSL_TYPE_FLOAT, 130, 0, true },
                { "rgba8", GL_RGBA8, GLSL_TYPE_FLOAT, 130, 310, false },
-               { "rg16", GL_RG16, GLSL_TYPE_FLOAT, 130, 0, false },
+               { "rg16", GL_RG16, GLSL_TYPE_FLOAT, 130, 0, true },
                { "rg8", GL_RG8, GLSL_TYPE_FLOAT, 130, 0, true },
-               { "r16", GL_R16, GLSL_TYPE_FLOAT, 130, 0, false },
+               { "r16", GL_R16, GLSL_TYPE_FLOAT, 130, 0, true },
                { "r8", GL_R8, GLSL_TYPE_FLOAT, 130, 0, true },
-               { "rgba16_snorm", GL_RGBA16_SNORM, GLSL_TYPE_FLOAT, 130, 0, false },
+               { "rgba16_snorm", GL_RGBA16_SNORM, GLSL_TYPE_FLOAT, 130, 0, true },
                { "rgba8_snorm", GL_RGBA8_SNORM, GLSL_TYPE_FLOAT, 130, 310, false },
-               { "rg16_snorm", GL_RG16_SNORM, GLSL_TYPE_FLOAT, 130, 0, false },
+               { "rg16_snorm", GL_RG16_SNORM, GLSL_TYPE_FLOAT, 130, 0, true },
                { "rg8_snorm", GL_RG8_SNORM, GLSL_TYPE_FLOAT, 130, 0, true },
-               { "r16_snorm", GL_R16_SNORM, GLSL_TYPE_FLOAT, 130, 0, false },
+               { "r16_snorm", GL_R16_SNORM, GLSL_TYPE_FLOAT, 130, 0, true },
                { "r8_snorm", GL_R8_SNORM, GLSL_TYPE_FLOAT, 130, 0, true }
             };
 
@@ -1434,6 +1461,38 @@ layout_qualifier_id:
                              "post_depth_coverage & inner_coverage layout qualifiers "
                              "are mutually exclusive");
          }
+      }
+
+      const bool pixel_interlock_ordered = match_layout_qualifier($1,
+         "pixel_interlock_ordered", state) == 0;
+      const bool pixel_interlock_unordered = match_layout_qualifier($1,
+         "pixel_interlock_unordered", state) == 0;
+      const bool sample_interlock_ordered = match_layout_qualifier($1,
+         "sample_interlock_ordered", state) == 0;
+      const bool sample_interlock_unordered = match_layout_qualifier($1,
+         "sample_interlock_unordered", state) == 0;
+
+      if (pixel_interlock_ordered + pixel_interlock_unordered +
+          sample_interlock_ordered + sample_interlock_unordered > 0 &&
+          state->stage != MESA_SHADER_FRAGMENT) {
+         _mesa_glsl_error(& @1, state, "interlock layout qualifiers: "
+                          "pixel_interlock_ordered, pixel_interlock_unordered, "
+                          "sample_interlock_ordered and sample_interlock_unordered, "
+                          "only valid in fragment shader input layout declaration.");
+      } else if (pixel_interlock_ordered + pixel_interlock_unordered +
+                 sample_interlock_ordered + sample_interlock_unordered > 0 &&
+                 !state->ARB_fragment_shader_interlock_enable &&
+                 !state->NV_fragment_shader_interlock_enable) {
+         _mesa_glsl_error(& @1, state,
+                          "interlock layout qualifier present, but the "
+                          "GL_ARB_fragment_shader_interlock or "
+                          "GL_NV_fragment_shader_interlock extension is not "
+                          "enabled.");
+      } else {
+         $$.flags.q.pixel_interlock_ordered = pixel_interlock_ordered;
+         $$.flags.q.pixel_interlock_unordered = pixel_interlock_unordered;
+         $$.flags.q.sample_interlock_ordered = sample_interlock_ordered;
+         $$.flags.q.sample_interlock_unordered = sample_interlock_unordered;
       }
 
       /* Layout qualifiers for tessellation evaluation shaders. */
@@ -1566,6 +1625,64 @@ layout_qualifier_id:
             _mesa_glsl_error(& @1, state,
                              "qualifier `local_size_variable` requires "
                              "ARB_compute_variable_group_size");
+         }
+      }
+
+      /* Layout qualifiers for ARB_bindless_texture. */
+      if (!$$.flags.i) {
+         if (match_layout_qualifier($1, "bindless_sampler", state) == 0)
+            $$.flags.q.bindless_sampler = 1;
+         if (match_layout_qualifier($1, "bound_sampler", state) == 0)
+            $$.flags.q.bound_sampler = 1;
+
+         if (state->has_shader_image_load_store()) {
+            if (match_layout_qualifier($1, "bindless_image", state) == 0)
+               $$.flags.q.bindless_image = 1;
+            if (match_layout_qualifier($1, "bound_image", state) == 0)
+               $$.flags.q.bound_image = 1;
+         }
+
+         if ($$.flags.i && !state->has_bindless()) {
+            _mesa_glsl_error(& @1, state,
+                             "qualifier `%s` requires "
+                             "ARB_bindless_texture", $1);
+         }
+      }
+
+      if (!$$.flags.i &&
+          state->EXT_shader_framebuffer_fetch_non_coherent_enable) {
+         if (match_layout_qualifier($1, "noncoherent", state) == 0)
+            $$.flags.q.non_coherent = 1;
+      }
+
+      // Layout qualifiers for NV_compute_shader_derivatives.
+      if (!$$.flags.i) {
+         if (match_layout_qualifier($1, "derivative_group_quadsNV", state) == 0) {
+            $$.flags.q.derivative_group = 1;
+            $$.derivative_group = DERIVATIVE_GROUP_QUADS;
+         } else if (match_layout_qualifier($1, "derivative_group_linearNV", state) == 0) {
+            $$.flags.q.derivative_group = 1;
+            $$.derivative_group = DERIVATIVE_GROUP_LINEAR;
+         }
+
+         if ($$.flags.i) {
+            if (!state->has_compute_shader()) {
+               _mesa_glsl_error(& @1, state,
+                                "qualifier `%s' requires "
+                                "a compute shader", $1);
+            }
+
+            if (!state->NV_compute_shader_derivatives_enable) {
+               _mesa_glsl_error(& @1, state,
+                                "qualifier `%s' requires "
+                                "NV_compute_shader_derivatives", $1);
+            }
+
+            if (state->NV_compute_shader_derivatives_warn) {
+               _mesa_glsl_warning(& @1, state,
+                                  "NV_compute_shader_derivatives layout "
+                                  "qualifier `%s' used", $1);
+            }
          }
       }
 
@@ -1792,7 +1909,7 @@ subroutine_qualifier:
    | SUBROUTINE '(' subroutine_type_list ')'
    {
       memset(& $$, 0, sizeof($$));
-      $$.flags.q.subroutine_def = 1;
+      $$.flags.q.subroutine = 1;
       $$.subroutine_list = $3;
    }
    ;
@@ -1955,7 +2072,7 @@ type_qualifier:
                           "duplicate auxiliary storage qualifier (centroid or sample)");
       }
 
-      if (!state->has_420pack_or_es31() &&
+      if ((!state->has_420pack_or_es31() && !state->EXT_gpu_shader4_enable) &&
           ($2.flags.q.precise || $2.flags.q.invariant ||
            $2.has_interpolation() || $2.has_layout())) {
          _mesa_glsl_error(&@1, state, "auxiliary storage qualifiers must come "
@@ -1969,8 +2086,13 @@ type_qualifier:
       /* Section 4.3 of the GLSL 1.20 specification states:
        * "Variable declarations may have a storage qualifier specified..."
        *  1.30 clarifies this to "may have one storage qualifier".
+       *
+       * GL_EXT_gpu_shader4 allows "varying out" in fragment shaders.
        */
-      if ($2.has_storage())
+      if ($2.has_storage() &&
+          (!state->EXT_gpu_shader4_enable ||
+           state->stage != MESA_SHADER_FRAGMENT ||
+           !$1.flags.q.varying || !$2.flags.q.out))
          _mesa_glsl_error(&@1, state, "duplicate storage qualifier");
 
       if (!state->has_420pack_or_es31() &&
@@ -2190,120 +2312,17 @@ type_specifier_nonarray:
    ;
 
 basic_type_specifier_nonarray:
-   VOID_TOK                 { $$ = "void"; }
-   | FLOAT_TOK              { $$ = "float"; }
-   | DOUBLE_TOK             { $$ = "double"; }
-   | INT_TOK                { $$ = "int"; }
-   | UINT_TOK               { $$ = "uint"; }
-   | BOOL_TOK               { $$ = "bool"; }
-   | VEC2                   { $$ = "vec2"; }
-   | VEC3                   { $$ = "vec3"; }
-   | VEC4                   { $$ = "vec4"; }
-   | BVEC2                  { $$ = "bvec2"; }
-   | BVEC3                  { $$ = "bvec3"; }
-   | BVEC4                  { $$ = "bvec4"; }
-   | IVEC2                  { $$ = "ivec2"; }
-   | IVEC3                  { $$ = "ivec3"; }
-   | IVEC4                  { $$ = "ivec4"; }
-   | UVEC2                  { $$ = "uvec2"; }
-   | UVEC3                  { $$ = "uvec3"; }
-   | UVEC4                  { $$ = "uvec4"; }
-   | DVEC2                  { $$ = "dvec2"; }
-   | DVEC3                  { $$ = "dvec3"; }
-   | DVEC4                  { $$ = "dvec4"; }
-   | MAT2X2                 { $$ = "mat2"; }
-   | MAT2X3                 { $$ = "mat2x3"; }
-   | MAT2X4                 { $$ = "mat2x4"; }
-   | MAT3X2                 { $$ = "mat3x2"; }
-   | MAT3X3                 { $$ = "mat3"; }
-   | MAT3X4                 { $$ = "mat3x4"; }
-   | MAT4X2                 { $$ = "mat4x2"; }
-   | MAT4X3                 { $$ = "mat4x3"; }
-   | MAT4X4                 { $$ = "mat4"; }
-   | DMAT2X2                { $$ = "dmat2"; }
-   | DMAT2X3                { $$ = "dmat2x3"; }
-   | DMAT2X4                { $$ = "dmat2x4"; }
-   | DMAT3X2                { $$ = "dmat3x2"; }
-   | DMAT3X3                { $$ = "dmat3"; }
-   | DMAT3X4                { $$ = "dmat3x4"; }
-   | DMAT4X2                { $$ = "dmat4x2"; }
-   | DMAT4X3                { $$ = "dmat4x3"; }
-   | DMAT4X4                { $$ = "dmat4"; }
-   | SAMPLER1D              { $$ = "sampler1D"; }
-   | SAMPLER2D              { $$ = "sampler2D"; }
-   | SAMPLER2DRECT          { $$ = "sampler2DRect"; }
-   | SAMPLER3D              { $$ = "sampler3D"; }
-   | SAMPLERCUBE            { $$ = "samplerCube"; }
-   | SAMPLEREXTERNALOES     { $$ = "samplerExternalOES"; }
-   | SAMPLER1DSHADOW        { $$ = "sampler1DShadow"; }
-   | SAMPLER2DSHADOW        { $$ = "sampler2DShadow"; }
-   | SAMPLER2DRECTSHADOW    { $$ = "sampler2DRectShadow"; }
-   | SAMPLERCUBESHADOW      { $$ = "samplerCubeShadow"; }
-   | SAMPLER1DARRAY         { $$ = "sampler1DArray"; }
-   | SAMPLER2DARRAY         { $$ = "sampler2DArray"; }
-   | SAMPLER1DARRAYSHADOW   { $$ = "sampler1DArrayShadow"; }
-   | SAMPLER2DARRAYSHADOW   { $$ = "sampler2DArrayShadow"; }
-   | SAMPLERBUFFER          { $$ = "samplerBuffer"; }
-   | SAMPLERCUBEARRAY       { $$ = "samplerCubeArray"; }
-   | SAMPLERCUBEARRAYSHADOW { $$ = "samplerCubeArrayShadow"; }
-   | ISAMPLER1D             { $$ = "isampler1D"; }
-   | ISAMPLER2D             { $$ = "isampler2D"; }
-   | ISAMPLER2DRECT         { $$ = "isampler2DRect"; }
-   | ISAMPLER3D             { $$ = "isampler3D"; }
-   | ISAMPLERCUBE           { $$ = "isamplerCube"; }
-   | ISAMPLER1DARRAY        { $$ = "isampler1DArray"; }
-   | ISAMPLER2DARRAY        { $$ = "isampler2DArray"; }
-   | ISAMPLERBUFFER         { $$ = "isamplerBuffer"; }
-   | ISAMPLERCUBEARRAY      { $$ = "isamplerCubeArray"; }
-   | USAMPLER1D             { $$ = "usampler1D"; }
-   | USAMPLER2D             { $$ = "usampler2D"; }
-   | USAMPLER2DRECT         { $$ = "usampler2DRect"; }
-   | USAMPLER3D             { $$ = "usampler3D"; }
-   | USAMPLERCUBE           { $$ = "usamplerCube"; }
-   | USAMPLER1DARRAY        { $$ = "usampler1DArray"; }
-   | USAMPLER2DARRAY        { $$ = "usampler2DArray"; }
-   | USAMPLERBUFFER         { $$ = "usamplerBuffer"; }
-   | USAMPLERCUBEARRAY      { $$ = "usamplerCubeArray"; }
-   | SAMPLER2DMS            { $$ = "sampler2DMS"; }
-   | ISAMPLER2DMS           { $$ = "isampler2DMS"; }
-   | USAMPLER2DMS           { $$ = "usampler2DMS"; }
-   | SAMPLER2DMSARRAY       { $$ = "sampler2DMSArray"; }
-   | ISAMPLER2DMSARRAY      { $$ = "isampler2DMSArray"; }
-   | USAMPLER2DMSARRAY      { $$ = "usampler2DMSArray"; }
-   | IMAGE1D                { $$ = "image1D"; }
-   | IMAGE2D                { $$ = "image2D"; }
-   | IMAGE3D                { $$ = "image3D"; }
-   | IMAGE2DRECT            { $$ = "image2DRect"; }
-   | IMAGECUBE              { $$ = "imageCube"; }
-   | IMAGEBUFFER            { $$ = "imageBuffer"; }
-   | IMAGE1DARRAY           { $$ = "image1DArray"; }
-   | IMAGE2DARRAY           { $$ = "image2DArray"; }
-   | IMAGECUBEARRAY         { $$ = "imageCubeArray"; }
-   | IMAGE2DMS              { $$ = "image2DMS"; }
-   | IMAGE2DMSARRAY         { $$ = "image2DMSArray"; }
-   | IIMAGE1D               { $$ = "iimage1D"; }
-   | IIMAGE2D               { $$ = "iimage2D"; }
-   | IIMAGE3D               { $$ = "iimage3D"; }
-   | IIMAGE2DRECT           { $$ = "iimage2DRect"; }
-   | IIMAGECUBE             { $$ = "iimageCube"; }
-   | IIMAGEBUFFER           { $$ = "iimageBuffer"; }
-   | IIMAGE1DARRAY          { $$ = "iimage1DArray"; }
-   | IIMAGE2DARRAY          { $$ = "iimage2DArray"; }
-   | IIMAGECUBEARRAY        { $$ = "iimageCubeArray"; }
-   | IIMAGE2DMS             { $$ = "iimage2DMS"; }
-   | IIMAGE2DMSARRAY        { $$ = "iimage2DMSArray"; }
-   | UIMAGE1D               { $$ = "uimage1D"; }
-   | UIMAGE2D               { $$ = "uimage2D"; }
-   | UIMAGE3D               { $$ = "uimage3D"; }
-   | UIMAGE2DRECT           { $$ = "uimage2DRect"; }
-   | UIMAGECUBE             { $$ = "uimageCube"; }
-   | UIMAGEBUFFER           { $$ = "uimageBuffer"; }
-   | UIMAGE1DARRAY          { $$ = "uimage1DArray"; }
-   | UIMAGE2DARRAY          { $$ = "uimage2DArray"; }
-   | UIMAGECUBEARRAY        { $$ = "uimageCubeArray"; }
-   | UIMAGE2DMS             { $$ = "uimage2DMS"; }
-   | UIMAGE2DMSARRAY        { $$ = "uimage2DMSArray"; }
-   | ATOMIC_UINT            { $$ = "atomic_uint"; }
+   VOID_TOK                 { $$ = glsl_type::void_type; }
+   | BASIC_TYPE_TOK         { $$ = $1; }
+   | UNSIGNED BASIC_TYPE_TOK
+   {
+      if ($2 == glsl_type::int_type) {
+         $$ = glsl_type::uint_type;
+      } else {
+         _mesa_glsl_error(&@1, state,
+                          "\"unsigned\" is only allowed before \"int\"");
+      }
+   }
    ;
 
 precision_qualifier:
@@ -2328,14 +2347,22 @@ struct_specifier:
    STRUCT any_identifier '{' struct_declaration_list '}'
    {
       void *ctx = state->linalloc;
-      $$ = new(ctx) ast_struct_specifier(ctx, $2, $4);
+      $$ = new(ctx) ast_struct_specifier($2, $4);
       $$->set_location_range(@2, @5);
       state->symbols->add_type($2, glsl_type::void_type);
    }
    | STRUCT '{' struct_declaration_list '}'
    {
       void *ctx = state->linalloc;
-      $$ = new(ctx) ast_struct_specifier(ctx, NULL, $3);
+
+      /* All anonymous structs have the same name. This simplifies matching of
+       * globals whose type is an unnamed struct.
+       *
+       * It also avoids a memory leak when the same shader is compiled over and
+       * over again.
+       */
+      $$ = new(ctx) ast_struct_specifier("#anon_struct", $3);
+
       $$->set_location_range(@2, @4);
    }
    ;
@@ -2360,10 +2387,29 @@ struct_declaration:
       ast_fully_specified_type *const type = $1;
       type->set_location(@1);
 
-      if (type->qualifier.flags.i != 0)
-         _mesa_glsl_error(&@1, state,
-			  "only precision qualifiers may be applied to "
-			  "structure members");
+      if (state->has_bindless()) {
+         ast_type_qualifier input_layout_mask;
+
+         /* Allow to declare qualifiers for images. */
+         input_layout_mask.flags.i = 0;
+         input_layout_mask.flags.q.coherent = 1;
+         input_layout_mask.flags.q._volatile = 1;
+         input_layout_mask.flags.q.restrict_flag = 1;
+         input_layout_mask.flags.q.read_only = 1;
+         input_layout_mask.flags.q.write_only = 1;
+         input_layout_mask.flags.q.explicit_image_format = 1;
+
+         if ((type->qualifier.flags.i & ~input_layout_mask.flags.i) != 0) {
+            _mesa_glsl_error(&@1, state,
+                             "only precision and image qualifiers may be "
+                             "applied to structure members");
+         }
+      } else {
+         if (type->qualifier.flags.i != 0)
+            _mesa_glsl_error(&@1, state,
+                             "only precision qualifiers may be applied to "
+                             "structure members");
+      }
 
       $$ = new(ctx) ast_declarator_list(type);
       $$->set_location(@2);
@@ -2505,6 +2551,15 @@ statement_list:
       }
       $$ = $1;
       $$->link.insert_before(& $2->link);
+   }
+   | statement_list extension_statement
+   {
+      if (!state->allow_extension_directive_midshader) {
+         _mesa_glsl_error(& @1, state,
+                          "#extension directive is not allowed "
+                          "in the middle of a shader");
+         YYERROR;
+      }
    }
    ;
 
@@ -2736,8 +2791,9 @@ jump_statement:
 external_declaration:
    function_definition      { $$ = $1; }
    | declaration            { $$ = $1; }
-   | pragma_statement       { $$ = NULL; }
+   | pragma_statement       { $$ = $1; }
    | layout_defaults        { $$ = $1; }
+   | ';'                    { $$ = NULL; }
    ;
 
 function_definition:

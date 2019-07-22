@@ -36,14 +36,14 @@ LOCAL_C_INCLUDES += \
 	$(intermediates)/glsl \
 	$(intermediates)/glsl/glcpp \
 	$(LOCAL_PATH)/glsl \
-	$(LOCAL_PATH)/glsl/glcpp \
+	$(LOCAL_PATH)/glsl/glcpp
 
 LOCAL_GENERATED_SOURCES += $(addprefix $(intermediates)/, \
 	$(LIBGLCPP_GENERATED_FILES) \
 	$(LIBGLSL_GENERATED_FILES))
 
 LOCAL_EXPORT_C_INCLUDE_DIRS += \
-	$(intermediates)/glsl \
+	$(intermediates)/glsl
 
 # Modules using libmesa_nir must set LOCAL_GENERATED_SOURCES to this
 MESA_GEN_GLSL_H := $(addprefix $(call local-generated-sources-dir)/, \
@@ -91,8 +91,6 @@ $(intermediates)/glsl/glcpp/glcpp-lex.c: $(LOCAL_PATH)/glsl/glcpp/glcpp-lex.l
 $(intermediates)/glsl/glcpp/glcpp-parse.c: $(LOCAL_PATH)/glsl/glcpp/glcpp-parse.y
 	$(call glsl_local-y-to-c-and-h)
 
-$(LOCAL_PATH)/glsl/ir.h: $(intermediates)/glsl/ir_expression_operation.h
-
 $(intermediates)/glsl/ir_expression_operation.h: $(prebuilt_intermediates)/glsl/ir_expression_operation.h
 	cp -a $< $@
 
@@ -101,3 +99,7 @@ $(intermediates)/glsl/ir_expression_operation_constant.h: $(prebuilt_intermediat
 
 $(intermediates)/glsl/ir_expression_operation_strings.h: $(prebuilt_intermediates)/glsl/ir_expression_operation_strings.h
 	cp -a $< $@
+
+$(intermediates)/glsl/float64_glsl.h: $(LOCAL_PATH)/glsl/xxd.py
+	@mkdir -p $(dir $@)
+	$(hide) $(MESA_PYTHON2) $< $(MESA_TOP)/src/compiler/glsl/float64.glsl $@ -n float64_source > $@

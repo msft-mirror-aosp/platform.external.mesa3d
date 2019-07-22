@@ -29,22 +29,90 @@ include $(LOCAL_PATH)/Makefile.sources
 
 I965_PERGEN_COMMON_INCLUDES := \
 	$(MESA_DRI_C_INCLUDES) \
-	$(MESA_TOP)/src/intel
+	$(MESA_TOP)/src/intel \
+	$(MESA_TOP)/include
 
 I965_PERGEN_SHARED_LIBRARIES := \
-	$(MESA_DRI_SHARED_LIBRARIES) \
-	libdrm_intel
+	$(MESA_DRI_SHARED_LIBRARIES)
 
 I965_PERGEN_STATIC_LIBRARIES := \
 	libmesa_genxml \
 	libmesa_nir
 
 I965_PERGEN_LIBS := \
+	libmesa_i965_gen4 \
+	libmesa_i965_gen45 \
+	libmesa_i965_gen5 \
 	libmesa_i965_gen6 \
 	libmesa_i965_gen7 \
 	libmesa_i965_gen75 \
 	libmesa_i965_gen8 \
-	libmesa_i965_gen9
+	libmesa_i965_gen9 \
+	libmesa_i965_gen10 \
+	libmesa_i965_gen11
+
+# ---------------------------------------
+# Build libmesa_i965_gen4
+# ---------------------------------------
+
+include $(CLEAR_VARS)
+
+LOCAL_MODULE := libmesa_i965_gen4
+
+LOCAL_C_INCLUDES := $(I965_PERGEN_COMMON_INCLUDES)
+
+LOCAL_SRC_FILES := $(i965_gen4_FILES)
+
+LOCAL_SHARED_LIBRARIES := $(I965_PERGEN_SHARED_LIBRARIES)
+
+LOCAL_STATIC_LIBRARIES := $(I965_PERGEN_STATIC_LIBRARIES)
+
+LOCAL_CFLAGS := -DGEN_VERSIONx10=40
+
+include $(MESA_COMMON_MK)
+include $(BUILD_STATIC_LIBRARY)
+
+# ---------------------------------------
+# Build libmesa_i965_gen45
+# ---------------------------------------
+
+include $(CLEAR_VARS)
+
+LOCAL_MODULE := libmesa_i965_gen45
+
+LOCAL_C_INCLUDES := $(I965_PERGEN_COMMON_INCLUDES)
+
+LOCAL_SRC_FILES := $(i965_gen45_FILES)
+
+LOCAL_SHARED_LIBRARIES := $(I965_PERGEN_SHARED_LIBRARIES)
+
+LOCAL_STATIC_LIBRARIES := $(I965_PERGEN_STATIC_LIBRARIES)
+
+LOCAL_CFLAGS := -DGEN_VERSIONx10=45
+
+include $(MESA_COMMON_MK)
+include $(BUILD_STATIC_LIBRARY)
+
+# ---------------------------------------
+# Build libmesa_i965_gen5
+# ---------------------------------------
+
+include $(CLEAR_VARS)
+
+LOCAL_MODULE := libmesa_i965_gen5
+
+LOCAL_C_INCLUDES := $(I965_PERGEN_COMMON_INCLUDES)
+
+LOCAL_SRC_FILES := $(i965_gen5_FILES)
+
+LOCAL_SHARED_LIBRARIES := $(I965_PERGEN_SHARED_LIBRARIES)
+
+LOCAL_STATIC_LIBRARIES := $(I965_PERGEN_STATIC_LIBRARIES)
+
+LOCAL_CFLAGS := -DGEN_VERSIONx10=50
+
+include $(MESA_COMMON_MK)
+include $(BUILD_STATIC_LIBRARY)
 
 # ---------------------------------------
 # Build libmesa_i965_gen6
@@ -152,28 +220,44 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 # ---------------------------------------
-# Build libmesa_i965_compiler
+# Build libmesa_i965_gen10
 # ---------------------------------------
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := libmesa_i965_compiler
-LOCAL_MODULE_CLASS := STATIC_LIBRARIES
+LOCAL_MODULE := libmesa_i965_gen10
 
-LOCAL_SRC_FILES := \
-	$(i965_compiler_FILES)
+LOCAL_C_INCLUDES := $(I965_PERGEN_COMMON_INCLUDES)
 
-LOCAL_C_INCLUDES := \
-	$(MESA_DRI_C_INCLUDES) \
-	$(MESA_TOP)/src/intel \
-	$(MESA_TOP)/src/compiler/nir \
-	$(call generated-sources-dir-for,STATIC_LIBRARIES,libmesa_nir,,)/nir \
-	$(call generated-sources-dir-for,STATIC_LIBRARIES,libmesa_glsl,,)/glsl
+LOCAL_SRC_FILES := $(i965_gen10_FILES)
 
-LOCAL_SHARED_LIBRARIES := \
-	libdrm_intel
+LOCAL_SHARED_LIBRARIES := $(I965_PERGEN_SHARED_LIBRARIES)
 
-include $(LOCAL_PATH)/Android.gen.mk
+LOCAL_STATIC_LIBRARIES := $(I965_PERGEN_STATIC_LIBRARIES)
+
+LOCAL_CFLAGS := -DGEN_VERSIONx10=100
+
+include $(MESA_COMMON_MK)
+include $(BUILD_STATIC_LIBRARY)
+
+# ---------------------------------------
+# Build libmesa_i965_gen11
+# ---------------------------------------
+
+include $(CLEAR_VARS)
+
+LOCAL_MODULE := libmesa_i965_gen11
+
+LOCAL_C_INCLUDES := $(I965_PERGEN_COMMON_INCLUDES)
+
+LOCAL_SRC_FILES := $(i965_gen11_FILES)
+
+LOCAL_SHARED_LIBRARIES := $(I965_PERGEN_SHARED_LIBRARIES)
+
+LOCAL_STATIC_LIBRARIES := $(I965_PERGEN_STATIC_LIBRARIES)
+
+LOCAL_CFLAGS := -DGEN_VERSIONx10=110
+
 include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
@@ -185,17 +269,15 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE := i965_dri
 LOCAL_MODULE_RELATIVE_PATH := $(MESA_DRI_MODULE_REL_PATH)
+LOCAL_LDFLAGS += $(MESA_DRI_LDFLAGS)
 
 LOCAL_CFLAGS := \
 	$(MESA_DRI_CFLAGS)
 
-ifeq ($(ARCH_X86_HAVE_SSE4_1),true)
-LOCAL_CFLAGS += \
-	-DUSE_SSE41
-endif
-
 LOCAL_C_INCLUDES := \
-	$(MESA_DRI_C_INCLUDES)
+	$(MESA_DRI_C_INCLUDES) \
+	$(call generated-sources-dir-for,STATIC_LIBRARIES,libmesa_glsl,,) \
+	$(MESA_TOP)/include
 
 LOCAL_SRC_FILES := \
 	$(i965_FILES)
@@ -203,18 +285,44 @@ LOCAL_SRC_FILES := \
 LOCAL_WHOLE_STATIC_LIBRARIES := \
 	$(MESA_DRI_WHOLE_STATIC_LIBRARIES) \
 	$(I965_PERGEN_LIBS) \
+	libmesa_intel_dev \
 	libmesa_intel_common \
-	libmesa_blorp \
 	libmesa_isl \
-	libmesa_i965_compiler
+	libmesa_blorp \
+	libmesa_intel_compiler \
+	libmesa_intel_perf
+
+ifeq ($(ARCH_X86_HAVE_SSE4_1),true)
+LOCAL_CFLAGS += \
+	-DUSE_SSE41
+endif
 
 LOCAL_SHARED_LIBRARIES := \
-	$(MESA_DRI_SHARED_LIBRARIES) \
-	libdrm_intel
+	$(MESA_DRI_SHARED_LIBRARIES)
 
 LOCAL_GENERATED_SOURCES := \
 	$(MESA_DRI_OPTIONS_H) \
 	$(MESA_GEN_NIR_H)
+
+LOCAL_MODULE_CLASS := SHARED_LIBRARIES
+
+intermediates := $(call local-generated-sources-dir)
+
+LOCAL_GENERATED_SOURCES += $(addprefix $(intermediates)/, \
+	$(i965_oa_GENERATED_FILES))
+
+i965_oa_xml_FILES := $(addprefix $(MESA_TOP)/src/mesa/drivers/dri/i965/, \
+	$(i965_oa_xml_FILES))
+
+$(intermediates)/brw_oa_metrics.c: $(LOCAL_PATH)/brw_oa.py $(i965_oa_xml_FILES)
+	@echo "target Generated: $(PRIVATE_MODULE) <= $(notdir $(@))"
+	@mkdir -p $(dir $@)
+	$(hide) $(MESA_PYTHON2) $< \
+	--code=$@ \
+	--header=$(call generated-sources-dir-for,SHARED_LIBRARIES,i965_dri,,)/brw_oa_metrics.h \
+	$(i965_oa_xml_FILES)
+
+$(intermediates)/brw_oa_metrics.h: $(intermediates)/brw_oa_metrics.c
 
 include $(MESA_COMMON_MK)
 include $(BUILD_SHARED_LIBRARY)

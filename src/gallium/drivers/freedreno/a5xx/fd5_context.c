@@ -24,9 +24,12 @@
  *    Rob Clark <robclark@freedesktop.org>
  */
 
+#include "freedreno_query_acc.h"
 
 #include "fd5_context.h"
 #include "fd5_blend.h"
+#include "fd5_blitter.h"
+#include "fd5_compute.h"
 #include "fd5_draw.h"
 #include "fd5_emit.h"
 #include "fd5_gmem.h"
@@ -41,16 +44,16 @@ fd5_context_destroy(struct pipe_context *pctx)
 {
 	struct fd5_context *fd5_ctx = fd5_context(fd_context(pctx));
 
-	fd_bo_del(fd5_ctx->vs_pvt_mem);
-	fd_bo_del(fd5_ctx->fs_pvt_mem);
+	u_upload_destroy(fd5_ctx->border_color_uploader);
+
+	fd_context_destroy(pctx);
+
 	fd_bo_del(fd5_ctx->vsc_size_mem);
 	fd_bo_del(fd5_ctx->blit_mem);
 
 	fd_context_cleanup_common_vbos(&fd5_ctx->base);
 
-	u_upload_destroy(fd5_ctx->border_color_uploader);
-
-	fd_context_destroy(pctx);
+	free(fd5_ctx);
 }
 
 static const uint8_t primtypes[] = {
@@ -85,33 +88,33 @@ fd5_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
 	pctx->create_depth_stencil_alpha_state = fd5_zsa_state_create;
 
 	fd5_draw_init(pctx);
+	fd5_compute_init(pctx);
 	fd5_gmem_init(pctx);
 	fd5_texture_init(pctx);
 	fd5_prog_init(pctx);
 	fd5_emit_init(pctx);
 
-	pctx = fd_context_init(&fd5_ctx->base, pscreen, primtypes, priv);
+	if (!(fd_mesa_debug & FD_DBG_NOBLIT))
+		fd5_ctx->base.blit = fd5_blitter_blit;
+
+	pctx = fd_context_init(&fd5_ctx->base, pscreen, primtypes, priv, flags);
 	if (!pctx)
 		return NULL;
 
-	fd5_ctx->vs_pvt_mem = fd_bo_new(screen->dev, 0x2000,
-			DRM_FREEDRENO_GEM_TYPE_KMEM);
-
-	fd5_ctx->fs_pvt_mem = fd_bo_new(screen->dev, 0x2000,
-			DRM_FREEDRENO_GEM_TYPE_KMEM);
+	util_blitter_set_texture_multisample(fd5_ctx->base.blitter, true);
 
 	fd5_ctx->vsc_size_mem = fd_bo_new(screen->dev, 0x1000,
-			DRM_FREEDRENO_GEM_TYPE_KMEM);
+			DRM_FREEDRENO_GEM_TYPE_KMEM, "vsc_size");
 
 	fd5_ctx->blit_mem = fd_bo_new(screen->dev, 0x1000,
-			DRM_FREEDRENO_GEM_TYPE_KMEM);
+			DRM_FREEDRENO_GEM_TYPE_KMEM, "blit");
 
 	fd_context_setup_common_vbos(&fd5_ctx->base);
 
 	fd5_query_context_init(pctx);
 
 	fd5_ctx->border_color_uploader = u_upload_create(pctx, 4096, 0,
-                                                         PIPE_USAGE_STREAM);
+                                                         PIPE_USAGE_STREAM, 0);
 
 	return pctx;
 }

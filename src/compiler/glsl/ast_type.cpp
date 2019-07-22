@@ -44,7 +44,6 @@ ast_fully_specified_type::has_qualifiers(_mesa_glsl_parse_state *state) const
    ast_type_qualifier subroutine_only;
    subroutine_only.flags.i = 0;
    subroutine_only.flags.q.subroutine = 1;
-   subroutine_only.flags.q.subroutine_def = 1;
    if (state->has_explicit_uniform_location()) {
       subroutine_only.flags.q.explicit_index = 1;
    }
@@ -63,16 +62,17 @@ ast_type_qualifier::has_layout() const
 {
    return this->flags.q.origin_upper_left
           || this->flags.q.pixel_center_integer
-          || this->flags.q.depth_any
-          || this->flags.q.depth_greater
-          || this->flags.q.depth_less
-          || this->flags.q.depth_unchanged
+          || this->flags.q.depth_type
           || this->flags.q.std140
           || this->flags.q.std430
           || this->flags.q.shared
           || this->flags.q.column_major
           || this->flags.q.row_major
           || this->flags.q.packed
+          || this->flags.q.bindless_sampler
+          || this->flags.q.bindless_image
+          || this->flags.q.bound_sampler
+          || this->flags.q.bound_image
           || this->flags.q.explicit_align
           || this->flags.q.explicit_component
           || this->flags.q.explicit_location
@@ -114,6 +114,11 @@ bool ast_type_qualifier::has_memory() const
           || this->flags.q.restrict_flag
           || this->flags.q.read_only
           || this->flags.q.write_only;
+}
+
+bool ast_type_qualifier::is_subroutine_decl() const
+{
+   return this->flags.q.subroutine && !this->subroutine_list;
 }
 
 static bool
@@ -180,6 +185,30 @@ validate_point_mode(MAYBE_UNUSED const ast_type_qualifier &qualifier,
    return true;
 }
 
+static void
+merge_bindless_qualifier(_mesa_glsl_parse_state *state)
+{
+   if (state->default_uniform_qualifier->flags.q.bindless_sampler) {
+      state->bindless_sampler_specified = true;
+      state->default_uniform_qualifier->flags.q.bindless_sampler = false;
+   }
+
+   if (state->default_uniform_qualifier->flags.q.bindless_image) {
+      state->bindless_image_specified = true;
+      state->default_uniform_qualifier->flags.q.bindless_image = false;
+   }
+
+   if (state->default_uniform_qualifier->flags.q.bound_sampler) {
+      state->bound_sampler_specified = true;
+      state->default_uniform_qualifier->flags.q.bound_sampler = false;
+   }
+
+   if (state->default_uniform_qualifier->flags.q.bound_image) {
+      state->bound_image_specified = true;
+      state->default_uniform_qualifier->flags.q.bound_image = false;
+   }
+}
+
 /**
  * This function merges duplicate layout identifiers.
  *
@@ -241,6 +270,17 @@ ast_type_qualifier::merge_qualifier(YYLTYPE *loc,
    input_layout_mask.flags.q.precise = 1;
    input_layout_mask.flags.q.sample = 1;
    input_layout_mask.flags.q.smooth = 1;
+   input_layout_mask.flags.q.non_coherent = 1;
+
+   if (state->has_bindless()) {
+      /* Allow to use image qualifiers with shader inputs/outputs. */
+      input_layout_mask.flags.q.coherent = 1;
+      input_layout_mask.flags.q._volatile = 1;
+      input_layout_mask.flags.q.restrict_flag = 1;
+      input_layout_mask.flags.q.read_only = 1;
+      input_layout_mask.flags.q.write_only = 1;
+      input_layout_mask.flags.q.explicit_image_format = 1;
+   }
 
    /* Uniform block layout qualifiers get to overwrite each
     * other (rightmost having priority), while all other
@@ -288,8 +328,8 @@ ast_type_qualifier::merge_qualifier(YYLTYPE *loc,
       }
    }
 
-   if (q.flags.q.subroutine_def) {
-      if (this->flags.q.subroutine_def) {
+   if (q.subroutine_list) {
+      if (this->subroutine_list) {
          _mesa_glsl_error(loc, state,
                           "conflicting subroutine qualifiers used");
       } else {
@@ -392,6 +432,23 @@ ast_type_qualifier::merge_qualifier(YYLTYPE *loc,
    if (q.flags.q.local_size_variable)
       this->flags.q.local_size_variable = true;
 
+   if (q.flags.q.bindless_sampler)
+      this->flags.q.bindless_sampler = true;
+
+   if (q.flags.q.bindless_image)
+      this->flags.q.bindless_image = true;
+
+   if (q.flags.q.bound_sampler)
+      this->flags.q.bound_sampler = true;
+
+   if (q.flags.q.bound_image)
+      this->flags.q.bound_image = true;
+
+   if (q.flags.q.derivative_group) {
+      this->flags.q.derivative_group = true;
+      this->derivative_group = q.derivative_group;
+   }
+
    this->flags.i |= q.flags.i;
 
    if (this->flags.q.in &&
@@ -424,6 +481,19 @@ ast_type_qualifier::merge_qualifier(YYLTYPE *loc,
    if (q.flags.q.explicit_image_format) {
       this->image_format = q.image_format;
       this->image_base_type = q.image_base_type;
+   }
+
+   if (q.flags.q.bindless_sampler ||
+       q.flags.q.bindless_image ||
+       q.flags.q.bound_sampler ||
+       q.flags.q.bound_image)
+      merge_bindless_qualifier(state);
+
+   if (state->EXT_gpu_shader4_enable &&
+       state->stage == MESA_SHADER_FRAGMENT &&
+       this->flags.q.varying && q.flags.q.out) {
+      this->flags.q.varying = 0;
+      this->flags.q.out = 1;
    }
 
    return r;
@@ -579,10 +649,15 @@ ast_type_qualifier::validate_in_qualifier(YYLTYPE *loc,
       valid_in_mask.flags.q.early_fragment_tests = 1;
       valid_in_mask.flags.q.inner_coverage = 1;
       valid_in_mask.flags.q.post_depth_coverage = 1;
+      valid_in_mask.flags.q.pixel_interlock_ordered = 1;
+      valid_in_mask.flags.q.pixel_interlock_unordered = 1;
+      valid_in_mask.flags.q.sample_interlock_ordered = 1;
+      valid_in_mask.flags.q.sample_interlock_unordered = 1;
       break;
    case MESA_SHADER_COMPUTE:
       valid_in_mask.flags.q.local_size = 7;
       valid_in_mask.flags.q.local_size_variable = 1;
+      valid_in_mask.flags.q.derivative_group = 1;
       break;
    default:
       r = false;
@@ -648,6 +723,48 @@ ast_type_qualifier::merge_into_in_qualifier(YYLTYPE *loc,
                        "inner_coverage & post_depth_coverage layout qualifiers "
                        "are mutally exclusives");
       r = false;
+   }
+
+   if (state->in_qualifier->flags.q.pixel_interlock_ordered) {
+      state->fs_pixel_interlock_ordered = true;
+      state->in_qualifier->flags.q.pixel_interlock_ordered = false;
+   }
+
+   if (state->in_qualifier->flags.q.pixel_interlock_unordered) {
+      state->fs_pixel_interlock_unordered = true;
+      state->in_qualifier->flags.q.pixel_interlock_unordered = false;
+   }
+
+   if (state->in_qualifier->flags.q.sample_interlock_ordered) {
+      state->fs_sample_interlock_ordered = true;
+      state->in_qualifier->flags.q.sample_interlock_ordered = false;
+   }
+
+   if (state->in_qualifier->flags.q.sample_interlock_unordered) {
+      state->fs_sample_interlock_unordered = true;
+      state->in_qualifier->flags.q.sample_interlock_unordered = false;
+   }
+
+   if (state->fs_pixel_interlock_ordered +
+       state->fs_pixel_interlock_unordered +
+       state->fs_sample_interlock_ordered +
+       state->fs_sample_interlock_unordered > 1) {
+      _mesa_glsl_error(loc, state,
+                       "only one interlock mode can be used at any time.");
+      r = false;
+   }
+
+   if (state->in_qualifier->flags.q.derivative_group) {
+      if (state->cs_derivative_group != DERIVATIVE_GROUP_NONE) {
+         if (state->in_qualifier->derivative_group != DERIVATIVE_GROUP_NONE &&
+             state->cs_derivative_group != state->in_qualifier->derivative_group) {
+            _mesa_glsl_error(loc, state,
+                             "conflicting derivative groups.");
+            r = false;
+         }
+      } else {
+         state->cs_derivative_group = state->in_qualifier->derivative_group;
+      }
    }
 
    /* We allow the creation of multiple cs_input_layout nodes. Coherence among
@@ -718,7 +835,7 @@ ast_type_qualifier::validate_flags(YYLTYPE *loc,
                     "%s '%s':"
                     "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s"
                     "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s"
-                    "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
+                    "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
                     message, name,
                     bad.flags.q.invariant ? " invariant" : "",
                     bad.flags.q.precise ? " precise" : "",
@@ -744,10 +861,7 @@ ast_type_qualifier::validate_flags(YYLTYPE *loc,
                     bad.flags.q.explicit_index ? " index" : "",
                     bad.flags.q.explicit_binding ? " binding" : "",
                     bad.flags.q.explicit_offset ? " offset" : "",
-                    bad.flags.q.depth_any ? " depth_any" : "",
-                    bad.flags.q.depth_greater ? " depth_greater" : "",
-                    bad.flags.q.depth_less ? " depth_less" : "",
-                    bad.flags.q.depth_unchanged ? " depth_unchanged" : "",
+                    bad.flags.q.depth_type ? " depth_type" : "",
                     bad.flags.q.std140 ? " std140" : "",
                     bad.flags.q.std430 ? " std430" : "",
                     bad.flags.q.shared ? " shared" : "",
@@ -778,9 +892,18 @@ ast_type_qualifier::validate_flags(YYLTYPE *loc,
                     bad.flags.q.point_mode ? " point_mode" : "",
                     bad.flags.q.vertices ? " vertices" : "",
                     bad.flags.q.subroutine ? " subroutine" : "",
-                    bad.flags.q.subroutine_def ? " subroutine_def" : "",
+                    bad.flags.q.blend_support ? " blend_support" : "",
                     bad.flags.q.inner_coverage ? " inner_coverage" : "",
-                    bad.flags.q.post_depth_coverage ? " post_depth_coverage" : "");
+                    bad.flags.q.bindless_sampler ? " bindless_sampler" : "",
+                    bad.flags.q.bindless_image ? " bindless_image" : "",
+                    bad.flags.q.bound_sampler ? " bound_sampler" : "",
+                    bad.flags.q.bound_image ? " bound_image" : "",
+                    bad.flags.q.post_depth_coverage ? " post_depth_coverage" : "",
+                    bad.flags.q.pixel_interlock_ordered ? " pixel_interlock_ordered" : "",
+                    bad.flags.q.pixel_interlock_unordered ? " pixel_interlock_unordered": "",
+                    bad.flags.q.sample_interlock_ordered ? " sample_interlock_ordered": "",
+                    bad.flags.q.sample_interlock_unordered ? " sample_interlock_unordered": "",
+                    bad.flags.q.non_coherent ? " noncoherent" : "");
    return false;
 }
 
@@ -805,7 +928,9 @@ ast_layout_expression::process_qualifier_constant(struct _mesa_glsl_parse_state 
 
       ir_rvalue *const ir = const_expression->hir(&dummy_instructions, state);
 
-      ir_constant *const const_int = ir->constant_expression_value();
+      ir_constant *const const_int =
+         ir->constant_expression_value(ralloc_parent(ir));
+
       if (const_int == NULL || !const_int->type->is_integer()) {
          YYLTYPE loc = const_expression->get_location();
          _mesa_glsl_error(&loc, state, "%s must be an integral constant "
@@ -860,7 +985,8 @@ process_qualifier_constant(struct _mesa_glsl_parse_state *state,
 
    ir_rvalue *const ir = const_expression->hir(&dummy_instructions, state);
 
-   ir_constant *const const_int = ir->constant_expression_value();
+   ir_constant *const const_int =
+      ir->constant_expression_value(ralloc_parent(ir));
    if (const_int == NULL || !const_int->type->is_integer()) {
       _mesa_glsl_error(loc, state, "%s must be an integral constant "
                        "expression", qual_indentifier);

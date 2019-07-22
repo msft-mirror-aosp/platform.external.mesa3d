@@ -149,6 +149,7 @@
 #include "ir_builder.h"
 #include "ir_optimization.h"
 #include "program/prog_instruction.h"
+#include "main/mtypes.h"
 
 using namespace ir_builder;
 
@@ -351,6 +352,44 @@ lower_packed_varyings_visitor::bitwise_assign_pack(ir_rvalue *lhs,
             rhs = u2i(expr(ir_unop_unpack_double_2x32, rhs));
          }
          break;
+      case GLSL_TYPE_INT64:
+         assert(rhs->type->vector_elements <= 2);
+         if (rhs->type->vector_elements == 2) {
+            ir_variable *t = new(mem_ctx) ir_variable(lhs->type, "pack", ir_var_temporary);
+
+            assert(lhs->type->vector_elements == 4);
+            this->out_variables->push_tail(t);
+            this->out_instructions->push_tail(
+               assign(t, expr(ir_unop_unpack_int_2x32, swizzle_x(rhs->clone(mem_ctx, NULL))), 0x3));
+            this->out_instructions->push_tail(
+               assign(t,  expr(ir_unop_unpack_int_2x32, swizzle_y(rhs)), 0xc));
+            rhs = deref(t).val;
+         } else {
+            rhs = expr(ir_unop_unpack_int_2x32, rhs);
+         }
+         break;
+      case GLSL_TYPE_UINT64:
+         assert(rhs->type->vector_elements <= 2);
+         if (rhs->type->vector_elements == 2) {
+            ir_variable *t = new(mem_ctx) ir_variable(lhs->type, "pack", ir_var_temporary);
+
+            assert(lhs->type->vector_elements == 4);
+            this->out_variables->push_tail(t);
+            this->out_instructions->push_tail(
+                  assign(t, u2i(expr(ir_unop_unpack_uint_2x32, swizzle_x(rhs->clone(mem_ctx, NULL)))), 0x3));
+            this->out_instructions->push_tail(
+                  assign(t,  u2i(expr(ir_unop_unpack_uint_2x32, swizzle_y(rhs))), 0xc));
+            rhs = deref(t).val;
+         } else {
+            rhs = u2i(expr(ir_unop_unpack_uint_2x32, rhs));
+         }
+         break;
+      case GLSL_TYPE_SAMPLER:
+         rhs = u2i(expr(ir_unop_unpack_sampler_2x32, rhs));
+         break;
+      case GLSL_TYPE_IMAGE:
+         rhs = u2i(expr(ir_unop_unpack_image_2x32, rhs));
+         break;
       default:
          assert(!"Unexpected type conversion while lowering varyings");
          break;
@@ -400,6 +439,44 @@ lower_packed_varyings_visitor::bitwise_assign_unpack(ir_rvalue *lhs,
             rhs = expr(ir_unop_pack_double_2x32, i2u(rhs));
          }
          break;
+      case GLSL_TYPE_INT64:
+         assert(lhs->type->vector_elements <= 2);
+         if (lhs->type->vector_elements == 2) {
+            ir_variable *t = new(mem_ctx) ir_variable(lhs->type, "unpack", ir_var_temporary);
+            assert(rhs->type->vector_elements == 4);
+            this->out_variables->push_tail(t);
+            this->out_instructions->push_tail(
+                  assign(t, expr(ir_unop_pack_int_2x32, swizzle_xy(rhs->clone(mem_ctx, NULL))), 0x1));
+            this->out_instructions->push_tail(
+                  assign(t, expr(ir_unop_pack_int_2x32, swizzle(rhs->clone(mem_ctx, NULL), SWIZZLE_ZWZW, 2)), 0x2));
+            rhs = deref(t).val;
+         } else {
+            rhs = expr(ir_unop_pack_int_2x32, rhs);
+         }
+         break;
+      case GLSL_TYPE_UINT64:
+         assert(lhs->type->vector_elements <= 2);
+         if (lhs->type->vector_elements == 2) {
+            ir_variable *t = new(mem_ctx) ir_variable(lhs->type, "unpack", ir_var_temporary);
+            assert(rhs->type->vector_elements == 4);
+            this->out_variables->push_tail(t);
+            this->out_instructions->push_tail(
+                  assign(t, expr(ir_unop_pack_uint_2x32, i2u(swizzle_xy(rhs->clone(mem_ctx, NULL)))), 0x1));
+            this->out_instructions->push_tail(
+                  assign(t, expr(ir_unop_pack_uint_2x32, i2u(swizzle(rhs->clone(mem_ctx, NULL), SWIZZLE_ZWZW, 2))), 0x2));
+            rhs = deref(t).val;
+         } else {
+            rhs = expr(ir_unop_pack_uint_2x32, i2u(rhs));
+         }
+         break;
+      case GLSL_TYPE_SAMPLER:
+         rhs = new(mem_ctx)
+            ir_expression(ir_unop_pack_sampler_2x32, lhs->type, i2u(rhs));
+         break;
+      case GLSL_TYPE_IMAGE:
+         rhs = new(mem_ctx)
+            ir_expression(ir_unop_pack_image_2x32, lhs->type, i2u(rhs));
+         break;
       default:
          assert(!"Unexpected type conversion while lowering varyings");
          break;
@@ -444,7 +521,7 @@ lower_packed_varyings_visitor::lower_rvalue(ir_rvalue *rvalue,
     */
    assert(!gs_input_toplevel || rvalue->type->is_array());
 
-   if (rvalue->type->is_record()) {
+   if (rvalue->type->is_struct()) {
       for (unsigned i = 0; i < rvalue->type->length; i++) {
          if (i != 0)
             rvalue = rvalue->clone(this->mem_ctx, NULL);
@@ -642,7 +719,8 @@ lower_packed_varyings_visitor::get_packed_varying_deref(
       packed_var->data.centroid = unpacked_var->data.centroid;
       packed_var->data.sample = unpacked_var->data.sample;
       packed_var->data.patch = unpacked_var->data.patch;
-      packed_var->data.interpolation = packed_type == glsl_type::ivec4_type
+      packed_var->data.interpolation =
+         packed_type->without_array() == glsl_type::ivec4_type
          ? unsigned(INTERP_MODE_FLAT) : unpacked_var->data.interpolation;
       packed_var->data.location = location;
       packed_var->data.precision = unpacked_var->data.precision;
@@ -651,12 +729,17 @@ lower_packed_varyings_visitor::get_packed_varying_deref(
       unpacked_var->insert_before(packed_var);
       this->packed_varyings[slot] = packed_var;
    } else {
+      ir_variable *var = this->packed_varyings[slot];
+
+      /* The slot needs to be marked as always active if any variable that got
+       * packed there was.
+       */
+      var->data.always_active_io |= unpacked_var->data.always_active_io;
+
       /* For geometry shader inputs, only update the packed variable name the
        * first time we visit each component.
        */
       if (this->gs_input_vertices == 0 || vertex_index == 0) {
-         ir_variable *var = this->packed_varyings[slot];
-
          if (var->is_name_ralloced())
             ralloc_asprintf_append((char **) &var->name, ",%s", name);
          else
@@ -679,20 +762,21 @@ lower_packed_varyings_visitor::get_packed_varying_deref(
 bool
 lower_packed_varyings_visitor::needs_lowering(ir_variable *var)
 {
-   /* Things composed of vec4's and varyings with explicitly assigned
-    * locations don't need lowering.  Everything else does.
+   /* Things composed of vec4's, varyings with explicitly assigned
+    * locations or varyings marked as must_be_shader_input (which might be used
+    * by interpolateAt* functions) shouldn't be lowered. Everything else can be.
     */
-   if (var->data.explicit_location)
+   if (var->data.explicit_location || var->data.must_be_shader_input)
       return false;
 
    /* Override disable_varying_packing if the var is only used by transform
     * feedback. Also override it if transform feedback is enabled and the
     * variable is an array, struct or matrix as the elements of these types
-    * will always has the same interpolation and therefore asre safe to pack.
+    * will always have the same interpolation and therefore are safe to pack.
     */
    const glsl_type *type = var->type;
    if (disable_varying_packing && !var->data.is_xfb_only &&
-       !((type->is_array() || type->is_record() || type->is_matrix()) &&
+       !((type->is_array() || type->is_struct() || type->is_matrix()) &&
          xfb_enabled))
       return false;
 

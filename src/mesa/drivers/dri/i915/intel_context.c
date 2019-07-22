@@ -314,15 +314,18 @@ static const struct debug_control debug_control[] = {
 
 
 static void
-intelInvalidateState(struct gl_context * ctx, GLuint new_state)
+intelInvalidateState(struct gl_context * ctx)
 {
+   GLuint new_state = ctx->NewState;
     struct intel_context *intel = intel_context(ctx);
 
     if (ctx->swrast_context)
        _swrast_InvalidateState(ctx, new_state);
-   _vbo_InvalidateState(ctx, new_state);
 
    intel->NewGLState |= new_state;
+
+   if (new_state & (_NEW_SCISSOR | _NEW_BUFFERS | _NEW_VIEWPORT))
+      _mesa_update_draw_buffer_bounds(ctx, ctx->DrawBuffer);
 
    if (intel->vtbl.invalidate_state)
       intel->vtbl.invalidate_state( intel, new_state );
@@ -377,6 +380,7 @@ void
 intelInitDriverFunctions(struct dd_function_table *functions)
 {
    _mesa_init_driver_functions(functions);
+   _tnl_init_driver_draw_function(functions);
 
    functions->Flush = intel_glFlush;
    functions->Finish = intelFinish;
@@ -438,13 +442,11 @@ intelInitContext(struct intel_context *intel,
 
    intel->is_945 = IS_945(devID);
 
-   intel->has_swizzling = intel->intelScreen->hw_has_swizzling;
-
    memset(&ctx->TextureFormatSupported,
 	  0, sizeof(ctx->TextureFormatSupported));
 
    driParseConfigFiles(&intel->optionCache, &intelScreen->optionCache,
-                       sPriv->myNum, "i915");
+                       sPriv->myNum, "i915", NULL);
    intel->maxBatchSize = 4096;
 
    /* Estimate the size of the mappable aperture into the GTT.  There's an
@@ -528,12 +530,10 @@ intelInitContext(struct intel_context *intel,
 
    intel_fbo_init(intel);
 
-   intel->use_early_z = driQueryOptionb(&intel->optionCache, "early_z");
-
    intel->prim.primitive = ~0;
 
    /* Force all software fallbacks */
-   if (driQueryOptionb(&intel->optionCache, "no_rast")) {
+   if (getenv("INTEL_NO_RAST")) {
       fprintf(stderr, "disabling 3D rasterization\n");
       intel->no_rast = 1;
    }
@@ -599,7 +599,7 @@ intelDestroyContext(__DRIcontext * driContextPriv)
       driDestroyOptionCache(&intel->optionCache);
 
       /* free the Mesa context */
-      _mesa_free_context_data(&intel->ctx);
+      _mesa_free_context_data(&intel->ctx, true);
 
       _math_matrix_dtr(&intel->ViewportMatrix);
 
@@ -623,20 +623,11 @@ intelMakeCurrent(__DRIcontext * driContextPriv,
                  __DRIdrawable * driReadPriv)
 {
    struct intel_context *intel;
-   GET_CURRENT_CONTEXT(curCtx);
 
    if (driContextPriv)
       intel = (struct intel_context *) driContextPriv->driverPrivate;
    else
       intel = NULL;
-
-   /* According to the glXMakeCurrent() man page: "Pending commands to
-    * the previous context, if any, are flushed before it is released."
-    * But only flush if we're actually changing contexts.
-    */
-   if (intel_context(curCtx) && intel_context(curCtx) != intel) {
-      _mesa_flush(curCtx);
-   }
 
    if (driContextPriv) {
       struct gl_context *ctx = &intel->ctx;

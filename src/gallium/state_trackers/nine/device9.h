@@ -127,10 +127,7 @@ struct NineDevice9
 
     struct {
         boolean user_vbufs;
-        boolean user_ibufs;
-        boolean user_cbufs;
         boolean user_sw_vbufs;
-        boolean user_sw_cbufs;
         boolean window_space_position_support;
         boolean vs_integer;
         boolean ps_integer;
@@ -141,12 +138,11 @@ struct NineDevice9
         boolean buggy_barycentrics;
     } driver_bugs;
 
+    struct {
+        boolean dynamic_texture_workaround;
+    } workarounds;
+
     struct u_upload_mgr *vertex_uploader;
-    struct u_upload_mgr *index_uploader;
-    struct u_upload_mgr *constbuf_uploader;
-    struct u_upload_mgr *vertex_sw_uploader;
-    struct u_upload_mgr *constbuf_sw_uploader;
-    unsigned constbuf_alignment;
 
     struct nine_range_pool range_pool;
 

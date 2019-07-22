@@ -103,7 +103,8 @@ r300_buffer_transfer_map( struct pipe_context *context,
             /* Create a new one in the same pipe_resource. */
             new_buf = r300->rws->buffer_create(r300->rws, rbuf->b.b.width0,
                                                R300_BUFFER_ALIGNMENT,
-                                               rbuf->domain, 0);
+                                               rbuf->domain,
+                                               RADEON_FLAG_NO_INTERPROCESS_SHARING);
             if (new_buf) {
                 /* Discard the old buffer. */
                 pb_reference(&rbuf->buf, NULL);
@@ -111,7 +112,7 @@ r300_buffer_transfer_map( struct pipe_context *context,
 
                 /* We changed the buffer, now we need to bind it where the old one was bound. */
                 for (i = 0; i < r300->nr_vertex_buffers; i++) {
-                    if (r300->vertex_buffer[i].buffer == &rbuf->b.b) {
+                    if (r300->vertex_buffer[i].buffer.resource == &rbuf->b.b) {
                         r300->vertex_arrays_dirty = TRUE;
                         break;
                     }
@@ -183,7 +184,8 @@ struct pipe_resource *r300_buffer_create(struct pipe_screen *screen,
     rbuf->buf =
         r300screen->rws->buffer_create(r300screen->rws, rbuf->b.b.width0,
                                        R300_BUFFER_ALIGNMENT,
-                                       rbuf->domain, 0);
+                                       rbuf->domain,
+                                       RADEON_FLAG_NO_INTERPROCESS_SHARING);
     if (!rbuf->buf) {
         FREE(rbuf);
         return NULL;

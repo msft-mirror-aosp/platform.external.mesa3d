@@ -88,15 +88,30 @@ lower_bitmap(nir_shader *shader, nir_builder *b,
 
    texcoord = nir_load_var(b, get_texcoord(shader));
 
-   tex = nir_tex_instr_create(shader, 1);
+   const struct glsl_type *sampler2D =
+      glsl_sampler_type(GLSL_SAMPLER_DIM_2D, false, false, GLSL_TYPE_FLOAT);
+
+   nir_variable *tex_var =
+      nir_variable_create(shader, nir_var_uniform, sampler2D, "bitmap_tex");
+   tex_var->data.binding = options->sampler;
+   tex_var->data.explicit_binding = true;
+   tex_var->data.how_declared = nir_var_hidden;
+
+   nir_deref_instr *tex_deref = nir_build_deref_var(b, tex_var);
+
+   tex = nir_tex_instr_create(shader, 3);
    tex->op = nir_texop_tex;
    tex->sampler_dim = GLSL_SAMPLER_DIM_2D;
    tex->coord_components = 2;
-   tex->sampler_index = options->sampler;
-   tex->texture_index = options->sampler;
    tex->dest_type = nir_type_float;
-   tex->src[0].src_type = nir_tex_src_coord;
-   tex->src[0].src = nir_src_for_ssa(texcoord);
+   tex->src[0].src_type = nir_tex_src_texture_deref;
+   tex->src[0].src = nir_src_for_ssa(&tex_deref->dest.ssa);
+   tex->src[1].src_type = nir_tex_src_sampler_deref;
+   tex->src[1].src = nir_src_for_ssa(&tex_deref->dest.ssa);
+   tex->src[2].src_type = nir_tex_src_coord;
+   tex->src[2].src =
+      nir_src_for_ssa(nir_channels(b, texcoord,
+                                   (1 << tex->coord_components) - 1));
 
    nir_ssa_dest_init(&tex->instr, &tex->dest, 4, 32, NULL);
    nir_builder_instr_insert(b, &tex->instr);
@@ -109,7 +124,7 @@ lower_bitmap(nir_shader *shader, nir_builder *b,
    discard->src[0] = nir_src_for_ssa(cond);
    nir_builder_instr_insert(b, &discard->instr);
 
-   shader->info->fs.uses_discard = true;
+   shader->info.fs.uses_discard = true;
 }
 
 static void
@@ -131,7 +146,7 @@ void
 nir_lower_bitmap(nir_shader *shader,
                  const nir_lower_bitmap_options *options)
 {
-   assert(shader->stage == MESA_SHADER_FRAGMENT);
+   assert(shader->info.stage == MESA_SHADER_FRAGMENT);
 
    lower_bitmap_impl(nir_shader_get_entrypoint(shader), options);
 }

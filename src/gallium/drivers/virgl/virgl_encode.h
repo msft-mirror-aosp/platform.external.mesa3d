@@ -32,11 +32,20 @@ struct tgsi_token;
 
 struct virgl_context;
 struct virgl_resource;
+struct virgl_screen;
+struct virgl_transfer;
 struct virgl_sampler_view;
 
 struct virgl_surface {
    struct pipe_surface base;
    uint32_t handle;
+};
+
+struct virgl_indexbuf {
+   unsigned offset;
+   unsigned index_size;  /**< size of an index, in bytes */
+   struct pipe_resource *buffer; /**< the actual buffer */
+   const void *user_buffer;  /**< pointer to a user buffer if buffer == NULL */
 };
 
 static inline struct virgl_surface *virgl_surface(struct pipe_surface *surf)
@@ -63,7 +72,6 @@ static inline void virgl_encoder_write_block(struct virgl_cmd_buf *state,
    int x;
    memcpy(state->buf + state->cdw, ptr, len);
    x = (len % 4);
-//   fprintf(stderr, "[%d] block %d x is %d\n", state->cdw, len, x);
    if (x) {
       uint8_t *mp = (uint8_t *)(state->buf + state->cdw);
       mp += len;
@@ -83,6 +91,7 @@ extern int virgl_encode_shader_state(struct virgl_context *ctx,
                                      uint32_t handle,
                                      uint32_t type,
                                      const struct pipe_stream_output_info *so_info,
+                                     uint32_t cs_req_local_mem,
                                      const struct tgsi_token *tokens);
 
 int virgl_encode_stream_output_info(struct virgl_context *ctx,
@@ -167,7 +176,7 @@ int virgl_encode_bind_sampler_states(struct virgl_context *ctx,
                                     uint32_t *handles);
 
 int virgl_encoder_set_index_buffer(struct virgl_context *ctx,
-                                  const struct pipe_index_buffer *ib);
+                                  const struct virgl_indexbuf *ib);
 
 uint32_t virgl_object_assign_handle(void);
 
@@ -204,6 +213,9 @@ void virgl_encoder_set_polygon_stipple(struct virgl_context *ctx,
 void virgl_encoder_set_sample_mask(struct virgl_context *ctx,
                                   unsigned sample_mask);
 
+void virgl_encoder_set_min_samples(struct virgl_context *ctx,
+                                  unsigned min_samples);
+
 void virgl_encoder_set_clip_state(struct virgl_context *ctx,
                                  const struct pipe_clip_state *clip);
 
@@ -236,7 +248,7 @@ int virgl_encoder_get_query_result(struct virgl_context *ctx,
 
 int virgl_encoder_render_condition(struct virgl_context *ctx,
                                   uint32_t handle, boolean condition,
-                                  uint mode);
+                                  enum pipe_render_cond_flag mode);
 
 int virgl_encoder_set_sub_ctx(struct virgl_context *ctx, uint32_t sub_ctx_id);
 int virgl_encoder_create_sub_ctx(struct virgl_context *ctx, uint32_t sub_ctx_id);
@@ -244,4 +256,41 @@ int virgl_encoder_destroy_sub_ctx(struct virgl_context *ctx, uint32_t sub_ctx_id
 
 int virgl_encode_bind_shader(struct virgl_context *ctx,
                              uint32_t handle, uint32_t type);
+
+int virgl_encode_set_tess_state(struct virgl_context *ctx,
+                                const float outer[4],
+                                const float inner[2]);
+
+int virgl_encode_set_shader_buffers(struct virgl_context *ctx,
+                                    enum pipe_shader_type shader,
+                                    unsigned start_slot, unsigned count,
+                                    const struct pipe_shader_buffer *buffers);
+int virgl_encode_set_shader_images(struct virgl_context *ctx,
+                                   enum pipe_shader_type shader,
+                                   unsigned start_slot, unsigned count,
+                                   const struct pipe_image_view *images);
+int virgl_encode_set_hw_atomic_buffers(struct virgl_context *ctx,
+                                       unsigned start_slot, unsigned count,
+                                       const struct pipe_shader_buffer *buffers);
+int virgl_encode_memory_barrier(struct virgl_context *ctx,
+                                unsigned flags);
+int virgl_encode_launch_grid(struct virgl_context *ctx,
+                             const struct pipe_grid_info *grid_info);
+int virgl_encode_texture_barrier(struct virgl_context *ctx,
+                                 unsigned flags);
+
+int virgl_encode_host_debug_flagstring(struct virgl_context *ctx,
+                                  const char *envname);
+
+int virgl_encode_get_query_result_qbo(struct virgl_context *ctx,
+                                      uint32_t handle,
+                                      struct virgl_resource *res, boolean wait,
+                                      uint32_t result_type,
+                                      uint32_t offset,
+                                      uint32_t index);
+
+void virgl_encode_transfer(struct virgl_screen *vs, struct virgl_cmd_buf *buf,
+                           struct virgl_transfer *trans, uint32_t direction);
+
+void virgl_encode_end_transfers(struct virgl_cmd_buf *buf);
 #endif

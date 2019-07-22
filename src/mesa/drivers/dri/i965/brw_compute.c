@@ -35,150 +35,10 @@
 
 
 static void
-prepare_indirect_gpgpu_walker(struct brw_context *brw)
-{
-   GLintptr indirect_offset = brw->compute.num_work_groups_offset;
-   drm_intel_bo *bo = brw->compute.num_work_groups_bo;
-
-   brw_load_register_mem(brw, GEN7_GPGPU_DISPATCHDIMX, bo,
-                         I915_GEM_DOMAIN_VERTEX, 0,
-                         indirect_offset + 0);
-   brw_load_register_mem(brw, GEN7_GPGPU_DISPATCHDIMY, bo,
-                         I915_GEM_DOMAIN_VERTEX, 0,
-                         indirect_offset + 4);
-   brw_load_register_mem(brw, GEN7_GPGPU_DISPATCHDIMZ, bo,
-                         I915_GEM_DOMAIN_VERTEX, 0,
-                         indirect_offset + 8);
-
-   if (brw->gen > 7)
-      return;
-
-   /* Clear upper 32-bits of SRC0 and all 64-bits of SRC1 */
-   BEGIN_BATCH(7);
-   OUT_BATCH(MI_LOAD_REGISTER_IMM | (7 - 2));
-   OUT_BATCH(MI_PREDICATE_SRC0 + 4);
-   OUT_BATCH(0u);
-   OUT_BATCH(MI_PREDICATE_SRC1 + 0);
-   OUT_BATCH(0u);
-   OUT_BATCH(MI_PREDICATE_SRC1 + 4);
-   OUT_BATCH(0u);
-   ADVANCE_BATCH();
-
-   /* Load compute_dispatch_indirect_x_size into SRC0 */
-   brw_load_register_mem(brw, MI_PREDICATE_SRC0, bo,
-                         I915_GEM_DOMAIN_INSTRUCTION, 0,
-                         indirect_offset + 0);
-
-   /* predicate = (compute_dispatch_indirect_x_size == 0); */
-   BEGIN_BATCH(1);
-   OUT_BATCH(GEN7_MI_PREDICATE |
-             MI_PREDICATE_LOADOP_LOAD |
-             MI_PREDICATE_COMBINEOP_SET |
-             MI_PREDICATE_COMPAREOP_SRCS_EQUAL);
-   ADVANCE_BATCH();
-
-   /* Load compute_dispatch_indirect_y_size into SRC0 */
-   brw_load_register_mem(brw, MI_PREDICATE_SRC0, bo,
-                         I915_GEM_DOMAIN_INSTRUCTION, 0,
-                         indirect_offset + 4);
-
-   /* predicate |= (compute_dispatch_indirect_y_size == 0); */
-   BEGIN_BATCH(1);
-   OUT_BATCH(GEN7_MI_PREDICATE |
-             MI_PREDICATE_LOADOP_LOAD |
-             MI_PREDICATE_COMBINEOP_OR |
-             MI_PREDICATE_COMPAREOP_SRCS_EQUAL);
-   ADVANCE_BATCH();
-
-   /* Load compute_dispatch_indirect_z_size into SRC0 */
-   brw_load_register_mem(brw, MI_PREDICATE_SRC0, bo,
-                         I915_GEM_DOMAIN_INSTRUCTION, 0,
-                         indirect_offset + 8);
-
-   /* predicate |= (compute_dispatch_indirect_z_size == 0); */
-   BEGIN_BATCH(1);
-   OUT_BATCH(GEN7_MI_PREDICATE |
-             MI_PREDICATE_LOADOP_LOAD |
-             MI_PREDICATE_COMBINEOP_OR |
-             MI_PREDICATE_COMPAREOP_SRCS_EQUAL);
-   ADVANCE_BATCH();
-
-   /* predicate = !predicate; */
-   BEGIN_BATCH(1);
-   OUT_BATCH(GEN7_MI_PREDICATE |
-             MI_PREDICATE_LOADOP_LOADINV |
-             MI_PREDICATE_COMBINEOP_OR |
-             MI_PREDICATE_COMPAREOP_FALSE);
-   ADVANCE_BATCH();
-}
-
-static void
-brw_emit_gpgpu_walker(struct brw_context *brw)
-{
-   const struct brw_cs_prog_data *prog_data =
-      brw_cs_prog_data(brw->cs.base.prog_data);
-
-   const GLuint *num_groups = brw->compute.num_work_groups;
-   uint32_t indirect_flag;
-
-   if (brw->compute.num_work_groups_bo == NULL) {
-      indirect_flag = 0;
-   } else {
-      indirect_flag =
-         GEN7_GPGPU_INDIRECT_PARAMETER_ENABLE |
-         (brw->gen == 7 ? GEN7_GPGPU_PREDICATE_ENABLE : 0);
-      prepare_indirect_gpgpu_walker(brw);
-   }
-
-   const unsigned simd_size = prog_data->simd_size;
-   unsigned group_size = prog_data->local_size[0] *
-      prog_data->local_size[1] * prog_data->local_size[2];
-   unsigned thread_width_max =
-      (group_size + simd_size - 1) / simd_size;
-
-   uint32_t right_mask = 0xffffffffu >> (32 - simd_size);
-   const unsigned right_non_aligned = group_size & (simd_size - 1);
-   if (right_non_aligned != 0)
-      right_mask >>= (simd_size - right_non_aligned);
-
-   uint32_t dwords = brw->gen < 8 ? 11 : 15;
-   BEGIN_BATCH(dwords);
-   OUT_BATCH(GPGPU_WALKER << 16 | (dwords - 2) | indirect_flag);
-   OUT_BATCH(0);
-   if (brw->gen >= 8) {
-      OUT_BATCH(0);                     /* Indirect Data Length */
-      OUT_BATCH(0);                     /* Indirect Data Start Address */
-   }
-   assert(thread_width_max <= brw->screen->devinfo.max_cs_threads);
-   OUT_BATCH(SET_FIELD(simd_size / 16, GPGPU_WALKER_SIMD_SIZE) |
-             SET_FIELD(thread_width_max - 1, GPGPU_WALKER_THREAD_WIDTH_MAX));
-   OUT_BATCH(0);                        /* Thread Group ID Starting X */
-   if (brw->gen >= 8)
-      OUT_BATCH(0);                     /* MBZ */
-   OUT_BATCH(num_groups[0]);            /* Thread Group ID X Dimension */
-   OUT_BATCH(0);                        /* Thread Group ID Starting Y */
-   if (brw->gen >= 8)
-      OUT_BATCH(0);                     /* MBZ */
-   OUT_BATCH(num_groups[1]);            /* Thread Group ID Y Dimension */
-   OUT_BATCH(0);                        /* Thread Group ID Starting/Resume Z */
-   OUT_BATCH(num_groups[2]);            /* Thread Group ID Z Dimension */
-   OUT_BATCH(right_mask);               /* Right Execution Mask */
-   OUT_BATCH(0xffffffff);               /* Bottom Execution Mask */
-   ADVANCE_BATCH();
-
-   BEGIN_BATCH(2);
-   OUT_BATCH(MEDIA_STATE_FLUSH << 16 | (2 - 2));
-   OUT_BATCH(0);
-   ADVANCE_BATCH();
-}
-
-
-static void
 brw_dispatch_compute_common(struct gl_context *ctx)
 {
    struct brw_context *brw = brw_context(ctx);
-   int estimated_buffer_space_needed;
-   bool fail_next = false;
+   bool fail_next;
 
    if (!_mesa_check_conditional_render(ctx))
       return;
@@ -188,46 +48,35 @@ brw_dispatch_compute_common(struct gl_context *ctx)
 
    brw_validate_textures(brw);
 
-   const int sampler_state_size = 16; /* 16 bytes */
-   estimated_buffer_space_needed = 512; /* batchbuffer commands */
-   estimated_buffer_space_needed += (BRW_MAX_TEX_UNIT *
-                                     (sampler_state_size +
-                                      sizeof(struct gen5_sampler_default_color)));
-   estimated_buffer_space_needed += 1024; /* push constants */
-   estimated_buffer_space_needed += 512; /* misc. pad */
+   brw_predraw_resolve_inputs(brw, false, NULL);
 
-   /* Flush the batch if it's approaching full, so that we don't wrap while
-    * we've got validated state that needs to be in the same batch as the
-    * primitives.
+   /* Flush the batch if the batch/state buffers are nearly full.  We can
+    * grow them if needed, but this is not free, so we'd like to avoid it.
     */
-   intel_batchbuffer_require_space(brw, estimated_buffer_space_needed,
-                                   RENDER_RING);
+   intel_batchbuffer_require_space(brw, 600);
+   brw_require_statebuffer_space(brw, 2500);
    intel_batchbuffer_save_state(brw);
+   fail_next = intel_batchbuffer_saved_state_is_empty(brw);
 
  retry:
-   brw->no_batch_wrap = true;
+   brw->batch.no_wrap = true;
    brw_upload_compute_state(brw);
 
-   brw_emit_gpgpu_walker(brw);
+   brw->vtbl.emit_compute_walker(brw);
 
-   brw->no_batch_wrap = false;
+   brw->batch.no_wrap = false;
 
-   if (dri_bufmgr_check_aperture_space(&brw->batch.bo, 1)) {
+   if (!brw_batch_has_aperture_space(brw, 0)) {
       if (!fail_next) {
          intel_batchbuffer_reset_to_saved(brw);
          intel_batchbuffer_flush(brw);
          fail_next = true;
          goto retry;
       } else {
-         if (intel_batchbuffer_flush(brw) == -ENOSPC) {
-            static bool warned = false;
-
-            if (!warned) {
-               fprintf(stderr, "i965: Single compute shader dispatch "
-                       "exceeded available aperture space\n");
-               warned = true;
-            }
-         }
+         int ret = intel_batchbuffer_flush(brw);
+         WARN_ONCE(ret == -ENOSPC,
+                   "i965: Single compute shader dispatch "
+                   "exceeded available aperture space\n");
       }
    }
 
@@ -263,10 +112,10 @@ brw_dispatch_compute_indirect(struct gl_context *ctx, GLintptr indirect)
    struct brw_context *brw = brw_context(ctx);
    static const GLuint indirect_group_counts[3] = { 0, 0, 0 };
    struct gl_buffer_object *indirect_buffer = ctx->DispatchIndirectBuffer;
-   drm_intel_bo *bo =
+   struct brw_bo *bo =
       intel_bufferobj_buffer(brw,
                              intel_buffer_object(indirect_buffer),
-                             indirect, 3 * sizeof(GLuint));
+                             indirect, 3 * sizeof(GLuint), false);
 
    brw->compute.num_work_groups_bo = bo;
    brw->compute.num_work_groups_offset = indirect;

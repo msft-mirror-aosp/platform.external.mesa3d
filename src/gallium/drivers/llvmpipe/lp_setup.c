@@ -41,7 +41,7 @@
 #include "util/u_pack_color.h"
 #include "util/u_viewport.h"
 #include "draw/draw_pipe.h"
-#include "os/os_time.h"
+#include "util/os_time.h"
 #include "lp_context.h"
 #include "lp_memory.h"
 #include "lp_scene.h"
@@ -82,7 +82,7 @@ lp_setup_get_empty_scene(struct lp_setup_context *setup)
       lp_fence_wait(setup->scene->fence);
    }
 
-   lp_scene_begin_binning(setup->scene, &setup->fb, setup->rasterizer_discard);
+   lp_scene_begin_binning(setup->scene, &setup->fb);
 
 }
 
@@ -165,7 +165,7 @@ lp_setup_rasterize_scene( struct lp_setup_context *setup )
    if (setup->last_fence)
       setup->last_fence->issued = TRUE;
 
-   pipe_mutex_lock(screen->rast_mutex);
+   mtx_lock(&screen->rast_mutex);
 
    /* FIXME: We enqueue the scene then wait on the rasterizer to finish.
     * This means we never actually run any vertex stuff in parallel to
@@ -179,7 +179,7 @@ lp_setup_rasterize_scene( struct lp_setup_context *setup )
     */
    lp_rast_queue_scene(screen->rast, scene);
    lp_rast_finish(screen->rast);
-   pipe_mutex_unlock(screen->rast_mutex);
+   mtx_unlock(&screen->rast_mutex);
 
    lp_scene_end_rasterization(setup->scene);
    lp_setup_reset( setup );
@@ -361,6 +361,8 @@ lp_setup_flush( struct lp_setup_context *setup,
 
    if (fence) {
       lp_fence_reference((struct lp_fence **)fence, setup->last_fence);
+      if (!*fence)
+         *fence = (struct pipe_fence_handle *)lp_fence_create(0);
    }
 }
 
@@ -724,25 +726,27 @@ lp_setup_set_scissors( struct lp_setup_context *setup,
 
 
 void 
-lp_setup_set_flatshade_first( struct lp_setup_context *setup,
-                              boolean flatshade_first )
+lp_setup_set_flatshade_first(struct lp_setup_context *setup,
+                             boolean flatshade_first)
 {
    setup->flatshade_first = flatshade_first;
 }
 
 void
-lp_setup_set_rasterizer_discard( struct lp_setup_context *setup,
-                                 boolean rasterizer_discard )
+lp_setup_set_rasterizer_discard(struct lp_setup_context *setup,
+                                boolean rasterizer_discard)
 {
    if (setup->rasterizer_discard != rasterizer_discard) {
       setup->rasterizer_discard = rasterizer_discard;
-      set_scene_state( setup, SETUP_FLUSHED, __FUNCTION__ );
+      setup->line = first_line;
+      setup->point = first_point;
+      setup->triangle = first_triangle;
    }
 }
 
 void 
-lp_setup_set_vertex_info( struct lp_setup_context *setup,
-                          struct vertex_info *vertex_info )
+lp_setup_set_vertex_info(struct lp_setup_context *setup,
+                         struct vertex_info *vertex_info)
 {
    /* XXX: just silently holding onto the pointer:
     */
@@ -1347,6 +1351,10 @@ lp_setup_create( struct pipe_context *pipe,
    
    setup->dirty = ~0;
 
+   /* Initialize empty default fb correctly, so the rect is empty */
+   setup->framebuffer.x1 = -1;
+   setup->framebuffer.y1 = -1;
+
    return setup;
 
 no_scenes:
@@ -1376,6 +1384,7 @@ lp_setup_begin_query(struct lp_setup_context *setup,
 
    if (!(pq->type == PIPE_QUERY_OCCLUSION_COUNTER ||
          pq->type == PIPE_QUERY_OCCLUSION_PREDICATE ||
+         pq->type == PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE ||
          pq->type == PIPE_QUERY_PIPELINE_STATISTICS))
       return;
 
@@ -1426,6 +1435,7 @@ lp_setup_end_query(struct lp_setup_context *setup, struct llvmpipe_query *pq)
 
       if (pq->type == PIPE_QUERY_OCCLUSION_COUNTER ||
           pq->type == PIPE_QUERY_OCCLUSION_PREDICATE ||
+          pq->type == PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE ||
           pq->type == PIPE_QUERY_PIPELINE_STATISTICS ||
           pq->type == PIPE_QUERY_TIMESTAMP) {
          if (pq->type == PIPE_QUERY_TIMESTAMP &&
@@ -1462,6 +1472,7 @@ fail:
     */
    if (pq->type == PIPE_QUERY_OCCLUSION_COUNTER ||
       pq->type == PIPE_QUERY_OCCLUSION_PREDICATE ||
+      pq->type == PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE ||
       pq->type == PIPE_QUERY_PIPELINE_STATISTICS) {
       unsigned i;
 

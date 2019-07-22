@@ -25,6 +25,9 @@
  *
  */
 
+#ifndef GLSL_TO_NIR_H
+#define GLSL_TO_NIR_H
+
 #include "compiler/nir/nir.h"
 
 #ifdef __cplusplus
@@ -33,10 +36,16 @@ extern "C" {
 
 struct gl_shader_program;
 
-nir_shader *glsl_to_nir(const struct gl_shader_program *shader_prog,
+nir_shader *glsl_to_nir(struct gl_context *ctx,
+                        const struct gl_shader_program *shader_prog,
                         gl_shader_stage stage,
                         const nir_shader_compiler_options *options);
+
+nir_shader *glsl_float64_funcs_to_nir(struct gl_context *ctx,
+                                      const nir_shader_compiler_options *options);
 
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* GLSL_TO_NIR_H */

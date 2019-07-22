@@ -25,10 +25,12 @@
 
 #include "util/u_bitmask.h"
 #include "util/u_memory.h"
+#include "util/u_format.h"
 #include "svga_context.h"
 #include "svga_cmd.h"
 #include "svga_format.h"
 #include "svga_shader.h"
+#include "svga_resource_texture.h"
 
 
 /**
@@ -160,6 +162,66 @@ svga_remap_generic_index(int8_t remap_table[MAX_GENERIC_VARYING],
    return remap_table[generic_index];
 }
 
+static const enum pipe_swizzle copy_alpha[PIPE_SWIZZLE_MAX] = {
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_Y,
+   PIPE_SWIZZLE_Z,
+   PIPE_SWIZZLE_W,
+   PIPE_SWIZZLE_0,
+   PIPE_SWIZZLE_1,
+   PIPE_SWIZZLE_NONE
+};
+
+static const enum pipe_swizzle set_alpha[PIPE_SWIZZLE_MAX] = {
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_Y,
+   PIPE_SWIZZLE_Z,
+   PIPE_SWIZZLE_1,
+   PIPE_SWIZZLE_0,
+   PIPE_SWIZZLE_1,
+   PIPE_SWIZZLE_NONE
+};
+
+static const enum pipe_swizzle set_000X[PIPE_SWIZZLE_MAX] = {
+   PIPE_SWIZZLE_0,
+   PIPE_SWIZZLE_0,
+   PIPE_SWIZZLE_0,
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_0,
+   PIPE_SWIZZLE_1,
+   PIPE_SWIZZLE_NONE
+};
+
+static const enum pipe_swizzle set_XXXX[PIPE_SWIZZLE_MAX] = {
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_0,
+   PIPE_SWIZZLE_1,
+   PIPE_SWIZZLE_NONE
+};
+
+static const enum pipe_swizzle set_XXX1[PIPE_SWIZZLE_MAX] = {
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_1,
+   PIPE_SWIZZLE_0,
+   PIPE_SWIZZLE_1,
+   PIPE_SWIZZLE_NONE
+};
+
+static const enum pipe_swizzle set_XXXY[PIPE_SWIZZLE_MAX] = {
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_X,
+   PIPE_SWIZZLE_Y,
+   PIPE_SWIZZLE_0,
+   PIPE_SWIZZLE_1,
+   PIPE_SWIZZLE_NONE
+};
+
 
 /**
  * Initialize the shader-neutral fields of svga_compile_key from context
@@ -177,42 +239,91 @@ svga_init_shader_key_common(const struct svga_context *svga,
    /* In case the number of samplers and sampler_views doesn't match,
     * loop over the lower of the two counts.
     */
-   key->num_textures = MIN2(svga->curr.num_sampler_views[shader],
+   key->num_textures = MAX2(svga->curr.num_sampler_views[shader],
                             svga->curr.num_samplers[shader]);
 
    for (i = 0; i < key->num_textures; i++) {
       struct pipe_sampler_view *view = svga->curr.sampler_views[shader][i];
       const struct svga_sampler_state *sampler = svga->curr.sampler[shader][i];
-      if (view && sampler) {
+      if (view) {
          assert(view->texture);
          assert(view->texture->target < (1 << 4)); /* texture_target:4 */
 
-         /* 1D/2D array textures with one slice are treated as non-arrays
-          * by the SVGA3D device.  Convert the texture type here so that
-          * we emit the right TEX/SAMPLE instruction in the shader.
+         /* 1D/2D array textures with one slice and cube map array textures
+          * with one cube are treated as non-arrays by the SVGA3D device.
+          * Set the is_array flag only if we know that we have more than 1
+          * element.  This will be used to select shader instruction/resource
+          * types during shader translation.
           */
-         if (view->texture->target == PIPE_TEXTURE_1D_ARRAY ||
-             view->texture->target == PIPE_TEXTURE_2D_ARRAY) {
-            if (view->texture->array_size == 1) {
-               key->tex[i].is_array = 0;
-            }
-            else {
-               assert(view->texture->array_size > 1);
-               key->tex[i].is_array = 1;
-            }
+         switch (view->texture->target) {
+         case PIPE_TEXTURE_1D_ARRAY:
+         case PIPE_TEXTURE_2D_ARRAY:
+            key->tex[i].is_array = view->texture->array_size > 1;
+            break;
+         case PIPE_TEXTURE_CUBE_ARRAY:
+            key->tex[i].is_array = view->texture->array_size > 6;
+            break;
+         default:
+            ; /* nothing / silence compiler warning */
          }
 
+         assert(view->texture->nr_samples < (1 << 5)); /* 5-bit field */
+         key->tex[i].num_samples = view->texture->nr_samples;
+
+         const enum pipe_swizzle *swizzle_tab;
+         if (view->texture->target == PIPE_BUFFER) {
+            SVGA3dSurfaceFormat svga_format;
+            unsigned tf_flags;
+
+            /* Apply any special swizzle mask for the view format if needed */
+
+            svga_translate_texture_buffer_view_format(view->format,
+                                                      &svga_format, &tf_flags);
+            if (tf_flags & TF_000X)
+               swizzle_tab = set_000X;
+            else if (tf_flags & TF_XXXX)
+               swizzle_tab = set_XXXX;
+            else if (tf_flags & TF_XXX1)
+               swizzle_tab = set_XXX1;
+            else if (tf_flags & TF_XXXY)
+               swizzle_tab = set_XXXY;
+            else
+               swizzle_tab = copy_alpha;
+         }
+         else {
+            /* If we have a non-alpha view into an svga3d surface with an
+             * alpha channel, then explicitly set the alpha channel to 1
+             * when sampling. Note that we need to check the
+             * actual device format to cover also imported surface cases.
+             */
+            swizzle_tab =
+               (!util_format_has_alpha(view->format) &&
+                svga_texture_device_format_has_alpha(view->texture)) ?
+                set_alpha : copy_alpha;
+
+            if (view->texture->format == PIPE_FORMAT_DXT1_RGB ||
+                view->texture->format == PIPE_FORMAT_DXT1_SRGB)
+               swizzle_tab = set_alpha;
+         }
+
+         key->tex[i].swizzle_r = swizzle_tab[view->swizzle_r];
+         key->tex[i].swizzle_g = swizzle_tab[view->swizzle_g];
+         key->tex[i].swizzle_b = swizzle_tab[view->swizzle_b];
+         key->tex[i].swizzle_a = swizzle_tab[view->swizzle_a];
+      }
+
+      if (sampler) {
          if (!sampler->normalized_coords) {
             assert(idx < (1 << 5));  /* width_height_idx:5 bitfield */
             key->tex[i].width_height_idx = idx++;
             key->tex[i].unnormalized = TRUE;
             ++key->num_unnormalized_coords;
-         }
 
-         key->tex[i].swizzle_r = view->swizzle_r;
-         key->tex[i].swizzle_g = view->swizzle_g;
-         key->tex[i].swizzle_b = view->swizzle_b;
-         key->tex[i].swizzle_a = view->swizzle_a;
+            if (sampler->magfilter == SVGA3D_TEX_FILTER_NEAREST ||
+                sampler->minfilter == SVGA3D_TEX_FILTER_NEAREST) {
+                key->tex[i].texel_bias = TRUE;
+            }
+         }
       }
    }
 }
@@ -255,7 +366,6 @@ svga_search_shader_token_key(struct svga_shader *pshader,
  */
 static enum pipe_error
 define_gb_shader_vgpu9(struct svga_context *svga,
-                       SVGA3dShaderType type,
                        struct svga_shader_variant *variant,
                        unsigned codeLen)
 {
@@ -267,7 +377,7 @@ define_gb_shader_vgpu9(struct svga_context *svga,
     * Kernel module will allocate an id for the shader and issue
     * the DefineGBShader command.
     */
-   variant->gb_shader = sws->shader_create(sws, type,
+   variant->gb_shader = sws->shader_create(sws, variant->type,
                                            variant->tokens, codeLen);
 
    if (!variant->gb_shader)
@@ -283,7 +393,6 @@ define_gb_shader_vgpu9(struct svga_context *svga,
  */
 static enum pipe_error
 define_gb_shader_vgpu10(struct svga_context *svga,
-                        SVGA3dShaderType type,
                         struct svga_shader_variant *variant,
                         unsigned codeLen)
 {
@@ -302,7 +411,7 @@ define_gb_shader_vgpu10(struct svga_context *svga,
 
    /* Create gb memory for the shader and upload the shader code */
    variant->gb_shader = swc->shader_create(swc,
-                                           variant->id, type,
+                                           variant->id, variant->type,
                                            variant->tokens, codeLen);
 
    if (!variant->gb_shader) {
@@ -320,7 +429,7 @@ define_gb_shader_vgpu10(struct svga_context *svga,
     * the shader creation and return an error.
     */
    ret = SVGA3D_vgpu10_DefineAndBindShader(swc, variant->gb_shader,
-                                           variant->id, type, codeLen);
+                                           variant->id, variant->type, codeLen);
 
    if (ret != PIPE_OK)
       goto fail;
@@ -345,7 +454,6 @@ fail_no_allocation:
  */
 enum pipe_error
 svga_define_shader(struct svga_context *svga,
-                   SVGA3dShaderType type,
                    struct svga_shader_variant *variant)
 {
    unsigned codeLen = variant->nr_tokens * sizeof(variant->tokens[0]);
@@ -357,9 +465,9 @@ svga_define_shader(struct svga_context *svga,
 
    if (svga_have_gb_objects(svga)) {
       if (svga_have_vgpu10(svga))
-         ret = define_gb_shader_vgpu10(svga, type, variant, codeLen);
+         ret = define_gb_shader_vgpu10(svga, variant, codeLen);
       else
-         ret = define_gb_shader_vgpu9(svga, type, variant, codeLen);
+         ret = define_gb_shader_vgpu9(svga, variant, codeLen);
    }
    else {
       /* Allocate an integer ID for the shader */
@@ -372,7 +480,7 @@ svga_define_shader(struct svga_context *svga,
       /* Issue SVGA3D device command to define the shader */
       ret = SVGA3D_DefineShader(svga->swc,
                                 variant->id,
-                                type,
+                                variant->type,
                                 variant->tokens,
                                 codeLen);
       if (ret != PIPE_OK) {
@@ -423,16 +531,20 @@ svga_set_shader(struct svga_context *svga,
 
 
 struct svga_shader_variant *
-svga_new_shader_variant(struct svga_context *svga)
+svga_new_shader_variant(struct svga_context *svga, enum pipe_shader_type type)
 {
-   svga->hud.num_shaders++;
-   return CALLOC_STRUCT(svga_shader_variant);
+   struct svga_shader_variant *variant = CALLOC_STRUCT(svga_shader_variant);
+
+   if (variant) {
+      variant->type = svga_shader_type(type);
+      svga->hud.num_shaders++;
+   }
+   return variant;
 }
 
 
-enum pipe_error
+void
 svga_destroy_shader_variant(struct svga_context *svga,
-                            SVGA3dShaderType type,
                             struct svga_shader_variant *variant)
 {
    enum pipe_error ret = PIPE_OK;
@@ -446,6 +558,7 @@ svga_destroy_shader_variant(struct svga_context *svga,
             /* flush and try again */
             svga_context_flush(svga, NULL);
             ret = SVGA3D_vgpu10_DestroyShader(svga->swc, variant->id);
+            assert(ret == PIPE_OK);
          }
          util_bitmask_clear(svga->shader_id_bm, variant->id);
       }
@@ -457,11 +570,11 @@ svga_destroy_shader_variant(struct svga_context *svga,
    }
    else {
       if (variant->id != UTIL_BITMASK_INVALID_INDEX) {
-         ret = SVGA3D_DestroyShader(svga->swc, variant->id, type);
+         ret = SVGA3D_DestroyShader(svga->swc, variant->id, variant->type);
          if (ret != PIPE_OK) {
             /* flush and try again */
             svga_context_flush(svga, NULL);
-            ret = SVGA3D_DestroyShader(svga->swc, variant->id, type);
+            ret = SVGA3D_DestroyShader(svga->swc, variant->id, variant->type);
             assert(ret == PIPE_OK);
          }
          util_bitmask_clear(svga->shader_id_bm, variant->id);
@@ -472,8 +585,6 @@ svga_destroy_shader_variant(struct svga_context *svga,
    FREE(variant);
 
    svga->hud.num_shaders--;
-
-   return ret;
 }
 
 /*

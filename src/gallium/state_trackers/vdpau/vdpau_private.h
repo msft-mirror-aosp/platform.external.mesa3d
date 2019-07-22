@@ -229,6 +229,8 @@ ProfileToPipe(VdpDecoderProfile vdpau_profile)
          return PIPE_VIDEO_PROFILE_MPEG2_MAIN;
       case VDP_DECODER_PROFILE_H264_BASELINE:
          return PIPE_VIDEO_PROFILE_MPEG4_AVC_BASELINE;
+      case VDP_DECODER_PROFILE_H264_CONSTRAINED_BASELINE:
+         return PIPE_VIDEO_PROFILE_MPEG4_AVC_CONSTRAINED_BASELINE;
       case VDP_DECODER_PROFILE_H264_MAIN:
          return PIPE_VIDEO_PROFILE_MPEG4_AVC_MAIN;
       case VDP_DECODER_PROFILE_H264_HIGH:
@@ -270,6 +272,8 @@ PipeToProfile(enum pipe_video_profile p_profile)
          return VDP_DECODER_PROFILE_MPEG2_MAIN;
       case PIPE_VIDEO_PROFILE_MPEG4_AVC_BASELINE:
          return VDP_DECODER_PROFILE_H264_BASELINE;
+      case PIPE_VIDEO_PROFILE_MPEG4_AVC_CONSTRAINED_BASELINE:
+         return VDP_DECODER_PROFILE_H264_CONSTRAINED_BASELINE;
       case PIPE_VIDEO_PROFILE_MPEG4_AVC_MAIN:
          return VDP_DECODER_PROFILE_H264_MAIN;
       case PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH:
@@ -339,8 +343,9 @@ static inline bool
 CheckSurfaceParams(struct pipe_screen *screen,
                    const struct pipe_resource *templ)
 {
-   return screen->is_format_supported(
-         screen, templ->format, templ->target, templ->nr_samples, templ->bind);
+   return screen->is_format_supported(screen, templ->format, templ->target,
+                                      templ->nr_samples,
+                                      templ->nr_storage_samples, templ->bind);
 }
 
 typedef struct
@@ -350,7 +355,7 @@ typedef struct
    struct pipe_context *context;
    struct vl_compositor compositor;
    struct pipe_sampler_view *dummy_sv;
-   pipe_mutex mutex;
+   mtx_t mutex;
 } vlVdpDevice;
 
 typedef struct
@@ -435,7 +440,7 @@ typedef struct
 typedef struct
 {
    vlVdpDevice *device;
-   pipe_mutex mutex;
+   mtx_t mutex;
    struct pipe_video_codec *decoder;
 } vlVdpDecoder;
 

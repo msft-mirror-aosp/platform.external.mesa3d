@@ -24,24 +24,18 @@ env.Prepend(CPPPATH = [
 
 env.Append(CPPDEFINES = [
     '_REENTRANT',
-    #('DEFAULT_DRIVER_DIR', 'DRI_DRIVER_SEARCH_DIR')
 ])
 
 env.Prepend(LIBS = [
     libloader,
+    mesautil,
     glapi
 ])
 
 env.PkgUseModules('X11')
 env.PkgUseModules('XCB')
 env.PkgUseModules('DRM')
-
-if env['HAVE_XF86VIDMODE']:
-    env.Append(CPPDEFINES = ['XF86VIDMODE'])
-    env.PkgUseModules('XF86VIDMODE')
-
-if False: # XXX: SHARED_GLAPI
-    env.Append(CPPDEFINES = ['GLX_SHARED_GLAPI'])
+env.PkgUseModules('XF86VIDMODE')
 
 sources = [
     'clientattrib.c',

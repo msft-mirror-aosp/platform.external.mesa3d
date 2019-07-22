@@ -21,112 +21,44 @@
  * IN THE SOFTWARE.
  */
 
-#pragma once
+#ifndef AC_NIR_TO_LLVM_H
+#define AC_NIR_TO_LLVM_H
 
 #include <stdbool.h>
 #include "llvm-c/Core.h"
 #include "llvm-c/TargetMachine.h"
 #include "amd_family.h"
-#include "../vulkan/radv_descriptor_set.h"
+#include "compiler/shader_enums.h"
 
-struct ac_shader_binary;
-struct ac_shader_config;
 struct nir_shader;
-struct radv_pipeline_layout;
+struct nir_variable;
+struct ac_llvm_context;
+struct ac_shader_abi;
 
+/* Interpolation locations */
+#define INTERP_CENTER 0
+#define INTERP_CENTROID 1
+#define INTERP_SAMPLE 2
 
-struct ac_vs_variant_key {
-	uint32_t instance_rate_inputs;
-};
+static inline unsigned ac_llvm_reg_index_soa(unsigned index, unsigned chan)
+{
+	return (index * 4) + chan;
+}
 
-struct ac_fs_variant_key {
-	uint32_t col_format;
-	uint32_t is_int8;
-};
+void ac_lower_indirect_derefs(struct nir_shader *nir, enum chip_class);
 
-union ac_shader_variant_key {
-	struct ac_vs_variant_key vs;
-	struct ac_fs_variant_key fs;
-};
+bool ac_are_tessfactors_def_in_all_invocs(const struct nir_shader *nir);
 
-struct ac_nir_compiler_options {
-	struct radv_pipeline_layout *layout;
-	union ac_shader_variant_key key;
-	bool unsafe_math;
-	enum radeon_family family;
-	enum chip_class chip_class;
-};
+void ac_nir_translate(struct ac_llvm_context *ac, struct ac_shader_abi *abi,
+		      struct nir_shader *nir);
 
-struct ac_userdata_info {
-	int8_t sgpr_idx;
-	uint8_t num_sgprs;
-	bool indirect;
-	uint32_t indirect_offset;
-};
+void
+ac_handle_shader_output_decl(struct ac_llvm_context *ctx,
+			     struct ac_shader_abi *abi,
+			     struct nir_shader *nir,
+			     struct nir_variable *variable,
+			     gl_shader_stage stage);
 
-enum ac_ud_index {
-	AC_UD_PUSH_CONSTANTS = 0,
-	AC_UD_SHADER_START = 1,
-	AC_UD_VS_VERTEX_BUFFERS = AC_UD_SHADER_START,
-	AC_UD_VS_BASE_VERTEX_START_INSTANCE,
-	AC_UD_VS_MAX_UD,
-	AC_UD_PS_SAMPLE_POS = AC_UD_SHADER_START,
-	AC_UD_PS_MAX_UD,
-	AC_UD_CS_GRID_SIZE = AC_UD_SHADER_START,
-	AC_UD_CS_MAX_UD,
-	AC_UD_MAX_UD = AC_UD_VS_MAX_UD,
-};
+void ac_emit_barrier(struct ac_llvm_context *ac, gl_shader_stage stage);
 
-// Match MAX_SETS from radv_descriptor_set.h
-#define AC_UD_MAX_SETS MAX_SETS
-
-struct ac_userdata_locations {
-	struct ac_userdata_info descriptor_sets[AC_UD_MAX_SETS];
-	struct ac_userdata_info shader_data[AC_UD_MAX_UD];
-};
-
-struct ac_shader_variant_info {
-	struct ac_userdata_locations user_sgprs_locs;
-	unsigned num_user_sgprs;
-	unsigned num_input_sgprs;
-	unsigned num_input_vgprs;
-	union {
-		struct {
-			unsigned param_exports;
-			unsigned pos_exports;
-			unsigned vgpr_comp_cnt;
-			uint32_t export_mask;
-			bool writes_pointsize;
-			bool writes_layer;
-			bool writes_viewport_index;
-			uint8_t clip_dist_mask;
-			uint8_t cull_dist_mask;
-		} vs;
-		struct {
-			unsigned num_interp;
-			uint32_t input_mask;
-			unsigned output_mask;
-			uint32_t flat_shaded_mask;
-			bool has_pcoord;
-			bool can_discard;
-			bool writes_z;
-			bool writes_stencil;
-			bool early_fragment_test;
-			bool writes_memory;
-			bool force_persample;
-		} fs;
-		struct {
-			unsigned block_size[3];
-		} cs;
-	};
-};
-
-void ac_compile_nir_shader(LLVMTargetMachineRef tm,
-                           struct ac_shader_binary *binary,
-                           struct ac_shader_config *config,
-                           struct ac_shader_variant_info *shader_info,
-                           struct nir_shader *nir,
-                           const struct ac_nir_compiler_options *options,
-			   bool dump_shader);
-
-
+#endif /* AC_NIR_TO_LLVM_H */

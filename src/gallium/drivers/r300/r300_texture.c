@@ -34,7 +34,6 @@
 #include "util/u_format_s3tc.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
-#include "util/u_mm.h"
 
 #include "pipe/p_screen.h"
 
@@ -251,10 +250,6 @@ uint32_t r300_translate_texformat(enum pipe_format format,
 
     /* S3TC formats. */
     if (desc->layout == UTIL_FORMAT_LAYOUT_S3TC) {
-        if (!util_format_s3tc_enabled) {
-            return ~0; /* Unsupported. */
-        }
-
         switch (format) {
             case PIPE_FORMAT_DXT1_RGB:
             case PIPE_FORMAT_DXT1_RGBA:
@@ -1030,11 +1025,11 @@ static void r300_texture_destroy(struct pipe_screen *screen,
     struct r300_resource* tex = (struct r300_resource*)texture;
 
     if (tex->tex.cmask_dwords) {
-        pipe_mutex_lock(rscreen->cmask_mutex);
+        mtx_lock(&rscreen->cmask_mutex);
         if (texture == rscreen->cmask_resource) {
             rscreen->cmask_resource = NULL;
         }
-        pipe_mutex_unlock(rscreen->cmask_mutex);
+        mtx_unlock(&rscreen->cmask_mutex);
     }
     pb_reference(&tex->buf, NULL);
     FREE(tex);
@@ -1118,8 +1113,16 @@ r300_texture_create_object(struct r300_screen *rscreen,
 
     /* Create the backing buffer if needed. */
     if (!tex->buf) {
+        /* Only use the first domain for allocation. Multiple domains are not allowed. */
+        unsigned alloc_domain =
+            tex->domain & RADEON_DOMAIN_VRAM ? RADEON_DOMAIN_VRAM :
+                                               RADEON_DOMAIN_GTT;
+
         tex->buf = rws->buffer_create(rws, tex->tex.size_in_bytes, 2048,
-                                      tex->domain, RADEON_FLAG_HANDLE);
+                                      alloc_domain,
+                                      RADEON_FLAG_NO_SUBALLOC |
+                                      /* Use the reusable pool: */
+                                      RADEON_FLAG_NO_INTERPROCESS_SHARING);
 
         if (!tex->buf) {
             goto fail;
@@ -1132,9 +1135,9 @@ r300_texture_create_object(struct r300_screen *rscreen,
                 util_format_is_depth_or_stencil(base->format) ? "depth" : "color");
     }
 
-    tiling.microtile = tex->tex.microtile;
-    tiling.macrotile = tex->tex.macrotile[0];
-    tiling.stride = tex->tex.stride_in_bytes[0];
+    tiling.u.legacy.microtile = tex->tex.microtile;
+    tiling.u.legacy.macrotile = tex->tex.macrotile[0];
+    tiling.u.legacy.stride = tex->tex.stride_in_bytes[0];
     rws->buffer_set_metadata(tex->buf, &tiling);
 
     return tex;
@@ -1187,7 +1190,7 @@ struct pipe_resource *r300_texture_from_handle(struct pipe_screen *screen,
         return NULL;
     }
 
-    buffer = rws->buffer_from_handle(rws, whandle, &stride, NULL);
+    buffer = rws->buffer_from_handle(rws, whandle, 0, &stride, NULL);
     if (!buffer)
         return NULL;
 
@@ -1195,20 +1198,20 @@ struct pipe_resource *r300_texture_from_handle(struct pipe_screen *screen,
 
     /* Enforce a microtiled zbuffer. */
     if (util_format_is_depth_or_stencil(base->format) &&
-        tiling.microtile == RADEON_LAYOUT_LINEAR) {
+        tiling.u.legacy.microtile == RADEON_LAYOUT_LINEAR) {
         switch (util_format_get_blocksize(base->format)) {
             case 4:
-                tiling.microtile = RADEON_LAYOUT_TILED;
+                tiling.u.legacy.microtile = RADEON_LAYOUT_TILED;
                 break;
 
             case 2:
-                tiling.microtile = RADEON_LAYOUT_SQUARETILED;
+                tiling.u.legacy.microtile = RADEON_LAYOUT_SQUARETILED;
                 break;
         }
     }
 
     return (struct pipe_resource*)
-           r300_texture_create_object(rscreen, base, tiling.microtile, tiling.macrotile,
+           r300_texture_create_object(rscreen, base, tiling.u.legacy.microtile, tiling.u.legacy.macrotile,
                                       stride, buffer);
 }
 
@@ -1239,7 +1242,6 @@ struct pipe_surface* r300_create_surface_custom(struct pipe_context * ctx,
         surface->base.u.tex.first_layer = surf_tmpl->u.tex.first_layer;
         surface->base.u.tex.last_layer = surf_tmpl->u.tex.last_layer;
 
-        surface->buf = tex->buf;
         surface->buf = tex->buf;
 
         /* Prefer VRAM if there are multiple domains to choose from. */

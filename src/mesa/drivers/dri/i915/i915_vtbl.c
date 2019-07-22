@@ -176,7 +176,7 @@ i915_emit_invarient_state(struct intel_context *intel)
 {
    BATCH_LOCALS;
 
-   BEGIN_BATCH(17);
+   BEGIN_BATCH(15);
 
    OUT_BATCH(_3DSTATE_AA_CMD |
              AA_LINE_ECAAR_WIDTH_ENABLE |
@@ -199,11 +199,6 @@ i915_emit_invarient_state(struct intel_context *intel)
              CSB_TCB(2, 2) |
              CSB_TCB(3, 3) |
              CSB_TCB(4, 4) | CSB_TCB(5, 5) | CSB_TCB(6, 6) | CSB_TCB(7, 7));
-
-   /* Need to initialize this to zero.
-    */
-   OUT_BATCH(_3DSTATE_LOAD_STATE_IMMEDIATE_1 | I1_LOAD_S(3) | (0));
-   OUT_BATCH(0);
 
    OUT_BATCH(_3DSTATE_SCISSOR_RECT_0_CMD);
    OUT_BATCH(0);
@@ -613,14 +608,6 @@ i915_set_draw_region(struct intel_context *intel,
    } else {
       value |= DV_PF_8888;
    }
-
-   /* This isn't quite safe, thus being hidden behind an option.  When changing
-    * the value of this bit, the pipeline needs to be MI_FLUSHed.  And it
-    * can only be set when a depth buffer is already defined.
-    */
-   if (intel->is_945 && intel->use_early_z &&
-       depth_region->tiling != I915_TILING_NONE)
-      value |= CLASSIC_EARLY_DEPTH;
 
    if (depth_region && depth_region->cpp == 4) {
       value |= DEPTH_FRMT_24_FIXED_8_OTHER;

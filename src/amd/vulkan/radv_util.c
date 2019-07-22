@@ -29,6 +29,8 @@
 #include <assert.h>
 
 #include "radv_private.h"
+#include "radv_debug.h"
+#include "vk_enum_to_str.h"
 
 #include "util/u_math.h"
 
@@ -52,6 +54,26 @@ radv_loge_v(const char *format, va_list va)
 	fprintf(stderr, "\n");
 }
 
+/** Log an error message.  */
+void radv_printflike(1, 2)
+	radv_logi(const char *format, ...)
+{
+	va_list va;
+
+	va_start(va, format);
+	radv_logi_v(format, va);
+	va_end(va);
+}
+
+/** \see radv_logi() */
+void
+radv_logi_v(const char *format, va_list va)
+{
+	fprintf(stderr, "radv: info: ");
+	vfprintf(stderr, format, va);
+	fprintf(stderr, "\n");
+}
+
 void radv_printflike(3, 4)
 	__radv_finishme(const char *file, int line, const char *format, ...)
 {
@@ -66,35 +88,18 @@ void radv_printflike(3, 4)
 }
 
 VkResult
-__vk_errorf(VkResult error, const char *file, int line, const char *format, ...)
+__vk_errorf(struct radv_instance *instance, VkResult error, const char *file,
+	    int line, const char *format, ...)
 {
 	va_list ap;
 	char buffer[256];
 
-#define ERROR_CASE(error) case error: error_str = #error; break;
+	const char *error_str = vk_Result_to_str(error);
 
-	const char *error_str;
-	switch ((int32_t)error) {
-
-		/* Core errors */
-		ERROR_CASE(VK_ERROR_OUT_OF_HOST_MEMORY)
-			ERROR_CASE(VK_ERROR_OUT_OF_DEVICE_MEMORY)
-			ERROR_CASE(VK_ERROR_INITIALIZATION_FAILED)
-			ERROR_CASE(VK_ERROR_DEVICE_LOST)
-			ERROR_CASE(VK_ERROR_MEMORY_MAP_FAILED)
-			ERROR_CASE(VK_ERROR_LAYER_NOT_PRESENT)
-			ERROR_CASE(VK_ERROR_EXTENSION_NOT_PRESENT)
-			ERROR_CASE(VK_ERROR_INCOMPATIBLE_DRIVER)
-
-			/* Extension errors */
-			ERROR_CASE(VK_ERROR_OUT_OF_DATE_KHR)
-
-	default:
-		assert(!"Unknown error");
-		error_str = "unknown error";
-	}
-
-#undef ERROR_CASE
+#ifndef DEBUG
+	if (instance && !(instance->debug_flags & RADV_DEBUG_ERRORS))
+		return error;
+#endif
 
 	if (format) {
 		va_start(ap, format);

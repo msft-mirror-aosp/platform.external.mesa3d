@@ -106,11 +106,11 @@ vc4_nir_get_vattr_channel_vpm(struct vc4_compile *c,
         } else if (chan->size == 32 && chan->type == UTIL_FORMAT_TYPE_SIGNED) {
                 if (chan->normalized) {
                         return nir_fmul(b,
-                                        nir_i2f(b, vpm_reads[swiz]),
+                                        nir_i2f32(b, vpm_reads[swiz]),
                                         nir_imm_float(b,
                                                       1.0 / 0x7fffffff));
                 } else {
-                        return nir_i2f(b, vpm_reads[swiz]);
+                        return nir_i2f32(b, vpm_reads[swiz]);
                 }
         } else if (chan->size == 8 &&
                    (chan->type == UTIL_FORMAT_TYPE_UNSIGNED ||
@@ -125,16 +125,16 @@ vc4_nir_get_vattr_channel_vpm(struct vc4_compile *c,
                                                 nir_imm_float(b, 1.0));
                         } else {
                                 return nir_fadd(b,
-                                                nir_i2f(b,
-                                                        vc4_nir_unpack_8i(b, temp,
-                                                                          swiz)),
+                                                nir_i2f32(b,
+                                                          vc4_nir_unpack_8i(b, temp,
+                                                                            swiz)),
                                                 nir_imm_float(b, -128.0));
                         }
                 } else {
                         if (chan->normalized) {
                                 return vc4_nir_unpack_8f(b, vpm, swiz);
                         } else {
-                                return nir_i2f(b, vc4_nir_unpack_8i(b, vpm, swiz));
+                                return nir_i2f32(b, vc4_nir_unpack_8i(b, vpm, swiz));
                         }
                 }
         } else if (chan->size == 16 &&
@@ -146,7 +146,7 @@ vc4_nir_get_vattr_channel_vpm(struct vc4_compile *c,
                  * UNPACK_16_I for all of these.
                  */
                 if (chan->type == UTIL_FORMAT_TYPE_SIGNED) {
-                        temp = nir_i2f(b, vc4_nir_unpack_16i(b, vpm, swiz & 1));
+                        temp = nir_i2f32(b, vc4_nir_unpack_16i(b, vpm, swiz & 1));
                         if (chan->normalized) {
                                 return nir_fmul(b, temp,
                                                 nir_imm_float(b, 1/32768.0f));
@@ -154,7 +154,7 @@ vc4_nir_get_vattr_channel_vpm(struct vc4_compile *c,
                                 return temp;
                         }
                 } else {
-                        temp = nir_i2f(b, vc4_nir_unpack_16u(b, vpm, swiz & 1));
+                        temp = nir_i2f32(b, vc4_nir_unpack_16u(b, vpm, swiz & 1));
                         if (chan->normalized) {
                                 return nir_fmul(b, temp,
                                                 nir_imm_float(b, 1 / 65535.0));
@@ -180,8 +180,7 @@ vc4_nir_lower_vertex_attr(struct vc4_compile *c, nir_builder *b,
         /* We only accept direct outputs and TGSI only ever gives them to us
          * with an offset value of 0.
          */
-        assert(nir_src_as_const_value(intr->src[0]) &&
-               nir_src_as_const_value(intr->src[0])->u32[0] == 0);
+        assert(nir_src_as_uint(intr->src[0]) == 0);
 
         /* Generate dword loads for the VPM values (Since these intrinsics may
          * be reordered, the actual reads will be generated at the top of the
@@ -330,7 +329,8 @@ vc4_nir_lower_uniform(struct vc4_compile *c, nir_builder *b,
                 nir_intrinsic_instr *intr_comp =
                         nir_intrinsic_instr_create(c->s, intr->intrinsic);
                 intr_comp->num_components = 1;
-                nir_ssa_dest_init(&intr_comp->instr, &intr_comp->dest, 1, 32, NULL);
+                nir_ssa_dest_init(&intr_comp->instr, &intr_comp->dest, 1,
+                                  intr->dest.ssa.bit_size, NULL);
 
                 /* Convert the uniform offset to bytes.  If it happens
                  * to be a constant, constant-folding will clean up
@@ -339,6 +339,8 @@ vc4_nir_lower_uniform(struct vc4_compile *c, nir_builder *b,
                 nir_intrinsic_set_base(intr_comp,
                                        nir_intrinsic_base(intr) * 16 +
                                        i * 4);
+                nir_intrinsic_set_range(intr_comp,
+                                        nir_intrinsic_range(intr) * 16 - i * 4);
 
                 intr_comp->src[0] =
                         nir_src_for_ssa(nir_ishl(b, intr->src[0].ssa,

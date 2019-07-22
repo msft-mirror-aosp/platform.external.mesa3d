@@ -26,8 +26,10 @@
 #define __gen_address_type uint64_t
 #define __gen_user_data void
 
-static inline uint64_t
-__gen_combine_address(void *data, void *loc, uint64_t addr, uint32_t delta)
+static uint64_t
+__gen_combine_address(__attribute__((unused)) void *data,
+                      __attribute__((unused)) void *loc, uint64_t addr,
+                      uint32_t delta)
 {
    return addr + delta;
 }
@@ -36,10 +38,6 @@ __gen_combine_address(void *data, void *loc, uint64_t addr, uint32_t delta)
 #include "genxml/genX_pack.h"
 
 #include "isl_priv.h"
-
-#define __PASTE2(x, y) x ## y
-#define __PASTE(x, y) __PASTE2(x, y)
-#define isl_genX(x) __PASTE(isl_, genX(x))
 
 #if GEN_GEN >= 8
 static const uint8_t isl_to_gen_halign[] = {
@@ -134,7 +132,7 @@ get_surftype(enum isl_surf_dim dim, isl_surf_usage_flags_t usage)
  * hardware.  Note that this does NOT give you the actual hardware enum values
  * but an index into the isl_to_gen_[hv]align arrays above.
  */
-static inline struct isl_extent3d
+UNUSED static struct isl_extent3d
 get_image_alignment(const struct isl_surf *surf)
 {
    if (GEN_GEN >= 9) {
@@ -254,10 +252,35 @@ isl_genX(surf_fill_state_s)(const struct isl_device *dev, void *state,
    if (info->surf->dim == ISL_SURF_DIM_1D)
       assert(!isl_format_is_compressed(info->view->format));
 
+   if (isl_format_is_compressed(info->surf->format)) {
+      /* You're not allowed to make a view of a compressed format with any
+       * format other than the surface format.  None of the userspace APIs
+       * allow for this directly and doing so would mess up a number of
+       * surface parameters such as Width, Height, and alignments.  Ideally,
+       * we'd like to assert that the two formats match.  However, we have an
+       * S3TC workaround that requires us to do reinterpretation.  So assert
+       * that they're at least the same bpb and block size.
+       */
+      MAYBE_UNUSED const struct isl_format_layout *surf_fmtl =
+         isl_format_get_layout(info->surf->format);
+      MAYBE_UNUSED const struct isl_format_layout *view_fmtl =
+         isl_format_get_layout(info->surf->format);
+      assert(surf_fmtl->bpb == view_fmtl->bpb);
+      assert(surf_fmtl->bw == view_fmtl->bw);
+      assert(surf_fmtl->bh == view_fmtl->bh);
+   }
+
    s.SurfaceFormat = info->view->format;
 
+#if GEN_GEN <= 5
+   s.ColorBufferComponentWriteDisables = info->write_disables;
+#else
+   assert(info->write_disables == 0);
+#endif
+
 #if GEN_IS_HASWELL
-   s.IntegerSurfaceFormat = isl_format_has_int_channel(s.SurfaceFormat);
+   s.IntegerSurfaceFormat =
+      isl_format_has_int_channel((enum isl_format) s.SurfaceFormat);
 #endif
 
    assert(info->surf->logical_level0_px.width > 0 &&
@@ -407,7 +430,7 @@ isl_genX(surf_fill_state_s)(const struct isl_device *dev, void *state,
       /* For gen9 1-D textures, surface pitch is ignored */
       s.SurfacePitch = 0;
    } else {
-      s.SurfacePitch = info->surf->row_pitch - 1;
+      s.SurfacePitch = info->surf->row_pitch_B - 1;
    }
 
 #if GEN_GEN >= 8
@@ -431,18 +454,12 @@ isl_genX(surf_fill_state_s)(const struct isl_device *dev, void *state,
    s.RenderCacheReadWriteMode = 0;
 #endif
 
-   if (info->view->usage & ISL_SURF_USAGE_CUBE_BIT) {
-#if GEN_GEN >= 8
-      s.CubeFaceEnablePositiveZ = 1;
-      s.CubeFaceEnableNegativeZ = 1;
-      s.CubeFaceEnablePositiveY = 1;
-      s.CubeFaceEnableNegativeY = 1;
-      s.CubeFaceEnablePositiveX = 1;
-      s.CubeFaceEnableNegativeX = 1;
-#else
-      s.CubeFaceEnables = 0x3f;
-#endif
-   }
+   s.CubeFaceEnablePositiveZ = 1;
+   s.CubeFaceEnableNegativeZ = 1;
+   s.CubeFaceEnablePositiveY = 1;
+   s.CubeFaceEnableNegativeY = 1;
+   s.CubeFaceEnablePositiveX = 1;
+   s.CubeFaceEnableNegativeX = 1;
 
 #if GEN_GEN >= 6
    s.NumberofMultisamples = ffs(info->surf->samples) - 1;
@@ -453,10 +470,15 @@ isl_genX(surf_fill_state_s)(const struct isl_device *dev, void *state,
 #endif
 
 #if (GEN_GEN >= 8 || GEN_IS_HASWELL)
-   s.ShaderChannelSelectRed = info->view->swizzle.r;
-   s.ShaderChannelSelectGreen = info->view->swizzle.g;
-   s.ShaderChannelSelectBlue = info->view->swizzle.b;
-   s.ShaderChannelSelectAlpha = info->view->swizzle.a;
+   if (info->view->usage & ISL_SURF_USAGE_RENDER_TARGET_BIT)
+      assert(isl_swizzle_supports_rendering(dev->info, info->view->swizzle));
+
+   s.ShaderChannelSelectRed = (enum GENX(ShaderChannelSelect)) info->view->swizzle.r;
+   s.ShaderChannelSelectGreen = (enum GENX(ShaderChannelSelect)) info->view->swizzle.g;
+   s.ShaderChannelSelectBlue = (enum GENX(ShaderChannelSelect)) info->view->swizzle.b;
+   s.ShaderChannelSelectAlpha = (enum GENX(ShaderChannelSelect)) info->view->swizzle.a;
+#else
+   assert(isl_swizzle_is_identity(info->view->swizzle));
 #endif
 
    s.SurfaceBaseAddress = info->address;
@@ -505,21 +527,28 @@ isl_genX(surf_fill_state_s)(const struct isl_device *dev, void *state,
 
 #if GEN_GEN >= 7
    if (info->aux_surf && info->aux_usage != ISL_AUX_USAGE_NONE) {
+      /* The docs don't appear to say anything whatsoever about compression
+       * and the data port.  Testing seems to indicate that the data port
+       * completely ignores the AuxiliarySurfaceMode field.
+       */
+      assert(!(info->view->usage & ISL_SURF_USAGE_STORAGE_BIT));
+
       struct isl_tile_info tile_info;
-      isl_surf_get_tile_info(dev, info->aux_surf, &tile_info);
+      isl_surf_get_tile_info(info->aux_surf, &tile_info);
       uint32_t pitch_in_tiles =
-         info->aux_surf->row_pitch / tile_info.phys_extent_B.width;
+         info->aux_surf->row_pitch_B / tile_info.phys_extent_B.width;
+
+      s.AuxiliarySurfaceBaseAddress = info->aux_address;
+      s.AuxiliarySurfacePitch = pitch_in_tiles - 1;
 
 #if GEN_GEN >= 8
       assert(GEN_GEN >= 9 || info->aux_usage != ISL_AUX_USAGE_CCS_E);
-      s.AuxiliarySurfacePitch = pitch_in_tiles - 1;
       /* Auxiliary surfaces in ISL have compressed formats but the hardware
        * doesn't expect our definition of the compression, it expects qpitch
        * in units of samples on the main surface.
        */
       s.AuxiliarySurfaceQPitch =
          isl_surf_get_array_pitch_sa_rows(info->aux_surf) >> 2;
-      s.AuxiliarySurfaceBaseAddress = info->aux_address;
 
       if (info->aux_usage == ISL_AUX_USAGE_HIZ) {
          /* The number of samples must be 1 */
@@ -544,8 +573,6 @@ isl_genX(surf_fill_state_s)(const struct isl_device *dev, void *state,
 #else
       assert(info->aux_usage == ISL_AUX_USAGE_MCS ||
              info->aux_usage == ISL_AUX_USAGE_CCS_D);
-      s.MCSBaseAddress = info->aux_address,
-      s.MCSSurfacePitch = pitch_in_tiles - 1;
       s.MCSEnable = true;
 #endif
    }
@@ -583,11 +610,42 @@ isl_genX(surf_fill_state_s)(const struct isl_device *dev, void *state,
 #endif
 
    if (info->aux_usage != ISL_AUX_USAGE_NONE) {
+      if (info->use_clear_address) {
+#if GEN_GEN >= 10
+         s.ClearValueAddressEnable = true;
+         s.ClearValueAddress = info->clear_address;
+#else
+         unreachable("Gen9 and earlier do not support indirect clear colors");
+#endif
+      }
+
+#if GEN_GEN == 11
+      /*
+       * From BXML > GT > Shared Functions > vol5c Shared Functions >
+       * [Structure] RENDER_SURFACE_STATE [BDW+] > ClearColorConversionEnable:
+       *
+       *   Project: Gen11
+       *
+       *   "Enables Pixel backend hw to convert clear values into native format
+       *    and write back to clear address, so that display and sampler can use
+       *    the converted value for resolving fast cleared RTs."
+       *
+       * Summary:
+       *   Clear color conversion must be enabled if the clear color is stored
+       *   indirectly and fast color clears are enabled.
+       */
+      if (info->use_clear_address) {
+         s.ClearColorConversionEnable = true;
+      }
+#endif
+
 #if GEN_GEN >= 9
-      s.RedClearColor = info->clear_color.u32[0];
-      s.GreenClearColor = info->clear_color.u32[1];
-      s.BlueClearColor = info->clear_color.u32[2];
-      s.AlphaClearColor = info->clear_color.u32[3];
+      if (!info->use_clear_address) {
+         s.RedClearColor = info->clear_color.u32[0];
+         s.GreenClearColor = info->clear_color.u32[1];
+         s.BlueClearColor = info->clear_color.u32[2];
+         s.AlphaClearColor = info->clear_color.u32[3];
+      }
 #elif GEN_GEN >= 7
       /* Prior to Sky Lake, we only have one bit for the clear color which
        * gives us 0 or 1 in whatever the surface's format happens to be.
@@ -621,7 +679,27 @@ void
 isl_genX(buffer_fill_state_s)(void *state,
                               const struct isl_buffer_fill_state_info *restrict info)
 {
-   uint32_t num_elements = info->size / info->stride;
+   uint64_t buffer_size = info->size_B;
+
+   /* Uniform and Storage buffers need to have surface size not less that the
+    * aligned 32-bit size of the buffer. To calculate the array lenght on
+    * unsized arrays in StorageBuffer the last 2 bits store the padding size
+    * added to the surface, so we can calculate latter the original buffer
+    * size to know the number of elements.
+    *
+    *  surface_size = isl_align(buffer_size, 4) +
+    *                 (isl_align(buffer_size) - buffer_size)
+    *
+    *  buffer_size = (surface_size & ~3) - (surface_size & 3)
+    */
+   if (info->format == ISL_FORMAT_RAW  ||
+       info->stride_B < isl_format_get_layout(info->format)->bpb / 8) {
+      assert(info->stride_B == 1);
+      uint64_t aligned_size = isl_align(buffer_size, 4);
+      buffer_size = aligned_size + (aligned_size - buffer_size);
+   }
+
+   uint32_t num_elements = buffer_size / info->stride_B;
 
    if (GEN_GEN >= 7) {
       /* From the IVB PRM, SURFACE_STATE::Height,
@@ -633,7 +711,7 @@ isl_genX(buffer_fill_state_s)(void *state,
        */
       if (info->format == ISL_FORMAT_RAW) {
          assert(num_elements <= (1ull << 30));
-         assert((num_elements & 3) == 0);
+         assert(num_elements > 0);
       } else {
          assert(num_elements <= (1ull << 27));
       }
@@ -664,7 +742,7 @@ isl_genX(buffer_fill_state_s)(void *state,
    s.Depth = ((num_elements - 1) >> 20) & 0x7f;
 #endif
 
-   s.SurfacePitch = info->stride - 1;
+   s.SurfacePitch = info->stride_B - 1;
 
 #if GEN_GEN >= 6
    s.NumberofMultisamples = MULTISAMPLECOUNT_1;
@@ -688,11 +766,37 @@ isl_genX(buffer_fill_state_s)(void *state,
 #endif
 
 #if (GEN_GEN >= 8 || GEN_IS_HASWELL)
-   s.ShaderChannelSelectRed = SCS_RED;
-   s.ShaderChannelSelectGreen = SCS_GREEN;
-   s.ShaderChannelSelectBlue = SCS_BLUE;
-   s.ShaderChannelSelectAlpha = SCS_ALPHA;
+   s.ShaderChannelSelectRed = (enum GENX(ShaderChannelSelect)) info->swizzle.r;
+   s.ShaderChannelSelectGreen = (enum GENX(ShaderChannelSelect)) info->swizzle.g;
+   s.ShaderChannelSelectBlue = (enum GENX(ShaderChannelSelect)) info->swizzle.b;
+   s.ShaderChannelSelectAlpha = (enum GENX(ShaderChannelSelect)) info->swizzle.a;
 #endif
 
+   GENX(RENDER_SURFACE_STATE_pack)(NULL, state, &s);
+}
+
+void
+isl_genX(null_fill_state)(void *state, struct isl_extent3d size)
+{
+   struct GENX(RENDER_SURFACE_STATE) s = {
+      .SurfaceType = SURFTYPE_NULL,
+      .SurfaceFormat = ISL_FORMAT_B8G8R8A8_UNORM,
+#if GEN_GEN >= 7
+      .SurfaceArray = size.depth > 0,
+#endif
+#if GEN_GEN >= 8
+      .TileMode = YMAJOR,
+#else
+      .TiledSurface = true,
+      .TileWalk = TILEWALK_YMAJOR,
+#endif
+      .Width = size.width - 1,
+      .Height = size.height - 1,
+      .Depth = size.depth - 1,
+      .RenderTargetViewExtent = size.depth - 1,
+#if GEN_GEN <= 5
+      .ColorBufferComponentWriteDisables = 0xf,
+#endif
+   };
    GENX(RENDER_SURFACE_STATE_pack)(NULL, state, &s);
 }

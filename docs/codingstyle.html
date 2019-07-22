@@ -58,7 +58,7 @@ and not <tt>a=b+c;</tt>
 
 <li>Use comments wherever you think it would be helpful for other developers.
 Several specific cases and style examples follow.  Note that we roughly
-follow <a href="http://www.stack.nl/~dimitri/doxygen/">Doxygen</a> conventions.
+follow <a href="https://www.stack.nl/~dimitri/doxygen/">Doxygen</a> conventions.
 <br>
 <br>
 Single-line comments:
@@ -83,7 +83,7 @@ We try to quote the OpenGL specification where prudent:
     *     "An INVALID_OPERATION error is generated for any of the following
     *     conditions:
     *
-    *     * <length> is zero."
+    *     * &lt;length&gt; is zero."
     *
     * Additionally, page 94 of the PDF of the OpenGL 4.5 core spec
     * (30.10.2014) also says this, so it's no longer allowed for desktop GL,
@@ -94,7 +94,7 @@ Function comment example:
 <pre>
    /**
     * Create and initialize a new buffer object.  Called via the
-    * ctx->Driver.CreateObject() driver callback function.
+    * ctx-&gt;Driver.CreateObject() driver callback function.
     * \param  name  integer name of the object
     * \param  type  one of GL_FOO, GL_BAR, etc.
     * \return  pointer to new object or NULL if error
@@ -120,7 +120,7 @@ the opening brace goes on the next line by itself (see above.)
    _mesa_foo_bar()  - an internal non-static Mesa function
 </pre>
 
-<li>Constants, macros and enumerant names are ALL_UPPERCASE, with _ between
+<li>Constants, macros and enum names are ALL_UPPERCASE, with _ between
 words.
 <li>Mesa usually uses camel case for local variables (Ex: "localVarname")
 while gallium typically uses underscores (Ex: "local_var_name").
@@ -135,7 +135,6 @@ should prefer the use of <tt>bool</tt>, <tt>true</tt>, and
 src/mesa/state_tracker/st_glsl_to_tgsi.cpp can serve as examples.
 
 </ul>
-</p>
 
 </div>
 </body>

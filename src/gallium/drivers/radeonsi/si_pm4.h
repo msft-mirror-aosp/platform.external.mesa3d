@@ -1,5 +1,6 @@
 /*
  * Copyright 2012 Advanced Micro Devices, Inc.
+ * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -19,9 +20,6 @@
  * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
  * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
- * Authors:
- *      Christian König <christian.koenig@amd.com>
  */
 
 #ifndef SI_PM4_H
@@ -30,16 +28,22 @@
 #include "radeon/radeon_winsys.h"
 
 #define SI_PM4_MAX_DW		176
-#define SI_PM4_MAX_BO		1
+#define SI_PM4_MAX_BO		3
 
 // forward defines
 struct si_context;
-enum chip_class;
+
+/* State atoms are callbacks which write a sequence of packets into a GPU
+ * command buffer (AKA indirect buffer, AKA IB, AKA command stream, AKA CS).
+ */
+struct si_atom {
+	void (*emit)(struct si_context *ctx);
+};
 
 struct si_pm4_state
 {
 	/* optional indirect buffer */
-	struct r600_resource	*indirect_buffer;
+	struct si_resource	*indirect_buffer;
 
 	/* PKT3_SET_*_REG handling */
 	unsigned	last_opcode;
@@ -52,11 +56,13 @@ struct si_pm4_state
 
 	/* BO's referenced by this state */
 	unsigned		nbo;
-	struct r600_resource	*bo[SI_PM4_MAX_BO];
+	struct si_resource	*bo[SI_PM4_MAX_BO];
 	enum radeon_bo_usage	bo_usage[SI_PM4_MAX_BO];
 	enum radeon_bo_priority	bo_priority[SI_PM4_MAX_BO];
 
-	bool compute_pkt;
+	/* For shader states only */
+	struct si_shader *shader;
+	struct si_atom atom;
 };
 
 void si_pm4_cmd_begin(struct si_pm4_state *state, unsigned opcode);
@@ -65,20 +71,18 @@ void si_pm4_cmd_end(struct si_pm4_state *state, bool predicate);
 
 void si_pm4_set_reg(struct si_pm4_state *state, unsigned reg, uint32_t val);
 void si_pm4_add_bo(struct si_pm4_state *state,
-		   struct r600_resource *bo,
+		   struct si_resource *bo,
 		   enum radeon_bo_usage usage,
 		   enum radeon_bo_priority priority);
 void si_pm4_upload_indirect_buffer(struct si_context *sctx,
 				   struct si_pm4_state *state);
 
 void si_pm4_clear_state(struct si_pm4_state *state);
-void si_pm4_free_state_simple(struct si_pm4_state *state);
 void si_pm4_free_state(struct si_context *sctx,
 		       struct si_pm4_state *state,
 		       unsigned idx);
 
 void si_pm4_emit(struct si_context *sctx, struct si_pm4_state *state);
-void si_pm4_emit_dirty(struct si_context *sctx);
 void si_pm4_reset_emitted(struct si_context *sctx);
 
 #endif

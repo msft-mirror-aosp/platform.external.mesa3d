@@ -21,6 +21,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+#include <stdlib.h>
 #include <stdio.h>
 #include <getopt.h>
 
@@ -52,7 +53,7 @@ const struct option compiler_opts[] = {
 /**
  * \brief Print proper usage and exit with failure.
  */
-void
+static void
 usage_fail(const char *name)
 {
 
@@ -62,7 +63,10 @@ usage_fail(const char *name)
       "Possible options are:\n";
    printf(header, name);
    for (const struct option *o = compiler_opts; o->name != 0; ++o) {
-      printf("    --%s\n", o->name);
+      printf("    --%s", o->name);
+      if (o->has_arg == required_argument)
+         printf(" (mandatory)");
+      printf("\n");
    }
    exit(EXIT_FAILURE);
 }
@@ -88,8 +92,10 @@ main(int argc, char * const* argv)
       usage_fail(argv[0]);
 
    struct gl_shader_program *whole_program;
+   static struct gl_context local_ctx;
 
-   whole_program = standalone_compile_shader(&options, argc - optind, &argv[optind]);
+   whole_program = standalone_compile_shader(&options, argc - optind,
+                                             &argv[optind], &local_ctx);
 
    if (!whole_program)
       usage_fail(argv[0]);

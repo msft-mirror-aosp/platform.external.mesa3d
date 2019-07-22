@@ -44,6 +44,8 @@ struct pipe_context;
  */
 
 #define VL_COMPOSITOR_MAX_LAYERS 16
+#define VL_COMPOSITOR_MIN_DIRTY (0)
+#define VL_COMPOSITOR_MAX_DIRTY (1 << 15)
 
 /* deinterlace allgorithem */
 enum vl_compositor_deinterlace
@@ -70,6 +72,7 @@ struct vl_compositor_layer
    struct pipe_viewport_state viewport;
 
    void *fs;
+   void *cs;
    void *samplers[3];
    void *blend;
 
@@ -88,7 +91,7 @@ struct vl_compositor_state
 
    bool scissor_valid;
    struct pipe_scissor_state scissor;
-   struct pipe_resource *csc_matrix;
+   struct pipe_resource *shader_params;
 
    union pipe_color_union clear_color;
 
@@ -99,7 +102,6 @@ struct vl_compositor_state
 struct vl_compositor
 {
    struct pipe_context *pipe;
-   struct u_upload_mgr *upload;
 
    struct pipe_framebuffer_state fb_state;
    struct pipe_vertex_buffer vertex_buf;
@@ -115,16 +117,32 @@ struct vl_compositor
    void *fs_video_buffer;
    void *fs_weave_rgb;
    void *fs_rgba;
+   void *cs_video_buffer;
+   void *cs_weave_rgb;
+   void *cs_rgba;
+
+   bool pipe_cs_composit_supported;
 
    struct {
-      void *y;
-      void *uv;
-   } fs_weave_yuv;
+      struct {
+         void *y;
+         void *uv;
+      } weave;
+      struct {
+         void *y;
+         void *uv;
+      } bob;
+   } fs_yuv;
 
    struct {
       void *rgb;
       void *yuv;
    } fs_palette;
+
+   struct {
+      void *y;
+      void *uv;
+   } fs_rgb_yuv;
 };
 
 /**
@@ -242,16 +260,28 @@ vl_compositor_set_layer_rotation(struct vl_compositor_state *state,
                                  enum vl_compositor_rotation rotate);
 
 /**
- * set a layer of y or uv to render
+ * deinterlace yuv buffer with full abilities
  */
 void
-vl_compositor_set_yuv_layer(struct vl_compositor_state *s,
-                            struct vl_compositor *c,
-                            unsigned layer,
-                            struct pipe_video_buffer *buffer,
-                            struct u_rect *src_rect,
-                            struct u_rect *dst_rect,
-                            bool y);
+vl_compositor_yuv_deint_full(struct vl_compositor_state *state,
+                             struct vl_compositor *compositor,
+                             struct pipe_video_buffer *src,
+                             struct pipe_video_buffer *dst,
+                             struct u_rect *src_rect,
+                             struct u_rect *dst_rect,
+                             enum vl_compositor_deinterlace deinterlace);
+
+/**
++ * convert rgb to yuv
++ */
+void
+vl_compositor_convert_rgb_to_yuv(struct vl_compositor_state *state,
+                                 struct vl_compositor *compositor,
+                                 unsigned layer,
+                                 struct pipe_resource *src_res,
+                                 struct pipe_video_buffer *dst,
+                                 struct u_rect *src_rect,
+                                 struct u_rect *dst_rect);
 
 /*@}*/
 

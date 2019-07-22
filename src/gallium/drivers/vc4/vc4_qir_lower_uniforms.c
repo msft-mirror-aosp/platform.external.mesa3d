@@ -66,7 +66,7 @@ remove_uniform(struct hash_table *ht, struct qreg reg)
 
         entry = _mesa_hash_table_search(ht, key);
         assert(entry);
-        entry->data--;
+        entry->data = (void *)(((uintptr_t) entry->data) - 1);
         if (entry->data == NULL)
                 _mesa_hash_table_remove(ht, entry);
 }
@@ -136,7 +136,6 @@ qir_lower_uniforms(struct vc4_compile *c)
                  */
                 uint32_t max_count = 0;
                 uint32_t max_index = 0;
-                struct hash_entry *entry;
                 hash_table_foreach(ht, entry) {
                         uint32_t count = (uintptr_t)entry->data;
                         uint32_t index = (uintptr_t)entry->key - 1;

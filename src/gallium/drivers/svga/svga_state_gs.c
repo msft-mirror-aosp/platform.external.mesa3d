@@ -87,9 +87,9 @@ compile_gs(struct svga_context *svga,
       }
    }
 
-   ret = svga_define_shader(svga, SVGA3D_SHADERTYPE_GS, variant);
+   ret = svga_define_shader(svga, variant);
    if (ret != PIPE_OK) {
-      svga_destroy_shader_variant(svga, SVGA3D_SHADERTYPE_GS, variant);
+      svga_destroy_shader_variant(svga, variant);
       return ret;
    }
 
@@ -129,44 +129,6 @@ make_gs_key(struct svga_context *svga, struct svga_compile_key *key)
 }
 
 
-/**
- * svga_reemit_gs_bindings - Reemit the geometry shader bindings
- */
-enum pipe_error
-svga_reemit_gs_bindings(struct svga_context *svga)
-{
-   enum pipe_error ret;
-   struct svga_winsys_gb_shader *gbshader = NULL;
-   SVGA3dShaderId shaderId = SVGA3D_INVALID_ID;
-
-   assert(svga->rebind.flags.gs);
-   assert(svga_have_gb_objects(svga));
-
-   /* Geometry Shader is only supported in vgpu10 */
-   assert(svga_have_vgpu10(svga));
-
-   if (svga->state.hw_draw.gs) {
-      gbshader = svga->state.hw_draw.gs->gb_shader;
-      shaderId = svga->state.hw_draw.gs->id;
-   }
-
-   if (!svga_need_to_rebind_resources(svga)) {
-      ret =  svga->swc->resource_rebind(svga->swc, NULL, gbshader,
-                                        SVGA_RELOC_READ);
-      goto out;
-   }
-
-   ret = SVGA3D_vgpu10_SetShader(svga->swc, SVGA3D_SHADERTYPE_GS,
-                                 gbshader, shaderId);
-
- out:
-   if (ret != PIPE_OK)
-      return ret;
-
-   svga->rebind.flags.gs = FALSE;
-   return PIPE_OK;
-}
-
 static enum pipe_error
 emit_hw_gs(struct svga_context *svga, unsigned dirty)
 {
@@ -190,6 +152,8 @@ emit_hw_gs(struct svga_context *svga, unsigned dirty)
           *  Needs to unbind the geometry shader.
           */
          ret = svga_set_shader(svga, SVGA3D_SHADERTYPE_GS, NULL);
+         if (ret != PIPE_OK)
+            goto done;
          svga->state.hw_draw.gs = NULL;
       }
       goto done;
@@ -199,11 +163,17 @@ emit_hw_gs(struct svga_context *svga, unsigned dirty)
     * it instead of the one from the vertex shader.
     */
    if (svga_have_gs_streamout(svga)) {
-      svga_set_stream_output(svga, gs->base.stream_output);
+      ret = svga_set_stream_output(svga, gs->base.stream_output);
+      if (ret != PIPE_OK) {
+         goto done;
+      }
    }
    else if (!svga_have_vs_streamout(svga)) {
       /* turn off stream out */
-      svga_set_stream_output(svga, NULL);
+      ret = svga_set_stream_output(svga, NULL);
+      if (ret != PIPE_OK) {
+         goto done;
+      }
    }
 
    /* SVGA_NEW_NEED_SWTNL */

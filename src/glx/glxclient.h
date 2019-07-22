@@ -56,7 +56,7 @@
 
 #include "glxextensions.h"
 
-#if defined(USE_LIBGLVND_GLX)
+#if defined(USE_LIBGLVND)
 #define _GLX_PUBLIC _X_HIDDEN
 #else
 #define _GLX_PUBLIC _X_EXPORT
@@ -437,6 +437,12 @@ struct glx_context
     */
    unsigned long thread_refcount;
 
+   /**
+    * GLX_ARB_create_context_no_error setting for this context.
+    * This needs to be kept here to enforce shared context rules.
+    */
+   Bool noError;
+
    char gl_extension_bits[__GL_EXT_BYTES];
 };
 
@@ -646,8 +652,6 @@ extern void __glXSendLargeCommand(struct glx_context *, const GLvoid *, GLint,
 /* Initialize the GLX extension for dpy */
 extern struct glx_display *__glXInitialize(Display *);
 
-extern void __glXPreferEGL(int state);
-
 /************************************************************************/
 
 extern int __glXDebug;
@@ -840,6 +844,10 @@ indirect_create_context_attribs(struct glx_screen *base,
                                 unsigned num_attribs,
                                 const uint32_t *attribs,
                                 unsigned *error);
+
+
+extern int __glXGetDrawableAttribute(Display * dpy, GLXDrawable drawable,
+                                     int attribute, unsigned int *value);
 
 #ifdef __cplusplus
 }
