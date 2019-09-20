@@ -23,6 +23,11 @@ LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 include $(LOCAL_PATH)/Makefile.sources
 
+ANV_ENTRYPOINTS_GEN_SCRIPT := $(LOCAL_PATH)/vulkan/anv_entrypoints_gen.py
+ANV_EXTENSIONS_GEN_SCRIPT := $(LOCAL_PATH)/vulkan/anv_extensions_gen.py
+ANV_EXTENSIONS_SCRIPT := $(LOCAL_PATH)/vulkan/anv_extensions.py
+VULKAN_API_XML := $(MESA_TOP)/src/vulkan/registry/vk.xml
+
 VULKAN_COMMON_INCLUDES := \
 	$(MESA_TOP)/include \
 	$(MESA_TOP)/src/mapi \
@@ -32,9 +37,21 @@ VULKAN_COMMON_INCLUDES := \
 	$(MESA_TOP)/src/vulkan/wsi \
 	$(MESA_TOP)/src/vulkan/util \
 	$(MESA_TOP)/src/intel \
-	$(MESA_TOP)/include/drm-uapi \
 	$(MESA_TOP)/src/intel/vulkan \
+	$(MESA_TOP)/src/compiler \
 	frameworks/native/vulkan/include
+
+ifeq ($(shell test $(PLATFORM_SDK_VERSION) -ge 27; echo $$?), 0)
+VULKAN_COMMON_INCLUDES += \
+	frameworks/native/vulkan/include \
+	frameworks/native/libs/nativebase/include \
+	frameworks/native/libs/nativewindow/include \
+	frameworks/native/libs/arect/include
+
+VULKAN_COMMON_HEADER_LIBRARIES := \
+	libcutils_headers \
+	libhardware_headers
+endif
 
 # libmesa_anv_entrypoints with header and dummy.c
 #
@@ -55,6 +72,7 @@ LOCAL_C_INCLUDES := \
 
 LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_entrypoints.h
 LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/dummy.c
+LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_extensions.h
 
 $(intermediates)/vulkan/dummy.c:
 	@mkdir -p $(dir $@)
@@ -62,6 +80,10 @@ $(intermediates)/vulkan/dummy.c:
 	$(hide) touch $@
 
 $(intermediates)/vulkan/anv_entrypoints.h: $(prebuilt_intermediates)/vulkan/anv_entrypoints.h
+	@mkdir -p $(dir $@)
+	@cp -f $< $@
+
+$(intermediates)/vulkan/anv_extensions.h: $(prebuilt_intermediates)/vulkan/anv_extensions.h
 	@mkdir -p $(dir $@)
 	@cp -f $< $@
 
@@ -106,6 +128,7 @@ LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
 LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
+LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
 include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
@@ -128,6 +151,7 @@ LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
 LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
+LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
 include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
@@ -150,6 +174,7 @@ LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
 LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
+LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
 include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
@@ -172,6 +197,7 @@ LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
 LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
+LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
 include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
@@ -194,6 +220,28 @@ LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
 LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
+LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
+
+include $(MESA_COMMON_MK)
+include $(BUILD_STATIC_LIBRARY)
+
+#
+# libanv for gen11
+#
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := libmesa_anv_gen11
+LOCAL_MODULE_CLASS := STATIC_LIBRARIES
+
+LOCAL_SRC_FILES := $(VULKAN_GEN11_FILES)
+LOCAL_CFLAGS := -DGEN_VERSIONx10=110
+
+LOCAL_C_INCLUDES := $(ANV_INCLUDES)
+
+LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
+
+LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
+LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
 include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
@@ -218,6 +266,7 @@ LOCAL_C_INCLUDES := \
 LOCAL_WHOLE_STATIC_LIBRARIES := \
 	libmesa_anv_entrypoints \
 	libmesa_genxml \
+	libmesa_git_sha1 \
 	libmesa_vulkan_util
 
 # The rule generates both C and H files, but due to some strange
@@ -227,7 +276,6 @@ LOCAL_WHOLE_STATIC_LIBRARIES := \
 
 LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_entrypoints.c
 LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_extensions.c
-LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_extensions.h
 
 $(intermediates)/vulkan/anv_entrypoints.c: $(prebuilt_intermediates)/vulkan/anv_entrypoints.c
 	@mkdir -p $(dir $@)
@@ -237,13 +285,11 @@ $(intermediates)/vulkan/anv_extensions.c: $(prebuilt_intermediates)/vulkan/anv_e
 	@mkdir -p $(dir $@)
 	@cp -f $< $@
 
-$(intermediates)/vulkan/anv_extensions.h: $(prebuilt_intermediates)/vulkan/anv_extensions.h
-	@mkdir -p $(dir $@)
-	@cp -f $< $@
 
 LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
+LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
 include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
@@ -289,18 +335,30 @@ LOCAL_WHOLE_STATIC_LIBRARIES := \
 	libmesa_blorp \
 	libmesa_compiler \
 	libmesa_intel_common \
+	libmesa_intel_dev \
 	libmesa_vulkan_common \
 	libmesa_anv_gen7 \
 	libmesa_anv_gen75 \
 	libmesa_anv_gen8 \
 	libmesa_anv_gen9 \
 	libmesa_anv_gen10 \
+	libmesa_anv_gen11 \
 	libmesa_intel_compiler \
 	libmesa_anv_entrypoints
 
 LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES) libhardware_headers
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES) libz libsync liblog
+LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
+
+# If Android version >=8 MESA should static link libexpat else should dynamic link
+ifeq ($(shell test $(PLATFORM_SDK_VERSION) -ge 27; echo $$?), 0)
+LOCAL_STATIC_LIBRARIES := \
+       libexpat
+else
+ LOCAL_SHARED_LIBRARIES += \
+        libexpat
+endif
 
 include $(MESA_COMMON_MK)
 include $(BUILD_SHARED_LIBRARY)
