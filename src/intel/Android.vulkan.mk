@@ -38,7 +38,6 @@ VULKAN_COMMON_INCLUDES := \
 	$(MESA_TOP)/src/vulkan/util \
 	$(MESA_TOP)/src/intel \
 	$(MESA_TOP)/src/intel/vulkan \
-	$(MESA_TOP)/src/compiler \
 	frameworks/native/vulkan/include
 
 ifeq ($(shell test $(PLATFORM_SDK_VERSION) -ge 27; echo $$?), 0)
@@ -53,60 +52,14 @@ VULKAN_COMMON_HEADER_LIBRARIES := \
 	libhardware_headers
 endif
 
-# libmesa_anv_entrypoints with header and dummy.c
-#
-# This static library is built to pull entrypoints header
-# for multiple gen specific build targets below. The c file
-# is generated separately for libmesa_vulkan_common to avoid
-# duplicate symbols when linking the anv libraries.
-
-include $(CLEAR_VARS)
-LOCAL_MODULE := libmesa_anv_entrypoints
-LOCAL_MODULE_CLASS := STATIC_LIBRARIES
-
-intermediates := $(call local-generated-sources-dir)
-prebuilt_intermediates := $(MESA_TOP)/prebuilt-intermediates
-
-LOCAL_C_INCLUDES := \
-	$(VULKAN_COMMON_INCLUDES)
-
-LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_entrypoints.h
-LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/dummy.c
-LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_extensions.h
-
-$(intermediates)/vulkan/dummy.c:
-	@mkdir -p $(dir $@)
-	@echo "Gen Dummy: $(PRIVATE_MODULE) <= $(notdir $(@))"
-	$(hide) touch $@
-
-$(intermediates)/vulkan/anv_entrypoints.h: $(prebuilt_intermediates)/vulkan/anv_entrypoints.h
-	@mkdir -p $(dir $@)
-	@cp -f $< $@
-
-$(intermediates)/vulkan/anv_extensions.h: $(prebuilt_intermediates)/vulkan/anv_extensions.h
-	@mkdir -p $(dir $@)
-	@cp -f $< $@
-
-LOCAL_EXPORT_C_INCLUDE_DIRS := \
-        $(intermediates)
-
-LOCAL_SHARED_LIBRARIES := libdrm
-
-include $(MESA_COMMON_MK)
-include $(BUILD_STATIC_LIBRARY)
-
-ANV_INCLUDES := \
-	$(VULKAN_COMMON_INCLUDES) \
-	$(call generated-sources-dir-for,STATIC_LIBRARIES,libmesa_anv_entrypoints,,)/vulkan \
-	$(call generated-sources-dir-for,STATIC_LIBRARIES,libmesa_nir,,)/nir \
-	$(call generated-sources-dir-for,STATIC_LIBRARIES,libmesa_vulkan_common,,)/vulkan \
-	$(call generated-sources-dir-for,STATIC_LIBRARIES,libmesa_vulkan_util,,)/util
+ANV_STATIC_LIBRARIES := \
+	libmesa_vulkan_common \
+	libmesa_genxml \
+	libmesa_nir
 
 ANV_SHARED_LIBRARIES := libdrm
 
 ifeq ($(filter $(MESA_ANDROID_MAJOR_VERSION), 4 5 6 7),)
-ANV_HEADER_LIBRARIES += libcutils_headers libnativebase_headers libsystem_headers
-ANV_STATIC_LIBRARIES += libarect
 ANV_SHARED_LIBRARIES += libnativewindow
 endif
 
@@ -121,12 +74,10 @@ LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 LOCAL_SRC_FILES := $(VULKAN_GEN7_FILES)
 LOCAL_CFLAGS := -DGEN_VERSIONx10=70
 
-LOCAL_C_INCLUDES := $(ANV_INCLUDES)
+LOCAL_C_INCLUDES := $(VULKAN_COMMON_INCLUDES)
 
-LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
-
-LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
+
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
@@ -144,12 +95,10 @@ LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 LOCAL_SRC_FILES := $(VULKAN_GEN75_FILES)
 LOCAL_CFLAGS := -DGEN_VERSIONx10=75
 
-LOCAL_C_INCLUDES := $(ANV_INCLUDES)
+LOCAL_C_INCLUDES := $(VULKAN_COMMON_INCLUDES)
 
-LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
-
-LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
+
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
@@ -167,12 +116,10 @@ LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 LOCAL_SRC_FILES := $(VULKAN_GEN8_FILES)
 LOCAL_CFLAGS := -DGEN_VERSIONx10=80
 
-LOCAL_C_INCLUDES := $(ANV_INCLUDES)
+LOCAL_C_INCLUDES := $(VULKAN_COMMON_INCLUDES)
 
-LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
-
-LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
+
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
@@ -190,12 +137,10 @@ LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 LOCAL_SRC_FILES := $(VULKAN_GEN9_FILES)
 LOCAL_CFLAGS := -DGEN_VERSIONx10=90
 
-LOCAL_C_INCLUDES := $(ANV_INCLUDES)
+LOCAL_C_INCLUDES := $(VULKAN_COMMON_INCLUDES)
 
-LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
-
-LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
+
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
@@ -213,12 +158,10 @@ LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 LOCAL_SRC_FILES := $(VULKAN_GEN10_FILES)
 LOCAL_CFLAGS := -DGEN_VERSIONx10=100
 
-LOCAL_C_INCLUDES := $(ANV_INCLUDES)
+LOCAL_C_INCLUDES := $(VULKAN_COMMON_INCLUDES)
 
-LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
-
-LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
 LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
+
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
@@ -236,15 +179,37 @@ LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 LOCAL_SRC_FILES := $(VULKAN_GEN11_FILES)
 LOCAL_CFLAGS := -DGEN_VERSIONx10=110
 
-LOCAL_C_INCLUDES := $(ANV_INCLUDES)
+LOCAL_C_INCLUDES := $(VULKAN_COMMON_INCLUDES)
 
-LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_anv_entrypoints libmesa_genxml
+LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
 include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
+
+#
+# libanv for gen12
+#
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := libmesa_anv_gen12
+LOCAL_MODULE_CLASS := STATIC_LIBRARIES
+
+LOCAL_SRC_FILES := $(VULKAN_GEN12_FILES)
+LOCAL_CFLAGS := -DGEN_VERSIONx10=120
+
+LOCAL_C_INCLUDES := $(VULKAN_COMMON_INCLUDES)
+
+LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
+
+LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
+LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
+
+include $(MESA_COMMON_MK)
+include $(BUILD_STATIC_LIBRARY)
+
 
 #
 # libmesa_vulkan_common
@@ -259,25 +224,31 @@ prebuilt_intermediates := $(MESA_TOP)/prebuilt-intermediates
 
 LOCAL_SRC_FILES := $(VULKAN_FILES)
 
-LOCAL_C_INCLUDES := \
-	$(ANV_INCLUDES) \
-	$(MESA_TOP)/src/compiler
+LOCAL_EXPORT_C_INCLUDE_DIRS := $(intermediates)/vulkan
 
-LOCAL_WHOLE_STATIC_LIBRARIES := \
-	libmesa_anv_entrypoints \
+LOCAL_C_INCLUDES := \
+	$(LOCAL_EXPORT_C_INCLUDE_DIRS) \
+	$(VULKAN_COMMON_INCLUDES)
+
+LOCAL_STATIC_LIBRARIES := \
+	libmesa_nir \
 	libmesa_genxml \
 	libmesa_git_sha1 \
-	libmesa_vulkan_util
+	libmesa_vulkan_util \
+	libmesa_util
 
 # The rule generates both C and H files, but due to some strange
 # reason generating the files once leads to link-time issues.
 # Work around create them here as well - we're safe from race
 # conditions since they are stored in another location.
 
-LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_entrypoints.c
-LOCAL_GENERATED_SOURCES += $(intermediates)/vulkan/anv_extensions.c
+LOCAL_GENERATED_SOURCES := $(addprefix $(intermediates)/,$(VULKAN_GENERATED_FILES))
 
 $(intermediates)/vulkan/anv_entrypoints.c: $(prebuilt_intermediates)/vulkan/anv_entrypoints.c
+	@mkdir -p $(dir $@)
+	@cp -f $< $@
+
+$(intermediates)/vulkan/anv_entrypoints.h: $(prebuilt_intermediates)/vulkan/anv_entrypoints.h
 	@mkdir -p $(dir $@)
 	@cp -f $< $@
 
@@ -285,23 +256,16 @@ $(intermediates)/vulkan/anv_extensions.c: $(prebuilt_intermediates)/vulkan/anv_e
 	@mkdir -p $(dir $@)
 	@cp -f $< $@
 
+$(intermediates)/vulkan/anv_extensions.h: $(prebuilt_intermediates)/vulkan/anv_extensions.h
+	@mkdir -p $(dir $@)
+	@cp -f $< $@
 
-LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES)
-LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES)
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
 include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
-#
-# FIXME: Defining a vulkan HAL for all TARGET_BOARD_PLATFORM, when it can
-#        only work for Intel platforms, is just wrong. For now, just omit
-#        module unless BOARD_GPU_DRIVERS contains i965. Even this is not
-#        correct, but it's difficult to determine what the 'right' list of
-#        TARGET_BOARD_PLATFORM to check really are..
-#
-ifneq ($(findstring i965,$(BOARD_GPU_DRIVERS)),)
 
 #
 # libvulkan_intel
@@ -322,10 +286,6 @@ LOCAL_SRC_FILES := \
 
 LOCAL_C_INCLUDES := \
 	$(VULKAN_COMMON_INCLUDES) \
-	$(call generated-sources-dir-for,STATIC_LIBRARIES,libmesa_anv_entrypoints,,)/vulkan \
-	$(call generated-sources-dir-for,STATIC_LIBRARIES,libmesa_vulkan_common,,)/vulkan
-
-LOCAL_EXPORT_C_INCLUDE_DIRS := $(MESA_TOP)/src/intel/vulkan
 
 LOCAL_WHOLE_STATIC_LIBRARIES := \
 	libmesa_nir \
@@ -336,18 +296,18 @@ LOCAL_WHOLE_STATIC_LIBRARIES := \
 	libmesa_compiler \
 	libmesa_intel_common \
 	libmesa_intel_dev \
+	libmesa_intel_perf \
 	libmesa_vulkan_common \
+	libmesa_vulkan_util \
 	libmesa_anv_gen7 \
 	libmesa_anv_gen75 \
 	libmesa_anv_gen8 \
 	libmesa_anv_gen9 \
 	libmesa_anv_gen10 \
 	libmesa_anv_gen11 \
-	libmesa_intel_compiler \
-	libmesa_anv_entrypoints
+	libmesa_anv_gen12 \
+	libmesa_intel_compiler
 
-LOCAL_HEADER_LIBRARIES := $(ANV_HEADER_LIBRARIES) libhardware_headers
-LOCAL_STATIC_LIBRARIES := $(ANV_STATIC_LIBRARIES)
 LOCAL_SHARED_LIBRARIES := $(ANV_SHARED_LIBRARIES) libz libsync liblog
 LOCAL_HEADER_LIBRARIES += $(VULKAN_COMMON_HEADER_LIBRARIES)
 
@@ -362,5 +322,3 @@ endif
 
 include $(MESA_COMMON_MK)
 include $(BUILD_SHARED_LIBRARY)
-
-endif # BOARD_GPU_DRIVERS contains 'i965'
