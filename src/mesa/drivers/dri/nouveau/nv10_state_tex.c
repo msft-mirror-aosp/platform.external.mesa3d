@@ -39,8 +39,7 @@ nv10_emit_tex_gen(struct gl_context *ctx, int emit)
 	const int i = emit - NOUVEAU_STATE_TEX_GEN0;
 	struct nouveau_context *nctx = to_nouveau_context(ctx);
 	struct nouveau_pushbuf *push = context_push(ctx);
-	struct gl_fixedfunc_texture_unit *unit =
-           &ctx->Texture.FixedFuncUnit[i];
+	struct gl_texture_unit *unit = &ctx->Texture.Unit[i];
 	int j;
 
 	for (j = 0; j < 4; j++) {
@@ -74,7 +73,7 @@ nv10_emit_tex_mat(struct gl_context *ctx, int emit)
 
 	if (nctx->fallback == HWTNL &&
 	    ((ctx->Texture._TexMatEnabled & 1 << i) ||
-	     ctx->Texture.FixedFuncUnit[i]._GenFlags)) {
+	     ctx->Texture.Unit[i]._GenFlags)) {
 		BEGIN_NV04(push, NV10_3D(TEX_MATRIX_ENABLE(i)), 1);
 		PUSH_DATA (push, 1);
 

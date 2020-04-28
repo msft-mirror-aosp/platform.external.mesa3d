@@ -1,6 +1,5 @@
 /*
  * Copyright 2013-2017 Advanced Micro Devices, Inc.
- * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -30,10 +29,11 @@
 #include "util/u_queue.h"
 #include "util/u_upload_mgr.h"
 
-#include "si_build_pm4.h"
+#include "si_pipe.h"
+#include "radeon/r600_cs.h"
 
 struct si_fine_fence {
-	struct si_resource *buf;
+	struct r600_resource *buf;
 	unsigned offset;
 };
 
@@ -46,146 +46,21 @@ struct si_multi_fence {
 
 	/* If the context wasn't flushed at fence creation, this is non-NULL. */
 	struct {
-		struct si_context *ctx;
+		struct r600_common_context *ctx;
 		unsigned ib_index;
 	} gfx_unflushed;
 
 	struct si_fine_fence fine;
 };
 
-/**
- * Write an EOP event.
- *
- * \param event		EVENT_TYPE_*
- * \param event_flags	Optional cache flush flags (TC)
- * \param dst_sel       MEM or TC_L2
- * \param int_sel       NONE or SEND_DATA_AFTER_WR_CONFIRM
- * \param data_sel	DISCARD, VALUE_32BIT, TIMESTAMP, or GDS
- * \param buf		Buffer
- * \param va		GPU address
- * \param old_value	Previous fence value (for a bug workaround)
- * \param new_value	Fence value to write for this event.
- */
-void si_cp_release_mem(struct si_context *ctx,
-		       unsigned event, unsigned event_flags,
-		       unsigned dst_sel, unsigned int_sel, unsigned data_sel,
-		       struct si_resource *buf, uint64_t va,
-		       uint32_t new_fence, unsigned query_type)
-{
-	struct radeon_cmdbuf *cs = ctx->gfx_cs;
-	unsigned op = EVENT_TYPE(event) |
-		      EVENT_INDEX(event == V_028A90_CS_DONE ||
-				  event == V_028A90_PS_DONE ? 6 : 5) |
-		      event_flags;
-	unsigned sel = EOP_DST_SEL(dst_sel) |
-		       EOP_INT_SEL(int_sel) |
-		       EOP_DATA_SEL(data_sel);
-
-	if (ctx->chip_class >= GFX9) {
-		/* A ZPASS_DONE or PIXEL_STAT_DUMP_EVENT (of the DB occlusion
-		 * counters) must immediately precede every timestamp event to
-		 * prevent a GPU hang on GFX9.
-		 *
-		 * Occlusion queries don't need to do it here, because they
-		 * always do ZPASS_DONE before the timestamp.
-		 */
-		if (ctx->chip_class == GFX9 &&
-		    query_type != PIPE_QUERY_OCCLUSION_COUNTER &&
-		    query_type != PIPE_QUERY_OCCLUSION_PREDICATE &&
-		    query_type != PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE) {
-			struct si_resource *scratch = ctx->eop_bug_scratch;
-
-			assert(16 * ctx->screen->info.num_render_backends <=
-			       scratch->b.b.width0);
-			radeon_emit(cs, PKT3(PKT3_EVENT_WRITE, 2, 0));
-			radeon_emit(cs, EVENT_TYPE(EVENT_TYPE_ZPASS_DONE) | EVENT_INDEX(1));
-			radeon_emit(cs, scratch->gpu_address);
-			radeon_emit(cs, scratch->gpu_address >> 32);
-
-			radeon_add_to_buffer_list(ctx, ctx->gfx_cs, scratch,
-						  RADEON_USAGE_WRITE, RADEON_PRIO_QUERY);
-		}
-
-		radeon_emit(cs, PKT3(PKT3_RELEASE_MEM, 6, 0));
-		radeon_emit(cs, op);
-		radeon_emit(cs, sel);
-		radeon_emit(cs, va);		/* address lo */
-		radeon_emit(cs, va >> 32);	/* address hi */
-		radeon_emit(cs, new_fence);	/* immediate data lo */
-		radeon_emit(cs, 0); /* immediate data hi */
-		radeon_emit(cs, 0); /* unused */
-	} else {
-		if (ctx->chip_class == CIK ||
-		    ctx->chip_class == VI) {
-			struct si_resource *scratch = ctx->eop_bug_scratch;
-			uint64_t va = scratch->gpu_address;
-
-			/* Two EOP events are required to make all engines go idle
-			 * (and optional cache flushes executed) before the timestamp
-			 * is written.
-			 */
-			radeon_emit(cs, PKT3(PKT3_EVENT_WRITE_EOP, 4, 0));
-			radeon_emit(cs, op);
-			radeon_emit(cs, va);
-			radeon_emit(cs, ((va >> 32) & 0xffff) | sel);
-			radeon_emit(cs, 0); /* immediate data */
-			radeon_emit(cs, 0); /* unused */
-
-			radeon_add_to_buffer_list(ctx, ctx->gfx_cs, scratch,
-						  RADEON_USAGE_WRITE, RADEON_PRIO_QUERY);
-		}
-
-		radeon_emit(cs, PKT3(PKT3_EVENT_WRITE_EOP, 4, 0));
-		radeon_emit(cs, op);
-		radeon_emit(cs, va);
-		radeon_emit(cs, ((va >> 32) & 0xffff) | sel);
-		radeon_emit(cs, new_fence); /* immediate data */
-		radeon_emit(cs, 0); /* unused */
-	}
-
-	if (buf) {
-		radeon_add_to_buffer_list(ctx, ctx->gfx_cs, buf, RADEON_USAGE_WRITE,
-					  RADEON_PRIO_QUERY);
-	}
-}
-
-unsigned si_cp_write_fence_dwords(struct si_screen *screen)
-{
-	unsigned dwords = 6;
-
-	if (screen->info.chip_class == CIK ||
-	    screen->info.chip_class == VI)
-		dwords *= 2;
-
-	return dwords;
-}
-
-void si_cp_wait_mem(struct si_context *ctx, struct radeon_cmdbuf *cs,
-		    uint64_t va, uint32_t ref, uint32_t mask, unsigned flags)
-{
-	radeon_emit(cs, PKT3(PKT3_WAIT_REG_MEM, 5, 0));
-	radeon_emit(cs, WAIT_REG_MEM_MEM_SPACE(1) | flags);
-	radeon_emit(cs, va);
-	radeon_emit(cs, va >> 32);
-	radeon_emit(cs, ref); /* reference value */
-	radeon_emit(cs, mask); /* mask */
-	radeon_emit(cs, 4); /* poll interval */
-}
-
-static void si_add_fence_dependency(struct si_context *sctx,
+static void si_add_fence_dependency(struct r600_common_context *rctx,
 				    struct pipe_fence_handle *fence)
 {
-	struct radeon_winsys *ws = sctx->ws;
+	struct radeon_winsys *ws = rctx->ws;
 
-	if (sctx->dma_cs)
-		ws->cs_add_fence_dependency(sctx->dma_cs, fence);
-	ws->cs_add_fence_dependency(sctx->gfx_cs, fence);
-}
-
-static void si_add_syncobj_signal(struct si_context *sctx,
-				  struct pipe_fence_handle *fence)
-{
-	sctx->ws->cs_add_syncobj_signal(sctx->gfx_cs, fence);
+	if (rctx->dma.cs)
+		ws->cs_add_fence_dependency(rctx->dma.cs, fence);
+	ws->cs_add_fence_dependency(rctx->gfx.cs, fence);
 }
 
 static void si_fence_reference(struct pipe_screen *screen,
@@ -193,17 +68,17 @@ static void si_fence_reference(struct pipe_screen *screen,
 			       struct pipe_fence_handle *src)
 {
 	struct radeon_winsys *ws = ((struct si_screen*)screen)->ws;
-	struct si_multi_fence **sdst = (struct si_multi_fence **)dst;
-	struct si_multi_fence *ssrc = (struct si_multi_fence *)src;
+	struct si_multi_fence **rdst = (struct si_multi_fence **)dst;
+	struct si_multi_fence *rsrc = (struct si_multi_fence *)src;
 
-	if (pipe_reference(&(*sdst)->reference, &ssrc->reference)) {
-		ws->fence_reference(&(*sdst)->gfx, NULL);
-		ws->fence_reference(&(*sdst)->sdma, NULL);
-		tc_unflushed_batch_token_reference(&(*sdst)->tc_token, NULL);
-		si_resource_reference(&(*sdst)->fine.buf, NULL);
-		FREE(*sdst);
+	if (pipe_reference(&(*rdst)->reference, &rsrc->reference)) {
+		ws->fence_reference(&(*rdst)->gfx, NULL);
+		ws->fence_reference(&(*rdst)->sdma, NULL);
+		tc_unflushed_batch_token_reference(&(*rdst)->tc_token, NULL);
+		r600_resource_reference(&(*rdst)->fine.buf, NULL);
+		FREE(*rdst);
 	}
-        *sdst = ssrc;
+        *rdst = rsrc;
 }
 
 static struct si_multi_fence *si_create_multi_fence()
@@ -231,6 +106,30 @@ struct pipe_fence_handle *si_create_fence(struct pipe_context *ctx,
 	return (struct pipe_fence_handle *)fence;
 }
 
+static void si_fence_server_sync(struct pipe_context *ctx,
+				 struct pipe_fence_handle *fence)
+{
+	struct r600_common_context *rctx = (struct r600_common_context *)ctx;
+	struct si_multi_fence *rfence = (struct si_multi_fence *)fence;
+
+	util_queue_fence_wait(&rfence->ready);
+
+	/* Unflushed fences from the same context are no-ops. */
+	if (rfence->gfx_unflushed.ctx &&
+	    rfence->gfx_unflushed.ctx == rctx)
+		return;
+
+	/* All unflushed commands will not start execution before
+	 * this fence dependency is signalled.
+	 *
+	 * Should we flush the context to allow more GPU parallelism?
+	 */
+	if (rfence->sdma)
+		si_add_fence_dependency(rctx, rfence->sdma);
+	if (rfence->gfx)
+		si_add_fence_dependency(rctx, rfence->gfx);
+}
+
 static bool si_fine_fence_signaled(struct radeon_winsys *rws,
 				   const struct si_fine_fence *fine)
 {
@@ -251,30 +150,32 @@ static void si_fine_fence_set(struct si_context *ctx,
 
 	assert(util_bitcount(flags & (PIPE_FLUSH_TOP_OF_PIPE | PIPE_FLUSH_BOTTOM_OF_PIPE)) == 1);
 
-	/* Use cached system memory for the fence. */
-	u_upload_alloc(ctx->cached_gtt_allocator, 0, 4, 4,
+	/* Use uncached system memory for the fence. */
+	u_upload_alloc(ctx->b.cached_gtt_allocator, 0, 4, 4,
 		       &fine->offset, (struct pipe_resource **)&fine->buf, (void **)&fence_ptr);
 	if (!fine->buf)
 		return;
 
 	*fence_ptr = 0;
 
+	uint64_t fence_va = fine->buf->gpu_address + fine->offset;
+
+	radeon_add_to_buffer_list(&ctx->b, &ctx->b.gfx, fine->buf,
+				  RADEON_USAGE_WRITE, RADEON_PRIO_QUERY);
 	if (flags & PIPE_FLUSH_TOP_OF_PIPE) {
-		uint32_t value = 0x80000000;
-
-		si_cp_write_data(ctx, fine->buf, fine->offset, 4,
-				 V_370_MEM, V_370_PFP, &value);
+		struct radeon_winsys_cs *cs = ctx->b.gfx.cs;
+		radeon_emit(cs, PKT3(PKT3_WRITE_DATA, 3, 0));
+		radeon_emit(cs, S_370_DST_SEL(V_370_MEM_ASYNC) |
+			S_370_WR_CONFIRM(1) |
+			S_370_ENGINE_SEL(V_370_PFP));
+		radeon_emit(cs, fence_va);
+		radeon_emit(cs, fence_va >> 32);
+		radeon_emit(cs, 0x80000000);
 	} else if (flags & PIPE_FLUSH_BOTTOM_OF_PIPE) {
-		uint64_t fence_va = fine->buf->gpu_address + fine->offset;
-
-		radeon_add_to_buffer_list(ctx, ctx->gfx_cs, fine->buf,
-					  RADEON_USAGE_WRITE, RADEON_PRIO_QUERY);
-		si_cp_release_mem(ctx,
-				  V_028A90_BOTTOM_OF_PIPE_TS, 0,
-				  EOP_DST_SEL_MEM, EOP_INT_SEL_NONE,
-				  EOP_DATA_SEL_VALUE_32BIT,
-				  NULL, fence_va, 0x80000000,
-				  PIPE_QUERY_GPU_FINISHED);
+		si_gfx_write_event_eop(&ctx->b, V_028A90_BOTTOM_OF_PIPE_TS, 0,
+				       EOP_DATA_SEL_VALUE_32BIT,
+				       NULL, fence_va, 0x80000000,
+				       PIPE_QUERY_GPU_FINISHED);
 	} else {
 		assert(false);
 	}
@@ -286,15 +187,11 @@ static boolean si_fence_finish(struct pipe_screen *screen,
 			       uint64_t timeout)
 {
 	struct radeon_winsys *rws = ((struct si_screen*)screen)->ws;
-	struct si_multi_fence *sfence = (struct si_multi_fence *)fence;
-	struct si_context *sctx;
+	struct si_multi_fence *rfence = (struct si_multi_fence *)fence;
 	int64_t abs_timeout = os_time_get_absolute_timeout(timeout);
 
-	ctx = threaded_context_unwrap_sync(ctx);
-	sctx = (struct si_context*)(ctx ? ctx : NULL);
-
-	if (!util_queue_fence_is_signalled(&sfence->ready)) {
-		if (sfence->tc_token) {
+	if (!util_queue_fence_is_signalled(&rfence->ready)) {
+		if (rfence->tc_token) {
 			/* Ensure that si_flush_from_st will be called for
 			 * this fence, but only if we're in the API thread
 			 * where the context is current.
@@ -303,7 +200,7 @@ static boolean si_fence_finish(struct pipe_screen *screen,
 			 * be in flight in the driver thread, so the fence
 			 * may not be ready yet when this call returns.
 			 */
-			threaded_context_flush(ctx, sfence->tc_token,
+			threaded_context_flush(ctx, rfence->tc_token,
 					       timeout == 0);
 		}
 
@@ -311,9 +208,9 @@ static boolean si_fence_finish(struct pipe_screen *screen,
 			return false;
 
 		if (timeout == PIPE_TIMEOUT_INFINITE) {
-			util_queue_fence_wait(&sfence->ready);
+			util_queue_fence_wait(&rfence->ready);
 		} else {
-			if (!util_queue_fence_wait_timeout(&sfence->ready, abs_timeout))
+			if (!util_queue_fence_wait_timeout(&rfence->ready, abs_timeout))
 				return false;
 		}
 
@@ -323,8 +220,8 @@ static boolean si_fence_finish(struct pipe_screen *screen,
 		}
 	}
 
-	if (sfence->sdma) {
-		if (!rws->fence_wait(rws, sfence->sdma, timeout))
+	if (rfence->sdma) {
+		if (!rws->fence_wait(rws, rfence->sdma, timeout))
 			return false;
 
 		/* Recompute the timeout after waiting. */
@@ -334,109 +231,95 @@ static boolean si_fence_finish(struct pipe_screen *screen,
 		}
 	}
 
-	if (!sfence->gfx)
+	if (!rfence->gfx)
 		return true;
 
-	if (sfence->fine.buf &&
-	    si_fine_fence_signaled(rws, &sfence->fine)) {
-		rws->fence_reference(&sfence->gfx, NULL);
-		si_resource_reference(&sfence->fine.buf, NULL);
+	if (rfence->fine.buf &&
+	    si_fine_fence_signaled(rws, &rfence->fine)) {
+		rws->fence_reference(&rfence->gfx, NULL);
+		r600_resource_reference(&rfence->fine.buf, NULL);
 		return true;
 	}
 
 	/* Flush the gfx IB if it hasn't been flushed yet. */
-	if (sctx && sfence->gfx_unflushed.ctx == sctx &&
-	    sfence->gfx_unflushed.ib_index == sctx->num_gfx_cs_flushes) {
-		/* Section 4.1.2 (Signaling) of the OpenGL 4.6 (Core profile)
-		 * spec says:
-		 *
-		 *    "If the sync object being blocked upon will not be
-		 *     signaled in finite time (for example, by an associated
-		 *     fence command issued previously, but not yet flushed to
-		 *     the graphics pipeline), then ClientWaitSync may hang
-		 *     forever. To help prevent this behavior, if
-		 *     ClientWaitSync is called and all of the following are
-		 *     true:
-		 *
-		 *     * the SYNC_FLUSH_COMMANDS_BIT bit is set in flags,
-		 *     * sync is unsignaled when ClientWaitSync is called,
-		 *     * and the calls to ClientWaitSync and FenceSync were
-		 *       issued from the same context,
-		 *
-		 *     then the GL will behave as if the equivalent of Flush
-		 *     were inserted immediately after the creation of sync."
-		 *
-		 * This means we need to flush for such fences even when we're
-		 * not going to wait.
-		 */
-		si_flush_gfx_cs(sctx,
-				(timeout ? 0 : PIPE_FLUSH_ASYNC) |
-				 RADEON_FLUSH_START_NEXT_GFX_IB_NOW,
-				NULL);
-		sfence->gfx_unflushed.ctx = NULL;
+	if (ctx && rfence->gfx_unflushed.ctx) {
+		struct si_context *sctx;
 
-		if (!timeout)
-			return false;
+		sctx = (struct si_context *)threaded_context_unwrap_unsync(ctx);
+		if (rfence->gfx_unflushed.ctx == &sctx->b &&
+		    rfence->gfx_unflushed.ib_index == sctx->b.num_gfx_cs_flushes) {
+			/* Section 4.1.2 (Signaling) of the OpenGL 4.6 (Core profile)
+			 * spec says:
+			 *
+			 *    "If the sync object being blocked upon will not be
+			 *     signaled in finite time (for example, by an associated
+			 *     fence command issued previously, but not yet flushed to
+			 *     the graphics pipeline), then ClientWaitSync may hang
+			 *     forever. To help prevent this behavior, if
+			 *     ClientWaitSync is called and all of the following are
+			 *     true:
+			 *
+			 *     * the SYNC_FLUSH_COMMANDS_BIT bit is set in flags,
+			 *     * sync is unsignaled when ClientWaitSync is called,
+			 *     * and the calls to ClientWaitSync and FenceSync were
+			 *       issued from the same context,
+			 *
+			 *     then the GL will behave as if the equivalent of Flush
+			 *     were inserted immediately after the creation of sync."
+			 *
+			 * This means we need to flush for such fences even when we're
+			 * not going to wait.
+			 */
+			threaded_context_unwrap_sync(ctx);
+			sctx->b.gfx.flush(&sctx->b, timeout ? 0 : PIPE_FLUSH_ASYNC, NULL);
+			rfence->gfx_unflushed.ctx = NULL;
 
-		/* Recompute the timeout after all that. */
-		if (timeout && timeout != PIPE_TIMEOUT_INFINITE) {
-			int64_t time = os_time_get_nano();
-			timeout = abs_timeout > time ? abs_timeout - time : 0;
+			if (!timeout)
+				return false;
+
+			/* Recompute the timeout after all that. */
+			if (timeout && timeout != PIPE_TIMEOUT_INFINITE) {
+				int64_t time = os_time_get_nano();
+				timeout = abs_timeout > time ? abs_timeout - time : 0;
+			}
 		}
 	}
 
-	if (rws->fence_wait(rws, sfence->gfx, timeout))
+	if (rws->fence_wait(rws, rfence->gfx, timeout))
 		return true;
 
 	/* Re-check in case the GPU is slow or hangs, but the commands before
 	 * the fine-grained fence have completed. */
-	if (sfence->fine.buf &&
-	    si_fine_fence_signaled(rws, &sfence->fine))
+	if (rfence->fine.buf &&
+	    si_fine_fence_signaled(rws, &rfence->fine))
 		return true;
 
 	return false;
 }
 
 static void si_create_fence_fd(struct pipe_context *ctx,
-			       struct pipe_fence_handle **pfence, int fd,
-			       enum pipe_fd_type type)
+			       struct pipe_fence_handle **pfence, int fd)
 {
 	struct si_screen *sscreen = (struct si_screen*)ctx->screen;
 	struct radeon_winsys *ws = sscreen->ws;
-	struct si_multi_fence *sfence;
+	struct si_multi_fence *rfence;
 
 	*pfence = NULL;
 
-	sfence = si_create_multi_fence();
-	if (!sfence)
+	if (!sscreen->info.has_fence_to_handle)
 		return;
 
-	switch (type) {
-	case PIPE_FD_TYPE_NATIVE_SYNC:
-		if (!sscreen->info.has_fence_to_handle)
-			goto finish;
+	rfence = si_create_multi_fence();
+	if (!rfence)
+		return;
 
-		sfence->gfx = ws->fence_import_sync_file(ws, fd);
-		break;
-
-	case PIPE_FD_TYPE_SYNCOBJ:
-		if (!sscreen->info.has_syncobj)
-			goto finish;
-
-		sfence->gfx = ws->fence_import_syncobj(ws, fd);
-		break;
-
-	default:
-		unreachable("bad fence fd type when importing");
-	}
-
-finish:
-	if (!sfence->gfx) {
-		FREE(sfence);
+	rfence->gfx = ws->fence_import_sync_file(ws, fd);
+	if (!rfence->gfx) {
+		FREE(rfence);
 		return;
 	}
 
-	*pfence = (struct pipe_fence_handle*)sfence;
+	*pfence = (struct pipe_fence_handle*)rfence;
 }
 
 static int si_fence_get_fd(struct pipe_screen *screen,
@@ -444,26 +327,26 @@ static int si_fence_get_fd(struct pipe_screen *screen,
 {
 	struct si_screen *sscreen = (struct si_screen*)screen;
 	struct radeon_winsys *ws = sscreen->ws;
-	struct si_multi_fence *sfence = (struct si_multi_fence *)fence;
+	struct si_multi_fence *rfence = (struct si_multi_fence *)fence;
 	int gfx_fd = -1, sdma_fd = -1;
 
 	if (!sscreen->info.has_fence_to_handle)
 		return -1;
 
-	util_queue_fence_wait(&sfence->ready);
+	util_queue_fence_wait(&rfence->ready);
 
 	/* Deferred fences aren't supported. */
-	assert(!sfence->gfx_unflushed.ctx);
-	if (sfence->gfx_unflushed.ctx)
+	assert(!rfence->gfx_unflushed.ctx);
+	if (rfence->gfx_unflushed.ctx)
 		return -1;
 
-	if (sfence->sdma) {
-		sdma_fd = ws->fence_export_sync_file(ws, sfence->sdma);
+	if (rfence->sdma) {
+		sdma_fd = ws->fence_export_sync_file(ws, rfence->sdma);
 		if (sdma_fd == -1)
 			return -1;
 	}
-	if (sfence->gfx) {
-		gfx_fd = ws->fence_export_sync_file(ws, sfence->gfx);
+	if (rfence->gfx) {
+		gfx_fd = ws->fence_export_sync_file(ws, rfence->gfx);
 		if (gfx_fd == -1) {
 			if (sdma_fd != -1)
 				close(sdma_fd);
@@ -491,8 +374,8 @@ static void si_flush_from_st(struct pipe_context *ctx,
 			     unsigned flags)
 {
 	struct pipe_screen *screen = ctx->screen;
-	struct si_context *sctx = (struct si_context *)ctx;
-	struct radeon_winsys *ws = sctx->ws;
+	struct r600_common_context *rctx = (struct r600_common_context *)ctx;
+	struct radeon_winsys *ws = rctx->ws;
 	struct pipe_fence_handle *gfx_fence = NULL;
 	struct pipe_fence_handle *sdma_fence = NULL;
 	bool deferred_fence = false;
@@ -506,18 +389,18 @@ static void si_flush_from_st(struct pipe_context *ctx,
 		assert(flags & PIPE_FLUSH_DEFERRED);
 		assert(fence);
 
-		si_fine_fence_set(sctx, &fine, flags);
+		si_fine_fence_set((struct si_context *)rctx, &fine, flags);
 	}
 
 	/* DMA IBs are preambles to gfx IBs, therefore must be flushed first. */
-	if (sctx->dma_cs)
-		si_flush_dma_cs(sctx, rflags, fence ? &sdma_fence : NULL);
+	if (rctx->dma.cs)
+		rctx->dma.flush(rctx, rflags, fence ? &sdma_fence : NULL);
 
-	if (!radeon_emitted(sctx->gfx_cs, sctx->initial_gfx_cs_size)) {
+	if (!radeon_emitted(rctx->gfx.cs, rctx->initial_gfx_cs_size)) {
 		if (fence)
-			ws->fence_reference(&gfx_fence, sctx->last_gfx_fence);
+			ws->fence_reference(&gfx_fence, rctx->last_gfx_fence);
 		if (!(flags & PIPE_FLUSH_DEFERRED))
-			ws->cs_sync_flush(sctx->gfx_cs);
+			ws->cs_sync_flush(rctx->gfx.cs);
 	} else {
 		/* Instead of flushing, create a deferred fence. Constraints:
 		 * - The state tracker must allow a deferred flush.
@@ -528,10 +411,10 @@ static void si_flush_from_st(struct pipe_context *ctx,
 		if (flags & PIPE_FLUSH_DEFERRED &&
 		    !(flags & PIPE_FLUSH_FENCE_FD) &&
 		    fence) {
-			gfx_fence = sctx->ws->cs_get_next_fence(sctx->gfx_cs);
+			gfx_fence = rctx->ws->cs_get_next_fence(rctx->gfx.cs);
 			deferred_fence = true;
 		} else {
-			si_flush_gfx_cs(sctx, rflags, fence ? &gfx_fence : NULL);
+			rctx->gfx.flush(rctx, rflags, fence ? &gfx_fence : NULL);
 		}
 	}
 
@@ -559,8 +442,8 @@ static void si_flush_from_st(struct pipe_context *ctx,
 		multi_fence->sdma = sdma_fence;
 
 		if (deferred_fence) {
-			multi_fence->gfx_unflushed.ctx = sctx;
-			multi_fence->gfx_unflushed.ib_index = sctx->num_gfx_cs_flushes;
+			multi_fence->gfx_unflushed.ctx = rctx;
+			multi_fence->gfx_unflushed.ib_index = rctx->num_gfx_cs_flushes;
 		}
 
 		multi_fence->fine = fine;
@@ -573,72 +456,18 @@ static void si_flush_from_st(struct pipe_context *ctx,
 	}
 	assert(!fine.buf);
 finish:
-	if (!(flags & (PIPE_FLUSH_DEFERRED | PIPE_FLUSH_ASYNC))) {
-		if (sctx->dma_cs)
-			ws->cs_sync_flush(sctx->dma_cs);
-		ws->cs_sync_flush(sctx->gfx_cs);
+	if (!(flags & PIPE_FLUSH_DEFERRED)) {
+		if (rctx->dma.cs)
+			ws->cs_sync_flush(rctx->dma.cs);
+		ws->cs_sync_flush(rctx->gfx.cs);
 	}
-}
-
-static void si_fence_server_signal(struct pipe_context *ctx,
-				   struct pipe_fence_handle *fence)
-{
-	struct si_context *sctx = (struct si_context *)ctx;
-	struct si_multi_fence *sfence = (struct si_multi_fence *)fence;
-
-	/* We should have at least one syncobj to signal */
-	assert(sfence->sdma || sfence->gfx);
-
-	if (sfence->sdma)
-		si_add_syncobj_signal(sctx, sfence->sdma);
-	if (sfence->gfx)
-		si_add_syncobj_signal(sctx, sfence->gfx);
-
-	/**
-	 * The spec does not require a flush here. We insert a flush
-	 * because syncobj based signals are not directly placed into
-	 * the command stream. Instead the signal happens when the
-	 * submission associated with the syncobj finishes execution.
-	 *
-	 * Therefore, we must make sure that we flush the pipe to avoid
-	 * new work being emitted and getting executed before the signal
-	 * operation.
-	 */
-	si_flush_from_st(ctx, NULL, PIPE_FLUSH_ASYNC);
-}
-
-static void si_fence_server_sync(struct pipe_context *ctx,
-				 struct pipe_fence_handle *fence)
-{
-	struct si_context *sctx = (struct si_context *)ctx;
-	struct si_multi_fence *sfence = (struct si_multi_fence *)fence;
-
-	util_queue_fence_wait(&sfence->ready);
-
-	/* Unflushed fences from the same context are no-ops. */
-	if (sfence->gfx_unflushed.ctx &&
-	    sfence->gfx_unflushed.ctx == sctx)
-		return;
-
-	/* All unflushed commands will not start execution before
-	 * this fence dependency is signalled.
-	 *
-	 * Therefore we must flush before inserting the dependency
-	 */
-	si_flush_from_st(ctx, NULL, PIPE_FLUSH_ASYNC);
-
-	if (sfence->sdma)
-		si_add_fence_dependency(sctx, sfence->sdma);
-	if (sfence->gfx)
-		si_add_fence_dependency(sctx, sfence->gfx);
 }
 
 void si_init_fence_functions(struct si_context *ctx)
 {
-	ctx->b.flush = si_flush_from_st;
-	ctx->b.create_fence_fd = si_create_fence_fd;
-	ctx->b.fence_server_sync = si_fence_server_sync;
-	ctx->b.fence_server_signal = si_fence_server_signal;
+	ctx->b.b.flush = si_flush_from_st;
+	ctx->b.b.create_fence_fd = si_create_fence_fd;
+	ctx->b.b.fence_server_sync = si_fence_server_sync;
 }
 
 void si_init_screen_fence_functions(struct si_screen *screen)

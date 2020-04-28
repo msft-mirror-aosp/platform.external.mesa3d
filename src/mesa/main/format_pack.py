@@ -1,4 +1,3 @@
-from __future__ import print_function
 
 from mako.template import Template
 from sys import argv
@@ -43,8 +42,6 @@ string = """/*
 
 #include <stdint.h>
 
-#include "config.h"
-#include "errors.h"
 #include "format_pack.h"
 #include "format_utils.h"
 #include "macros.h"
@@ -356,7 +353,7 @@ _mesa_pack_ubyte_rgba_row(mesa_format format, GLuint n,
    case ${f.name}:
       for (i = 0; i < n; ++i) {
          pack_ubyte_${f.short_name()}(src[i], d);
-         d += ${f.block_size() // 8};
+         d += ${f.block_size() / 8};
       }
       break;
 %endfor
@@ -388,7 +385,7 @@ _mesa_pack_uint_rgba_row(mesa_format format, GLuint n,
    case ${f.name}:
       for (i = 0; i < n; ++i) {
          pack_uint_${f.short_name()}(src[i], d);
-         d += ${f.block_size() // 8};
+         d += ${f.block_size() / 8};
       }
       break;
 %endfor
@@ -418,7 +415,7 @@ _mesa_pack_float_rgba_row(mesa_format format, GLuint n,
    case ${f.name}:
       for (i = 0; i < n; ++i) {
          pack_float_${f.short_name()}(src[i], d);
-         d += ${f.block_size() // 8};
+         d += ${f.block_size() / 8};
       }
       break;
 %endfor
@@ -510,10 +507,6 @@ pack_float_Z_UNORM32(const GLfloat *src, void *dst)
    *d = (GLuint) (*src * scale);
 }
 
-/**
- ** Pack float to Z_FLOAT32 or Z_FLOAT32_X24S8.
- **/
-
 static void
 pack_float_Z_FLOAT32(const GLfloat *src, void *dst)
 {
@@ -586,12 +579,18 @@ pack_uint_Z_UNORM32(const GLuint *src, void *dst)
    *d = *src;
 }
 
-/**
- ** Pack uint to Z_FLOAT32 or Z_FLOAT32_X24S8.
- **/
-
 static void
 pack_uint_Z_FLOAT32(const GLuint *src, void *dst)
+{
+   GLuint *d = ((GLuint *) dst);
+   const GLdouble scale = 1.0 / (GLdouble) 0xffffffff;
+   *d = (GLuint) (*src * scale);
+   assert(*d >= 0.0f);
+   assert(*d <= 1.0f);
+}
+
+static void
+pack_uint_Z_FLOAT32_X24S8(const GLuint *src, void *dst)
 {
    GLfloat *d = ((GLfloat *) dst);
    const GLdouble scale = 1.0 / (GLdouble) 0xffffffff;
@@ -615,8 +614,9 @@ _mesa_get_pack_uint_z_func(mesa_format format)
    case MESA_FORMAT_Z_UNORM32:
       return pack_uint_Z_UNORM32;
    case MESA_FORMAT_Z_FLOAT32:
-   case MESA_FORMAT_Z32_FLOAT_S8X24_UINT:
       return pack_uint_Z_FLOAT32;
+   case MESA_FORMAT_Z32_FLOAT_S8X24_UINT:
+      return pack_uint_Z_FLOAT32_X24S8;
    default:
       _mesa_problem(NULL, "unexpected format in _mesa_get_pack_uint_z_func()");
       return NULL;
@@ -997,6 +997,6 @@ _mesa_pack_colormask(mesa_format format, const GLubyte colorMask[4], void *dst)
 }
 """
 
-template = Template(string, future_imports=['division']);
+template = Template(string);
 
-print(template.render(argv = argv[0:]))
+print template.render(argv = argv[0:])

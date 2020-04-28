@@ -82,7 +82,7 @@ lp_setup_get_empty_scene(struct lp_setup_context *setup)
       lp_fence_wait(setup->scene->fence);
    }
 
-   lp_scene_begin_binning(setup->scene, &setup->fb);
+   lp_scene_begin_binning(setup->scene, &setup->fb, setup->rasterizer_discard);
 
 }
 
@@ -361,8 +361,6 @@ lp_setup_flush( struct lp_setup_context *setup,
 
    if (fence) {
       lp_fence_reference((struct lp_fence **)fence, setup->last_fence);
-      if (!*fence)
-         *fence = (struct pipe_fence_handle *)lp_fence_create(0);
    }
 }
 
@@ -726,27 +724,25 @@ lp_setup_set_scissors( struct lp_setup_context *setup,
 
 
 void 
-lp_setup_set_flatshade_first(struct lp_setup_context *setup,
-                             boolean flatshade_first)
+lp_setup_set_flatshade_first( struct lp_setup_context *setup,
+                              boolean flatshade_first )
 {
    setup->flatshade_first = flatshade_first;
 }
 
 void
-lp_setup_set_rasterizer_discard(struct lp_setup_context *setup,
-                                boolean rasterizer_discard)
+lp_setup_set_rasterizer_discard( struct lp_setup_context *setup,
+                                 boolean rasterizer_discard )
 {
    if (setup->rasterizer_discard != rasterizer_discard) {
       setup->rasterizer_discard = rasterizer_discard;
-      setup->line = first_line;
-      setup->point = first_point;
-      setup->triangle = first_triangle;
+      set_scene_state( setup, SETUP_FLUSHED, __FUNCTION__ );
    }
 }
 
 void 
-lp_setup_set_vertex_info(struct lp_setup_context *setup,
-                         struct vertex_info *vertex_info)
+lp_setup_set_vertex_info( struct lp_setup_context *setup,
+                          struct vertex_info *vertex_info )
 {
    /* XXX: just silently holding onto the pointer:
     */

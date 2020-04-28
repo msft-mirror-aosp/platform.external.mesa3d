@@ -88,7 +88,6 @@ NineVolumeTexture9_ctor( struct NineVolumeTexture9 *This,
         info->last_level = util_logbase2(MAX2(MAX2(Width, Height), Depth));
     info->array_size = 1;
     info->nr_samples = 0;
-    info->nr_storage_samples = 0;
     info->bind = PIPE_BIND_SAMPLER_VIEW;
     info->usage = PIPE_USAGE_DEFAULT;
     info->flags = 0;
@@ -141,8 +140,7 @@ NineVolumeTexture9_dtor( struct NineVolumeTexture9 *This )
 
     if (This->volumes) {
         for (l = 0; l <= This->base.base.info.last_level; ++l)
-            if (This->volumes[l])
-                NineUnknown_Destroy(&This->volumes[l]->base);
+            NineUnknown_Destroy(&This->volumes[l]->base);
         FREE(This->volumes);
     }
 

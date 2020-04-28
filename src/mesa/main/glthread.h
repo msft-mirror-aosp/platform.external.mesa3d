@@ -24,6 +24,8 @@
 #ifndef _GLTHREAD_H
 #define _GLTHREAD_H
 
+#include "main/mtypes.h"
+
 /* The size of one batch and the maximum size of one call.
  *
  * This should be as low as possible, so that:
@@ -48,7 +50,6 @@
 #include "util/u_queue.h"
 
 enum marshal_dispatch_cmd_id;
-struct gl_context;
 
 /** A single batch of commands queued up for execution. */
 struct glthread_batch
@@ -99,7 +100,7 @@ struct glthread_state
 void _mesa_glthread_init(struct gl_context *ctx);
 void _mesa_glthread_destroy(struct gl_context *ctx);
 
-void _mesa_glthread_restore_dispatch(struct gl_context *ctx, const char *func);
+void _mesa_glthread_restore_dispatch(struct gl_context *ctx);
 void _mesa_glthread_flush_batch(struct gl_context *ctx);
 void _mesa_glthread_finish(struct gl_context *ctx);
 

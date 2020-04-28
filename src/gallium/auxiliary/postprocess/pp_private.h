@@ -76,6 +76,7 @@ struct pp_queue_t
 
    struct pipe_resource *depth; /* depth of original input */
    struct pipe_resource *stencil;       /* stencil shared by inner_tmps */
+   struct pipe_resource *constbuf;      /* MLAA constant buffer */
    struct pipe_resource *areamaptex;    /* MLAA area map texture */
 
    struct pipe_surface *tmps[2], *inner_tmps[3], *stencils;

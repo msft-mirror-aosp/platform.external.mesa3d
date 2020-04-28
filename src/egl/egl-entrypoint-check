@@ -7,5 +7,5 @@ then
 fi
 
 entrypoints=$(grep EGL_ENTRYPOINT "$srcdir"/main/eglentrypoint.h)
-sorted=$(LC_ALL=C sort <<< "$entrypoints")
+sorted=$(sort <<< "$entrypoints")
 test "$entrypoints" = "$sorted"

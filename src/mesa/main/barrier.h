@@ -53,7 +53,4 @@ _mesa_MemoryBarrierByRegion(GLbitfield barriers);
 void GLAPIENTRY
 _mesa_BlendBarrier(void);
 
-void GLAPIENTRY
-_mesa_FramebufferFetchBarrierEXT(void);
-
 #endif /* BARRIER_H */

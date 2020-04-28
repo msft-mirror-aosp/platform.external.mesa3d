@@ -18,8 +18,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-inc_st_dri = include_directories('.')
-
 files_libdri = files(
   'dri_context.c',
   'dri_context.h',
@@ -38,7 +36,7 @@ if with_dri
 endif
 
 if with_dri2
-  files_libdri += files('dri2.c')
+  files_libdri += files('dri2.c', 'dri2_buffer.h')
 endif
 
 libdri_c_args = []

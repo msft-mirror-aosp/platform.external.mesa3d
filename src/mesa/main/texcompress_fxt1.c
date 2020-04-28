@@ -29,7 +29,6 @@
  */
 
 
-#include "errors.h"
 #include "glheader.h"
 #include "imports.h"
 #include "image.h"
@@ -38,7 +37,6 @@
 #include "texcompress.h"
 #include "texcompress_fxt1.h"
 #include "texstore.h"
-#include "mtypes.h"
 
 
 static void

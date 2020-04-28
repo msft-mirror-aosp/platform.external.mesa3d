@@ -18,19 +18,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-c_sse2_args = ['-msse2', '-mstackrealign']
 inc_intel = include_directories('.')
 
-subdir('genxml')
 subdir('blorp')
-subdir('dev')
-subdir('isl')
+subdir('genxml')
 subdir('common')
+subdir('isl')
 subdir('compiler')
-subdir('perf')
-if with_tools.contains('intel') or with_tools.contains('intel-ui')
-  subdir('tools')
-endif
+subdir('tools')
 if with_intel_vk
   subdir('vulkan')
 endif

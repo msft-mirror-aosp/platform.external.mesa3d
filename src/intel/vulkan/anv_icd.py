@@ -22,9 +22,8 @@
 
 import json
 import os.path
-import argparse
 
-from anv_extensions import MAX_API_VERSION
+from anv_extensions import *
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -45,4 +44,4 @@ if __name__ == '__main__':
     }
 
     with open(args.out, 'w') as f:
-        json.dump(json_data, f, indent=4, sort_keys=True, separators=(',', ': '))
+        json.dump(json_data, f, indent = 4, sort_keys=True)

@@ -35,6 +35,7 @@
 
 #include "config.h"
 #include "macros.h"
+#include "mtypes.h"
 
 
 /**

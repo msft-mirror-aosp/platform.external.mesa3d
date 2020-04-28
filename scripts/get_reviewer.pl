@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+#!/usr/bin/perl -w
 # (c) 2007, Joe Perches <joe@perches.com>
 #           created from checkpatch.pl
 #
@@ -14,7 +14,6 @@
 # Licensed under the terms of the GNU GPL License version 2
 
 use strict;
-use warnings;
 
 my $P = $0;
 my $V = '0.26';

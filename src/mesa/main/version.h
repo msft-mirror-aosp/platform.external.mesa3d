@@ -27,13 +27,8 @@
 #ifndef VERSION_H
 #define VERSION_H
 
-#include <stdbool.h>
-#include "glheader.h"
-#include "menums.h"
+#include "mtypes.h"
 
-struct gl_context;
-struct gl_constants;
-struct gl_extensions;
 
 extern GLuint
 _mesa_get_version(const struct gl_extensions *extensions,

@@ -1,35 +1,35 @@
 /****************************************************************************
- * Copyright (C) 2014-2015 Intel Corporation.   All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
- *
- * @file arena.h
- *
- * @brief Arena memory manager
- *        The arena is convenient and fast for managing allocations for any of
- *        our allocations that are associated with operations and can all be freed
- *        once when their operation has completed. Allocations are cheap since
- *        most of the time its simply an increment of an offset. Also, no need to
- *        free individual allocations. All of the arena memory can be freed at once.
- *
- ******************************************************************************/
+* Copyright (C) 2014-2015 Intel Corporation.   All Rights Reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice (including the next
+* paragraph) shall be included in all copies or substantial portions of the
+* Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+* IN THE SOFTWARE.
+*
+* @file arena.h
+*
+* @brief Arena memory manager
+*        The arena is convenient and fast for managing allocations for any of
+*        our allocations that are associated with operations and can all be freed
+*        once when their operation has completed. Allocations are cheap since
+*        most of the time its simply an increment of an offset. Also, no need to
+*        free individual allocations. All of the arena memory can be freed at once.
+*
+******************************************************************************/
 #pragma once
 
 #include <mutex>
@@ -42,9 +42,10 @@ static const size_t ARENA_BLOCK_ALIGN = 64;
 struct ArenaBlock
 {
     size_t      blockSize = 0;
-    ArenaBlock* pNext     = nullptr;
+    ArenaBlock* pNext = nullptr;
 };
-static_assert(sizeof(ArenaBlock) <= ARENA_BLOCK_ALIGN, "Increase BLOCK_ALIGN size");
+static_assert(sizeof(ArenaBlock) <= ARENA_BLOCK_ALIGN,
+    "Increase BLOCK_ALIGN size");
 
 class DefaultAllocator
 {
@@ -54,7 +55,7 @@ public:
         SWR_ASSUME_ASSERT(size >= sizeof(ArenaBlock));
 
         ArenaBlock* p = new (AlignedMalloc(size, align)) ArenaBlock();
-        p->blockSize  = size;
+        p->blockSize = size;
         return p;
     }
 
@@ -69,7 +70,7 @@ public:
 };
 
 // Caching Allocator for Arena
-template <uint32_t NumBucketsT = 8, uint32_t StartBucketBitT = 12>
+template<uint32_t NumBucketsT = 8, uint32_t StartBucketBitT = 12>
 struct CachingAllocatorT : DefaultAllocator
 {
     ArenaBlock* AllocateAligned(size_t size, size_t align)
@@ -82,8 +83,8 @@ struct CachingAllocatorT : DefaultAllocator
         {
             // search cached blocks
             std::lock_guard<std::mutex> l(m_mutex);
-            ArenaBlock*                 pPrevBlock = &m_cachedBlocks[bucket];
-            ArenaBlock*                 pBlock     = SearchBlocks(pPrevBlock, size, align);
+            ArenaBlock* pPrevBlock = &m_cachedBlocks[bucket];
+            ArenaBlock* pBlock = SearchBlocks(pPrevBlock, size, align);
 
             if (pBlock)
             {
@@ -96,7 +97,7 @@ struct CachingAllocatorT : DefaultAllocator
             else
             {
                 pPrevBlock = &m_oldCachedBlocks[bucket];
-                pBlock     = SearchBlocks(pPrevBlock, size, align);
+                pBlock = SearchBlocks(pPrevBlock, size, align);
 
                 if (pBlock)
                 {
@@ -112,7 +113,7 @@ struct CachingAllocatorT : DefaultAllocator
             {
                 SWR_ASSUME_ASSERT(pPrevBlock && pPrevBlock->pNext == pBlock);
                 pPrevBlock->pNext = pBlock->pNext;
-                pBlock->pNext     = nullptr;
+                pBlock->pNext = nullptr;
 
                 return pBlock;
             }
@@ -149,10 +150,7 @@ struct CachingAllocatorT : DefaultAllocator
 
     void FreeOldBlocks()
     {
-        if (!m_cachedSize)
-        {
-            return;
-        }
+        if (!m_cachedSize) { return; }
         std::lock_guard<std::mutex> l(m_mutex);
 
         bool doFree = (m_oldCachedSize > MAX_UNUSED_SIZE);
@@ -171,7 +169,7 @@ struct CachingAllocatorT : DefaultAllocator
                     pBlock = pNext;
                 }
                 m_oldCachedBlocks[i].pNext = nullptr;
-                m_pOldLastCachedBlocks[i]  = &m_oldCachedBlocks[i];
+                m_pOldLastCachedBlocks[i] = &m_oldCachedBlocks[i];
             }
 
             if (m_pLastCachedBlocks[i] != &m_cachedBlocks[i])
@@ -181,8 +179,8 @@ struct CachingAllocatorT : DefaultAllocator
                     // We know that all blocks are the same size.
                     // Just move the list over.
                     m_pLastCachedBlocks[i]->pNext = m_oldCachedBlocks[i].pNext;
-                    m_oldCachedBlocks[i].pNext    = m_cachedBlocks[i].pNext;
-                    m_cachedBlocks[i].pNext       = nullptr;
+                    m_oldCachedBlocks[i].pNext = m_cachedBlocks[i].pNext;
+                    m_cachedBlocks[i].pNext = nullptr;
                     if (m_pOldLastCachedBlocks[i]->pNext)
                     {
                         m_pOldLastCachedBlocks[i] = m_pLastCachedBlocks[i];
@@ -197,13 +195,13 @@ struct CachingAllocatorT : DefaultAllocator
                     while (pBlock)
                     {
                         ArenaBlock* pNext = pBlock->pNext;
-                        pBlock->pNext     = nullptr;
+                        pBlock->pNext = nullptr;
                         m_cachedSize -= pBlock->blockSize;
                         InsertCachedBlock<true>(i, pBlock);
                         pBlock = pNext;
                     }
 
-                    m_pLastCachedBlocks[i]  = &m_cachedBlocks[i];
+                    m_pLastCachedBlocks[i] = &m_cachedBlocks[i];
                     m_cachedBlocks[i].pNext = nullptr;
                 }
             }
@@ -217,7 +215,7 @@ struct CachingAllocatorT : DefaultAllocator
     {
         for (uint32_t i = 0; i < CACHE_NUM_BUCKETS; ++i)
         {
-            m_pLastCachedBlocks[i]    = &m_cachedBlocks[i];
+            m_pLastCachedBlocks[i] = &m_cachedBlocks[i];
             m_pOldLastCachedBlocks[i] = &m_oldCachedBlocks[i];
         }
     }
@@ -262,8 +260,7 @@ private:
     {
         SWR_ASSUME_ASSERT(bucketId < CACHE_NUM_BUCKETS);
 
-        ArenaBlock* pPrevBlock =
-            OldBlockT ? &m_oldCachedBlocks[bucketId] : &m_cachedBlocks[bucketId];
+        ArenaBlock* pPrevBlock = OldBlockT ? &m_oldCachedBlocks[bucketId] : &m_cachedBlocks[bucketId];
         ArenaBlock* pBlock = pPrevBlock->pNext;
 
         while (pBlock)
@@ -274,13 +271,13 @@ private:
                 break;
             }
             pPrevBlock = pBlock;
-            pBlock     = pBlock->pNext;
+            pBlock = pBlock->pNext;
         }
 
         // Insert into list
         SWR_ASSUME_ASSERT(pPrevBlock);
         pPrevBlock->pNext = pNewBlock;
-        pNewBlock->pNext  = pBlock;
+        pNewBlock->pNext = pBlock;
 
         if (OldBlockT)
         {
@@ -304,9 +301,9 @@ private:
 
     static ArenaBlock* SearchBlocks(ArenaBlock*& pPrevBlock, size_t blockSize, size_t align)
     {
-        ArenaBlock* pBlock          = pPrevBlock->pNext;
+        ArenaBlock* pBlock = pPrevBlock->pNext;
         ArenaBlock* pPotentialBlock = nullptr;
-        ArenaBlock* pPotentialPrev  = nullptr;
+        ArenaBlock* pPotentialPrev = nullptr;
 
         while (pBlock)
         {
@@ -323,26 +320,26 @@ private:
                     // We could use this as it is larger than we wanted, but
                     // continue to search for a better match
                     pPotentialBlock = pBlock;
-                    pPotentialPrev  = pPrevBlock;
+                    pPotentialPrev = pPrevBlock;
                 }
             }
             else
             {
                 // Blocks are sorted by size (biggest first)
-                // So, if we get here, there are no blocks
+                // So, if we get here, there are no blocks 
                 // large enough, fall through to allocation.
                 pBlock = nullptr;
                 break;
             }
 
             pPrevBlock = pBlock;
-            pBlock     = pBlock->pNext;
+            pBlock = pBlock->pNext;
         }
 
         if (!pBlock)
         {
             // Couldn't find an exact match, use next biggest size
-            pBlock     = pPotentialBlock;
+            pBlock = pPotentialBlock;
             pPrevBlock = pPotentialPrev;
         }
 
@@ -350,32 +347,35 @@ private:
     }
 
     // buckets, for block sizes < (1 << (start+1)), < (1 << (start+2)), ...
-    static const uint32_t CACHE_NUM_BUCKETS      = NumBucketsT;
-    static const uint32_t CACHE_START_BUCKET_BIT = StartBucketBitT;
-    static const size_t   MAX_UNUSED_SIZE        = sizeof(MEGABYTE);
+    static const uint32_t   CACHE_NUM_BUCKETS       = NumBucketsT;
+    static const uint32_t   CACHE_START_BUCKET_BIT  = StartBucketBitT;
+    static const size_t     MAX_UNUSED_SIZE         = sizeof(MEGABYTE);
 
-    ArenaBlock  m_cachedBlocks[CACHE_NUM_BUCKETS];
-    ArenaBlock* m_pLastCachedBlocks[CACHE_NUM_BUCKETS];
-    ArenaBlock  m_oldCachedBlocks[CACHE_NUM_BUCKETS];
-    ArenaBlock* m_pOldLastCachedBlocks[CACHE_NUM_BUCKETS];
-    std::mutex  m_mutex;
+    ArenaBlock              m_cachedBlocks[CACHE_NUM_BUCKETS];
+    ArenaBlock*             m_pLastCachedBlocks[CACHE_NUM_BUCKETS];
+    ArenaBlock              m_oldCachedBlocks[CACHE_NUM_BUCKETS];
+    ArenaBlock*             m_pOldLastCachedBlocks[CACHE_NUM_BUCKETS];
+    std::mutex              m_mutex;
 
-    size_t m_totalAllocated = 0;
+    size_t                  m_totalAllocated = 0;
 
-    size_t m_cachedSize    = 0;
-    size_t m_oldCachedSize = 0;
+    size_t                  m_cachedSize = 0;
+    size_t                  m_oldCachedSize = 0;
 };
 typedef CachingAllocatorT<> CachingAllocator;
 
-template <typename T = DefaultAllocator, size_t BlockSizeT = 128 * sizeof(KILOBYTE)>
+template<typename T = DefaultAllocator, size_t BlockSizeT = 128 * sizeof(KILOBYTE)>
 class TArena
 {
 public:
-    TArena(T& in_allocator) : m_allocator(in_allocator) {}
-    TArena() : m_allocator(m_defAllocator) {}
-    ~TArena() { Reset(true); }
+    TArena(T& in_allocator)  : m_allocator(in_allocator) {}
+    TArena()                 : m_allocator(m_defAllocator) {}
+    ~TArena()
+    {
+        Reset(true);
+    }
 
-    void* AllocAligned(size_t size, size_t align)
+    void* AllocAligned(size_t size, size_t  align)
     {
         if (0 == size)
         {
@@ -387,12 +387,12 @@ public:
         if (m_pCurBlock)
         {
             ArenaBlock* pCurBlock = m_pCurBlock;
-            size_t      offset    = AlignUp(m_offset, align);
+            size_t offset = AlignUp(m_offset, align);
 
             if ((offset + size) <= pCurBlock->blockSize)
             {
                 void* pMem = PtrAdd(pCurBlock, offset);
-                m_offset   = offset + size;
+                m_offset = offset + size;
                 return pMem;
             }
 
@@ -401,18 +401,17 @@ public:
         }
 
         static const size_t ArenaBlockSize = BlockSizeT;
-        size_t              blockSize      = std::max(size + ARENA_BLOCK_ALIGN, ArenaBlockSize);
+        size_t blockSize = std::max(size + ARENA_BLOCK_ALIGN, ArenaBlockSize);
 
         // Add in one BLOCK_ALIGN unit to store ArenaBlock in.
         blockSize = AlignUp(blockSize, ARENA_BLOCK_ALIGN);
 
-        ArenaBlock* pNewBlock = m_allocator.AllocateAligned(
-            blockSize, ARENA_BLOCK_ALIGN); // Arena blocks are always simd byte aligned.
+        ArenaBlock* pNewBlock = m_allocator.AllocateAligned(blockSize, ARENA_BLOCK_ALIGN);    // Arena blocks are always simd byte aligned.
         SWR_ASSERT(pNewBlock != nullptr);
 
         if (pNewBlock != nullptr)
         {
-            m_offset         = ARENA_BLOCK_ALIGN;
+            m_offset = ARENA_BLOCK_ALIGN;
             pNewBlock->pNext = m_pCurBlock;
 
             m_pCurBlock = pNewBlock;
@@ -421,7 +420,10 @@ public:
         return AllocAligned(size, align);
     }
 
-    void* Alloc(size_t size) { return AllocAligned(size, 1); }
+    void* Alloc(size_t  size)
+    {
+        return AllocAligned(size, 1);
+    }
 
     void* AllocAlignedSync(size_t size, size_t align)
     {
@@ -451,12 +453,12 @@ public:
 
         if (m_pCurBlock)
         {
-            ArenaBlock* pUsedBlocks = m_pCurBlock->pNext;
-            m_pCurBlock->pNext      = nullptr;
+            ArenaBlock *pUsedBlocks = m_pCurBlock->pNext;
+            m_pCurBlock->pNext = nullptr;
             while (pUsedBlocks)
             {
                 ArenaBlock* pBlock = pUsedBlocks;
-                pUsedBlocks        = pBlock->pNext;
+                pUsedBlocks = pBlock->pNext;
 
                 m_allocator.Free(pBlock);
             }
@@ -471,20 +473,20 @@ public:
 
     bool IsEmpty()
     {
-        return (m_pCurBlock == nullptr) ||
-               (m_offset == ARENA_BLOCK_ALIGN && m_pCurBlock->pNext == nullptr);
+        return (m_pCurBlock == nullptr) || (m_offset == ARENA_BLOCK_ALIGN && m_pCurBlock->pNext == nullptr);
     }
 
 private:
-    ArenaBlock* m_pCurBlock = nullptr;
-    size_t      m_offset    = ARENA_BLOCK_ALIGN;
+
+    ArenaBlock*         m_pCurBlock = nullptr;
+    size_t              m_offset    = ARENA_BLOCK_ALIGN;
 
     /// @note Mutex is only used by sync allocation functions.
-    std::mutex m_mutex;
+    std::mutex          m_mutex;
 
-    DefaultAllocator m_defAllocator;
-    T&               m_allocator;
+    DefaultAllocator    m_defAllocator;
+    T&                  m_allocator;
 };
 
-using StdArena     = TArena<DefaultAllocator>;
-using CachingArena = TArena<CachingAllocator>;
+using StdArena      = TArena<DefaultAllocator>;
+using CachingArena  = TArena<CachingAllocator>;

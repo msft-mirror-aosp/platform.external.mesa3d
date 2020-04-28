@@ -29,7 +29,6 @@
  */
 
 
-#include "main/errors.h"
 #include "main/mtypes.h"
 #include "glsl_symbol_table.h"
 #include "glsl_parser_extras.h"
@@ -38,7 +37,6 @@
 #include "link_varyings.h"
 #include "main/macros.h"
 #include "util/hash_table.h"
-#include "util/u_math.h"
 #include "program.h"
 
 
@@ -79,7 +77,7 @@ create_xfb_varying_names(void *mem_ctx, const glsl_type *t, char **name,
 
       create_xfb_varying_names(mem_ctx, ifc_member_t, name, new_length, count,
                                NULL, NULL, varying_names);
-   } else if (t->is_struct()) {
+   } else if (t->is_record()) {
       for (unsigned i = 0; i < t->length; i++) {
          const char *field = t->fields.structure[i].name;
          size_t new_length = name_length;
@@ -90,7 +88,7 @@ create_xfb_varying_names(void *mem_ctx, const glsl_type *t, char **name,
                                   new_length, count, NULL, NULL,
                                   varying_names);
       }
-   } else if (t->without_array()->is_struct() ||
+   } else if (t->without_array()->is_record() ||
               t->without_array()->is_interface() ||
               (t->is_array() && t->fields.array->is_array())) {
       for (unsigned i = 0; i < t->length; i++) {
@@ -214,42 +212,25 @@ cross_validate_types_and_qualifiers(struct gl_context *ctx,
    }
 
    if (type_to_match != output->type) {
-      if (output->type->is_struct()) {
-         /* Structures across shader stages can have different name
-          * and considered to match in type if and only if structure
-          * members match in name, type, qualification, and declaration
-          * order.
-          */
-         if (!output->type->record_compare(type_to_match, false, true)) {
-            linker_error(prog,
-                  "%s shader output `%s' declared as struct `%s', "
-                  "doesn't match in type with %s shader input "
-                  "declared as struct `%s'\n",
-                  _mesa_shader_stage_to_string(producer_stage),
-                  output->name,
-                  output->type->name,
-                  _mesa_shader_stage_to_string(consumer_stage),
-                  input->type->name);
-         }
-      } else if (!output->type->is_array() || !is_gl_identifier(output->name)) {
-         /* There is a bit of a special case for gl_TexCoord.  This
-          * built-in is unsized by default.  Applications that variable
-          * access it must redeclare it with a size.  There is some
-          * language in the GLSL spec that implies the fragment shader
-          * and vertex shader do not have to agree on this size.  Other
-          * driver behave this way, and one or two applications seem to
-          * rely on it.
-          *
-          * Neither declaration needs to be modified here because the array
-          * sizes are fixed later when update_array_sizes is called.
-          *
-          * From page 48 (page 54 of the PDF) of the GLSL 1.10 spec:
-          *
-          *     "Unlike user-defined varying variables, the built-in
-          *     varying variables don't have a strict one-to-one
-          *     correspondence between the vertex language and the
-          *     fragment language."
-          */
+      /* There is a bit of a special case for gl_TexCoord.  This
+       * built-in is unsized by default.  Applications that variable
+       * access it must redeclare it with a size.  There is some
+       * language in the GLSL spec that implies the fragment shader
+       * and vertex shader do not have to agree on this size.  Other
+       * driver behave this way, and one or two applications seem to
+       * rely on it.
+       *
+       * Neither declaration needs to be modified here because the array
+       * sizes are fixed later when update_array_sizes is called.
+       *
+       * From page 48 (page 54 of the PDF) of the GLSL 1.10 spec:
+       *
+       *     "Unlike user-defined varying variables, the built-in
+       *     varying variables don't have a strict one-to-one
+       *     correspondence between the vertex language and the
+       *     fragment language."
+       */
+      if (!output->type->is_array() || !is_gl_identifier(output->name)) {
          linker_error(prog,
                       "%s shader output `%s' declared as type `%s', "
                       "but %s shader input declared as type `%s'\n",
@@ -326,16 +307,16 @@ cross_validate_types_and_qualifiers(struct gl_context *ctx,
     *    "The invariance of varyings that are declared in both the vertex
     *     and fragment shaders must match."
     */
-   if (input->data.explicit_invariant != output->data.explicit_invariant &&
+   if (input->data.invariant != output->data.invariant &&
        prog->data->Version < (prog->IsES ? 300 : 430)) {
       linker_error(prog,
                    "%s shader output `%s' %s invariant qualifier, "
                    "but %s shader input %s invariant qualifier\n",
                    _mesa_shader_stage_to_string(producer_stage),
                    output->name,
-                   (output->data.explicit_invariant) ? "has" : "lacks",
+                   (output->data.invariant) ? "has" : "lacks",
                    _mesa_shader_stage_to_string(consumer_stage),
-                   (input->data.explicit_invariant) ? "has" : "lacks");
+                   (input->data.invariant) ? "has" : "lacks");
       return;
    }
 
@@ -441,13 +422,27 @@ compute_variable_location_slot(ir_variable *var, gl_shader_stage stage)
 
 struct explicit_location_info {
    ir_variable *var;
-   bool base_type_is_integer;
-   unsigned base_type_bit_size;
+   unsigned numerical_type;
    unsigned interpolation;
    bool centroid;
    bool sample;
    bool patch;
 };
+
+static inline unsigned
+get_numerical_type(const glsl_type *type)
+{
+   /* From the OpenGL 4.6 spec, section 4.4.1 Input Layout Qualifiers, Page 68,
+    * (Location aliasing):
+    *
+    *    "Further, when location aliasing, the aliases sharing the location
+    *     must have the same underlying numerical type  (floating-point or
+    *     integer)
+    */
+   if (type->is_float() || type->is_double())
+      return GLSL_TYPE_FLOAT;
+   return GLSL_TYPE_INT;
+}
 
 static bool
 check_location_aliasing(struct explicit_location_info explicit_locations[][4],
@@ -464,23 +459,14 @@ check_location_aliasing(struct explicit_location_info explicit_locations[][4],
                         gl_shader_stage stage)
 {
    unsigned last_comp;
-   unsigned base_type_bit_size;
-   const glsl_type *type_without_array = type->without_array();
-   const bool base_type_is_integer =
-      glsl_base_type_is_integer(type_without_array->base_type);
-   const bool is_struct = type_without_array->is_struct();
-   if (is_struct) {
-      /* structs don't have a defined underlying base type so just treat all
-       * component slots as used and set the bit size to 0. If there is
-       * location aliasing, we'll fail anyway later.
+   if (type->without_array()->is_record()) {
+      /* The component qualifier can't be used on structs so just treat
+       * all component slots as used.
        */
       last_comp = 4;
-      base_type_bit_size = 0;
    } else {
-      unsigned dmul = type_without_array->is_64bit() ? 2 : 1;
-      last_comp = component + type_without_array->vector_elements * dmul;
-      base_type_bit_size =
-         glsl_base_type_get_bit_size(type_without_array->base_type);
+      unsigned dmul = type->without_array()->is_64bit() ? 2 : 1;
+      last_comp = component + type->without_array()->vector_elements * dmul;
    }
 
    while (location < location_limit) {
@@ -490,76 +476,34 @@ check_location_aliasing(struct explicit_location_info explicit_locations[][4],
             &explicit_locations[location][comp];
 
          if (info->var) {
-            if (info->var->type->without_array()->is_struct() || is_struct) {
-               /* Structs cannot share location since they are incompatible
-                * with any other underlying numerical type.
-                */
+            /* Component aliasing is not alloed */
+            if (comp >= component && comp < last_comp) {
                linker_error(prog,
-                            "%s shader has multiple %sputs sharing the "
-                            "same location that don't have the same "
-                            "underlying numerical type. Struct variable '%s', "
-                            "location %u\n",
-                            _mesa_shader_stage_to_string(stage),
-                            var->data.mode == ir_var_shader_in ? "in" : "out",
-                            is_struct ? var->name : info->var->name,
-                            location);
-               return false;
-            } else if (comp >= component && comp < last_comp) {
-               /* Component aliasing is not allowed */
-               linker_error(prog,
-                            "%s shader has multiple %sputs explicitly "
+                            "%s shader has multiple outputs explicitly "
                             "assigned to location %d and component %d\n",
                             _mesa_shader_stage_to_string(stage),
-                            var->data.mode == ir_var_shader_in ? "in" : "out",
                             location, comp);
                return false;
             } else {
-               /* From the OpenGL 4.60.5 spec, section 4.4.1 Input Layout
-                * Qualifiers, Page 67, (Location aliasing):
-                *
-                *   " Further, when location aliasing, the aliases sharing the
-                *     location must have the same underlying numerical type
-                *     and bit width (floating-point or integer, 32-bit versus
-                *     64-bit, etc.) and the same auxiliary storage and
-                *     interpolation qualification."
+               /* For all other used components we need to have matching
+                * types, interpolation and auxiliary storage
                 */
-
-               /* If the underlying numerical type isn't integer, implicitly
-                * it will be float or else we would have failed by now.
-                */
-               if (info->base_type_is_integer != base_type_is_integer) {
+               if (info->numerical_type !=
+                   get_numerical_type(type->without_array())) {
                   linker_error(prog,
-                               "%s shader has multiple %sputs sharing the "
-                               "same location that don't have the same "
-                               "underlying numerical type. Location %u "
-                               "component %u.\n",
-                               _mesa_shader_stage_to_string(stage),
-                               var->data.mode == ir_var_shader_in ?
-                               "in" : "out", location, comp);
-                  return false;
-               }
-
-               if (info->base_type_bit_size != base_type_bit_size) {
-                  linker_error(prog,
-                               "%s shader has multiple %sputs sharing the "
-                               "same location that don't have the same "
-                               "underlying numerical bit size. Location %u "
-                               "component %u.\n",
-                               _mesa_shader_stage_to_string(stage),
-                               var->data.mode == ir_var_shader_in ?
-                               "in" : "out", location, comp);
+                               "Varyings sharing the same location must "
+                               "have the same underlying numerical type. "
+                               "Location %u component %u\n",
+                               location, comp);
                   return false;
                }
 
                if (info->interpolation != interpolation) {
                   linker_error(prog,
-                               "%s shader has multiple %sputs sharing the "
-                               "same location that don't have the same "
-                               "interpolation qualification. Location %u "
-                               "component %u.\n",
-                               _mesa_shader_stage_to_string(stage),
-                               var->data.mode == ir_var_shader_in ?
-                               "in" : "out", location, comp);
+                               "%s shader has multiple outputs at explicit "
+                               "location %u with different interpolation "
+                               "settings\n",
+                               _mesa_shader_stage_to_string(stage), location);
                   return false;
                }
 
@@ -567,20 +511,15 @@ check_location_aliasing(struct explicit_location_info explicit_locations[][4],
                    info->sample != sample ||
                    info->patch != patch) {
                   linker_error(prog,
-                               "%s shader has multiple %sputs sharing the "
-                               "same location that don't have the same "
-                               "auxiliary storage qualification. Location %u "
-                               "component %u.\n",
-                               _mesa_shader_stage_to_string(stage),
-                               var->data.mode == ir_var_shader_in ?
-                               "in" : "out", location, comp);
+                               "%s shader has multiple outputs at explicit "
+                               "location %u with different aux storage\n",
+                               _mesa_shader_stage_to_string(stage), location);
                   return false;
                }
             }
          } else if (comp >= component && comp < last_comp) {
             info->var = var;
-            info->base_type_is_integer = base_type_is_integer;
-            info->base_type_bit_size = base_type_bit_size;
+            info->numerical_type = get_numerical_type(type->without_array());
             info->interpolation = interpolation;
             info->centroid = centroid;
             info->sample = sample;
@@ -678,15 +617,17 @@ validate_explicit_variable_location(struct gl_context *ctx,
 
 /**
  * Validate explicit locations for the inputs to the first stage and the
- * outputs of the last stage in a program, if those are not the VS and FS
- * shaders.
+ * outputs of the last stage in an SSO program (everything in between is
+ * validated in cross_validate_outputs_to_inputs).
  */
 void
-validate_first_and_last_interface_explicit_locations(struct gl_context *ctx,
-                                                     struct gl_shader_program *prog,
-                                                     gl_shader_stage first_stage,
-                                                     gl_shader_stage last_stage)
+validate_sso_explicit_locations(struct gl_context *ctx,
+                                struct gl_shader_program *prog,
+                                gl_shader_stage first_stage,
+                                gl_shader_stage last_stage)
 {
+   assert(prog->SeparateShader);
+
    /* VS inputs and FS outputs are validated in
     * assign_attribute_or_color_locations()
     */
@@ -739,8 +680,7 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
                                  gl_linked_shader *consumer)
 {
    glsl_symbol_table parameters;
-   struct explicit_location_info output_explicit_locations[MAX_VARYING][4] = {};
-   struct explicit_location_info input_explicit_locations[MAX_VARYING][4] = {};
+   struct explicit_location_info explicit_locations[MAX_VARYING][4] = { 0 };
 
    /* Find all shader outputs in the "producer" stage.
     */
@@ -758,7 +698,7 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
           * differently because they do not need to have matching names.
           */
          if (!validate_explicit_variable_location(ctx,
-                                                  output_explicit_locations,
+                                                  explicit_locations,
                                                   var, prog, producer)) {
             return;
          }
@@ -816,12 +756,6 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
                compute_variable_location_slot(input, consumer->Stage);
             unsigned slot_limit = idx + num_elements;
 
-            if (!validate_explicit_variable_location(ctx,
-                                                     input_explicit_locations,
-                                                     input, prog, consumer)) {
-               return;
-            }
-
             while (idx < slot_limit) {
                if (idx >= MAX_VARYING) {
                   linker_error(prog,
@@ -830,22 +764,10 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
                   return;
                }
 
-               output = output_explicit_locations[idx][input->data.location_frac].var;
+               output = explicit_locations[idx][input->data.location_frac].var;
 
-               if (output == NULL) {
-                  /* A linker failure should only happen when there is no
-                   * output declaration and there is Static Use of the
-                   * declared input.
-                   */
-                  if (input->data.used) {
-                     linker_error(prog,
-                                  "%s shader input `%s' with explicit location "
-                                  "has no matching output\n",
-                                  _mesa_shader_stage_to_string(consumer->Stage),
-                                  input->name);
-                     break;
-                  }
-               } else if (input->data.location != output->data.location) {
+               if (output == NULL ||
+                   input->data.location != output->data.location) {
                   linker_error(prog,
                                "%s shader input `%s' with explicit location "
                                "has no matching output\n",
@@ -875,7 +797,7 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
              */
             assert(!input->data.assigned);
             if (input->data.used && !input->get_interface_type() &&
-                !input->data.explicit_location)
+                !input->data.explicit_location && !prog->SeparateShader)
                linker_error(prog,
                             "%s shader input `%s' "
                             "has no matching output in the previous stage\n",
@@ -1169,10 +1091,8 @@ bool
 tfeedback_decl::store(struct gl_context *ctx, struct gl_shader_program *prog,
                       struct gl_transform_feedback_info *info,
                       unsigned buffer, unsigned buffer_index,
-                      const unsigned max_outputs,
-                      BITSET_WORD *used_components[MAX_FEEDBACK_BUFFERS],
-                      bool *explicit_stride, bool has_xfb_qualifiers,
-                      const void* mem_ctx) const
+                      const unsigned max_outputs, bool *explicit_stride,
+                      bool has_xfb_qualifiers) const
 {
    unsigned xfb_offset = 0;
    unsigned size = this->size;
@@ -1199,72 +1119,6 @@ tfeedback_decl::store(struct gl_context *ctx, struct gl_shader_program *prog,
       unsigned location = this->location;
       unsigned location_frac = this->location_frac;
       unsigned num_components = this->num_components();
-
-      /* From GL_EXT_transform_feedback:
-       *
-       *   " A program will fail to link if:
-       *
-       *       * the total number of components to capture is greater than the
-       *         constant MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS_EXT
-       *         and the buffer mode is INTERLEAVED_ATTRIBS_EXT."
-       *
-       * From GL_ARB_enhanced_layouts:
-       *
-       *   " The resulting stride (implicit or explicit) must be less than or
-       *     equal to the implementation-dependent constant
-       *     gl_MaxTransformFeedbackInterleavedComponents."
-       */
-      if ((prog->TransformFeedback.BufferMode == GL_INTERLEAVED_ATTRIBS ||
-           has_xfb_qualifiers) &&
-          xfb_offset + num_components >
-          ctx->Const.MaxTransformFeedbackInterleavedComponents) {
-         linker_error(prog,
-                      "The MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS "
-                      "limit has been exceeded.");
-         return false;
-      }
-
-      /* From the OpenGL 4.60.5 spec, section 4.4.2. Output Layout Qualifiers,
-       * Page 76, (Transform Feedback Layout Qualifiers):
-       *
-       *   " No aliasing in output buffers is allowed: It is a compile-time or
-       *     link-time error to specify variables with overlapping transform
-       *     feedback offsets."
-       */
-      const unsigned max_components =
-         ctx->Const.MaxTransformFeedbackInterleavedComponents;
-      const unsigned first_component = xfb_offset;
-      const unsigned last_component = xfb_offset + num_components - 1;
-      const unsigned start_word = BITSET_BITWORD(first_component);
-      const unsigned end_word = BITSET_BITWORD(last_component);
-      BITSET_WORD *used;
-      assert(last_component < max_components);
-
-      if (!used_components[buffer]) {
-         used_components[buffer] =
-            rzalloc_array(mem_ctx, BITSET_WORD, BITSET_WORDS(max_components));
-      }
-      used = used_components[buffer];
-
-      for (unsigned word = start_word; word <= end_word; word++) {
-         unsigned start_range = 0;
-         unsigned end_range = BITSET_WORDBITS - 1;
-
-         if (word == start_word)
-            start_range = first_component % BITSET_WORDBITS;
-
-         if (word == end_word)
-            end_range = last_component % BITSET_WORDBITS;
-
-         if (used[word] & BITSET_RANGE(start_range, end_range)) {
-            linker_error(prog,
-                         "variable '%s', xfb_offset (%d) is causing aliasing.",
-                         this->orig_name, xfb_offset * 4);
-            return false;
-         }
-         used[word] |= BITSET_RANGE(start_range, end_range);
-      }
-
       while (num_components > 0) {
          unsigned output_size = MIN2(num_components, 4 - location_frac);
          assert((info->NumOutputs == 0 && max_outputs == 0) ||
@@ -1305,7 +1159,8 @@ tfeedback_decl::store(struct gl_context *ctx, struct gl_shader_program *prog,
          return false;
       }
 
-      if (xfb_offset > info->Buffers[buffer].Stride) {
+      if ((this->offset / 4) / info->Buffers[buffer].Stride !=
+          (xfb_offset - 1) / info->Buffers[buffer].Stride) {
          linker_error(prog, "xfb_offset (%d) overflows xfb_stride (%d) for "
                       "buffer (%d)", xfb_offset * 4,
                       info->Buffers[buffer].Stride * 4, buffer);
@@ -1313,6 +1168,28 @@ tfeedback_decl::store(struct gl_context *ctx, struct gl_shader_program *prog,
       }
    } else {
       info->Buffers[buffer].Stride = xfb_offset;
+   }
+
+   /* From GL_EXT_transform_feedback:
+    *   A program will fail to link if:
+    *
+    *     * the total number of components to capture is greater than
+    *       the constant MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS_EXT
+    *       and the buffer mode is INTERLEAVED_ATTRIBS_EXT.
+    *
+    * From GL_ARB_enhanced_layouts:
+    *
+    *   "The resulting stride (implicit or explicit) must be less than or
+    *   equal to the implementation-dependent constant
+    *   gl_MaxTransformFeedbackInterleavedComponents."
+    */
+   if ((prog->TransformFeedback.BufferMode == GL_INTERLEAVED_ATTRIBS ||
+        has_xfb_qualifiers) &&
+       info->Buffers[buffer].Stride >
+       ctx->Const.MaxTransformFeedbackInterleavedComponents) {
+      linker_error(prog, "The MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS "
+                   "limit has been exceeded.");
+      return false;
    }
 
  store_varying:
@@ -1435,8 +1312,7 @@ cmp_xfb_offset(const void * x_generic, const void * y_generic)
 static bool
 store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
                      unsigned num_tfeedback_decls,
-                     tfeedback_decl *tfeedback_decls, bool has_xfb_qualifiers,
-                     const void *mem_ctx)
+                     tfeedback_decl *tfeedback_decls, bool has_xfb_qualifiers)
 {
    if (!prog->last_vert_prog)
       return true;
@@ -1460,6 +1336,8 @@ store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
    if (has_xfb_qualifiers) {
       qsort(tfeedback_decls, num_tfeedback_decls, sizeof(*tfeedback_decls),
             cmp_xfb_offset);
+   } else {
+      xfb_prog->sh.LinkedTransformFeedback->api_enabled = true;
    }
 
    xfb_prog->sh.LinkedTransformFeedback->Varyings =
@@ -1478,7 +1356,6 @@ store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
 
    unsigned num_buffers = 0;
    unsigned buffers = 0;
-   BITSET_WORD *used_components[MAX_FEEDBACK_BUFFERS] = {};
 
    if (!has_xfb_qualifiers && separate_attribs_mode) {
       /* GL_SEPARATE_ATTRIBS */
@@ -1486,8 +1363,7 @@ store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
          if (!tfeedback_decls[i].store(ctx, prog,
                                        xfb_prog->sh.LinkedTransformFeedback,
                                        num_buffers, num_buffers, num_outputs,
-                                       used_components, NULL,
-                                       has_xfb_qualifiers, mem_ctx))
+                                       NULL, has_xfb_qualifiers))
             return false;
 
          buffers |= 1 << num_buffers;
@@ -1524,8 +1400,7 @@ store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
             if (!tfeedback_decls[i].store(ctx, prog,
                                           xfb_prog->sh.LinkedTransformFeedback,
                                           buffer, num_buffers, num_outputs,
-                                          used_components, explicit_stride,
-                                          has_xfb_qualifiers, mem_ctx))
+                                          explicit_stride, has_xfb_qualifiers))
                return false;
             num_buffers++;
             buffer_stream_id = -1;
@@ -1566,8 +1441,7 @@ store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
          if (!tfeedback_decls[i].store(ctx, prog,
                                        xfb_prog->sh.LinkedTransformFeedback,
                                        buffer, num_buffers, num_outputs,
-                                       used_components, explicit_stride,
-                                       has_xfb_qualifiers, mem_ctx))
+                                       explicit_stride, has_xfb_qualifiers))
             return false;
       }
    }
@@ -1740,7 +1614,7 @@ varying_matches::is_varying_packing_safe(const glsl_type *type,
        producer_stage == MESA_SHADER_TESS_CTRL)
       return false;
 
-   return xfb_enabled && (type->is_array() || type->is_struct() ||
+   return xfb_enabled && (type->is_array() || type->is_record() ||
                           type->is_matrix() || var->data.is_xfb_only);
 }
 
@@ -2047,7 +1921,7 @@ varying_matches::store_locations() const
          if (enhanced_layouts_enabled) {
             const glsl_type *type =
                get_varying_type(producer_var, producer_stage);
-            if (type->is_array() || type->is_matrix() || type->is_struct() ||
+            if (type->is_array() || type->is_matrix() || type->is_record() ||
                 type->is_double()) {
                unsigned comp_slots = type->component_slots() + offset;
                unsigned slots = comp_slots / 4;
@@ -2245,11 +2119,9 @@ class tfeedback_candidate_generator : public program_resource_visitor
 {
 public:
    tfeedback_candidate_generator(void *mem_ctx,
-                                 hash_table *tfeedback_candidates,
-                                 gl_shader_stage stage)
+                                 hash_table *tfeedback_candidates)
       : mem_ctx(mem_ctx),
         tfeedback_candidates(tfeedback_candidates),
-        stage(stage),
         toplevel_var(NULL),
         varying_floats(0)
    {
@@ -2259,17 +2131,10 @@ public:
    {
       /* All named varying interface blocks should be flattened by now */
       assert(!var->is_interface_instance());
-      assert(var->data.mode == ir_var_shader_out);
 
       this->toplevel_var = var;
       this->varying_floats = 0;
-      const glsl_type *t =
-         var->data.from_named_ifc_block ? var->get_interface_type() : var->type;
-      if (!var->data.patch && stage == MESA_SHADER_TESS_CTRL) {
-         assert(t->is_array());
-         t = t->fields.array;
-      }
-      program_resource_visitor::process(var, t, false);
+      program_resource_visitor::process(var, false);
    }
 
 private:
@@ -2279,7 +2144,7 @@ private:
                             const enum glsl_interface_packing,
                             bool /* last_field */)
    {
-      assert(!type->without_array()->is_struct());
+      assert(!type->without_array()->is_record());
       assert(!type->without_array()->is_interface());
 
       tfeedback_candidate *candidate
@@ -2302,8 +2167,6 @@ private:
     * Hash table in which tfeedback_candidate objects should be stored.
     */
    hash_table * const tfeedback_candidates;
-
-   gl_shader_stage stage;
 
    /**
     * Pointer to the toplevel variable that is being traversed.
@@ -2635,28 +2498,8 @@ assign_varying_locations(struct gl_context *ctx,
                  producer->Stage == MESA_SHADER_GEOMETRY));
 
          if (num_tfeedback_decls > 0) {
-            tfeedback_candidate_generator g(mem_ctx, tfeedback_candidates, producer->Stage);
-            /* From OpenGL 4.6 (Core Profile) spec, section 11.1.2.1
-             * ("Vertex Shader Variables / Output Variables")
-             *
-             * "Each program object can specify a set of output variables from
-             * one shader to be recorded in transform feedback mode (see
-             * section 13.3). The variables that can be recorded are those
-             * emitted by the first active shader, in order, from the
-             * following list:
-             *
-             *  * geometry shader
-             *  * tessellation evaluation shader
-             *  * tessellation control shader
-             *  * vertex shader"
-             *
-             * But on OpenGL ES 3.2, section 11.1.2.1 ("Vertex Shader
-             * Variables / Output Variables") tessellation control shader is
-             * not included in the stages list.
-             */
-            if (!prog->IsES || producer->Stage != MESA_SHADER_TESS_CTRL) {
-               g.process(output_var);
-            }
+            tfeedback_candidate_generator g(mem_ctx, tfeedback_candidates);
+            g.process(output_var);
          }
 
          ir_variable *const input_var =
@@ -3037,13 +2880,13 @@ link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
 
             /* This must be done after all dead varyings are eliminated. */
             if (sh_i != NULL) {
-               unsigned slots_used = util_bitcount64(reserved_out_slots);
+               unsigned slots_used = _mesa_bitcount_64(reserved_out_slots);
                if (!check_against_output_limit(ctx, prog, sh_i, slots_used)) {
                   return false;
                }
             }
 
-            unsigned slots_used = util_bitcount64(reserved_in_slots);
+            unsigned slots_used = _mesa_bitcount_64(reserved_in_slots);
             if (!check_against_input_limit(ctx, prog, sh_next, slots_used))
                return false;
 
@@ -3053,7 +2896,7 @@ link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
    }
 
    if (!store_tfeedback_info(ctx, prog, num_tfeedback_decls, tfeedback_decls,
-                             has_xfb_qualifiers, mem_ctx))
+                             has_xfb_qualifiers))
       return false;
 
    return true;

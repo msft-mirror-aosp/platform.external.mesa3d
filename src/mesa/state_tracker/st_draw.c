@@ -36,7 +36,6 @@
  */
 
 
-#include "main/errors.h"
 #include "main/imports.h"
 #include "main/image.h"
 #include "main/bufferobj.h"
@@ -55,11 +54,9 @@
 #include "st_debug.h"
 #include "st_draw.h"
 #include "st_program.h"
-#include "st_util.h"
 
 #include "pipe/p_context.h"
 #include "pipe/p_defines.h"
-#include "util/u_cpu_detect.h"
 #include "util/u_inlines.h"
 #include "util/u_format.h"
 #include "util/u_prim.h"
@@ -68,13 +65,6 @@
 #include "draw/draw_context.h"
 #include "cso_cache/cso_context.h"
 
-#if defined(PIPE_OS_LINUX) && !defined(ANDROID)
-#include <sched.h>
-#define HAVE_SCHED_GETCPU 1
-#else
-#define sched_getcpu() 0
-#define HAVE_SCHED_GETCPU 0
-#endif
 
 /**
  * Set the restart index.
@@ -131,38 +121,12 @@ prepare_draw(struct st_context *st, struct gl_context *ctx)
        st->gfx_shaders_may_be_dirty) {
       st_validate_state(st, ST_PIPELINE_RENDER);
    }
-
-   struct pipe_context *pipe = st->pipe;
-
-   /* Pin threads regularly to the same Zen CCX that the main thread is
-    * running on. The main thread can move between CCXs.
-    */
-   if (unlikely(HAVE_SCHED_GETCPU && /* Linux */
-                /* AMD Zen */
-                util_cpu_caps.nr_cpus != util_cpu_caps.cores_per_L3 &&
-                /* no glthread */
-                ctx->CurrentClientDispatch != ctx->MarshalExec &&
-                /* driver support */
-                pipe->set_context_param &&
-                /* do it occasionally */
-                ++st->pin_thread_counter % 512 == 0)) {
-      int cpu = sched_getcpu();
-      if (cpu >= 0) {
-         unsigned L3_cache = cpu / util_cpu_caps.cores_per_L3;
-
-         pipe->set_context_param(pipe,
-                                 PIPE_CONTEXT_PARAM_PIN_THREADS_TO_L3_CACHE,
-                                 L3_cache);
-      }
-   }
 }
 
 /**
  * This function gets plugged into the VBO module and is called when
  * we have something to render.
  * Basically, translate the information into the format expected by gallium.
- *
- * Try to keep this logic in sync with st_feedback_draw_vbo.
  */
 static void
 st_draw_vbo(struct gl_context *ctx,
@@ -183,12 +147,14 @@ st_draw_vbo(struct gl_context *ctx,
 
    prepare_draw(st, ctx);
 
+   if (st->vertex_array_out_of_memory)
+      return;
+
    /* Initialize pipe_draw_info. */
    info.primitive_restart = false;
    info.vertices_per_patch = ctx->TessCtrlProgram.patch_vertices;
    info.indirect = NULL;
    info.count_from_stream_output = NULL;
-   info.restart_index = 0;
 
    if (ib) {
       struct gl_buffer_object *bufobj = ib->obj;
@@ -207,13 +173,6 @@ st_draw_vbo(struct gl_context *ctx,
          /* indices are in a real VBO */
          info.has_user_indices = false;
          info.index.resource = st_buffer_object(bufobj)->buffer;
-
-         /* Return if the bound element array buffer doesn't have any backing
-          * storage. (nothing to do)
-          */
-         if (!info.index.resource)
-            return;
-
          start = pointer_to_offset(ib->ptr) / info.index_size;
       } else {
          /* indices are in user space memory */
@@ -276,8 +235,8 @@ st_indirect_draw_vbo(struct gl_context *ctx,
                      GLsizeiptr indirect_offset,
                      unsigned draw_count,
                      unsigned stride,
-                     struct gl_buffer_object *indirect_draw_count,
-                     GLsizeiptr indirect_draw_count_offset,
+                     struct gl_buffer_object *indirect_params,
+                     GLsizeiptr indirect_params_offset,
                      const struct _mesa_index_buffer *ib)
 {
    struct st_context *st = st_context(ctx);
@@ -287,10 +246,12 @@ st_indirect_draw_vbo(struct gl_context *ctx,
    assert(stride);
    prepare_draw(st, ctx);
 
+   if (st->vertex_array_out_of_memory)
+      return;
+
    memset(&indirect, 0, sizeof(indirect));
    util_draw_init_info(&info);
    info.start = 0; /* index offset / index size */
-   info.max_index = ~0u; /* so that u_vbuf can tell that it's unknown */
 
    if (ib) {
       struct gl_buffer_object *bufobj = ib->obj;
@@ -322,7 +283,7 @@ st_indirect_draw_vbo(struct gl_context *ctx,
    if (!st->has_multi_draw_indirect) {
       int i;
 
-      assert(!indirect_draw_count);
+      assert(!indirect_params);
       indirect.draw_count = 1;
       for (i = 0; i < draw_count; i++) {
          info.drawid = i;
@@ -332,10 +293,9 @@ st_indirect_draw_vbo(struct gl_context *ctx,
    } else {
       indirect.draw_count = draw_count;
       indirect.stride = stride;
-      if (indirect_draw_count) {
-         indirect.indirect_draw_count =
-            st_buffer_object(indirect_draw_count)->buffer;
-         indirect.indirect_draw_count_offset = indirect_draw_count_offset;
+      if (indirect_params) {
+         indirect.indirect_draw_count = st_buffer_object(indirect_params)->buffer;
+         indirect.indirect_draw_count_offset = indirect_params_offset;
       }
       cso_draw_vbo(st->cso_context, &info);
    }
@@ -343,10 +303,12 @@ st_indirect_draw_vbo(struct gl_context *ctx,
 
 
 void
-st_init_draw_functions(struct dd_function_table *functions)
+st_init_draw(struct st_context *st)
 {
-   functions->Draw = st_draw_vbo;
-   functions->DrawIndirect = st_indirect_draw_vbo;
+   struct gl_context *ctx = st->ctx;
+
+   vbo_set_draw_func(ctx, st_draw_vbo);
+   vbo_set_indirect_draw_func(ctx, st_indirect_draw_vbo);
 }
 
 
@@ -450,7 +412,15 @@ st_draw_quad(struct st_context *st,
 
    u_upload_unmap(st->pipe->stream_uploader);
 
-   cso_set_vertex_buffers(st->cso_context, 0, 1, &vb);
+   /* At the time of writing, cso_get_aux_vertex_buffer_slot() always returns
+    * zero.  If that ever changes we need to audit the calls to that function
+    * and make sure the slot number is used consistently everywhere.
+    */
+   assert(cso_get_aux_vertex_buffer_slot(st->cso_context) == 0);
+
+   cso_set_vertex_buffers(st->cso_context,
+                          cso_get_aux_vertex_buffer_slot(st->cso_context),
+                          1, &vb);
 
    if (num_instances > 1) {
       cso_draw_arrays_instanced(st->cso_context, PIPE_PRIM_TRIANGLE_FAN, 0, 4,

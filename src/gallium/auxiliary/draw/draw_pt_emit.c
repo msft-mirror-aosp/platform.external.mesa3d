@@ -158,7 +158,6 @@ draw_pt_emit(struct pt_emit *emit,
     */
    render->set_primitive(draw->render, prim_info->prim);
 
-   assert(vertex_count <= 65535);
    render->allocate_vertices(render,
                              (ushort)translate->key.output_stride,
                              (ushort)vertex_count);
@@ -230,7 +229,6 @@ draw_pt_emit_linear(struct pt_emit *emit,
     */
    render->set_primitive(draw->render, prim_info->prim);
 
-   assert(count <= 65535);
    if (!render->allocate_vertices(render,
                                   (ushort)translate->key.output_stride,
                                   (ushort)count))

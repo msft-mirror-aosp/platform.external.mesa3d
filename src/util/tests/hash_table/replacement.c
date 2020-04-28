@@ -24,8 +24,6 @@
  *    Eric Anholt <eric@anholt.net>
  */
 
-#undef NDEBUG
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>

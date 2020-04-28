@@ -3,18 +3,21 @@ Import('*')
 env.Prepend(LIBS = [
     ws_haiku,
     st_haiku,
+    trace,
+    rbug,
     mesautil,
     compiler,
     mesa,
     glsl,
     nir,
-    spirv,
     gallium
 ])
 
 if True:
     env.Append(CPPDEFINES = [
         'GALLIUM_SOFTPIPE',
+        'GALLIUM_RBUG',
+        'GALLIUM_TRACE',
     ])
     env.Prepend(LIBS = [softpipe])
 

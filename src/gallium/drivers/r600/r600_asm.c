@@ -231,25 +231,6 @@ int r600_bytecode_add_output(struct r600_bytecode *bc,
 	return 0;
 }
 
-int r600_bytecode_add_pending_output(struct r600_bytecode *bc,
-		const struct r600_bytecode_output *output)
-{
-	assert(bc->n_pending_outputs + 1 < ARRAY_SIZE(bc->pending_outputs));
-	bc->pending_outputs[bc->n_pending_outputs++] = *output;
-
-	return 0;
-}
-
-void r600_bytecode_need_wait_ack(struct r600_bytecode *bc, boolean need_wait_ack)
-{
-	bc->need_wait_ack = need_wait_ack;
-}
-
-boolean r600_bytecode_get_need_wait_ack(struct r600_bytecode *bc)
-{
-	return bc->need_wait_ack;
-}
-
 /* alu instructions that can ony exits once per group */
 static int is_alu_once_inst(struct r600_bytecode_alu *alu)
 {
@@ -1320,15 +1301,6 @@ int r600_bytecode_add_alu_type(struct r600_bytecode *bc,
 	if (nalu->dst.rel && bc->r6xx_nop_after_rel_dst)
 		insert_nop_r6xx(bc);
 
-	/* Might need to insert spill write ops after current clause */
-	if (nalu->last && bc->n_pending_outputs) {
-		while (bc->n_pending_outputs) {
-			r = r600_bytecode_add_output(bc, &bc->pending_outputs[--bc->n_pending_outputs]);
-			if (r)
-				return r;
-		}
-	}
-
 	return 0;
 }
 
@@ -1521,13 +1493,6 @@ int r600_bytecode_add_gds(struct r600_bytecode *bc, const struct r600_bytecode_g
 int r600_bytecode_add_cfinst(struct r600_bytecode *bc, unsigned op)
 {
 	int r;
-
-	/* Emit WAIT_ACK before control flow to ensure pending writes are always acked. */
-	if (op != CF_OP_MEM_SCRATCH && bc->need_wait_ack) {
-		bc->need_wait_ack = false;
-		r = r600_bytecode_add_cfinst(bc, CF_OP_WAIT_ACK);
-	}
-
 	r = r600_bytecode_add_cf(bc);
 	if (r)
 		return r;
@@ -1545,9 +1510,7 @@ int cm_bytecode_add_cf_end(struct r600_bytecode *bc)
 /* common to all 3 families */
 static int r600_bytecode_vtx_build(struct r600_bytecode *bc, struct r600_bytecode_vtx *vtx, unsigned id)
 {
-	if (r600_isa_fetch(vtx->op)->flags & FF_MEM)
-		return r700_bytecode_fetch_mem_build(bc, vtx, id);
-	bc->bytecode[id] = S_SQ_VTX_WORD0_VTX_INST(r600_isa_fetch_opcode(bc->isa->hw_class, vtx->op)) |
+	bc->bytecode[id] = S_SQ_VTX_WORD0_VTX_INST(vtx->op) |
 			S_SQ_VTX_WORD0_BUFFER_ID(vtx->buffer_id) |
 			S_SQ_VTX_WORD0_FETCH_TYPE(vtx->fetch_type) |
 			S_SQ_VTX_WORD0_SRC_GPR(vtx->src_gpr) |
@@ -2009,12 +1972,6 @@ static int print_src(struct r600_bytecode_alu *alu, unsigned idx)
 			o += fprintf(stderr, "LDS_OQ_B_POP");
 			need_chan = 1;
 			break;
-		case EG_V_SQ_ALU_SRC_TIME_LO:
-			o += fprintf(stderr, "TIME_LO");
-			break;
-		case EG_V_SQ_ALU_SRC_TIME_HI:
-			o += fprintf(stderr, "TIME_HI");
-			break;
 		case EG_V_SQ_ALU_SRC_SE_ID:
 			o += fprintf(stderr, "SE_ID");
 			break;
@@ -2142,12 +2099,9 @@ void r600_bytecode_disasm(struct r600_bytecode *bc)
 				fprintf(stderr, "%04d %08X %08X  %s ", id, bc->bytecode[id],
 						bc->bytecode[id + 1], cfop->name);
 				fprintf(stderr, "%d @%d ", cf->ndw / 4, cf->addr);
-				if (cf->vpm)
-					fprintf(stderr, "VPM ");
+				fprintf(stderr, "\n");
 				if (cf->end_of_program)
 					fprintf(stderr, "EOP ");
-				fprintf(stderr, "\n");
-
 			} else if (cfop->flags & CF_EXP) {
 				int o = 0;
 				const char *exp_type[] = {"PIXEL", "POS  ", "PARAM"};
@@ -2233,10 +2187,6 @@ void r600_bytecode_disasm(struct r600_bytecode *bc)
 					fprintf(stderr, "NO_BARRIER ");
 				if (cf->end_of_program)
 					fprintf(stderr, "EOP ");
-
-				if (cf->output.mark)
-					fprintf(stderr, "MARK ");
-
 				fprintf(stderr, "\n");
 			} else {
 				fprintf(stderr, "%04d %08X %08X  %s ", id, bc->bytecode[id],
@@ -2248,8 +2198,6 @@ void r600_bytecode_disasm(struct r600_bytecode *bc)
 					fprintf(stderr, "POP:%X ", cf->pop_count);
 				if (cf->count && (cfop->flags & CF_EMIT))
 					fprintf(stderr, "STREAM%d ", cf->count);
-				if (cf->vpm)
-					fprintf(stderr, "VPM ");
 				if (cf->end_of_program)
 					fprintf(stderr, "EOP ");
 				fprintf(stderr, "\n");
@@ -2370,8 +2318,6 @@ void r600_bytecode_disasm(struct r600_bytecode *bc)
 
 			o += fprintf(stderr, ", R%d.", vtx->src_gpr);
 			o += print_swizzle(vtx->src_sel_x);
-			if (r600_isa_fetch(vtx->op)->flags & FF_MEM)
-				o += print_swizzle(vtx->src_sel_y);
 
 			if (vtx->offset)
 				fprintf(stderr, " +%db", vtx->offset);
@@ -2387,19 +2333,6 @@ void r600_bytecode_disasm(struct r600_bytecode *bc)
 
 			if (bc->chip_class >= EVERGREEN && vtx->buffer_index_mode)
 				fprintf(stderr, "SQ_%s ", index_mode[vtx->buffer_index_mode]);
-
-			if (r600_isa_fetch(vtx->op)->flags & FF_MEM) {
-				if (vtx->uncached)
-					fprintf(stderr, "UNCACHED ");
-				if (vtx->indexed)
-					fprintf(stderr, "INDEXED:%d ", vtx->indexed);
-
-				fprintf(stderr, "ELEM_SIZE:%d ", vtx->elem_size);
-				if (vtx->burst_count)
-					fprintf(stderr, "BURST_COUNT:%d ", vtx->burst_count);
-				fprintf(stderr, "ARRAY_BASE:%d ", vtx->array_base);
-				fprintf(stderr, "ARRAY_SIZE:%d ", vtx->array_size);
-			}
 
 			fprintf(stderr, "UCF:%d ", vtx->use_const_fields);
 			fprintf(stderr, "FMT(DTA:%d ", vtx->data_format);
@@ -2476,11 +2409,6 @@ void r600_vertex_data_type(enum pipe_format pformat,
 		return;
 	}
 
-	if (pformat == PIPE_FORMAT_A1B5G5R5_UNORM) {
-		*format = FMT_5_5_5_1;
-		return;
-	}
-
 	desc = util_format_description(pformat);
 	if (desc->layout != UTIL_FORMAT_LAYOUT_PLAIN) {
 		goto out_unknown;
@@ -2538,16 +2466,6 @@ void r600_vertex_data_type(enum pipe_format pformat,
 		/* Signed ints */
 	case UTIL_FORMAT_TYPE_SIGNED:
 		switch (desc->channel[i].size) {
-		case 4:
-			switch (desc->nr_channels) {
-			case 2:
-				*format = FMT_4_4;
-				break;
-			case 4:
-				*format = FMT_4_4_4_4;
-				break;
-			}
-			break;
 		case 8:
 			switch (desc->nr_channels) {
 			case 1:
@@ -2772,9 +2690,7 @@ void *r600_create_vertex_fetch_shader(struct pipe_context *ctx,
 		return NULL;
 	}
 
-	bytecode = r600_buffer_map_sync_with_rings
-		(&rctx->b, shader->buffer,
-		PIPE_TRANSFER_WRITE | PIPE_TRANSFER_UNSYNCHRONIZED | RADEON_TRANSFER_TEMPORARY);
+	bytecode = r600_buffer_map_sync_with_rings(&rctx->b, shader->buffer, PIPE_TRANSFER_WRITE | PIPE_TRANSFER_UNSYNCHRONIZED);
 	bytecode += shader->offset / 4;
 
 	if (R600_BIG_ENDIAN) {

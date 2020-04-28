@@ -55,13 +55,9 @@
 
 #include <GL/gl.h>
 #include <GL/internal/dri_interface.h>
-#include "main/menums.h"
-#include "main/formats.h"
+#include "main/mtypes.h"
 #include "util/xmlconfig.h"
 #include <stdbool.h>
-
-struct gl_config;
-struct gl_context;
 
 /**
  * Extensions.
@@ -215,10 +211,6 @@ struct __DRIscreenRec {
     struct {
         const __DRIimageLoaderExtension *loader;
     } image;
-
-    struct {
-       const __DRImutableRenderBufferLoaderExtension *loader;
-    } mutableRenderBuffer;
 
     driOptionCache optionInfo;
     driOptionCache optionCache;

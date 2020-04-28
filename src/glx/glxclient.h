@@ -437,12 +437,6 @@ struct glx_context
     */
    unsigned long thread_refcount;
 
-   /**
-    * GLX_ARB_create_context_no_error setting for this context.
-    * This needs to be kept here to enforce shared context rules.
-    */
-   Bool noError;
-
    char gl_extension_bits[__GL_EXT_BYTES];
 };
 
@@ -651,6 +645,8 @@ extern void __glXSendLargeCommand(struct glx_context *, const GLvoid *, GLint,
 
 /* Initialize the GLX extension for dpy */
 extern struct glx_display *__glXInitialize(Display *);
+
+extern void __glXPreferEGL(int state);
 
 /************************************************************************/
 

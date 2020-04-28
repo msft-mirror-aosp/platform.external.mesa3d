@@ -31,11 +31,8 @@ extern "C" {
 #endif
 
 struct gl_context;
-struct gl_program;
 struct gl_shader;
 struct gl_shader_program;
-struct gl_linked_shader;
-struct gl_program_parameter_list;
 
 void _mesa_glsl_link_shader(struct gl_context *ctx, struct gl_shader_program *prog);
 GLboolean _mesa_ir_link_shader(struct gl_context *ctx, struct gl_shader_program *prog);
@@ -50,7 +47,8 @@ _mesa_generate_parameters_list_for_uniforms(struct gl_context *ctx,
 void
 _mesa_associate_uniform_storage(struct gl_context *ctx,
                                 struct gl_shader_program *shader_program,
-                                struct gl_program *prog);
+                                struct gl_program *prog,
+                                bool propagate_to_storage);
 
 #ifdef __cplusplus
 }

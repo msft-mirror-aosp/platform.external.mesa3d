@@ -134,7 +134,10 @@ do_blit_copypixels(struct gl_context * ctx,
       return false;
    }
 
-   if (GET_COLORMASK(ctx->Color.ColorMask, 0) != 0xf) {
+   if (!ctx->Color.ColorMask[0][0] ||
+       !ctx->Color.ColorMask[0][1] ||
+       !ctx->Color.ColorMask[0][2] ||
+       !ctx->Color.ColorMask[0][3]) {
       perf_debug("glCopyPixels(): Unsupported color mask state\n");
       return false;
    }
@@ -170,12 +173,12 @@ do_blit_copypixels(struct gl_context * ctx,
 
    if (!intel_miptree_blit(brw,
                            read_irb->mt, read_irb->mt_level, read_irb->mt_layer,
-                           srcx, srcy, read_fb->FlipY,
+                           srcx, srcy, _mesa_is_winsys_fbo(read_fb),
                            draw_irb->mt, draw_irb->mt_level, draw_irb->mt_layer,
-                           dstx, dsty, fb->FlipY,
+                           dstx, dsty, _mesa_is_winsys_fbo(fb),
                            width, height,
                            (ctx->Color.ColorLogicOpEnabled ?
-                            ctx->Color._LogicOp : COLOR_LOGICOP_COPY))) {
+                            ctx->Color.LogicOp : GL_COPY))) {
       DBG("%s: blit failure\n", __func__);
       return false;
    }
@@ -196,15 +199,12 @@ intelCopyPixels(struct gl_context * ctx,
                 GLsizei width, GLsizei height,
                 GLint destx, GLint desty, GLenum type)
 {
-   struct brw_context *brw = brw_context(ctx);
-
    DBG("%s\n", __func__);
 
    if (!_mesa_check_conditional_render(ctx))
       return;
 
-   if (brw->screen->devinfo.gen < 6 &&
-       do_blit_copypixels(ctx, srcx, srcy, width, height, destx, desty, type))
+   if (do_blit_copypixels(ctx, srcx, srcy, width, height, destx, desty, type))
       return;
 
    /* this will use swrast if needed */

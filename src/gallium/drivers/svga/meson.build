@@ -27,6 +27,7 @@ files_svga = files(
   'svga_draw_elements.c',
   'svga_format.c',
   'svga_link.c',
+  'svga_msg.c',
   'svga_pipe_blend.c',
   'svga_pipe_blit.c',
   'svga_pipe_clear.c',
@@ -78,7 +79,7 @@ files_svga = files(
 
 libsvga = static_library(
   'svga',
-  [files_svga, sha1_h],
+  files_svga,
   c_args : [c_vis_args, c_msvc_compat_args],
   include_directories : [
     inc_src, inc_include, inc_gallium, inc_gallium_aux,

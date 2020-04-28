@@ -24,44 +24,18 @@
 #include "nir.h"
 #include "nir_builder.h"
 
-static void
-build_constant_load(nir_builder *b, nir_deref_instr *deref, nir_constant *c)
+static bool
+deref_apply_constant_initializer(nir_deref_var *deref, void *state)
 {
-   if (glsl_type_is_vector_or_scalar(deref->type)) {
-      nir_load_const_instr *load =
-         nir_load_const_instr_create(b->shader,
-                                     glsl_get_vector_elements(deref->type),
-                                     glsl_get_bit_size(deref->type));
-      memcpy(load->value, c->values[0], sizeof(*load->value) * load->def.num_components);
-      nir_builder_instr_insert(b, &load->instr);
-      nir_store_deref(b, deref, &load->def, ~0);
-   } else if (glsl_type_is_matrix(deref->type)) {
-      unsigned cols = glsl_get_matrix_columns(deref->type);
-      unsigned rows = glsl_get_vector_elements(deref->type);
-      unsigned bit_size = glsl_get_bit_size(deref->type);
-      for (unsigned i = 0; i < cols; i++) {
-         nir_load_const_instr *load =
-            nir_load_const_instr_create(b->shader, rows, bit_size);
-         memcpy(load->value, c->values[i], sizeof(*load->value) * load->def.num_components);
-         nir_builder_instr_insert(b, &load->instr);
-         nir_store_deref(b, nir_build_deref_array_imm(b, deref, i),
-                         &load->def, ~0);
-      }
-   } else if (glsl_type_is_struct_or_ifc(deref->type)) {
-      unsigned len = glsl_get_length(deref->type);
-      for (unsigned i = 0; i < len; i++) {
-         build_constant_load(b, nir_build_deref_struct(b, deref, i),
-                             c->elements[i]);
-      }
-   } else {
-      assert(glsl_type_is_array(deref->type));
-      unsigned len = glsl_get_length(deref->type);
-      for (unsigned i = 0; i < len; i++) {
-         build_constant_load(b,
-                             nir_build_deref_array_imm(b, deref, i),
-                             c->elements[i]);
-      }
-   }
+   struct nir_builder *b = state;
+
+   nir_load_const_instr *initializer =
+      nir_deref_get_const_initializer_load(b->shader, deref);
+   nir_builder_instr_insert(b, &initializer->instr);
+
+   nir_store_deref_var(b, deref, &initializer->def, 0xf);
+
+   return true;
 }
 
 static bool
@@ -77,8 +51,13 @@ lower_const_initializer(struct nir_builder *b, struct exec_list *var_list)
 
       progress = true;
 
-      build_constant_load(b, nir_build_deref_var(b, var),
-                          var->constant_initializer);
+      nir_deref_var deref;
+      deref.deref.deref_type = nir_deref_type_var,
+      deref.deref.child = NULL;
+      deref.deref.type = var->type,
+      deref.var = var;
+
+      nir_deref_foreach_leaf(&deref, deref_apply_constant_initializer, b);
 
       var->constant_initializer = NULL;
    }
@@ -91,36 +70,41 @@ nir_lower_constant_initializers(nir_shader *shader, nir_variable_mode modes)
 {
    bool progress = false;
 
-   nir_foreach_function(function, shader) {
-      if (!function->impl)
-	 continue;
+   nir_builder builder;
+   if (modes & ~nir_var_local)
+      nir_builder_init(&builder, nir_shader_get_entrypoint(shader));
 
-      bool impl_progress = false;
+   if (modes & nir_var_shader_out)
+      progress |= lower_const_initializer(&builder, &shader->outputs);
 
-      nir_builder builder;
-      nir_builder_init(&builder, function->impl);
+   if (modes & nir_var_global)
+      progress |= lower_const_initializer(&builder, &shader->globals);
 
-      if ((modes & nir_var_shader_out) && function->is_entrypoint)
-         impl_progress |= lower_const_initializer(&builder, &shader->outputs);
+   if (modes & nir_var_system_value)
+      progress |= lower_const_initializer(&builder, &shader->system_values);
 
-      if ((modes & nir_var_shader_temp) && function->is_entrypoint)
-         impl_progress |= lower_const_initializer(&builder, &shader->globals);
+   if (progress) {
+      nir_foreach_function(function, shader) {
+         if (function->impl) {
+            nir_metadata_preserve(function->impl, nir_metadata_block_index |
+                                                  nir_metadata_dominance |
+                                                  nir_metadata_live_ssa_defs);
+         }
+      }
+   }
 
-      if ((modes & nir_var_system_value) && function->is_entrypoint)
-         impl_progress |= lower_const_initializer(&builder, &shader->system_values);
+   if (modes & nir_var_local) {
+      nir_foreach_function(function, shader) {
+         if (!function->impl)
+            continue;
 
-      if (modes & nir_var_function_temp)
-         impl_progress |= lower_const_initializer(&builder, &function->impl->locals);
-
-      if (impl_progress) {
-         progress = true;
-         nir_metadata_preserve(function->impl, nir_metadata_block_index |
-                                               nir_metadata_dominance |
-                                               nir_metadata_live_ssa_defs);
-      } else {
-#ifndef NDEBUG
-         function->impl->valid_metadata &= ~nir_metadata_not_properly_reset;
-#endif
+         nir_builder_init(&builder, function->impl);
+         if (lower_const_initializer(&builder, &function->impl->locals)) {
+            nir_metadata_preserve(function->impl, nir_metadata_block_index |
+                                                  nir_metadata_dominance |
+                                                  nir_metadata_live_ssa_defs);
+            progress = true;
+         }
       }
    }
 

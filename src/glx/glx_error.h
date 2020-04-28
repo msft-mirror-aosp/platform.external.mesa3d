@@ -26,10 +26,6 @@
  promote the sale, use or other dealings in this Software without
  prior written authorization.
 */
-
-#ifndef GLX_ERROR_H
-#define GLX_ERROR_H
-
 #include <stdbool.h>
 #include <stdint.h>
 #include <X11/Xlib.h>
@@ -48,6 +44,4 @@ _X_HIDDEN void __glXSendErrorForXcb(Display * dpy,
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif

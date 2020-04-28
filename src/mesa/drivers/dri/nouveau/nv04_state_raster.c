@@ -162,13 +162,13 @@ nv04_emit_control(struct gl_context *ctx, int emit)
 			 FLOAT_TO_UBYTE(ctx->Color.AlphaRef);
 
 	/* Color mask. */
-	if (GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 0))
+	if (ctx->Color.ColorMask[0][RCOMP])
 		nv04->ctrl[0] |= NV04_MULTITEX_TRIANGLE_CONTROL0_RED_WRITE;
-	if (GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 1))
+	if (ctx->Color.ColorMask[0][GCOMP])
 		nv04->ctrl[0] |= NV04_MULTITEX_TRIANGLE_CONTROL0_GREEN_WRITE;
-	if (GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 2))
+	if (ctx->Color.ColorMask[0][BCOMP])
 		nv04->ctrl[0] |= NV04_MULTITEX_TRIANGLE_CONTROL0_BLUE_WRITE;
-	if (GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 3))
+	if (ctx->Color.ColorMask[0][ACOMP])
 		nv04->ctrl[0] |= NV04_MULTITEX_TRIANGLE_CONTROL0_ALPHA_WRITE;
 
 	/* Stencil test. */

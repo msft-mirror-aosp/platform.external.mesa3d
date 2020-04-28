@@ -207,11 +207,7 @@ bool CodeEmitterGK110::isLIMM(const ValueRef& ref, DataType ty, bool mod)
 {
    const ImmediateValue *imm = ref.get()->asImm();
 
-   if (ty == TYPE_F32)
-      return imm && imm->reg.data.u32 & 0xfff;
-   else
-      return imm && (imm->reg.data.s32 > 0x7ffff ||
-                     imm->reg.data.s32 < -0x80000);
+   return imm && (imm->reg.data.u32 & ((ty == TYPE_F32) ? 0xfff : 0xfff00000));
 }
 
 void
@@ -346,7 +342,7 @@ CodeEmitterGK110::setShortImmediate(const Instruction *i, const int s)
       code[1] |= ((u64 & 0x7fe0000000000000ULL) >> 53);
       code[1] |= ((u64 & 0x8000000000000000ULL) >> 36);
    } else {
-      assert((u32 & 0xfff80000) == 0 || (u32 & 0xfff80000) == 0xfff80000);
+      assert((u32 & 0xfff00000) == 0 || (u32 & 0xfff00000) == 0xfff00000);
       code[0] |= (u32 & 0x001ff) << 23;
       code[1] |= (u32 & 0x7fe00) >> 9;
       code[1] |= (u32 & 0x80000) << 8;
@@ -637,7 +633,7 @@ CodeEmitterGK110::emitIMUL(const Instruction *i)
    assert(!i->src(0).mod.neg() && !i->src(1).mod.neg());
    assert(!i->src(0).mod.abs() && !i->src(1).mod.abs());
 
-   if (isLIMM(i->src(1), TYPE_S32)) {
+   if (i->src(1).getFile() == FILE_IMMEDIATE) {
       emitForm_L(i, 0x280, 2, Modifier(0));
 
       if (i->subOp == NV50_IR_SUBOP_MUL_HIGH)
@@ -2297,7 +2293,6 @@ CodeEmitterGK110::getSRegEncoding(const ValueRef& ref)
    case SV_INVOCATION_ID: return 0x11;
    case SV_YDIR:          return 0x12;
    case SV_THREAD_KILL:   return 0x13;
-   case SV_COMBINED_TID:  return 0x20;
    case SV_TID:           return 0x21 + SDATA(ref).sv.index;
    case SV_CTAID:         return 0x25 + SDATA(ref).sv.index;
    case SV_NTID:          return 0x29 + SDATA(ref).sv.index;

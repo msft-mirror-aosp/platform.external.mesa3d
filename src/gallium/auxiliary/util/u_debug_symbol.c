@@ -36,7 +36,7 @@
 #include "os/os_thread.h"
 #include "util/u_string.h"
 
-#include "util/u_debug.h"
+#include "u_debug.h"
 #include "u_debug_symbol.h"
 #include "u_hash_table.h"
 
@@ -219,7 +219,7 @@ debug_symbol_name_dbghelp(const void *addr, char* buf, unsigned size)
 #endif /* PIPE_OS_WINDOWS */
 
 
-#if defined(HAVE_EXECINFO_H)
+#if defined(__GLIBC__) && !defined(__UCLIBC__)
 
 #include <execinfo.h>
 
@@ -240,7 +240,7 @@ debug_symbol_name_glibc(const void *addr, char* buf, unsigned size)
    return TRUE;
 }
 
-#endif /* defined(HAVE_EXECINFO_H) */
+#endif /* defined(__GLIBC__) && !defined(__UCLIBC__) */
 
 
 void
@@ -252,11 +252,11 @@ debug_symbol_name(const void *addr, char* buf, unsigned size)
    }
 #endif
 
-#if defined(HAVE_EXECINFO_H)
+#if defined(__GLIBC__) && !defined(__UCLIBC__)
    if (debug_symbol_name_glibc(addr, buf, size)) {
        return;
    }
-#endif /* defined(HAVE_EXECINFO_H) */
+#endif
 
    util_snprintf(buf, size, "%p", addr);
    buf[size - 1] = 0;

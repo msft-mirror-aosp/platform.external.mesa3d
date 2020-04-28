@@ -111,7 +111,7 @@ intel_blit_texsubimage(struct gl_context * ctx,
                             0, 0, false,
                             intelImage->mt, texImage->Level, texImage->Face,
                             xoffset, yoffset, false,
-                            width, height, COLOR_LOGICOP_COPY);
+                            width, height, GL_COPY);
    assert(ret);
 
    intel_miptree_release(&temp_mt);

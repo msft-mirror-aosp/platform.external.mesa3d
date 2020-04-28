@@ -26,16 +26,8 @@
  *
  **************************************************************************/
 
-#if !defined(ANDROID) || ANDROID_API_LEVEL >= 26
-/* Android's libc began supporting shm in Oreo */
-#define HAVE_SHM
-#include <sys/ipc.h>
-#include <sys/shm.h>
-#endif
-
 #include "pipe/p_compiler.h"
 #include "pipe/p_format.h"
-#include "pipe/p_state.h"
 #include "util/u_inlines.h"
 #include "util/u_format.h"
 #include "util/u_math.h"
@@ -53,7 +45,6 @@ struct dri_sw_displaytarget
    unsigned stride;
 
    unsigned map_flags;
-   int shmid;
    void *data;
    void *mapped;
    const void *front_private;
@@ -63,7 +54,7 @@ struct dri_sw_winsys
 {
    struct sw_winsys base;
 
-   const struct drisw_loader_funcs *lf;
+   struct drisw_loader_funcs *lf;
 };
 
 static inline struct dri_sw_displaytarget *
@@ -88,27 +79,6 @@ dri_sw_is_displaytarget_format_supported( struct sw_winsys *ws,
    return TRUE;
 }
 
-#ifdef HAVE_SHM
-static char *
-alloc_shm(struct dri_sw_displaytarget *dri_sw_dt, unsigned size)
-{
-   char *addr;
-
-   dri_sw_dt->shmid = shmget(IPC_PRIVATE, size, IPC_CREAT|0777);
-   if (dri_sw_dt->shmid < 0)
-      return NULL;
-
-   addr = (char *) shmat(dri_sw_dt->shmid, 0, 0);
-   /* mark the segment immediately for deletion to avoid leaks */
-   shmctl(dri_sw_dt->shmid, IPC_RMID, 0);
-
-   if (addr == (char *) -1)
-      return NULL;
-
-   return addr;
-}
-#endif
-
 static struct sw_displaytarget *
 dri_sw_displaytarget_create(struct sw_winsys *winsys,
                             unsigned tex_usage,
@@ -118,7 +88,6 @@ dri_sw_displaytarget_create(struct sw_winsys *winsys,
                             const void *front_private,
                             unsigned *stride)
 {
-   struct dri_sw_winsys *ws = dri_sw_winsys(winsys);
    struct dri_sw_displaytarget *dri_sw_dt;
    unsigned nblocksy, size, format_stride;
 
@@ -137,16 +106,7 @@ dri_sw_displaytarget_create(struct sw_winsys *winsys,
    nblocksy = util_format_get_nblocksy(format, height);
    size = dri_sw_dt->stride * nblocksy;
 
-   dri_sw_dt->shmid = -1;
-
-#ifdef HAVE_SHM
-   if (ws->lf->put_image_shm)
-      dri_sw_dt->data = alloc_shm(dri_sw_dt, size);
-#endif
-
-   if(!dri_sw_dt->data)
-      dri_sw_dt->data = align_malloc(size, alignment);
-
+   dri_sw_dt->data = align_malloc(size, alignment);
    if(!dri_sw_dt->data)
       goto no_data;
 
@@ -165,14 +125,7 @@ dri_sw_displaytarget_destroy(struct sw_winsys *ws,
 {
    struct dri_sw_displaytarget *dri_sw_dt = dri_sw_displaytarget(dt);
 
-   if (dri_sw_dt->shmid >= 0) {
-#ifdef HAVE_SHM
-      shmdt(dri_sw_dt->data);
-      shmctl(dri_sw_dt->shmid, IPC_RMID, 0);
-#endif
-   } else {
-      align_free(dri_sw_dt->data);
-   }
+   align_free(dri_sw_dt->data);
 
    FREE(dri_sw_dt);
 }
@@ -221,15 +174,7 @@ dri_sw_displaytarget_get_handle(struct sw_winsys *winsys,
                                 struct sw_displaytarget *dt,
                                 struct winsys_handle *whandle)
 {
-   struct dri_sw_displaytarget *dri_sw_dt = dri_sw_displaytarget(dt);
-
-   if (whandle->type == WINSYS_HANDLE_TYPE_SHMID) {
-      if (dri_sw_dt->shmid < 0)
-         return FALSE;
-      whandle->handle = dri_sw_dt->shmid;
-      return TRUE;
-   }
-
+   assert(0);
    return FALSE;
 }
 
@@ -242,43 +187,25 @@ dri_sw_displaytarget_display(struct sw_winsys *ws,
    struct dri_sw_winsys *dri_sw_ws = dri_sw_winsys(ws);
    struct dri_sw_displaytarget *dri_sw_dt = dri_sw_displaytarget(dt);
    struct dri_drawable *dri_drawable = (struct dri_drawable *)context_private;
-   unsigned width, height, x = 0, y = 0;
+   unsigned width, height;
    unsigned blsize = util_format_get_blocksize(dri_sw_dt->format);
-   unsigned offset = 0;
-   unsigned offset_x = 0;
-   char *data = dri_sw_dt->data;
-   bool is_shm = dri_sw_dt->shmid != -1;
+
    /* Set the width to 'stride / cpp'.
     *
     * PutImage correctly clips to the width of the dst drawable.
     */
+   width = dri_sw_dt->stride / blsize;
+
+   height = dri_sw_dt->height;
+
    if (box) {
-      offset = dri_sw_dt->stride * box->y;
-      offset_x = box->x * blsize;
-      data += offset;
-      /* don't add x offset for shm, the put_image_shm will deal with it */
-      if (!is_shm)
-         data += offset_x;
-      x = box->x;
-      y = box->y;
-      width = box->width;
-      height = box->height;
+       void *data;
+       data = (char *)dri_sw_dt->data + (dri_sw_dt->stride * box->y) + box->x * blsize;
+       dri_sw_ws->lf->put_image2(dri_drawable, data,
+                                 box->x, box->y, box->width, box->height, dri_sw_dt->stride);
    } else {
-      width = dri_sw_dt->stride / blsize;
-      height = dri_sw_dt->height;
+       dri_sw_ws->lf->put_image(dri_drawable, dri_sw_dt->data, width, height);
    }
-
-   if (is_shm) {
-      dri_sw_ws->lf->put_image_shm(dri_drawable, dri_sw_dt->shmid, dri_sw_dt->data, offset, offset_x,
-                                   x, y, width, height, dri_sw_dt->stride);
-      return;
-   }
-
-   if (box)
-      dri_sw_ws->lf->put_image2(dri_drawable, data,
-                                x, y, width, height, dri_sw_dt->stride);
-   else
-      dri_sw_ws->lf->put_image(dri_drawable, data, width, height);
 }
 
 static void
@@ -288,7 +215,7 @@ dri_destroy_sw_winsys(struct sw_winsys *winsys)
 }
 
 struct sw_winsys *
-dri_create_sw_winsys(const struct drisw_loader_funcs *lf)
+dri_create_sw_winsys(struct drisw_loader_funcs *lf)
 {
    struct dri_sw_winsys *ws;
 

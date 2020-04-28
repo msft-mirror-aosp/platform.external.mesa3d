@@ -55,7 +55,7 @@
 int64_t
 os_time_get_nano(void)
 {
-#if defined(PIPE_OS_LINUX) || defined(PIPE_OS_BSD)
+#if defined(PIPE_OS_LINUX)
 
    struct timespec tv;
    clock_gettime(CLOCK_MONOTONIC, &tv);

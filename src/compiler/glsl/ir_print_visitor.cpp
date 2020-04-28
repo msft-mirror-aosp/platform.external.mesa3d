@@ -27,7 +27,6 @@
 #include "glsl_parser_extras.h"
 #include "main/macros.h"
 #include "util/hash_table.h"
-#include "util/u_string.h"
 
 static void print_type(FILE *f, const glsl_type *t);
 
@@ -90,7 +89,8 @@ ir_print_visitor::ir_print_visitor(FILE *f)
    : f(f)
 {
    indentation = 0;
-   printable_names = _mesa_pointer_hash_table_create(NULL);
+   printable_names =
+      _mesa_hash_table_create(NULL, _mesa_hash_pointer, _mesa_key_pointer_equal);
    symbols = _mesa_symbol_table_ctor();
    mem_ctx = ralloc_context(NULL);
 }
@@ -149,7 +149,7 @@ print_type(FILE *f, const glsl_type *t)
       fprintf(f, "(array ");
       print_type(f, t->fields.array);
       fprintf(f, " %u)", t->length);
-   } else if (t->is_struct() && !is_gl_identifier(t->name)) {
+   } else if (t->is_record() && !is_gl_identifier(t->name)) {
       fprintf(f, "%s@%p", t->name, (void *) t);
    } else {
       fprintf(f, "%s", t->name);
@@ -167,39 +167,37 @@ void ir_print_visitor::visit(ir_variable *ir)
 
    char binding[32] = {0};
    if (ir->data.binding)
-      util_snprintf(binding, sizeof(binding), "binding=%i ", ir->data.binding);
+      snprintf(binding, sizeof(binding), "binding=%i ", ir->data.binding);
 
    char loc[32] = {0};
    if (ir->data.location != -1)
-      util_snprintf(loc, sizeof(loc), "location=%i ", ir->data.location);
+      snprintf(loc, sizeof(loc), "location=%i ", ir->data.location);
 
    char component[32] = {0};
    if (ir->data.explicit_component || ir->data.location_frac != 0)
-      util_snprintf(component, sizeof(component), "component=%i ",
-                    ir->data.location_frac);
+      snprintf(component, sizeof(component), "component=%i ", ir->data.location_frac);
 
    char stream[32] = {0};
    if (ir->data.stream & (1u << 31)) {
       if (ir->data.stream & ~(1u << 31)) {
-         util_snprintf(stream, sizeof(stream), "stream(%u,%u,%u,%u) ",
-                       ir->data.stream & 3, (ir->data.stream >> 2) & 3,
-                       (ir->data.stream >> 4) & 3, (ir->data.stream >> 6) & 3);
+         snprintf(stream, sizeof(stream), "stream(%u,%u,%u,%u) ",
+                  ir->data.stream & 3, (ir->data.stream >> 2) & 3,
+                  (ir->data.stream >> 4) & 3, (ir->data.stream >> 6) & 3);
       }
    } else if (ir->data.stream) {
-      util_snprintf(stream, sizeof(stream), "stream%u ", ir->data.stream);
+      snprintf(stream, sizeof(stream), "stream%u ", ir->data.stream);
    }
 
    char image_format[32] = {0};
    if (ir->data.image_format) {
-      util_snprintf(image_format, sizeof(image_format), "format=%x ",
-                    ir->data.image_format);
+      snprintf(image_format, sizeof(image_format), "format=%x ",
+               ir->data.image_format);
    }
 
    const char *const cent = (ir->data.centroid) ? "centroid " : "";
    const char *const samp = (ir->data.sample) ? "sample " : "";
    const char *const patc = (ir->data.patch) ? "patch " : "";
    const char *const inv = (ir->data.invariant) ? "invariant " : "";
-   const char *const explicit_inv = (ir->data.explicit_invariant) ? "explicit_invariant " : "";
    const char *const prec = (ir->data.precise) ? "precise " : "";
    const char *const bindless = (ir->data.bindless) ? "bindless " : "";
    const char *const bound = (ir->data.bound) ? "bound " : "";
@@ -216,11 +214,11 @@ void ir_print_visitor::visit(ir_variable *ir)
    const char *const interp[] = { "", "smooth", "flat", "noperspective" };
    STATIC_ASSERT(ARRAY_SIZE(interp) == INTERP_MODE_COUNT);
 
-   fprintf(f, "(%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s) ",
+   fprintf(f, "(%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s) ",
            binding, loc, component, cent, bindless, bound,
            image_format, memory_read_only, memory_write_only,
            memory_coherent, memory_volatile, memory_restrict,
-           samp, patc, inv, explicit_inv, prec, mode[ir->data.mode],
+           samp, patc, inv, prec, mode[ir->data.mode],
            stream,
            interp[ir->data.interpolation]);
 
@@ -470,7 +468,7 @@ void ir_print_visitor::visit(ir_constant *ir)
    if (ir->type->is_array()) {
       for (unsigned i = 0; i < ir->type->length; i++)
 	 ir->get_array_element(i)->accept(this);
-   } else if (ir->type->is_struct()) {
+   } else if (ir->type->is_record()) {
       for (unsigned i = 0; i < ir->type->length; i++) {
 	 fprintf(f, "(%s ", ir->type->fields.structure[i].name);
          ir->get_record_field(i)->accept(this);

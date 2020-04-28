@@ -62,7 +62,6 @@ struct intel_image_format {
       uint32_t dri_format;
       int cpp;
    } planes[3];
-   float scaling_factor;
 };
 
 struct __DRIimageRec {
@@ -89,6 +88,9 @@ struct __DRIimageRec {
    GLuint tile_x;
    GLuint tile_y;
    bool has_depthstencil;
+
+   /** The image was created with EGL_EXT_image_dma_buf_import. */
+   bool dma_buf_imported;
 
    /** Offset of the auxiliary compression surface in the bo. */
    uint32_t aux_offset;

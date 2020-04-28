@@ -48,9 +48,8 @@
 struct stipple_stage {
    struct draw_stage stage;
    float counter;
-   ushort pattern;
-   ushort factor;
-   bool smooth;
+   uint pattern;
+   uint factor;
 };
 
 
@@ -110,7 +109,7 @@ emit_segment(struct draw_stage *stage, struct prim_header *header,
 
 
 static inline bool
-stipple_test(int counter, ushort pattern, ushort factor)
+stipple_test(int counter, ushort pattern, int factor)
 {
    int b = (counter / factor) & 0xf;
    return !!((1 << b) & pattern);
@@ -134,38 +133,28 @@ stipple_line(struct draw_stage *stage, struct prim_header *header)
    float y0 = pos0[1];
    float y1 = pos1[1];
 
-   float length;
+   float dx = x0 > x1 ? x0 - x1 : x1 - x0;
+   float dy = y0 > y1 ? y0 - y1 : y1 - y0;
+
+   float length = MAX2(dx, dy);
    int i;
-   int intlength;
 
    if (header->flags & DRAW_PIPE_RESET_STIPPLE)
       stipple->counter = 0;
 
-   if (stipple->smooth) {
-      float dx = x1 - x0;
-      float dy = y1 - y0;
-      length = sqrtf(dx*dx + dy*dy);
-   } else {
-      float dx = x0 > x1 ? x0 - x1 : x1 - x0;
-      float dy = y0 > y1 ? y0 - y1 : y1 - y0;
-      length = MAX2(dx, dy);
-   }
-
-   if (util_is_inf_or_nan(length))
-      intlength = 0;
-   else
-      intlength = ceilf(length);
 
    /* XXX ToDo: instead of iterating pixel-by-pixel, use a look-up table.
     */
-   for (i = 0; i < intlength; i++) {
+   for (i = 0; i < length; i++) {
       bool result = stipple_test((int)stipple->counter + i,
-                                 stipple->pattern, stipple->factor);
+                                 (ushort)stipple->pattern, stipple->factor);
       if (result != state) {
          /* changing from "off" to "on" or vice versa */
          if (state) {
-            /* finishing an "on" segment */
-            emit_segment(stage, header, start / length, i / length);
+            if (start != i) {
+               /* finishing an "on" segment */
+               emit_segment(stage, header, start / length, i / length);
+            }
          }
          else {
             /* starting an "on" segment */
@@ -216,7 +205,6 @@ stipple_first_line(struct draw_stage *stage,
 
    stipple->pattern = draw->rasterizer->line_stipple_pattern;
    stipple->factor = draw->rasterizer->line_stipple_factor + 1;
-   stipple->smooth = draw->rasterizer->line_smooth;
 
    stage->line = stipple_line;
    stage->line(stage, header);

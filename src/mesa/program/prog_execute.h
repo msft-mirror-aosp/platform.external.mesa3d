@@ -26,10 +26,8 @@
 #define PROG_EXECUTE_H
 
 #include "main/config.h"
-#include "main/glheader.h"
-#include "compiler/shader_enums.h"
+#include "main/mtypes.h"
 
-struct gl_context;
 
 typedef void (*FetchTexelLodFunc)(struct gl_context *ctx, const GLfloat texcoord[4],
                                   GLfloat lambda, GLuint unit, GLfloat color[4]);

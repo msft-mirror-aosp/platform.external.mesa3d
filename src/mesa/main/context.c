@@ -87,7 +87,6 @@
 #include "blend.h"
 #include "buffers.h"
 #include "bufferobj.h"
-#include "conservativeraster.h"
 #include "context.h"
 #include "cpuinfo.h"
 #include "debug.h"
@@ -124,12 +123,10 @@
 #include "shared.h"
 #include "shaderobj.h"
 #include "shaderimage.h"
-#include "state.h"
 #include "util/debug.h"
 #include "util/disk_cache.h"
 #include "util/strtod.h"
 #include "stencil.h"
-#include "shaderimage.h"
 #include "texcompress_s3tc.h"
 #include "texstate.h"
 #include "transformfeedback.h"
@@ -405,7 +402,11 @@ one_time_init( struct gl_context *ctx )
 
 #if defined(DEBUG)
       if (MESA_VERBOSE != 0) {
-         _mesa_debug(ctx, "Mesa " PACKAGE_VERSION " DEBUG build" MESA_GIT_SHA1 "\n");
+         _mesa_debug(ctx, "Mesa " PACKAGE_VERSION " DEBUG build"
+#ifdef MESA_GIT_SHA1
+                     " (" MESA_GIT_SHA1 ")"
+#endif
+                     "\n");
       }
 #endif
    }
@@ -616,17 +617,6 @@ _mesa_init_constants(struct gl_constants *consts, gl_api api)
    consts->MaxProgramMatrices = MAX_PROGRAM_MATRICES;
    consts->MaxProgramMatrixStackDepth = MAX_PROGRAM_MATRIX_STACK_DEPTH;
 
-   /* Set the absolute minimum possible GLSL version.  API_OPENGL_CORE can
-    * mean an OpenGL 3.0 forward-compatible context, so that implies a minimum
-    * possible version of 1.30.  Otherwise, the minimum possible version 1.20.
-    * Since Mesa unconditionally advertises GL_ARB_shading_language_100 and
-    * GL_ARB_shader_objects, every driver has GLSL 1.20... even if they don't
-    * advertise any extensions to enable any shader stages (e.g.,
-    * GL_ARB_vertex_shader).
-    */
-   consts->GLSLVersion = api == API_OPENGL_CORE ? 130 : 120;
-   consts->GLSLVersionCompat = consts->GLSLVersion;
-
    /* Assume that if GLSL 1.30+ (or GLSL ES 3.00+) is supported that
     * gl_VertexID is implemented using a native hardware register with OpenGL
     * semantics.
@@ -645,7 +635,10 @@ _mesa_init_constants(struct gl_constants *consts, gl_api api)
    consts->Program[MESA_SHADER_GEOMETRY].MaxTextureImageUnits = MAX_TEXTURE_IMAGE_UNITS;
    consts->MaxGeometryOutputVertices = MAX_GEOMETRY_OUTPUT_VERTICES;
    consts->MaxGeometryTotalOutputComponents = MAX_GEOMETRY_TOTAL_OUTPUT_COMPONENTS;
-   consts->MaxGeometryShaderInvocations = MAX_GEOMETRY_SHADER_INVOCATIONS;
+
+   /* Shading language version */
+   consts->GLSLVersion = 120;
+   _mesa_override_glsl_version(consts);
 
 #ifdef DEBUG
    consts->GenerateTemporaryNames = true;
@@ -745,14 +738,6 @@ _mesa_init_constants(struct gl_constants *consts, gl_api api)
    consts->MaxComputeVariableGroupSize[1] = 512;
    consts->MaxComputeVariableGroupSize[2] = 64;
    consts->MaxComputeVariableGroupInvocations = 512;
-
-   /** GL_NV_conservative_raster */
-   consts->MaxSubpixelPrecisionBiasBits = 0;
-
-   /** GL_NV_conservative_raster_dilate */
-   consts->ConservativeRasterDilateRange[0] = 0.0;
-   consts->ConservativeRasterDilateRange[1] = 0.0;
-   consts->ConservativeRasterDilateGranularity = 0.0;
 }
 
 
@@ -842,7 +827,6 @@ init_attrib_groups(struct gl_context *ctx)
    _mesa_init_bbox( ctx );
    _mesa_init_buffer_objects( ctx );
    _mesa_init_color( ctx );
-   _mesa_init_conservative_raster( ctx );
    _mesa_init_current( ctx );
    _mesa_init_depth( ctx );
    _mesa_init_debug( ctx );
@@ -1207,8 +1191,6 @@ _mesa_initialize_context(struct gl_context *ctx,
    /* misc one-time initializations */
    one_time_init(ctx);
 
-   _mesa_init_shader_compiler_types();
-
    /* Plug in driver functions and context pointer here.
     * This is important because when we call alloc_shared_state() below
     * we'll call ctx->Driver.NewTextureObject() to create the default
@@ -1282,10 +1264,8 @@ _mesa_initialize_context(struct gl_context *ctx,
        * GL_OES_texture_cube_map says
        * "Initially all texture generation modes are set to REFLECTION_MAP_OES"
        */
-      for (i = 0; i < ARRAY_SIZE(ctx->Texture.FixedFuncUnit); i++) {
-         struct gl_fixedfunc_texture_unit *texUnit =
-            &ctx->Texture.FixedFuncUnit[i];
-
+      for (i = 0; i < MAX_TEXTURE_UNITS; i++) {
+         struct gl_texture_unit *texUnit = &ctx->Texture.Unit[i];
          texUnit->GenS.Mode = GL_REFLECTION_MAP_NV;
          texUnit->GenT.Mode = GL_REFLECTION_MAP_NV;
          texUnit->GenR.Mode = GL_REFLECTION_MAP_NV;
@@ -1321,7 +1301,7 @@ fail:
  * \sa _mesa_initialize_context() and init_attrib_groups().
  */
 void
-_mesa_free_context_data(struct gl_context *ctx, bool destroy_compiler_types)
+_mesa_free_context_data( struct gl_context *ctx )
 {
    if (!_mesa_get_current_context()){
       /* No current context, but we may need one in order to delete
@@ -1352,14 +1332,11 @@ _mesa_free_context_data(struct gl_context *ctx, bool destroy_compiler_types)
 
    _mesa_reference_vao(ctx, &ctx->Array.VAO, NULL);
    _mesa_reference_vao(ctx, &ctx->Array.DefaultVAO, NULL);
-   _mesa_reference_vao(ctx, &ctx->Array._EmptyVAO, NULL);
-   _mesa_reference_vao(ctx, &ctx->Array._DrawVAO, NULL);
 
    _mesa_free_attrib_data(ctx);
    _mesa_free_buffer_objects(ctx);
    _mesa_free_eval_data( ctx );
    _mesa_free_texture_data( ctx );
-   _mesa_free_image_textures(ctx);
    _mesa_free_matrix_data( ctx );
    _mesa_free_pipeline_data(ctx);
    _mesa_free_program_data(ctx);
@@ -1396,9 +1373,6 @@ _mesa_free_context_data(struct gl_context *ctx, bool destroy_compiler_types)
 
    free(ctx->VersionString);
 
-   if (destroy_compiler_types)
-      _mesa_destroy_shader_compiler_types();
-
    /* unbind the context if it's currently bound */
    if (ctx == _mesa_get_current_context()) {
       _mesa_make_current(NULL, NULL, NULL);
@@ -1417,7 +1391,7 @@ void
 _mesa_destroy_context( struct gl_context *ctx )
 {
    if (ctx) {
-      _mesa_free_context_data(ctx, true);
+      _mesa_free_context_data(ctx);
       free( (void *) ctx );
    }
 }
@@ -1603,15 +1577,13 @@ handle_first_current(struct gl_context *ctx)
 
    check_context_limits(ctx);
 
-   _mesa_update_vertex_processing_mode(ctx);
-
    /* According to GL_MESA_configless_context the default value of
     * glDrawBuffers depends on the config of the first surface it is bound to.
     * For GLES it is always GL_BACK which has a magic interpretation.
     */
    if (!ctx->HasConfig && _mesa_is_desktop_gl(ctx)) {
       if (ctx->DrawBuffer != _mesa_get_incomplete_framebuffer()) {
-         GLenum16 buffer;
+         GLenum buffer;
 
          if (ctx->DrawBuffer->Visual.doubleBufferMode)
             buffer = GL_BACK;
@@ -1716,10 +1688,7 @@ _mesa_make_current( struct gl_context *newCtx,
       _mesa_flush(curCtx);
    }
 
-   /* Call this periodically to detect when the user has begun using
-    * GL rendering from multiple threads.
-    */
-   _glapi_check_multithread();
+   /* We used to call _glapi_check_multithread() here.  Now do it in drivers */
 
    if (!newCtx) {
       _glapi_set_dispatch(NULL);  /* none current */

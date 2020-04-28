@@ -92,20 +92,10 @@ copy_indirect_accessed_array(struct gl_program_parameter_list *src,
       assert(j == dst->NumParameters);
 
       /* copy src parameter [i] to dest parameter [j] */
-      memcpy(&dst->Parameters[j], curr,
+      memcpy(& dst->Parameters[j], curr,
 	     sizeof(dst->Parameters[j]));
-
-      dst->ParameterValueOffset[j] = dst->NumParameterValues;
-
-      gl_constant_value *pv_dst =
-         dst->ParameterValues + dst->ParameterValueOffset[j];
-      gl_constant_value *pv_src =
-         src->ParameterValues + src->ParameterValueOffset[i];
-
-      memcpy(pv_dst, pv_src, MIN2(src->Parameters[i].Size, 4) *
-             sizeof(GLfloat));
-      dst->NumParameterValues += MIN2(dst->Parameters[j].Size, 4);
-
+      memcpy(dst->ParameterValues[j], src->ParameterValues[i],
+	     sizeof(GLfloat) * 4);
 
       /* Pointer to the string name was copied.  Null-out src param name
        * to prevent double free later.
@@ -193,9 +183,8 @@ _mesa_layout_parameters(struct asm_parser_state *state)
 
 	 switch (p->Type) {
 	 case PROGRAM_CONSTANT: {
-            unsigned pvo = state->prog->Parameters->ParameterValueOffset[idx];
-            const gl_constant_value *const v =
-               state->prog->Parameters->ParameterValues + pvo;
+	    const gl_constant_value *const v =
+	       state->prog->Parameters->ParameterValues[idx];
 
 	    inst->Base.SrcReg[i].Index =
 	       _mesa_add_unnamed_constant(layout, v, p->Size, & swizzle);

@@ -191,7 +191,6 @@ svga_buffer_create_host_surface(struct svga_screen *ss,
       sbuf->key.numMipLevels = 1;
       sbuf->key.cachable = 1;
       sbuf->key.arraySize = 1;
-      sbuf->key.sampleCount = 0;
 
       SVGA_DBG(DEBUG_DMA, "surface_create for buffer sz %d\n",
                sbuf->b.b.width0);
@@ -315,9 +314,6 @@ svga_buffer_add_host_surface(struct svga_buffer *sbuf,
 
    /* add the surface to the surface list */
    LIST_ADD(&bufsurf->list, &sbuf->surfaces);
-
-   /* Set the new bind flags for this buffer resource */
-   sbuf->bind_flags = bind_flags;
 
    return PIPE_OK;
 }
@@ -1007,14 +1003,9 @@ svga_buffer_handle(struct svga_context *svga, struct pipe_resource *buf,
             return NULL;
       }
    } else {
-      /* If there is no resource handle yet, then combine the buffer bind
-       * flags and the tobind_flags if they are compatible.
-       * If not, just use the tobind_flags for creating the resource handle.
-       */
-      if (compatible_bind_flags(sbuf->bind_flags, tobind_flags))
-         sbuf->bind_flags = sbuf->bind_flags | tobind_flags;
-      else
+      if (!sbuf->bind_flags) {
          sbuf->bind_flags = tobind_flags;
+      }
 
       assert((sbuf->bind_flags & tobind_flags) == tobind_flags);
 

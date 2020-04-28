@@ -22,11 +22,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef ST_GLSL_TO_TGSI_H
-#define ST_GLSL_TO_TGSI_H
-
 #include "pipe/p_defines.h"
-#include "pipe/p_shader_tokens.h"
 #include "main/mtypes.h"
 
 #ifdef __cplusplus
@@ -41,7 +37,7 @@ struct ureg_program;
 
 enum pipe_error st_translate_program(
    struct gl_context *ctx,
-   enum pipe_shader_type procType,
+   uint procType,
    struct ureg_program *ureg,
    struct glsl_to_tgsi_visitor *program,
    const struct gl_program *proginfo,
@@ -58,19 +54,21 @@ enum pipe_error st_translate_program(
 
 void free_glsl_to_tgsi_visitor(struct glsl_to_tgsi_visitor *v);
 
-GLboolean
-st_link_tgsi(struct gl_context *ctx, struct gl_shader_program *prog);
+GLboolean st_link_shader(struct gl_context *ctx, struct gl_shader_program *prog);
 
 void
-st_translate_stream_output_info(struct gl_transform_feedback_info *info,
+st_translate_stream_output_info(struct glsl_to_tgsi_visitor *glsl_to_tgsi,
                                 const ubyte outputMapping[],
                                 struct pipe_stream_output_info *so);
 
-enum tgsi_semantic
+void
+st_translate_stream_output_info2(struct gl_transform_feedback_info *info,
+                                const ubyte outputMapping[],
+                                struct pipe_stream_output_info *so);
+
+unsigned
 _mesa_sysval_to_semantic(unsigned sysval);
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif

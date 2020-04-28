@@ -55,8 +55,7 @@ fast_draw_rgb_ubyte_pixels(struct gl_context *ctx,
                            GLint x, GLint y,
                            GLsizei width, GLsizei height,
                            const struct gl_pixelstore_attrib *unpack,
-                           const GLvoid *pixels,
-                           bool flip_y)
+                           const GLvoid *pixels)
 {
    const GLubyte *src = (const GLubyte *)
       _mesa_image_address2d(unpack, pixels, width,
@@ -68,8 +67,7 @@ fast_draw_rgb_ubyte_pixels(struct gl_context *ctx,
    GLint dstRowStride;
 
    ctx->Driver.MapRenderbuffer(ctx, rb, x, y, width, height,
-                               GL_MAP_WRITE_BIT, &dst, &dstRowStride,
-                               flip_y);
+                               GL_MAP_WRITE_BIT, &dst, &dstRowStride);
 
    if (!dst) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glDrawPixels");
@@ -104,8 +102,7 @@ fast_draw_rgba_ubyte_pixels(struct gl_context *ctx,
                            GLint x, GLint y,
                            GLsizei width, GLsizei height,
                            const struct gl_pixelstore_attrib *unpack,
-                           const GLvoid *pixels,
-                           bool flip_y)
+                           const GLvoid *pixels)
 {
    const GLubyte *src = (const GLubyte *)
       _mesa_image_address2d(unpack, pixels, width,
@@ -117,8 +114,7 @@ fast_draw_rgba_ubyte_pixels(struct gl_context *ctx,
    GLint dstRowStride;
 
    ctx->Driver.MapRenderbuffer(ctx, rb, x, y, width, height,
-                               GL_MAP_WRITE_BIT, &dst, &dstRowStride,
-                               flip_y);
+                               GL_MAP_WRITE_BIT, &dst, &dstRowStride);
 
    if (!dst) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glDrawPixels");
@@ -155,8 +151,7 @@ fast_draw_generic_pixels(struct gl_context *ctx,
                          GLsizei width, GLsizei height,
                          GLenum format, GLenum type,
                          const struct gl_pixelstore_attrib *unpack,
-                         const GLvoid *pixels,
-                         bool flip_y)
+                         const GLvoid *pixels)
 {
    const GLubyte *src = (const GLubyte *)
       _mesa_image_address2d(unpack, pixels, width,
@@ -169,8 +164,7 @@ fast_draw_generic_pixels(struct gl_context *ctx,
    GLint dstRowStride;
 
    ctx->Driver.MapRenderbuffer(ctx, rb, x, y, width, height,
-                               GL_MAP_WRITE_BIT, &dst, &dstRowStride,
-                               flip_y);
+                               GL_MAP_WRITE_BIT, &dst, &dstRowStride);
 
    if (!dst) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glDrawPixels");
@@ -203,7 +197,6 @@ fast_draw_rgba_pixels(struct gl_context *ctx, GLint x, GLint y,
                       const struct gl_pixelstore_attrib *userUnpack,
                       const GLvoid *pixels)
 {
-   struct gl_framebuffer *fb = ctx->DrawBuffer;
    struct gl_renderbuffer *rb = ctx->DrawBuffer->_ColorDrawBuffers[0];
    SWcontext *swrast = SWRAST_CONTEXT(ctx);
    struct gl_pixelstore_attrib unpack;
@@ -235,7 +228,7 @@ fast_draw_rgba_pixels(struct gl_context *ctx, GLint x, GLint y,
        (rb->Format == MESA_FORMAT_B8G8R8X8_UNORM ||
         rb->Format == MESA_FORMAT_B8G8R8A8_UNORM)) {
       fast_draw_rgb_ubyte_pixels(ctx, rb, x, y, width, height,
-                                 &unpack, pixels, fb->FlipY);
+                                 &unpack, pixels);
       return GL_TRUE;
    }
 
@@ -244,15 +237,14 @@ fast_draw_rgba_pixels(struct gl_context *ctx, GLint x, GLint y,
        (rb->Format == MESA_FORMAT_B8G8R8X8_UNORM ||
         rb->Format == MESA_FORMAT_B8G8R8A8_UNORM)) {
       fast_draw_rgba_ubyte_pixels(ctx, rb, x, y, width, height,
-                                  &unpack, pixels, fb->FlipY);
+                                  &unpack, pixels);
       return GL_TRUE;
    }
 
    if (_mesa_format_matches_format_and_type(rb->Format, format, type,
                                             ctx->Unpack.SwapBytes, NULL)) {
       fast_draw_generic_pixels(ctx, rb, x, y, width, height,
-                               format, type, &unpack, pixels,
-                               fb->FlipY);
+                               format, type, &unpack, pixels);
       return GL_TRUE;
    }
 

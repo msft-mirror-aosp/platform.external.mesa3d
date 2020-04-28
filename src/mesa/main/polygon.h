@@ -61,6 +61,9 @@ extern void GLAPIENTRY
 _mesa_PolygonOffset( GLfloat factor, GLfloat units );
 
 extern void GLAPIENTRY
+_mesa_PolygonOffsetEXT( GLfloat factor, GLfloat bias );
+
+extern void GLAPIENTRY
 _mesa_PolygonOffsetClampEXT( GLfloat factor, GLfloat units, GLfloat clamp );
 
 extern void GLAPIENTRY

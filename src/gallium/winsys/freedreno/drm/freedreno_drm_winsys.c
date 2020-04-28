@@ -1,3 +1,5 @@
+/* -*- mode: C; c-file-style: "k&r"; tab-width 4; indent-tabs-mode: t; -*- */
+
 /*
  * Copyright (C) 2012 Rob Clark <robclark@freedesktop.org>
  *
@@ -85,7 +87,7 @@ static int compare_fd(void *key1, void *key2)
 }
 
 struct pipe_screen *
-fd_drm_screen_create(int fd, struct renderonly *ro)
+fd_drm_screen_create(int fd)
 {
 	struct pipe_screen *pscreen = NULL;
 
@@ -104,7 +106,7 @@ fd_drm_screen_create(int fd, struct renderonly *ro)
 		if (!dev)
 			goto unlock;
 
-		pscreen = fd_screen_create(dev, ro);
+		pscreen = fd_screen_create(dev);
 		if (pscreen) {
 			int fd = fd_device_fd(dev);
 

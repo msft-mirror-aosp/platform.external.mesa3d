@@ -47,10 +47,10 @@ struct NineSurface9
     D3DSURFACE_DESC desc;
 
     uint8_t *data; /* system memory backing */
-    uint8_t *data_internal; /* for conversions */
-    enum pipe_format format_internal;
+    uint8_t *data_conversion; /* for conversions */
+    enum pipe_format format_conversion;
     unsigned stride; /* for system memory backing */
-    unsigned stride_internal;
+    unsigned stride_conversion;
 
     unsigned pending_uploads_counter; /* pending uploads */
 };
@@ -139,7 +139,7 @@ NineSurface9_IsOffscreenPlain (struct NineSurface9 *This )
     return This->base.usage == 0 && !This->texture;
 }
 
-#if defined(DEBUG) || !defined(NDEBUG)
+#ifdef DEBUG
 void
 NineSurface9_Dump( struct NineSurface9 *This );
 #else

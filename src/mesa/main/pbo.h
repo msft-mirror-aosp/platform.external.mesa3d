@@ -28,10 +28,8 @@
 #define PBO_H
 
 
-#include "glheader.h"
+#include "mtypes.h"
 
-struct gl_context;
-struct gl_pixelstore_attrib;
 
 extern GLboolean
 _mesa_validate_pbo_access(GLuint dimensions,

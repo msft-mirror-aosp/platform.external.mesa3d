@@ -252,7 +252,8 @@ loop_variable::record_reference(bool in_assignee,
 
 loop_state::loop_state()
 {
-   this->ht = _mesa_pointer_hash_table_create(NULL);
+   this->ht = _mesa_hash_table_create(NULL, _mesa_hash_pointer,
+                                      _mesa_key_pointer_equal);
    this->mem_ctx = ralloc_context(NULL);
    this->loop_found = false;
 }

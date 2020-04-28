@@ -24,8 +24,6 @@
 # _mesa_initialize_exec_table().  It is responsible for populating all
 # entries in the "exec" dispatch table that aren't dynamic.
 
-from __future__ import print_function
-
 import argparse
 import collections
 import license
@@ -64,14 +62,12 @@ header = """/**
 #include "main/colortab.h"
 #include "main/compute.h"
 #include "main/condrender.h"
-#include "main/conservativeraster.h"
 #include "main/context.h"
 #include "main/convolve.h"
 #include "main/copyimage.h"
 #include "main/depth.h"
 #include "main/debug_output.h"
 #include "main/dlist.h"
-#include "main/draw.h"
 #include "main/drawpix.h"
 #include "main/drawtex.h"
 #include "main/rastpos.h"
@@ -132,6 +128,7 @@ header = """/**
 #include "main/formatquery.h"
 #include "main/dispatch.h"
 #include "main/vdpau.h"
+#include "vbo/vbo.h"
 
 
 /**
@@ -152,7 +149,7 @@ _mesa_initialize_exec_table(struct gl_context *ctx)
 
    assert(ctx->Version > 0);
 
-   _mesa_initialize_exec_dispatch(ctx, exec);
+   vbo_initialize_exec_dispatch(ctx, exec);
 """
 
 
@@ -172,10 +169,10 @@ class PrintCode(gl_XML.gl_print_base):
             'Intel Corporation')
 
     def printRealHeader(self):
-        print(header)
+        print header
 
     def printRealFooter(self):
-        print(footer)
+        print footer
 
     def printBody(self, api):
         # Collect SET_* calls by the condition under which they should
@@ -251,10 +248,10 @@ class PrintCode(gl_XML.gl_print_base):
         # Print out an if statement for each unique condition, with
         # the SET_* calls nested inside it.
         for condition in sorted(settings_by_condition.keys()):
-            print('   if ({0}) {{'.format(condition))
+            print '   if ({0}) {{'.format(condition)
             for setting in sorted(settings_by_condition[condition]):
-                print('      {0}'.format(setting))
-            print('   }')
+                print '      {0}'.format(setting)
+            print '   }'
 
 
 def _parser():

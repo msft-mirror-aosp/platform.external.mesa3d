@@ -27,27 +27,31 @@ libxvmc_st = static_library(
 )
 
 # These tests will not work without a working xvmc configuration. 
-if with_tools.contains('xvmc')
+if with_tests
   dep_xvmcw = cc.find_library('XvMCW')
   dep_real_xvmc = dependency('xvmc')
   foreach x : ['context', 'surface', 'subpicture', 'blocks', 'rendering']
     _name = 'xvmc_@0@'.format(x)
-    executable(
+    test(
       _name,
-      files('tests/test_@0@.c'.format(x), 'tests/testlib.c'),
-      dependencies : [
-        dep_real_xvmc, dep_x11_xcb, dep_xcb, dep_xcb_dri2, dep_xcb_dri3, dep_xvmcw,
-      ],
-      install: true,
+      executable(
+        _name,
+        files('tests/test_@0@.c'.format(x), 'tests/testlib.c'), 
+        dependencies : [
+          dep_real_xvmc, dep_x11_xcb, dep_xcb, dep_xcb_dri2, dep_xcb_dri3, dep_xvmcw,
+        ],
+      )
     )
   endforeach
 
-  executable(
+  test(
     'xvmc_bench',
-    files('tests/xvmc_bench.c', 'tests/testlib.c'),
-    dependencies : [
-      dep_real_xvmc, dep_x11_xcb, dep_xcb, dep_xcb_dri2, dep_xcb_dri3, dep_xvmcw,
-    ],
-    install: true,
+    executable(
+      'xvmc_bench',
+      files('tests/xvmc_bench.c', 'tests/testlib.c'), 
+      dependencies : [
+        dep_real_xvmc, dep_x11_xcb, dep_xcb, dep_xcb_dri2, dep_xcb_dri3, dep_xvmcw,
+      ],
+    )
   )
 endif

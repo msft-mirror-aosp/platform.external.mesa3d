@@ -29,7 +29,7 @@
 #include <stdio.h>
 
 #include "main/glheader.h"
-#include "prog_parameter.h"
+#include "main/mtypes.h"
 
 
 #ifdef __cplusplus

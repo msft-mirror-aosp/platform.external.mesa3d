@@ -28,6 +28,12 @@
 
 #include "pipe/p_compiler.h"
 
+#if defined(PIPE_CC_GCC)
+#ifndef HAVE_STDINT_H
+#define HAVE_STDINT_H
+#endif
+#endif
+
 #include "svga_types.h"
 
 #include "svga3d_reg.h"

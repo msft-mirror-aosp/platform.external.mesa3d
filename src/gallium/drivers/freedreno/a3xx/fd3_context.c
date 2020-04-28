@@ -1,3 +1,5 @@
+/* -*- mode: C; c-file-style: "k&r"; tab-width 4; indent-tabs-mode: t; -*- */
+
 /*
  * Copyright (C) 2013 Rob Clark <robclark@freedesktop.org>
  *
@@ -42,19 +44,17 @@ fd3_context_destroy(struct pipe_context *pctx)
 {
 	struct fd3_context *fd3_ctx = fd3_context(fd_context(pctx));
 
-	u_upload_destroy(fd3_ctx->border_color_uploader);
-
-	fd_context_destroy(pctx);
-
 	fd_bo_del(fd3_ctx->vs_pvt_mem);
 	fd_bo_del(fd3_ctx->fs_pvt_mem);
 	fd_bo_del(fd3_ctx->vsc_size_mem);
 
 	fd_context_cleanup_common_vbos(&fd3_ctx->base);
 
+	u_upload_destroy(fd3_ctx->border_color_uploader);
+
 	fd_hw_query_fini(pctx);
 
-	free(fd3_ctx);
+	fd_context_destroy(pctx);
 }
 
 static const uint8_t primtypes[] = {
@@ -79,7 +79,6 @@ fd3_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
 		return NULL;
 
 	pctx = &fd3_ctx->base.base;
-	pctx->screen = pscreen;
 
 	fd3_ctx->base.dev = fd_device_ref(screen->dev);
 	fd3_ctx->base.screen = fd_screen(pscreen);
@@ -102,13 +101,13 @@ fd3_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
 	fd_hw_query_init(pctx);
 
 	fd3_ctx->vs_pvt_mem = fd_bo_new(screen->dev, 0x2000,
-			DRM_FREEDRENO_GEM_TYPE_KMEM, "vs_pvt");
+			DRM_FREEDRENO_GEM_TYPE_KMEM);
 
 	fd3_ctx->fs_pvt_mem = fd_bo_new(screen->dev, 0x2000,
-			DRM_FREEDRENO_GEM_TYPE_KMEM, "fs_pvt");
+			DRM_FREEDRENO_GEM_TYPE_KMEM);
 
 	fd3_ctx->vsc_size_mem = fd_bo_new(screen->dev, 0x1000,
-			DRM_FREEDRENO_GEM_TYPE_KMEM, "vsc_size");
+			DRM_FREEDRENO_GEM_TYPE_KMEM);
 
 	fd_context_setup_common_vbos(&fd3_ctx->base);
 

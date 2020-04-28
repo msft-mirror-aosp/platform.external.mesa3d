@@ -37,7 +37,6 @@
 #include "eglcurrent.h"
 #include "eglsurface.h"
 #include "egllog.h"
-#include "util/macros.h"
 
 
 /**
@@ -82,7 +81,7 @@ _eglGetContextAPIBit(_EGLContext *ctx)
  * Parse the list of context attributes and return the proper error code.
  */
 static EGLint
-_eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
+_eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *dpy,
                            const EGLint *attrib_list)
 {
    EGLenum api = ctx->ClientAPI;
@@ -119,7 +118,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           *      generate an error."
           */
          if ((api != EGL_OPENGL_ES_API &&
-             (!disp->Extensions.KHR_create_context || api != EGL_OPENGL_API))) {
+             (!dpy->Extensions.KHR_create_context || api != EGL_OPENGL_API))) {
                err = EGL_BAD_ATTRIBUTE;
                break;
          }
@@ -136,7 +135,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           *      contexts, and specifying them for other types of contexts will
           *      generate an error."
           */
-         if (!disp->Extensions.KHR_create_context ||
+         if (!dpy->Extensions.KHR_create_context ||
              (api != EGL_OPENGL_ES_API && api != EGL_OPENGL_API)) {
             err = EGL_BAD_ATTRIBUTE;
             break;
@@ -146,7 +145,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
          break;
 
       case EGL_CONTEXT_FLAGS_KHR:
-         if (!disp->Extensions.KHR_create_context) {
+         if (!dpy->Extensions.KHR_create_context) {
             err = EGL_BAD_ATTRIBUTE;
             break;
          }
@@ -178,12 +177,9 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           *     is supported for OpenGL contexts, and requesting a
           *     forward-compatible context for OpenGL versions less than 3.0
           *     will generate an error."
-          *
-          * Note: since the forward-compatible flag can be set more than one way,
-          *       the OpenGL version check is performed once, below.
           */
          if ((val & EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR) &&
-              api != EGL_OPENGL_API) {
+             (api != EGL_OPENGL_API || ctx->ClientMajorVersion < 3)) {
             err = EGL_BAD_ATTRIBUTE;
             break;
          }
@@ -223,7 +219,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
          break;
 
       case EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR:
-         if (!disp->Extensions.KHR_create_context) {
+         if (!dpy->Extensions.KHR_create_context) {
             err = EGL_BAD_ATTRIBUTE;
             break;
          }
@@ -251,7 +247,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           *     types of contexts, including OpenGL ES contexts, will generate
           *     an error."
           */
-           if (!disp->Extensions.KHR_create_context
+           if (!dpy->Extensions.KHR_create_context
                || api != EGL_OPENGL_API) {
             err = EGL_BAD_ATTRIBUTE;
             break;
@@ -267,7 +263,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
           *     meaningful for OpenGL ES contexts, and specifying it for other
           *     types of contexts will generate an EGL_BAD_ATTRIBUTE error."
           */
-         if (!disp->Extensions.EXT_create_context_robustness
+         if (!dpy->Extensions.EXT_create_context_robustness
              || api != EGL_OPENGL_ES_API) {
             err = EGL_BAD_ATTRIBUTE;
             break;
@@ -277,7 +273,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
          break;
 
       case EGL_CONTEXT_OPENGL_ROBUST_ACCESS_EXT:
-         if (!disp->Extensions.EXT_create_context_robustness) {
+         if (!dpy->Extensions.EXT_create_context_robustness) {
             err = EGL_BAD_ATTRIBUTE;
             break;
          }
@@ -287,7 +283,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
          break;
 
       case EGL_CONTEXT_OPENGL_ROBUST_ACCESS:
-         if (disp->Version < 15) {
+         if (dpy->Version < 15) {
             err = EGL_BAD_ATTRIBUTE;
             break;
          }
@@ -297,7 +293,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
          break;
 
       case EGL_CONTEXT_OPENGL_DEBUG:
-         if (disp->Version < 15) {
+         if (dpy->Version < 15) {
             err = EGL_BAD_ATTRIBUTE;
             break;
          }
@@ -307,7 +303,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
          break;
 
       case EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE:
-         if (disp->Version < 15) {
+         if (dpy->Version < 15) {
             err = EGL_BAD_ATTRIBUTE;
             break;
          }
@@ -317,8 +313,8 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
          break;
 
       case EGL_CONTEXT_OPENGL_NO_ERROR_KHR:
-         if (disp->Version < 14 ||
-             !disp->Extensions.KHR_create_context_no_error) {
+         if (dpy->Version < 14 ||
+             !dpy->Extensions.KHR_create_context_no_error) {
             err = EGL_BAD_ATTRIBUTE;
             break;
          }
@@ -384,7 +380,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
              * the driver would fail, and ctx->ContextPriority matches the
              * hint applied to the driver/hardware backend.
              */
-            if (disp->Extensions.IMG_context_priority & (1 << bit))
+            if (dpy->Extensions.IMG_context_priority & (1 << bit))
                ctx->ContextPriority = val;
 
             break;
@@ -580,7 +576,7 @@ _eglParseContextAttribList(_EGLContext *ctx, _EGLDisplay *disp,
  * responsible for determining whether that's an API it supports.
  */
 EGLBoolean
-_eglInitContext(_EGLContext *ctx, _EGLDisplay *disp, _EGLConfig *conf,
+_eglInitContext(_EGLContext *ctx, _EGLDisplay *dpy, _EGLConfig *conf,
                 const EGLint *attrib_list)
 {
    const EGLenum api = eglQueryAPI();
@@ -589,19 +585,21 @@ _eglInitContext(_EGLContext *ctx, _EGLDisplay *disp, _EGLConfig *conf,
    if (api == EGL_NONE)
       return _eglError(EGL_BAD_MATCH, "eglCreateContext(no client API)");
 
-   _eglInitResource(&ctx->Resource, sizeof(*ctx), disp);
+   _eglInitResource(&ctx->Resource, sizeof(*ctx), dpy);
    ctx->ClientAPI = api;
    ctx->Config = conf;
+   ctx->WindowRenderBuffer = EGL_NONE;
    ctx->Profile = EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR;
 
    ctx->ClientMajorVersion = 1; /* the default, per EGL spec */
    ctx->ClientMinorVersion = 0;
    ctx->Flags = 0;
+   ctx->Profile = EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR;
    ctx->ResetNotificationStrategy = EGL_NO_RESET_NOTIFICATION_KHR;
    ctx->ContextPriority = EGL_CONTEXT_PRIORITY_MEDIUM_IMG;
    ctx->ReleaseBehavior = EGL_CONTEXT_RELEASE_BEHAVIOR_FLUSH_KHR;
 
-   err = _eglParseContextAttribList(ctx, disp, attrib_list);
+   err = _eglParseContextAttribList(ctx, dpy, attrib_list);
    if (err == EGL_SUCCESS && ctx->Config) {
       EGLint api_bit;
 
@@ -623,51 +621,24 @@ static EGLint
 _eglQueryContextRenderBuffer(_EGLContext *ctx)
 {
    _EGLSurface *surf = ctx->DrawSurface;
+   EGLint rb;
 
-   /* From the EGL 1.5 spec:
-    *
-    *    - If the context is not bound to a surface, then EGL_NONE will be
-    *      returned.
-    */
    if (!surf)
       return EGL_NONE;
-
-   switch (surf->Type) {
-   default:
-      unreachable("bad EGLSurface type");
-   case EGL_PIXMAP_BIT:
-      /* - If the context is bound to a pixmap surface, then EGL_SINGLE_BUFFER
-       *   will be returned.
-       */
-      return EGL_SINGLE_BUFFER;
-   case EGL_PBUFFER_BIT:
-      /* - If the context is bound to a pbuffer surface, then EGL_BACK_BUFFER
-       *   will be returned.
-       */
-      return EGL_BACK_BUFFER;
-   case EGL_WINDOW_BIT:
-      /* - If the context is bound to a window surface, then either
-       *   EGL_BACK_BUFFER or EGL_SINGLE_BUFFER may be returned. The value
-       *   returned depends on both the buffer requested by the setting of the
-       *   EGL_RENDER_BUFFER property of the surface [...], and on the client
-       *   API (not all client APIs support single-buffer Rendering to window
-       *   surfaces). Some client APIs allow control of whether rendering goes
-       *   to the front or back buffer. This client API-specific choice is not
-       *   reflected in the returned value, which only describes the buffer
-       *   that will be rendered to by default if not overridden by the client
-       *   API.
-       */
-      return surf->ActiveRenderBuffer;
-   }
+   if (surf->Type == EGL_WINDOW_BIT && ctx->WindowRenderBuffer != EGL_NONE)
+      rb = ctx->WindowRenderBuffer;
+   else
+      rb = surf->RenderBuffer;
+   return rb;
 }
 
 
 EGLBoolean
-_eglQueryContext(_EGLDriver *drv, _EGLDisplay *disp, _EGLContext *c,
+_eglQueryContext(_EGLDriver *drv, _EGLDisplay *dpy, _EGLContext *c,
                  EGLint attribute, EGLint *value)
 {
    (void) drv;
-   (void) disp;
+   (void) dpy;
 
    if (!value)
       return _eglError(EGL_BAD_PARAMETER, "eglQueryContext");
@@ -734,7 +705,7 @@ static EGLBoolean
 _eglCheckMakeCurrent(_EGLContext *ctx, _EGLSurface *draw, _EGLSurface *read)
 {
    _EGLThreadInfo *t = _eglGetCurrentThread();
-   _EGLDisplay *disp;
+   _EGLDisplay *dpy;
 
    if (_eglIsCurrentThreadDummy())
       return _eglError(EGL_BAD_ALLOC, "eglMakeCurrent");
@@ -746,8 +717,8 @@ _eglCheckMakeCurrent(_EGLContext *ctx, _EGLSurface *draw, _EGLSurface *read)
       return EGL_TRUE;
    }
 
-   disp = ctx->Resource.Display;
-   if (!disp->Extensions.KHR_surfaceless_context
+   dpy = ctx->Resource.Display;
+   if (!dpy->Extensions.KHR_surfaceless_context
        && (draw == NULL || read == NULL))
       return _eglError(EGL_BAD_MATCH, "eglMakeCurrent");
 
@@ -783,7 +754,7 @@ _eglCheckMakeCurrent(_EGLContext *ctx, _EGLSurface *draw, _EGLSurface *read)
    } else {
       /* Otherwise we must be using the EGL_KHR_no_config_context
        * extension */
-      assert(disp->Extensions.KHR_no_config_context);
+      assert(dpy->Extensions.KHR_no_config_context);
 
       /* The extension doesn't permit binding draw and read buffers with
        * differing contexts */

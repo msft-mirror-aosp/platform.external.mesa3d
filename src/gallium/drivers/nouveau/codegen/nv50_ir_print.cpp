@@ -86,7 +86,6 @@ const char *operationStr[OP_LAST + 1] =
    "fma",
    "sad",
    "shladd",
-   "xmad",
    "abs",
    "neg",
    "not",
@@ -218,7 +217,7 @@ static const char *shflOpStr[] =
 
 static const char *pixldOpStr[] =
 {
-   "count", "covmask", "covered", "offset", "cent_offset", "sampleid"
+   "count", "covmask", "offset", "cent_offset", "sampleid"
 };
 
 static const char *rcprsqOpStr[] =
@@ -239,11 +238,6 @@ static const char *cctlOpStr[] =
 static const char *barOpStr[] =
 {
    "sync", "arrive", "red and", "red or", "red popc"
-};
-
-static const char *xmadOpCModeStr[] =
-{
-   "clo", "chi", "csfu", "cbcc"
 };
 
 static const char *DataTypeStr[] =
@@ -312,7 +306,6 @@ static const char *SemanticStr[SV_LAST + 1] =
    "TESS_INNER",
    "TESS_COORD",
    "TID",
-   "COMBINED_TID",
    "CTAID",
    "NTID",
    "GRIDID",
@@ -357,31 +350,6 @@ static const char *interpStr[16] =
    "samp mul",
    "samp flat",
    "samp sc"
-};
-
-static const char *texMaskStr[16] =
-{
-   "____",
-   "r___",
-   "_g__",
-   "rg__",
-   "__b_",
-   "r_b_",
-   "_gb_",
-   "rgb_",
-   "___a",
-   "r__a",
-   "_g_a",
-   "rg_a",
-   "__ba",
-   "r_ba",
-   "_gba",
-   "rgba",
-};
-
-static const char *gatherCompStr[4] =
-{
-   "r", "g", "b", "a",
 };
 
 #define PRINT(args...)                                \
@@ -612,10 +580,7 @@ void Instruction::print() const
       if (asFlow()->target.bb)
          PRINT(" %sBB:%i", colour[TXT_BRA], asFlow()->target.bb->getId());
    } else {
-      if (asTex())
-         PRINT("%s%s ", operationStr[op], asTex()->tex.scalar ? "s" : "");
-      else
-         PRINT("%s ", operationStr[op]);
+      PRINT("%s ", operationStr[op]);
       if (op == OP_LINTERP || op == OP_PINTERP)
          PRINT("%s ", interpStr[ipa]);
       switch (op) {
@@ -659,19 +624,6 @@ void Instruction::print() const
          if (subOp < ARRAY_SIZE(barOpStr))
             PRINT("%s ", barOpStr[subOp]);
          break;
-      case OP_XMAD: {
-         if (subOp & NV50_IR_SUBOP_XMAD_PSL)
-            PRINT("psl ");
-         if (subOp & NV50_IR_SUBOP_XMAD_MRG)
-            PRINT("mrg ");
-         unsigned cmode = (subOp & NV50_IR_SUBOP_XMAD_CMODE_MASK);
-         cmode >>= NV50_IR_SUBOP_XMAD_CMODE_SHIFT;
-         if (cmode && cmode <= ARRAY_SIZE(xmadOpCModeStr))
-            PRINT("%s ", xmadOpCModeStr[cmode - 1]);
-         for (int i = 0; i < 2; i++)
-            PRINT("h%d ", (subOp & NV50_IR_SUBOP_XMAD_H1(i)) ? 1 : 0);
-         break;
-      }
       default:
          if (subOp)
             PRINT("(SUBOP:%u) ", subOp);
@@ -679,14 +631,10 @@ void Instruction::print() const
       }
       if (perPatch)
          PRINT("patch ");
-      if (asTex()) {
-         PRINT("%s %s$r%u $s%u ", asTex()->tex.target.getName(),
-               colour[TXT_MEM], asTex()->tex.r, asTex()->tex.s);
-         if (op == OP_TXG)
-            PRINT("%s ", gatherCompStr[asTex()->tex.gatherComp]);
-         PRINT("%s %s", texMaskStr[asTex()->tex.mask], colour[TXT_INSN]);
-      }
-
+      if (asTex())
+         PRINT("%s %s$r%u $s%u %s", asTex()->tex.target.getName(),
+               colour[TXT_MEM], asTex()->tex.r, asTex()->tex.s,
+               colour[TXT_INSN]);
       if (postFactor)
          PRINT("x2^%i ", postFactor);
       PRINT("%s%s", dnz ? "dnz " : (ftz ? "ftz " : ""),  DataTypeStr[dType]);

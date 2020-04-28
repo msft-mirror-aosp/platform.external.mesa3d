@@ -353,9 +353,7 @@ static void rvce_get_feedback(struct pipe_video_codec *encoder,
 	struct rvid_buffer *fb = feedback;
 
 	if (size) {
-		uint32_t *ptr = enc->ws->buffer_map(
-			fb->res->buf, enc->cs,
-			PIPE_TRANSFER_READ_WRITE | RADEON_TRANSFER_TEMPORARY);
+		uint32_t *ptr = enc->ws->buffer_map(fb->res->buf, enc->cs, PIPE_TRANSFER_READ_WRITE);
 
 		if (ptr[1]) {
 			*size = ptr[4] - ptr[9];
@@ -430,7 +428,7 @@ struct pipe_video_codec *rvce_create_encoder(struct pipe_context *context,
 
 	enc->screen = context->screen;
 	enc->ws = ws;
-	enc->cs = ws->cs_create(rctx->ctx, RING_VCE, rvce_cs_flush, enc, false);
+	enc->cs = ws->cs_create(rctx->ctx, RING_VCE, rvce_cs_flush, enc);
 	if (!enc->cs) {
 		RVID_ERR("Can't get command submission context.\n");
 		goto error;
@@ -520,7 +518,7 @@ void rvce_add_buffer(struct rvce_encoder *enc, struct pb_buffer *buf,
 	int reloc_idx;
 
 	reloc_idx = enc->ws->cs_add_buffer(enc->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED,
-					   domain, 0);
+					   domain, RADEON_PRIO_VCE);
 	if (enc->use_vm) {
 		uint64_t addr;
 		addr = enc->ws->buffer_get_virtual_address(buf);

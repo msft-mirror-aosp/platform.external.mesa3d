@@ -25,9 +25,7 @@
 #include "ir.h"
 #include "ir_uniform.h"
 #include "linker.h"
-#include "main/errors.h"
 #include "main/macros.h"
-#include "main/mtypes.h"
 
 namespace {
    /*

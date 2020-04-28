@@ -20,20 +20,19 @@
 
 es2_glapi_mapi_tmp_h = custom_target(
   'es2_glapi_mapi_tmp.h',
-  input : [glapi_gen_mapi_py, glapi_gen_gl_xml],
+  input : [mapi_abi_py, gl_and_es_api_files],
   output : 'glapi_mapi_tmp.h',
-  command : [prog_python, '@INPUT0@', 'glesv2', '@INPUT1@'],
-  depend_files : glapi_gen_mapi_deps,
+  command : [prog_python2, '@INPUT0@', '--printer', 'es2api', '@INPUT1@'],
+  depend_files : api_xml_files,
   capture : true,
 )
 
 libgles2 = shared_library(
-  'GLESv2' + get_option('gles-lib-suffix'),
+  'GLESv2',
   ['../entry.c', es2_glapi_mapi_tmp_h],
   c_args : [
     c_msvc_compat_args, c_vis_args, '-DMAPI_MODE_BRIDGE',
     '-DMAPI_ABI_HEADER="@0@"'.format(es2_glapi_mapi_tmp_h.full_path()),
-    gcc_lto_quirk,
   ],
   link_args : [ld_args_gc_sections],
   include_directories : [inc_src, inc_include, inc_mapi],
@@ -49,15 +48,13 @@ pkg.generate(
   description : 'Mesa OpenGL ES 2.0 library',
   version : meson.project_version(),
   libraries : libgles2,
-  libraries_private : gl_priv_libs,
+  libraries_private : '-lm -ldl -lpthread -pthread',
 )
 
-if with_tests and prog_nm.found()
+if with_tests
   test(
     'es2-ABI-check',
     find_program('ABI-check'),
-    env : env_test,
-    args : libgles2,
-    suite : ['mapi'],
+    args : libgles2
   )
 endif

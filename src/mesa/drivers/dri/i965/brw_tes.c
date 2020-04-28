@@ -33,6 +33,35 @@
 #include "brw_state.h"
 #include "program/prog_parameter.h"
 
+static void
+brw_tes_debug_recompile(struct brw_context *brw, struct gl_program *prog,
+                       const struct brw_tes_prog_key *key)
+{
+   perf_debug("Recompiling tessellation evaluation shader for program %d\n",
+              prog->Id);
+
+   bool found = false;
+   const struct brw_tes_prog_key *old_key =
+      brw_find_previous_compile(&brw->cache, BRW_CACHE_TES_PROG,
+                                key->program_string_id);
+
+   if (!old_key) {
+      perf_debug("  Didn't find previous compile in the shader cache for "
+                 "debug\n");
+      return;
+   }
+
+   found |= brw_debug_recompile_sampler_key(brw, &old_key->tex, &key->tex);
+   found |= key_debug(brw, "inputs read", old_key->inputs_read,
+                      key->inputs_read);
+   found |= key_debug(brw, "patch inputs read", old_key->patch_inputs_read,
+                      key->patch_inputs_read);
+
+   if (!found) {
+      perf_debug("  Something else\n");
+   }
+}
+
 static bool
 brw_codegen_tes_prog(struct brw_context *brw,
                      struct brw_program *tep,
@@ -41,6 +70,7 @@ brw_codegen_tes_prog(struct brw_context *brw,
    const struct brw_compiler *compiler = brw->screen->compiler;
    const struct gen_device_info *devinfo = &brw->screen->devinfo;
    struct brw_stage_state *stage_state = &brw->tes.base;
+   nir_shader *nir = tep->program.nir;
    struct brw_tes_prog_data prog_data;
    bool start_busy = false;
    double start_time = 0;
@@ -49,15 +79,13 @@ brw_codegen_tes_prog(struct brw_context *brw,
 
    void *mem_ctx = ralloc_context(NULL);
 
-   nir_shader *nir = nir_shader_clone(mem_ctx, tep->program.nir);
-
    brw_assign_common_binding_table_offsets(devinfo, &tep->program,
                                            &prog_data.base.base, 0);
 
    brw_nir_setup_glsl_uniforms(mem_ctx, nir, &tep->program,
                                &prog_data.base.base,
                                compiler->scalar_stage[MESA_SHADER_TESS_EVAL]);
-   brw_nir_analyze_ubo_ranges(compiler, nir, NULL,
+   brw_nir_analyze_ubo_ranges(compiler, tep->program.nir,
                               prog_data.base.base.ubo_ranges);
 
    int st_index = -1;
@@ -78,7 +106,7 @@ brw_codegen_tes_prog(struct brw_context *brw,
       brw_compile_tes(compiler, brw, mem_ctx, key, &input_vue_map, &prog_data,
                       nir, &tep->program, st_index, &error_str);
    if (program == NULL) {
-      tep->program.sh.data->LinkStatus = LINKING_FAILURE;
+      tep->program.sh.data->LinkStatus = linking_failure;
       ralloc_strcat(&tep->program.sh.data->InfoLog, error_str);
 
       _mesa_problem(NULL, "Failed to compile tessellation evaluation shader: "
@@ -90,8 +118,7 @@ brw_codegen_tes_prog(struct brw_context *brw,
 
    if (unlikely(brw->perf_debug)) {
       if (tep->compiled_once) {
-         brw_debug_recompile(brw, MESA_SHADER_TESS_EVAL, tep->program.Id,
-                             key->program_string_id, key);
+         brw_tes_debug_recompile(brw, &tep->program, key);
       }
       if (start_busy && !brw_bo_busy(brw->batch.last_bo)) {
          perf_debug("TES compile took %.03f ms and stalled the GPU\n",
@@ -168,9 +195,10 @@ brw_upload_tes_prog(struct brw_context *brw)
 
    brw_tes_populate_key(brw, &key);
 
-   if (brw_search_cache(&brw->cache, BRW_CACHE_TES_PROG, &key, sizeof(key),
-                        &stage_state->prog_offset, &brw->tes.base.prog_data,
-                        true))
+   if (brw_search_cache(&brw->cache, BRW_CACHE_TES_PROG,
+                        &key, sizeof(key),
+                        &stage_state->prog_offset,
+                        &brw->tes.base.prog_data))
       return;
 
    if (brw_disk_cache_upload_program(brw, MESA_SHADER_TESS_EVAL))
@@ -183,30 +211,6 @@ brw_upload_tes_prog(struct brw_context *brw)
    assert(success);
 }
 
-void
-brw_tes_populate_default_key(const struct gen_device_info *devinfo,
-                             struct brw_tes_prog_key *key,
-                             struct gl_shader_program *sh_prog,
-                             struct gl_program *prog)
-{
-   struct brw_program *btep = brw_program(prog);
-
-   memset(key, 0, sizeof(*key));
-
-   key->program_string_id = btep->id;
-   key->inputs_read = prog->nir->info.inputs_read;
-   key->patch_inputs_read = prog->nir->info.patch_inputs_read;
-
-   if (sh_prog->_LinkedShaders[MESA_SHADER_TESS_CTRL]) {
-      struct gl_program *tcp =
-         sh_prog->_LinkedShaders[MESA_SHADER_TESS_CTRL]->Program;
-      key->inputs_read |= tcp->nir->info.outputs_written &
-         ~(VARYING_BIT_TESS_LEVEL_INNER | VARYING_BIT_TESS_LEVEL_OUTER);
-      key->patch_inputs_read |= tcp->nir->info.patch_outputs_written;
-   }
-
-   brw_setup_tex_for_precompile(devinfo, &key->tex, prog);
-}
 
 bool
 brw_tes_precompile(struct gl_context *ctx,
@@ -221,7 +225,21 @@ brw_tes_precompile(struct gl_context *ctx,
 
    struct brw_program *btep = brw_program(prog);
 
-   brw_tes_populate_default_key(&brw->screen->devinfo, &key, shader_prog, prog);
+   memset(&key, 0, sizeof(key));
+
+   key.program_string_id = btep->id;
+   key.inputs_read = prog->nir->info.inputs_read;
+   key.patch_inputs_read = prog->nir->info.patch_inputs_read;
+
+   if (shader_prog->_LinkedShaders[MESA_SHADER_TESS_CTRL]) {
+      struct gl_program *tcp =
+         shader_prog->_LinkedShaders[MESA_SHADER_TESS_CTRL]->Program;
+      key.inputs_read |= tcp->nir->info.outputs_written &
+         ~(VARYING_BIT_TESS_LEVEL_INNER | VARYING_BIT_TESS_LEVEL_OUTER);
+      key.patch_inputs_read |= tcp->nir->info.patch_outputs_written;
+   }
+
+   brw_setup_tex_for_precompile(brw, &key.tex, prog);
 
    success = brw_codegen_tes_prog(brw, btep, &key);
 

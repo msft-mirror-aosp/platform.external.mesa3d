@@ -34,7 +34,6 @@
 struct v3d_spec;
 struct v3d_group;
 struct v3d_field;
-struct clif_dump;
 
 struct v3d_group *v3d_spec_find_struct(struct v3d_spec *spec, const char *name);
 struct v3d_spec *v3d_spec_load(const struct v3d_device_info *devinfo);
@@ -58,6 +57,7 @@ struct v3d_field_iterator {
         int group_iter;
 
         struct v3d_field *field;
+        bool print_colors;
 };
 
 struct v3d_group {
@@ -99,7 +99,6 @@ struct v3d_type {
                 V3D_TYPE_UINT,
                 V3D_TYPE_BOOL,
                 V3D_TYPE_FLOAT,
-                V3D_TYPE_F187,
                 V3D_TYPE_ADDRESS,
                 V3D_TYPE_OFFSET,
                 V3D_TYPE_STRUCT,
@@ -126,7 +125,6 @@ struct v3d_field {
         char *name;
         int start, end;
         struct v3d_type type;
-        bool minus_one;
         bool has_default;
         uint32_t default_value;
 
@@ -135,13 +133,14 @@ struct v3d_field {
 
 void v3d_field_iterator_init(struct v3d_field_iterator *iter,
                              struct v3d_group *group,
-                             const uint8_t *p);
+                             const uint8_t *p,
+                             bool print_colors);
 
-bool v3d_field_iterator_next(struct clif_dump *clif,
-                             struct v3d_field_iterator *iter);
+bool v3d_field_iterator_next(struct v3d_field_iterator *iter);
 
-void v3d_print_group(struct clif_dump *clif,
+void v3d_print_group(FILE *out,
                      struct v3d_group *group,
-                     uint64_t offset, const uint8_t *p);
+                     uint64_t offset, const uint8_t *p,
+                     bool color);
 
 #endif /* V3D_DECODER_H */

@@ -73,13 +73,7 @@ class Channel:
         return s
 
     def __eq__(self, other):
-        if other is None:
-            return False
-
         return self.type == other.type and self.norm == other.norm and self.pure == other.pure and self.size == other.size and self.scaled == other.scaled
-
-    def __ne__(self, other):
-        return not self == other
 
     def max(self):
         '''Maximum representable number.'''
@@ -113,7 +107,7 @@ class Channel:
 class Format:
     '''Describe a pixel format.'''
 
-    def __init__(self, name, layout, block_width, block_height, le_channels, le_swizzles, be_channels, be_swizzles, colorspace, width_divisor, height_divisor, plane_formats):
+    def __init__(self, name, layout, block_width, block_height, le_channels, le_swizzles, be_channels, be_swizzles, colorspace):
         self.name = name
         self.layout = layout
         self.block_width = block_width
@@ -124,13 +118,6 @@ class Format:
         self.be_swizzles = be_swizzles
         self.name = name
         self.colorspace = colorspace
-        self.plane_count = len(plane_formats)
-        self.width_divisor = width_divisor
-        self.height_divisor = height_divisor
-        self.plane_formats = plane_formats
-
-        while len(self.plane_formats) < 3:
-            self.plane_formats.append("VK_FORMAT_UNDEFINED")
 
     def __str__(self):
         return self.name
@@ -341,16 +328,6 @@ def _parse_channels(fields, layout, colorspace, swizzles):
 
     return channels
 
-def parse_plane_divisor(format):
-    if format == '444':
-        return (1, 1)
-    elif format == '422':
-        return (2, 1)
-    elif format == '420':
-        return (2, 2)
-    else:
-        return (1, 1)
-
 def parse(filename):
     '''Parse the format description in CSV format in terms of the
     Channel and Format classes above.'''
@@ -371,9 +348,10 @@ def parse(filename):
         fields = [field.strip() for field in line.split(',')]
         if len (fields) < 10:
            continue
-
-        be_fields = fields[4:9]
-
+        if len (fields) == 10:
+           fields += fields[4:9]
+        assert len (fields) == 15
+        
         name = fields[0]
         layout = fields[1]
         block_width, block_height = map(int, fields[2:4])
@@ -382,8 +360,8 @@ def parse(filename):
         le_swizzles = [_swizzle_parse_map[swizzle] for swizzle in fields[8]]
         le_channels = _parse_channels(fields[4:8], layout, colorspace, le_swizzles)
 
-        be_swizzles = [_swizzle_parse_map[swizzle] for swizzle in be_fields[4]]
-        be_channels = _parse_channels(be_fields, layout, colorspace, be_swizzles)
+        be_swizzles = [_swizzle_parse_map[swizzle] for swizzle in fields[14]]
+        be_channels = _parse_channels(fields[10:14], layout, colorspace, be_swizzles)
 
         le_shift = 0
         for channel in le_channels:
@@ -399,18 +377,7 @@ def parse(filename):
         for i in range(4):
             assert (le_swizzles[i] != SWIZZLE_NONE) == (be_swizzles[i] != SWIZZLE_NONE)
 
-        width_divisor = 1
-        height_divisor = 1
-        plane_formats = [name]
-        if layout == "multiplane":
-            plane_formats = []
-            (width_divisor, height_divisor) = parse_plane_divisor(fields[10])
-
-            for i in range(11, len(fields)):
-                plane_formats.append(fields[i])
-            assert (len(plane_formats) > 1)
-
-        format = Format(name, layout, block_width, block_height, le_channels, le_swizzles, be_channels, be_swizzles, colorspace, width_divisor, height_divisor, plane_formats)
+        format = Format(name, layout, block_width, block_height, le_channels, le_swizzles, be_channels, be_swizzles, colorspace)
         formats.append(format)
     return formats
 

@@ -39,8 +39,8 @@
 #include "transformfeedback.h"
 #include "shaderapi.h"
 #include "shaderobj.h"
+#include "main/dispatch.h"
 
-#include "program/program.h"
 #include "program/prog_parameter.h"
 
 struct using_program_tuple
@@ -471,7 +471,6 @@ begin_transform_feedback(struct gl_context *ctx, GLenum mode, bool no_error)
 
    if (obj->program != source) {
       ctx->NewDriverState |= ctx->DriverFlags.NewTransformFeedbackProg;
-      _mesa_reference_program_(ctx, &obj->program, source);
       obj->program = source;
    }
 
@@ -506,7 +505,6 @@ end_transform_feedback(struct gl_context *ctx,
    assert(ctx->Driver.EndTransformFeedback);
    ctx->Driver.EndTransformFeedback(ctx, obj);
 
-   _mesa_reference_program_(ctx, &obj->program, NULL);
    ctx->TransformFeedback.CurrentObject->Active = GL_FALSE;
    ctx->TransformFeedback.CurrentObject->Paused = GL_FALSE;
    ctx->TransformFeedback.CurrentObject->EndedAnytime = GL_TRUE;

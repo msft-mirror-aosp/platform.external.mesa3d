@@ -25,6 +25,13 @@ if with_opencl_icd
   clover_cpp_args += '-DHAVE_CLOVER_ICD'
 endif
 
+libcltgsi = static_library(
+  'cltgsi',
+  files('tgsi/compiler.cpp', 'tgsi/invocation.hpp'),
+  include_directories : clover_incs,
+  cpp_args : [cpp_vis_args],
+)
+
 libclllvm = static_library(
   'clllvm',
   files(
@@ -45,11 +52,10 @@ libclllvm = static_library(
     '-DLIBCLC_LIBEXECDIR="@0@/"'.format(dep_clc.get_pkgconfig_variable('libexecdir')),
     '-DCLANG_RESOURCE_DIR="@0@"'.format(join_paths(
       dep_llvm.get_configtool_variable('libdir'), 'clang',
-      dep_llvm.version(), 'include',
+      dep_llvm.get_configtool_variable('version'), 'include',
     )),
   ],
   dependencies : [dep_llvm, dep_elf],
-  override_options : clover_cpp_std,
 )
 
 clover_files = files(
@@ -109,9 +115,8 @@ clover_files = files(
 
 libclover = static_library(
   'clover',
-  [clover_files, sha1_h],
+  clover_files,
   include_directories : clover_incs,
   cpp_args : [clover_cpp_args, cpp_vis_args],
-  link_with : [libclllvm],
-  override_options : clover_cpp_std,
+  link_with : [libcltgsi, libclllvm],
 )

@@ -69,28 +69,28 @@ build_blit_info(struct pipe_resource *dst_tex,
             src_box->depth, &blit->dst.box);
 }
 
+
 /**
- * Copy when src texture and dst texture are same with IntraSurfaceCopy
- * command.
+ * Copy an image between textures with the vgpu10 CopyRegion command.
  */
 static void
-intra_surface_copy(struct svga_context *svga, struct pipe_resource *tex,
+copy_region_vgpu10(struct svga_context *svga, struct pipe_resource *src_tex,
                     unsigned src_x, unsigned src_y, unsigned src_z,
-                    unsigned level, unsigned layer_face,
+                    unsigned src_level, unsigned src_face,
+                    struct pipe_resource *dst_tex,
                     unsigned dst_x, unsigned dst_y, unsigned dst_z,
+                    unsigned dst_level, unsigned dst_face,
                     unsigned width, unsigned height, unsigned depth)
 {
    enum pipe_error ret;
+   uint32 srcSubResource, dstSubResource;
+   struct svga_texture *dtex, *stex;
    SVGA3dCopyBox box;
-   struct svga_texture *stex;
 
-   /*
-    * Makes sure we have flushed all buffered draw operations and also
-    * synchronizes all surfaces with any emulated surface views.
-    */
+   stex = svga_texture(src_tex);
+   dtex = svga_texture(dst_tex);
+
    svga_surfaces_flush(svga);
-
-   stex = svga_texture(tex);
 
    box.x = dst_x;
    box.y = dst_y;
@@ -102,53 +102,25 @@ intra_surface_copy(struct svga_context *svga, struct pipe_resource *tex,
    box.srcy = src_y;
    box.srcz = src_z;
 
-   ret = SVGA3D_vgpu10_IntraSurfaceCopy(svga->swc,
-                                 stex->handle, level, layer_face,  &box);
+   srcSubResource = src_face * (src_tex->last_level + 1) + src_level;
+   dstSubResource = dst_face * (dst_tex->last_level + 1) + dst_level;
+
+   ret = SVGA3D_vgpu10_PredCopyRegion(svga->swc,
+                                      dtex->handle, dstSubResource,
+                                      stex->handle, srcSubResource, &box);
    if (ret != PIPE_OK) {
       svga_context_flush(svga, NULL);
-   ret = SVGA3D_vgpu10_IntraSurfaceCopy(svga->swc,
-                                 stex->handle, level, layer_face, &box);
+      ret = SVGA3D_vgpu10_PredCopyRegion(svga->swc,
+                                         dtex->handle, dstSubResource,
+                                         stex->handle, srcSubResource, &box);
       assert(ret == PIPE_OK);
    }
 
-   /* Mark the texture subresource as rendered-to. */
-   svga_set_texture_rendered_to(stex, layer_face, level);
-}
-
-/**
- * Copy an image between textures with the vgpu10 CopyRegion command.
- */
-static void
-copy_region_vgpu10(struct svga_context *svga, struct pipe_resource *src_tex,
-                    unsigned src_x, unsigned src_y, unsigned src_z,
-                    unsigned src_level, unsigned src_layer_face,
-                    struct pipe_resource *dst_tex,
-                    unsigned dst_x, unsigned dst_y, unsigned dst_z,
-                    unsigned dst_level, unsigned dst_layer_face,
-                    unsigned width, unsigned height, unsigned depth)
-{
-   uint32 srcSubResource, dstSubResource;
-   struct svga_texture *dtex, *stex;
-
-   stex = svga_texture(src_tex);
-   dtex = svga_texture(dst_tex);
-
-   svga_surfaces_flush(svga);
-
-   srcSubResource = src_layer_face * (src_tex->last_level + 1) + src_level;
-   dstSubResource = dst_layer_face * (dst_tex->last_level + 1) + dst_level;
-
-   svga_texture_copy_region(svga, stex->handle, srcSubResource,
-                            src_x, src_y, src_z,
-                            dtex->handle, dstSubResource,
-                            dst_x, dst_y, dst_z,
-                            width, height, depth);
-
    /* Mark the texture subresource as defined. */
-   svga_define_texture_level(dtex, dst_layer_face, dst_level);
+   svga_define_texture_level(dtex, dst_face, dst_level);
 
    /* Mark the texture subresource as rendered-to. */
-   svga_set_texture_rendered_to(dtex, dst_layer_face, dst_level);
+   svga_set_texture_rendered_to(dtex, dst_face, dst_level);
 }
 
 
@@ -173,22 +145,6 @@ copy_region_fallback(struct svga_context *svga,
 
 
 /**
- * Whether the layer_face index is given by the Z coordinate.
- */
-static bool
-has_layer_face_index_in_z(enum pipe_texture_target target)
-{
-   if (target == PIPE_TEXTURE_CUBE ||
-       target == PIPE_TEXTURE_1D_ARRAY ||
-       target == PIPE_TEXTURE_2D_ARRAY ||
-       target == PIPE_TEXTURE_CUBE_ARRAY)
-      return true;
-   else
-      return false;
-}
-
-
-/**
  * For some texture types, we need to move the z (slice) coordinate
  * to the layer value.  For example, to select the z=3 slice of a 2D ARRAY
  * texture, we need to use layer=3 and set z=0.
@@ -198,9 +154,8 @@ adjust_z_layer(enum pipe_texture_target target,
                int z_in, unsigned *layer_out, unsigned *z_out)
 {
    if (target == PIPE_TEXTURE_CUBE ||
-       target == PIPE_TEXTURE_1D_ARRAY ||
        target == PIPE_TEXTURE_2D_ARRAY ||
-       target == PIPE_TEXTURE_CUBE_ARRAY) {
+       target == PIPE_TEXTURE_1D_ARRAY) {
       *layer_out = z_in;
       *z_out = 0;
    }
@@ -239,8 +194,7 @@ is_blending_enabled(struct svga_context *svga,
    if (svga->curr.blend) {
       if (svga->curr.blend->independent_blend_enable) {
          for (i = 0; i < PIPE_MAX_COLOR_BUFS; i++) {
-            struct pipe_surface *cbuf = svga->curr.framebuffer.cbufs[i];
-            if (cbuf && (cbuf->texture == blit->dst.resource)) {
+            if (svga->curr.framebuffer.cbufs[i]->texture == blit->dst.resource) {
                if (svga->curr.blend->rt[i].blend_enable) {
                   blend_enable = true;
                }
@@ -255,6 +209,7 @@ is_blending_enabled(struct svga_context *svga,
    }
    return blend_enable;
 }
+
 
 /**
  * If GL_FRAMEBUFFER_SRGB is enabled, then output colorspace is
@@ -343,43 +298,6 @@ can_blit_via_svga_copy_region(struct svga_context *svga,
    return check_blending_and_srgb_cond(svga, blit_info);
 }
 
-/**
- * Check whether we can blit using the intra_surface_copy command.
- */
-static bool
-can_blit_via_intra_surface_copy(struct svga_context *svga,
-                                const struct pipe_blit_info *blit_info)
-{
-   struct svga_winsys_screen *sws = svga_screen(svga->pipe.screen)->sws;
-   struct svga_texture *dtex, *stex;
-
-   if (!svga_have_vgpu10(svga))
-      return false;
-
-   /* src surface cannot be multisample */
-   if (blit_info->src.resource->nr_samples > 1)
-      return false;
-
-   if (!sws->have_intra_surface_copy)
-      return false;
-
-   if (svga->render_condition && blit_info->render_condition_enable)
-      return false;
-
-   if (blit_info->src.level != blit_info->dst.level)
-      return false;
-
-   if (has_layer_face_index_in_z(blit_info->src.resource->target)){
-      if (blit_info->src.box.z != blit_info->dst.box.z)
-         return false;
-   }
-
-   stex = svga_texture(blit_info->src.resource);
-   dtex = svga_texture(blit_info->dst.resource);
-
-   return (stex->handle == dtex->handle);
-}
-
 
 /**
  * The state tracker implements some resource copies with blits (for
@@ -466,16 +384,16 @@ static bool
 try_copy_region(struct svga_context *svga,
                 const struct pipe_blit_info *blit)
 {
-   unsigned src_layer_face, src_z, dst_layer_face, dst_z;
+   unsigned src_face, src_z, dst_face, dst_z;
 
    if (!can_blit_via_svga_copy_region(svga, blit))
       return false;
 
    adjust_z_layer(blit->src.resource->target, blit->src.box.z,
-                  &src_layer_face, &src_z);
+                  &src_face, &src_z);
 
    adjust_z_layer(blit->dst.resource->target, blit->dst.box.z,
-                  &dst_layer_face, &dst_z);
+                  &dst_face, &dst_z);
 
    if (can_blit_via_copy_region_vgpu10(svga, blit)) {
       svga_toggle_render_condition(svga, blit->render_condition_enable, FALSE);
@@ -483,10 +401,10 @@ try_copy_region(struct svga_context *svga,
       copy_region_vgpu10(svga,
                          blit->src.resource,
                          blit->src.box.x, blit->src.box.y, src_z,
-                         blit->src.level, src_layer_face,
+                         blit->src.level, src_face,
                          blit->dst.resource,
                          blit->dst.box.x, blit->dst.box.y, dst_z,
-                         blit->dst.level, dst_layer_face,
+                         blit->dst.level, dst_face,
                          blit->src.box.width, blit->src.box.height,
                          blit->src.box.depth);
 
@@ -504,26 +422,15 @@ try_copy_region(struct svga_context *svga,
       svga_texture_copy_handle(svga,
                                stex->handle,
                                blit->src.box.x, blit->src.box.y, src_z,
-                               blit->src.level, src_layer_face,
+                               blit->src.level, src_face,
                                dtex->handle,
                                blit->dst.box.x, blit->dst.box.y, dst_z,
-                               blit->dst.level, dst_layer_face,
+                               blit->dst.level, dst_face,
                                blit->src.box.width, blit->src.box.height,
                                blit->src.box.depth);
 
-      svga_define_texture_level(dtex, dst_layer_face, blit->dst.level);
-      svga_set_texture_rendered_to(dtex, dst_layer_face, blit->dst.level);
-      return true;
-   }
-
-   if (can_blit_via_intra_surface_copy(svga, blit)) {
-      intra_surface_copy(svga,
-                         blit->src.resource,
-                         blit->src.box.x, blit->src.box.y, src_z,
-                         blit->src.level, src_layer_face,
-                         blit->dst.box.x, blit->dst.box.y, dst_z,
-                         blit->src.box.width, blit->src.box.height,
-                         blit->src.box.depth);
+      svga_define_texture_level(dtex, dst_face, blit->dst.level);
+      svga_set_texture_rendered_to(dtex, dst_face, blit->dst.level);
       return true;
    }
 
@@ -573,28 +480,13 @@ try_blit(struct svga_context *svga, const struct pipe_blit_info *blit_info)
    struct pipe_blit_info blit = *blit_info;
 
    SVGA_STATS_TIME_PUSH(sws, SVGA_STATS_TIME_BLITBLITTER);
-
-   /**
-    * Avoid using util_blitter_blit() for these depth formats on non-vgpu10
-    * devices because these depth formats only support comparison mode
-    * and not ordinary sampling.
-    */
-   if (!svga_have_vgpu10(svga) && (blit.mask & PIPE_MASK_Z) &&
-       (svga_texture(dst)->key.format == SVGA3D_Z_D16 ||
-       svga_texture(dst)->key.format == SVGA3D_Z_D24X8 ||
-       svga_texture(dst)->key.format == SVGA3D_Z_D24S8)) {
-      ret = false;
-      goto done;
-  }
-
+   
    /**
     * If format is srgb and blend is enabled then color values need
     * to be converted into linear format.
     */
-   if (is_blending_enabled(svga, &blit)) {
+   if (is_blending_enabled(svga, &blit))
       blit.src.format = util_format_linear(blit.src.format);
-      blit.dst.format = util_format_linear(blit.dst.format);
-   }
 
    /* Check if we can create shader resource view and
     * render target view for the quad blitter to work

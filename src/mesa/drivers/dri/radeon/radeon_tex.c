@@ -257,8 +257,7 @@ static void radeonTexEnv( struct gl_context *ctx, GLenum target,
 {
    r100ContextPtr rmesa = R100_CONTEXT(ctx);
    GLuint unit = ctx->Texture.CurrentUnit;
-   struct gl_fixedfunc_texture_unit *texUnit =
-      &ctx->Texture.FixedFuncUnit[unit];
+   struct gl_texture_unit *texUnit = &ctx->Texture.Unit[unit];
 
    if ( RADEON_DEBUG & RADEON_STATE ) {
       fprintf( stderr, "%s( %s )\n",

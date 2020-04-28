@@ -199,9 +199,15 @@ clear_driver_config_cache()
 static char *
 get_driver_config(const char *driverName)
 {
-   void *handle;
+   void *handle = driOpenDriver(driverName);
+   const __DRIextension **extensions;
+
+   if (!handle)
+      return NULL;
+
    char *config = NULL;
-   const __DRIextension **extensions = driOpenDriver(driverName, &handle);
+
+   extensions = driGetDriverExtensions(handle, driverName);
    if (extensions) {
       for (int i = 0; extensions[i]; i++) {
          if (strcmp(extensions[i]->name, __DRI_CONFIG_OPTIONS) != 0)
@@ -912,7 +918,11 @@ driCreateScreen(int screen, struct glx_display *priv)
       goto cleanup;
    }
 
-   extensions = driOpenDriver(driverName, &psc->driver);
+   psc->driver = driOpenDriver(driverName);
+   if (psc->driver == NULL)
+      goto cleanup;
+
+   extensions = dlsym(psc->driver, __DRI_DRIVER_EXTENSIONS);
    if (extensions == NULL) {
       ErrorMessageF("driver exports no extensions (%s)\n", dlerror());
       goto cleanup;

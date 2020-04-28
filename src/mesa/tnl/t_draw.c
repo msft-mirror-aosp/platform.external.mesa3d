@@ -28,7 +28,6 @@
 #include <stdio.h>
 
 #include "main/glheader.h"
-#include "main/arrayobj.h"
 #include "main/bufferobj.h"
 #include "main/condrender.h"
 #include "main/context.h"
@@ -36,11 +35,9 @@
 #include "main/mtypes.h"
 #include "main/macros.h"
 #include "main/enums.h"
-#include "main/varray.h"
 #include "util/half_float.h"
 
 #include "t_context.h"
-#include "t_rebase.h"
 #include "tnl.h"
 
 
@@ -70,14 +67,14 @@ static void free_space(struct gl_context *ctx)
  */
 #define CONVERT( TYPE, MACRO ) do {		\
    GLuint i, j;					\
-   if (attrib->Format.Normalized) {		\
+   if (input->Normalized) {			\
       for (i = 0; i < count; i++) {		\
 	 const TYPE *in = (TYPE *)ptr;		\
 	 for (j = 0; j < sz; j++) {		\
 	    *fptr++ = MACRO(*in);		\
 	    in++;				\
 	 }					\
-         ptr += binding->Stride;		\
+	 ptr += input->StrideB;			\
       }						\
    } else {					\
       for (i = 0; i < count; i++) {		\
@@ -86,7 +83,7 @@ static void free_space(struct gl_context *ctx)
 	    *fptr++ = (GLfloat)(*in);		\
 	    in++;				\
 	 }					\
-         ptr += binding->Stride;		\
+	 ptr += input->StrideB;			\
       }						\
    }						\
 } while (0)
@@ -98,27 +95,25 @@ static void free_space(struct gl_context *ctx)
  * \param fptr  output/float array
  */
 static void
-convert_bgra_to_float(const struct gl_vertex_buffer_binding *binding,
-                      const struct gl_array_attributes *attrib,
+convert_bgra_to_float(const struct gl_vertex_array *input,
                       const GLubyte *ptr, GLfloat *fptr,
                       GLuint count )
 {
    GLuint i;
-   assert(attrib->Format.Normalized);
-   assert(attrib->Format.Size == 4);
+   assert(input->Normalized);
+   assert(input->Size == 4);
    for (i = 0; i < count; i++) {
       const GLubyte *in = (GLubyte *) ptr;  /* in is in BGRA order */
       *fptr++ = UBYTE_TO_FLOAT(in[2]);  /* red */
       *fptr++ = UBYTE_TO_FLOAT(in[1]);  /* green */
       *fptr++ = UBYTE_TO_FLOAT(in[0]);  /* blue */
       *fptr++ = UBYTE_TO_FLOAT(in[3]);  /* alpha */
-      ptr += binding->Stride;
+      ptr += input->StrideB;
    }
 }
 
 static void
-convert_half_to_float(const struct gl_vertex_buffer_binding *binding,
-                      const struct gl_array_attributes *attrib,
+convert_half_to_float(const struct gl_vertex_array *input,
 		      const GLubyte *ptr, GLfloat *fptr,
 		      GLuint count, GLuint sz)
 {
@@ -130,7 +125,7 @@ convert_half_to_float(const struct gl_vertex_buffer_binding *binding,
       for (j = 0; j < sz; j++) {
 	 *fptr++ = _mesa_half_to_float(in[j]);
       }
-      ptr += binding->Stride;
+      ptr += input->StrideB;
    }
 }
 
@@ -145,22 +140,21 @@ convert_half_to_float(const struct gl_vertex_buffer_binding *binding,
  * is used to map the fixed-point numbers into the range [-1, 1].
  */
 static void
-convert_fixed_to_float(const struct gl_vertex_buffer_binding *binding,
-                       const struct gl_array_attributes *attrib,
+convert_fixed_to_float(const struct gl_vertex_array *input,
                        const GLubyte *ptr, GLfloat *fptr,
                        GLuint count)
 {
    GLuint i;
    GLint j;
-   const GLint size = attrib->Format.Size;
+   const GLint size = input->Size;
 
-   if (attrib->Format.Normalized) {
+   if (input->Normalized) {
       for (i = 0; i < count; ++i) {
          const GLfixed *in = (GLfixed *) ptr;
          for (j = 0; j < size; ++j) {
             *fptr++ = (GLfloat) (2 * in[j] + 1) / (GLfloat) ((1 << 16) - 1);
          }
-         ptr += binding->Stride;
+         ptr += input->StrideB;
       }
    } else {
       for (i = 0; i < count; ++i) {
@@ -168,7 +162,7 @@ convert_fixed_to_float(const struct gl_vertex_buffer_binding *binding,
          for (j = 0; j < size; ++j) {
             *fptr++ = in[j] / (GLfloat) (1 << 16);
          }
-         ptr += binding->Stride;
+         ptr += input->StrideB;
       }
    }
 }
@@ -177,29 +171,28 @@ convert_fixed_to_float(const struct gl_vertex_buffer_binding *binding,
  * floating point, populate VB->AttribPtr[].
  */
 static void _tnl_import_array( struct gl_context *ctx,
-                               GLuint attr,
+			       GLuint attrib,
 			       GLuint count,
-                               const struct gl_vertex_buffer_binding *binding,
-                               const struct gl_array_attributes *attrib,
+			       const struct gl_vertex_array *input,
 			       const GLubyte *ptr )
 {
    TNLcontext *tnl = TNL_CONTEXT(ctx);
    struct vertex_buffer *VB = &tnl->vb;
-   GLuint stride = binding->Stride;
+   GLuint stride = input->StrideB;
 
-   if (attrib->Format.Type != GL_FLOAT) {
-      const GLuint sz = attrib->Format.Size;
+   if (input->Type != GL_FLOAT) {
+      const GLuint sz = input->Size;
       GLubyte *buf = get_space(ctx, count * sz * sizeof(GLfloat));
       GLfloat *fptr = (GLfloat *)buf;
 
-      switch (attrib->Format.Type) {
+      switch (input->Type) {
       case GL_BYTE: 
 	 CONVERT(GLbyte, BYTE_TO_FLOAT); 
 	 break;
       case GL_UNSIGNED_BYTE: 
-         if (attrib->Format.Format == GL_BGRA) {
+         if (input->Format == GL_BGRA) {
             /* See GL_EXT_vertex_array_bgra */
-            convert_bgra_to_float(binding, attrib, ptr, fptr, count);
+            convert_bgra_to_float(input, ptr, fptr, count);
          }
          else {
             CONVERT(GLubyte, UBYTE_TO_FLOAT); 
@@ -221,10 +214,10 @@ static void _tnl_import_array( struct gl_context *ctx,
 	 CONVERT(GLdouble, (GLfloat)); 
 	 break;
       case GL_HALF_FLOAT:
-	 convert_half_to_float(binding, attrib, ptr, fptr, count, sz);
+	 convert_half_to_float(input, ptr, fptr, count, sz);
 	 break;
       case GL_FIXED:
-         convert_fixed_to_float(binding, attrib, ptr, fptr, count);
+         convert_fixed_to_float(input, ptr, fptr, count);
          break;
       default:
 	 assert(0);
@@ -235,20 +228,20 @@ static void _tnl_import_array( struct gl_context *ctx,
       stride = sz * sizeof(GLfloat);
    }
 
-   VB->AttribPtr[attr] = &tnl->tmp_inputs[attr];
-   VB->AttribPtr[attr]->data = (GLfloat (*)[4])ptr;
-   VB->AttribPtr[attr]->start = (GLfloat *)ptr;
-   VB->AttribPtr[attr]->count = count;
-   VB->AttribPtr[attr]->stride = stride;
-   VB->AttribPtr[attr]->size = attrib->Format.Size;
+   VB->AttribPtr[attrib] = &tnl->tmp_inputs[attrib];
+   VB->AttribPtr[attrib]->data = (GLfloat (*)[4])ptr;
+   VB->AttribPtr[attrib]->start = (GLfloat *)ptr;
+   VB->AttribPtr[attrib]->count = count;
+   VB->AttribPtr[attrib]->stride = stride;
+   VB->AttribPtr[attrib]->size = input->Size;
 
    /* This should die, but so should the whole GLvector4f concept: 
     */
-   VB->AttribPtr[attr]->flags = (((1<<attrib->Format.Size)-1) |
+   VB->AttribPtr[attrib]->flags = (((1<<input->Size)-1) | 
 				   VEC_NOT_WRITEABLE |
 				   (stride == 4*sizeof(GLfloat) ? 0 : VEC_BAD_STRIDE));
    
-   VB->AttribPtr[attr]->storage = NULL;
+   VB->AttribPtr[attrib]->storage = NULL;
 }
 
 #define CLIPVERTS  ((6 + MAX_CLIP_PLANES) * 2)
@@ -274,7 +267,7 @@ static GLboolean *_tnl_import_edgeflag( struct gl_context *ctx,
 
 
 static void bind_inputs( struct gl_context *ctx, 
-			 const struct tnl_vertex_array *inputs,
+			 const struct gl_vertex_array *inputs[],
 			 GLint count,
 			 struct gl_buffer_object **bo,
 			 GLuint *nr_bo )
@@ -286,28 +279,25 @@ static void bind_inputs( struct gl_context *ctx,
    /* Map all the VBOs
     */
    for (i = 0; i < VERT_ATTRIB_MAX; i++) {
-      const struct tnl_vertex_array *array = &inputs[i];
-      const struct gl_vertex_buffer_binding *binding = array->BufferBinding;
-      const struct gl_array_attributes *attrib = array->VertexAttrib;
       const void *ptr;
 
-      if (_mesa_is_bufferobj(binding->BufferObj)) {
-	 if (!binding->BufferObj->Mappings[MAP_INTERNAL].Pointer) {
-	    bo[*nr_bo] = binding->BufferObj;
+      if (inputs[i]->BufferObj->Name) { 
+	 if (!inputs[i]->BufferObj->Mappings[MAP_INTERNAL].Pointer) {
+	    bo[*nr_bo] = inputs[i]->BufferObj;
 	    (*nr_bo)++;
-	    ctx->Driver.MapBufferRange(ctx, 0, binding->BufferObj->Size,
+	    ctx->Driver.MapBufferRange(ctx, 0, inputs[i]->BufferObj->Size,
 				       GL_MAP_READ_BIT,
-                                       binding->BufferObj,
+				       inputs[i]->BufferObj,
                                        MAP_INTERNAL);
 	    
-            assert(binding->BufferObj->Mappings[MAP_INTERNAL].Pointer);
+	    assert(inputs[i]->BufferObj->Mappings[MAP_INTERNAL].Pointer);
 	 }
 	 
-         ptr = ADD_POINTERS(binding->BufferObj->Mappings[MAP_INTERNAL].Pointer,
-                            binding->Offset + attrib->RelativeOffset);
+	 ptr = ADD_POINTERS(inputs[i]->BufferObj->Mappings[MAP_INTERNAL].Pointer,
+			    inputs[i]->Ptr);
       }
       else
-         ptr = attrib->Ptr;
+	 ptr = inputs[i]->Ptr;
 
       /* Just make sure the array is floating point, otherwise convert to
        * temporary storage.  
@@ -315,7 +305,7 @@ static void bind_inputs( struct gl_context *ctx,
        * XXX: remove the GLvector4f type at some stage and just use
        * client arrays.
        */
-      _tnl_import_array(ctx, i, count, binding, attrib, ptr);
+      _tnl_import_array(ctx, i, count, inputs[i], ptr);
    }
 
    /* We process only the vertices between min & max index:
@@ -424,10 +414,11 @@ static void unmap_vbos( struct gl_context *ctx,
 }
 
 
-/* This is the main workhorse doing all the rendering work.
+/* This is the main entrypoint into the slimmed-down software tnl
+ * module.  In a regular swtnl driver, this can be plugged straight
+ * into the vbo->Driver.DrawPrims() callback.
  */
 void _tnl_draw_prims(struct gl_context *ctx,
-                     const struct tnl_vertex_array *arrays,
 			 const struct _mesa_prim *prim,
 			 GLuint nr_prims,
 			 const struct _mesa_index_buffer *ib,
@@ -439,6 +430,7 @@ void _tnl_draw_prims(struct gl_context *ctx,
 			 struct gl_buffer_object *indirect)
 {
    TNLcontext *tnl = TNL_CONTEXT(ctx);
+   const struct gl_vertex_array **arrays = ctx->Array._DrawArrays;
    const GLuint TEST_SPLIT = 0;
    const GLint max = TEST_SPLIT ? 8 : tnl->vb.Size - MAX_CLIPPED_VERTICES;
    GLint max_basevertex = prim->basevertex;
@@ -469,9 +461,9 @@ void _tnl_draw_prims(struct gl_context *ctx,
    if (min_index) {
       /* We always translate away calls with min_index != 0. 
        */
-      t_rebase_prims( ctx, arrays, prim, nr_prims, ib,
-                      min_index, max_index,
-                      _tnl_draw_prims );
+      vbo_rebase_prims( ctx, arrays, prim, nr_prims, ib, 
+			min_index, max_index,
+			_tnl_draw_prims );
       return;
    }
    else if ((GLint)max_index + max_basevertex > max) {
@@ -487,10 +479,10 @@ void _tnl_draw_prims(struct gl_context *ctx,
       /* This will split the buffers one way or another and
        * recursively call back into this function.
        */
-      _tnl_split_prims( ctx, arrays, prim, nr_prims, ib,
-                        0, max_index + prim->basevertex,
-                        _tnl_draw_prims,
-                        &limits );
+      vbo_split_prims( ctx, arrays, prim, nr_prims, ib, 
+		       0, max_index + prim->basevertex,
+		       _tnl_draw_prims,
+		       &limits );
    }
    else {
       /* May need to map a vertex buffer object for every attribute plus
@@ -537,122 +529,3 @@ void _tnl_draw_prims(struct gl_context *ctx,
    }
 }
 
-
-void
-_tnl_init_inputs(struct tnl_inputs *inputs)
-{
-   inputs->current = 0;
-   inputs->vertex_processing_mode = VP_MODE_FF;
-}
-
-
-/**
- * Update the tnl_inputs's arrays to point to the vao->_VertexArray arrays
- * according to the 'enable' bitmask.
- * \param enable  bitfield of VERT_BIT_x flags.
- */
-static inline void
-update_vao_inputs(struct gl_context *ctx,
-                  struct tnl_inputs *inputs, GLbitfield enable)
-{
-   const struct gl_vertex_array_object *vao = ctx->Array._DrawVAO;
-
-   /* Make sure we process only arrays enabled in the VAO */
-   assert((enable & ~_mesa_get_vao_vp_inputs(vao)) == 0);
-
-   /* Fill in the client arrays from the VAO */
-   const struct gl_vertex_buffer_binding *bindings = &vao->BufferBinding[0];
-   while (enable) {
-      const int attr = u_bit_scan(&enable);
-      struct tnl_vertex_array *input = &inputs->inputs[attr];
-      const struct gl_array_attributes *attrib;
-      attrib = _mesa_draw_array_attrib(vao, attr);
-      input->VertexAttrib = attrib;
-      input->BufferBinding = &bindings[attrib->BufferBindingIndex];
-   }
-}
-
-
-/**
- * Update the tnl_inputs's arrays to point to the vbo->currval arrays
- * according to the 'current' bitmask.
- * \param current  bitfield of VERT_BIT_x flags.
- */
-static inline void
-update_current_inputs(struct gl_context *ctx,
-                      struct tnl_inputs *inputs, GLbitfield current)
-{
-   gl_vertex_processing_mode mode = ctx->VertexProgram._VPMode;
-
-   /* All previously non current array pointers need update. */
-   GLbitfield mask = current & ~inputs->current;
-   /* On mode change, the slots aliasing with materials need update too */
-   if (mode != inputs->vertex_processing_mode)
-      mask |= current & VERT_BIT_MAT_ALL;
-
-   while (mask) {
-      const int attr = u_bit_scan(&mask);
-      struct tnl_vertex_array *input = &inputs->inputs[attr];
-      input->VertexAttrib = _vbo_current_attrib(ctx, attr);
-      input->BufferBinding = _vbo_current_binding(ctx);
-   }
-
-   inputs->current = current;
-   inputs->vertex_processing_mode = mode;
-}
-
-
-/**
- * Update the tnl_inputs's arrays to point to the vao->_VertexArray and
- * vbo->currval arrays according to Array._DrawVAO and
- * Array._DrawVAOEnableAttribs.
- */
-void
-_tnl_update_inputs(struct gl_context *ctx, struct tnl_inputs *inputs)
-{
-   const GLbitfield enable = ctx->Array._DrawVAOEnabledAttribs;
-
-   /* Update array input pointers */
-   update_vao_inputs(ctx, inputs, enable);
-
-   /* The rest must be current inputs. */
-   update_current_inputs(ctx, inputs, ~enable & VERT_BIT_ALL);
-}
-
-
-const struct tnl_vertex_array*
-_tnl_bind_inputs( struct gl_context *ctx )
-{
-   TNLcontext *tnl = TNL_CONTEXT(ctx);
-   _tnl_update_inputs(ctx, &tnl->draw_arrays);
-   return tnl->draw_arrays.inputs;
-}
-
-
-/* This is the main entrypoint into the slimmed-down software tnl
- * module.  In a regular swtnl driver, this can be plugged straight
- * into the ctx->Driver.Draw() callback.
- */
-void
-_tnl_draw(struct gl_context *ctx,
-          const struct _mesa_prim *prim, GLuint nr_prims,
-          const struct _mesa_index_buffer *ib,
-          GLboolean index_bounds_valid, GLuint min_index, GLuint max_index,
-          struct gl_transform_feedback_object *tfb_vertcount,
-          unsigned stream, struct gl_buffer_object *indirect)
-{
-   /* Update TNLcontext::draw_arrays and return that pointer.
-    */
-   const struct tnl_vertex_array* arrays = _tnl_bind_inputs(ctx);
-
-   _tnl_draw_prims(ctx, arrays, prim, nr_prims, ib,
-                   index_bounds_valid, min_index, max_index,
-                   tfb_vertcount, stream, indirect);
-}
-
-
-void
-_tnl_init_driver_draw_function(struct dd_function_table *functions)
-{
-   functions->Draw = _tnl_draw;
-}

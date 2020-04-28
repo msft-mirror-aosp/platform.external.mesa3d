@@ -3,8 +3,7 @@
 #define __FREEDRENO_DRM_PUBLIC_H__
 
 struct pipe_screen;
-struct renderonly;
 
-struct pipe_screen *fd_drm_screen_create(int drmFD, struct renderonly *ro);
+struct pipe_screen *fd_drm_screen_create(int drmFD);
 
 #endif

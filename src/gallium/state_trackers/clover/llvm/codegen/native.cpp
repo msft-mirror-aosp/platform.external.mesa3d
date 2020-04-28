@@ -114,7 +114,8 @@ namespace {
 
       std::unique_ptr<TargetMachine> tm {
          t->createTargetMachine(target.triple, target.cpu, "", {},
-                                ::llvm::None, compat::default_code_model,
+                                compat::default_reloc_model,
+                                compat::default_code_model,
                                 ::llvm::CodeGenOpt::Default) };
       if (!tm)
          fail(r_log, build_error(),
@@ -123,14 +124,15 @@ namespace {
       ::llvm::SmallVector<char, 1024> data;
 
       {
-         ::llvm::legacy::PassManager pm;
+         compat::pass_manager pm;
          ::llvm::raw_svector_ostream os { data };
+         compat::raw_ostream_to_emit_file fos(os);
 
-         mod.setDataLayout(tm->createDataLayout());
+         mod.setDataLayout(compat::get_data_layout(*tm));
          tm->Options.MCOptions.AsmVerbose =
             (ft == TargetMachine::CGFT_AssemblyFile);
 
-         if (compat::add_passes_to_emit_file(*tm, pm, os, ft))
+         if (tm->addPassesToEmitFile(pm, fos, ft))
             fail(r_log, build_error(), "TargetMachine can't emit this file");
 
          pm.run(mod);
@@ -154,7 +156,7 @@ clover::llvm::print_module_native(const ::llvm::Module &mod,
                                   const target &target) {
    std::string log;
    try {
-      std::unique_ptr< ::llvm::Module> cmod { compat::clone_module(mod) };
+      std::unique_ptr< ::llvm::Module> cmod { CloneModule(&mod) };
       return as_string(emit_code(*cmod, target,
                                  TargetMachine::CGFT_AssemblyFile, log));
    } catch (...) {

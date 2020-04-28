@@ -61,7 +61,7 @@ struct
 #endif
    ralloc_header
 {
-#ifndef NDEBUG
+#ifdef DEBUG
    /* A canary value used to determine whether a pointer is ralloc'd. */
    unsigned canary;
 #endif
@@ -88,7 +88,9 @@ get_header(const void *ptr)
 {
    ralloc_header *info = (ralloc_header *) (((char *) ptr) -
 					    sizeof(ralloc_header));
+#ifdef DEBUG
    assert(info->canary == CANARY);
+#endif
    return info;
 }
 
@@ -138,7 +140,7 @@ ralloc_size(const void *ctx, size_t size)
 
    add_child(parent, info);
 
-#ifndef NDEBUG
+#ifdef DEBUG
    info->canary = CANARY;
 #endif
 
@@ -551,20 +553,14 @@ ralloc_vasprintf_rewrite_tail(char **str, size_t *start, const char *fmt,
  * other buffers.
  */
 
+#define ALIGN_POT(x, y) (((x) + (y) - 1) & ~((y) - 1))
+
 #define MIN_LINEAR_BUFSIZE 2048
-#define SUBALLOC_ALIGNMENT 8
+#define SUBALLOC_ALIGNMENT sizeof(uintptr_t)
 #define LMAGIC 0x87b9c7d3
 
-struct
-#ifdef _MSC_VER
- __declspec(align(8))
-#elif defined(__LP64__)
- __attribute__((aligned(16)))
-#else
- __attribute__((aligned(8)))
-#endif
-   linear_header {
-#ifndef NDEBUG
+struct linear_header {
+#ifdef DEBUG
    unsigned magic;   /* for debugging */
 #endif
    unsigned offset;  /* points to the first unused byte in the buffer */
@@ -614,7 +610,7 @@ create_linear_node(void *ralloc_ctx, unsigned min_size)
    if (unlikely(!node))
       return NULL;
 
-#ifndef NDEBUG
+#ifdef DEBUG
    node->magic = LMAGIC;
 #endif
    node->offset = 0;
@@ -634,7 +630,9 @@ linear_alloc_child(void *parent, unsigned size)
    linear_size_chunk *ptr;
    unsigned full_size;
 
+#ifdef DEBUG
    assert(first->magic == LMAGIC);
+#endif
    assert(!latest->next);
 
    size = ALIGN_POT(size, SUBALLOC_ALIGNMENT);
@@ -655,8 +653,6 @@ linear_alloc_child(void *parent, unsigned size)
    ptr = (linear_size_chunk *)((char*)&latest[1] + latest->offset);
    ptr->size = size;
    latest->offset += full_size;
-
-   assert((uintptr_t)&ptr[1] % SUBALLOC_ALIGNMENT == 0);
    return &ptr[1];
 }
 
@@ -708,7 +704,9 @@ linear_free_parent(void *ptr)
       return;
 
    node = LINEAR_PARENT_TO_HEADER(ptr);
+#ifdef DEBUG
    assert(node->magic == LMAGIC);
+#endif
 
    while (node) {
       void *ptr = node;
@@ -727,7 +725,9 @@ ralloc_steal_linear_parent(void *new_ralloc_ctx, void *ptr)
       return;
 
    node = LINEAR_PARENT_TO_HEADER(ptr);
+#ifdef DEBUG
    assert(node->magic == LMAGIC);
+#endif
 
    while (node) {
       ralloc_steal(new_ralloc_ctx, node);
@@ -740,7 +740,9 @@ void *
 ralloc_parent_of_linear_parent(void *ptr)
 {
    linear_header *node = LINEAR_PARENT_TO_HEADER(ptr);
+#ifdef DEBUG
    assert(node->magic == LMAGIC);
+#endif
    return node->ralloc_parent;
 }
 

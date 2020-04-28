@@ -5,13 +5,13 @@
 
 <category name="GL_AMD_performance_monitor" number="360">
 
-    <function name="GetPerfMonitorGroupsAMD" es2="2.0">
+    <function name="GetPerfMonitorGroupsAMD">
         <param name="numGroups" type="GLint *"/>
         <param name="groupsSize" type="GLsizei"/>
         <param name="groups" type="GLuint *"/>
     </function>
 
-    <function name="GetPerfMonitorCountersAMD" es2="2.0">
+    <function name="GetPerfMonitorCountersAMD">
         <param name="group" type="GLuint"/>
         <param name="numCounters" type="GLint *"/>
         <param name="maxActiveCounters" type="GLint *"/>
@@ -19,14 +19,14 @@
         <param name="counters" type="GLuint *"/>
     </function>
 
-    <function name="GetPerfMonitorGroupStringAMD" es2="2.0">
+    <function name="GetPerfMonitorGroupStringAMD">
         <param name="group" type="GLuint"/>
         <param name="bufSize" type="GLsizei"/>
         <param name="length" type="GLsizei *"/>
         <param name="groupString" type="GLchar *"/>
     </function>
 
-    <function name="GetPerfMonitorCounterStringAMD" es2="2.0">
+    <function name="GetPerfMonitorCounterStringAMD">
         <param name="group" type="GLuint"/>
         <param name="counter" type="GLuint"/>
         <param name="bufSize" type="GLsizei"/>
@@ -34,24 +34,24 @@
         <param name="counterString" type="GLchar *"/>
     </function>
 
-    <function name="GetPerfMonitorCounterInfoAMD" es2="2.0">
+    <function name="GetPerfMonitorCounterInfoAMD">
         <param name="group" type="GLuint"/>
         <param name="counter" type="GLuint"/>
         <param name="pname" type="GLenum"/>
         <param name="data" type="GLvoid *"/>
     </function>
 
-    <function name="GenPerfMonitorsAMD" es2="2.0">
+    <function name="GenPerfMonitorsAMD">
         <param name="n" type="GLsizei"/>
         <param name="monitors" type="GLuint *"/>
     </function>
 
-    <function name="DeletePerfMonitorsAMD" es2="2.0">
+    <function name="DeletePerfMonitorsAMD">
         <param name="n" type="GLsizei"/>
         <param name="monitors" type="GLuint *"/>
     </function>
 
-    <function name="SelectPerfMonitorCountersAMD" es2="2.0">
+    <function name="SelectPerfMonitorCountersAMD">
         <param name="monitor" type="GLuint"/>
         <param name="enable" type="GLboolean"/>
         <param name="group" type="GLuint"/>
@@ -59,15 +59,15 @@
         <param name="counterList" type="GLuint *"/>
     </function>
 
-    <function name="BeginPerfMonitorAMD" es2="2.0">
+    <function name="BeginPerfMonitorAMD">
         <param name="monitor" type="GLuint"/>
     </function>
 
-    <function name="EndPerfMonitorAMD" es2="2.0">
+    <function name="EndPerfMonitorAMD">
         <param name="monitor" type="GLuint"/>
     </function>
 
-    <function name="GetPerfMonitorCounterDataAMD" es2="2.0">
+    <function name="GetPerfMonitorCounterDataAMD">
         <param name="monitor" type="GLuint"/>
         <param name="pname" type="GLenum"/>
         <param name="dataSize" type="GLsizei"/>

@@ -51,7 +51,7 @@ tgsi_parse_init(
 
 void
 tgsi_parse_free(
-   UNUSED struct tgsi_parse_context *ctx )
+   struct tgsi_parse_context *ctx )
 {
 }
 
@@ -59,12 +59,8 @@ boolean
 tgsi_parse_end_of_tokens(
    struct tgsi_parse_context *ctx )
 {
-   /* All values involved are unsigned, but the sum will be promoted to
-    * a signed value (at least on 64 bit). To capture a possible overflow
-    * make it a signed comparison.
-    */
-   return (int)ctx->Position >=
-	 ctx->FullHeader.Header.HeaderSize + ctx->FullHeader.Header.BodySize;
+   return ctx->Position >=
+      ctx->FullHeader.Header.HeaderSize + ctx->FullHeader.Header.BodySize;
 }
 
 

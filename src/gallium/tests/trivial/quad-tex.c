@@ -27,8 +27,8 @@
 #define USE_TRACE 0
 #define WIDTH 300
 #define HEIGHT 300
-#define NEAR 0
-#define FAR 1
+#define NEAR 30
+#define FAR 1000
 #define FLIP 0
 
 /* pipe_*_state structs */
@@ -174,7 +174,6 @@ static void init_prog(struct program *p)
 		memset(&box, 0, sizeof(box));
 		box.width = 2;
 		box.height = 2;
-		box.depth = 1;
 
 		ptr = p->pipe->transfer_map(p->pipe, p->tex, 0, PIPE_TRANSFER_WRITE, &box, &t);
 		ptr[0] = 0xffff0000;
@@ -200,8 +199,7 @@ static void init_prog(struct program *p)
 	p->rasterizer.cull_face = PIPE_FACE_NONE;
 	p->rasterizer.half_pixel_center = 1;
 	p->rasterizer.bottom_edge_rule = 1;
-	p->rasterizer.depth_clip_near = 1;
-	p->rasterizer.depth_clip_far = 1;
+	p->rasterizer.depth_clip = 1;
 
 	/* sampler */
 	memset(&p->sampler, 0, sizeof(p->sampler));
@@ -228,7 +226,7 @@ static void init_prog(struct program *p)
 	{
 		float x = 0;
 		float y = 0;
-		float z = NEAR;
+		float z = FAR;
 		float half_width = (float)WIDTH / 2.0f;
 		float half_height = (float)HEIGHT / 2.0f;
 		float half_depth = ((float)FAR - (float)NEAR) / 2.0f;
@@ -265,8 +263,8 @@ static void init_prog(struct program *p)
 
 	/* vertex shader */
 	{
-		const enum tgsi_semantic semantic_names[] =
-                   { TGSI_SEMANTIC_POSITION, TGSI_SEMANTIC_GENERIC };
+		const uint semantic_names[] = { TGSI_SEMANTIC_POSITION,
+		                                TGSI_SEMANTIC_GENERIC };
 		const uint semantic_indexes[] = { 0, 0 };
 		p->vs = util_make_vertex_passthrough_shader(p->pipe, 2, semantic_names, semantic_indexes, FALSE);
 	}

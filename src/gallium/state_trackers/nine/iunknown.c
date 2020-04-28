@@ -34,21 +34,9 @@ HRESULT
 NineUnknown_ctor( struct NineUnknown *This,
                   struct NineUnknownParams *pParams )
 {
-    if (pParams->container) {
-        This->refs = 0;
-        This->forward = true;
-        This->bind = 0;
-        assert(!pParams->start_with_bind_not_ref);
-    } else if (pParams->start_with_bind_not_ref) {
-        This->refs = 0;
-        This->forward = false;
-        This->bind = 1;
-    } else {
-        This->refs = 1;
-        This->forward = false;
-        This->bind = 0;
-    }
-
+    This->refs = pParams->container ? 0 : 1;
+    This->bind = 0;
+    This->forward = !This->refs;
     This->container = pParams->container;
     This->device = pParams->device;
     if (This->refs && This->device)

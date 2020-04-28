@@ -57,17 +57,10 @@ TargetGM107::isOpSupported(operation op, DataType ty) const
    switch (op) {
    case OP_SAD:
    case OP_POW:
+   case OP_SQRT:
    case OP_DIV:
    case OP_MOD:
       return false;
-   case OP_SQRT:
-      if (ty == TYPE_F64)
-         return false;
-      return chipset >= NVISA_GM200_CHIPSET;
-   case OP_XMAD:
-      if (isFloatType(ty))
-         return false;
-      break;
    default:
       break;
    }
@@ -132,7 +125,6 @@ TargetGM107::isBarrierRequired(const Instruction *insn) const
       case OP_RCP:
       case OP_RSQ:
       case OP_SIN:
-      case OP_SQRT:
          return true;
       default:
          break;
@@ -161,15 +153,15 @@ TargetGM107::isBarrierRequired(const Instruction *insn) const
       case OP_AFETCH:
       case OP_PFETCH:
       case OP_PIXLD:
+      case OP_RDSV:
       case OP_SHFL:
          return true;
-      case OP_RDSV:
-         return !isCS2RSV(insn->getSrc(0)->reg.data.sv.sv);
       default:
          break;
       }
       break;
    case OPCLASS_ARITH:
+      // TODO: IMUL/IMAD require barriers too, use of XMAD instead!
       if ((insn->op == OP_MUL || insn->op == OP_MAD) &&
           !isFloatType(insn->dType))
          return true;
@@ -237,12 +229,9 @@ TargetGM107::getLatency(const Instruction *insn) const
    case OP_SUB:
    case OP_VOTE:
    case OP_XOR:
-   case OP_XMAD:
       if (insn->dType != TYPE_F64)
          return 6;
       break;
-   case OP_RDSV:
-      return isCS2RSV(insn->getSrc(0)->reg.data.sv.sv) ? 6 : 15;
    case OP_ABS:
    case OP_CEIL:
    case OP_CVT:
@@ -264,7 +253,6 @@ TargetGM107::getLatency(const Instruction *insn) const
    case OP_RCP:
    case OP_RSQ:
    case OP_SIN:
-   case OP_SQRT:
       return 13;
    default:
       break;
@@ -293,7 +281,6 @@ TargetGM107::getReadLatency(const Instruction *insn) const
    case OP_RSQ:
    case OP_SAT:
    case OP_SIN:
-   case OP_SQRT:
    case OP_SULDB:
    case OP_SULDP:
    case OP_SUREDB:
@@ -332,12 +319,6 @@ TargetGM107::getReadLatency(const Instruction *insn) const
       break;
    }
    return 0;
-}
-
-bool
-TargetGM107::isCS2RSV(SVSemantic sv) const
-{
-   return sv == SV_CLOCK;
 }
 
 bool

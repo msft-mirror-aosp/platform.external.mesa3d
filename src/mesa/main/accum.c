@@ -33,6 +33,7 @@
 #include "macros.h"
 #include "state.h"
 #include "mtypes.h"
+#include "main/dispatch.h"
 
 
 void GLAPIENTRY
@@ -82,8 +83,7 @@ _mesa_clear_accum_buffer(struct gl_context *ctx)
    height = ctx->DrawBuffer->_Ymax - ctx->DrawBuffer->_Ymin;
 
    ctx->Driver.MapRenderbuffer(ctx, accRb, x, y, width, height,
-                               GL_MAP_WRITE_BIT, &accMap, &accRowStride,
-                               ctx->DrawBuffer->FlipY);
+                               GL_MAP_WRITE_BIT, &accMap, &accRowStride);
 
    if (!accMap) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glAccum");
@@ -138,8 +138,7 @@ accum_scale_or_bias(struct gl_context *ctx, GLfloat value,
 
    ctx->Driver.MapRenderbuffer(ctx, accRb, xpos, ypos, width, height,
                                GL_MAP_READ_BIT | GL_MAP_WRITE_BIT,
-                               &accMap, &accRowStride,
-                               ctx->DrawBuffer->FlipY);
+                               &accMap, &accRowStride);
 
    if (!accMap) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glAccum");
@@ -208,8 +207,7 @@ accum_or_load(struct gl_context *ctx, GLfloat value,
 
    /* Map accum buffer */
    ctx->Driver.MapRenderbuffer(ctx, accRb, xpos, ypos, width, height,
-                               mappingFlags, &accMap, &accRowStride,
-                               ctx->DrawBuffer->FlipY);
+                               mappingFlags, &accMap, &accRowStride);
    if (!accMap) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glAccum");
       return;
@@ -218,8 +216,7 @@ accum_or_load(struct gl_context *ctx, GLfloat value,
    /* Map color buffer */
    ctx->Driver.MapRenderbuffer(ctx, colorRb, xpos, ypos, width, height,
                                GL_MAP_READ_BIT,
-                               &colorMap, &colorRowStride,
-                               ctx->DrawBuffer->FlipY);
+                               &colorMap, &colorRowStride);
    if (!colorMap) {
       ctx->Driver.UnmapRenderbuffer(ctx, accRb);
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glAccum");
@@ -292,7 +289,7 @@ accum_return(struct gl_context *ctx, GLfloat value,
    /* Map accum buffer */
    ctx->Driver.MapRenderbuffer(ctx, accRb, xpos, ypos, width, height,
                                GL_MAP_READ_BIT,
-                               &accMap, &accRowStride, fb->FlipY);
+                               &accMap, &accRowStride);
    if (!accMap) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glAccum");
       return;
@@ -301,10 +298,10 @@ accum_return(struct gl_context *ctx, GLfloat value,
    /* Loop over destination buffers */
    for (buffer = 0; buffer < fb->_NumColorDrawBuffers; buffer++) {
       struct gl_renderbuffer *colorRb = fb->_ColorDrawBuffers[buffer];
-      const GLboolean masking = (!GET_COLORMASK_BIT(ctx->Color.ColorMask, buffer, 0) ||
-                                 !GET_COLORMASK_BIT(ctx->Color.ColorMask, buffer, 1) ||
-                                 !GET_COLORMASK_BIT(ctx->Color.ColorMask, buffer, 2) ||
-                                 !GET_COLORMASK_BIT(ctx->Color.ColorMask, buffer, 3));
+      const GLboolean masking = (!ctx->Color.ColorMask[buffer][RCOMP] ||
+                                 !ctx->Color.ColorMask[buffer][GCOMP] ||
+                                 !ctx->Color.ColorMask[buffer][BCOMP] ||
+                                 !ctx->Color.ColorMask[buffer][ACOMP]);
       GLbitfield mappingFlags = GL_MAP_WRITE_BIT;
 
       if (masking)
@@ -312,8 +309,7 @@ accum_return(struct gl_context *ctx, GLfloat value,
 
       /* Map color buffer */
       ctx->Driver.MapRenderbuffer(ctx, colorRb, xpos, ypos, width, height,
-                                  mappingFlags, &colorMap, &colorRowStride,
-                                  fb->FlipY);
+                                  mappingFlags, &colorMap, &colorRowStride);
       if (!colorMap) {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "glAccum");
          continue;
@@ -344,19 +340,19 @@ accum_return(struct gl_context *ctx, GLfloat value,
                   _mesa_unpack_rgba_row(colorRb->Format, width, colorMap, dest);
 
                   /* use the dest colors where mask[channel] = 0 */
-                  if (!GET_COLORMASK_BIT(ctx->Color.ColorMask, buffer, 0)) {
+                  if (ctx->Color.ColorMask[buffer][RCOMP] == 0) {
                      for (i = 0; i < width; i++)
                         rgba[i][RCOMP] = dest[i][RCOMP];
                   }
-                  if (!GET_COLORMASK_BIT(ctx->Color.ColorMask, buffer, 1)) {
+                  if (ctx->Color.ColorMask[buffer][GCOMP] == 0) {
                      for (i = 0; i < width; i++)
                         rgba[i][GCOMP] = dest[i][GCOMP];
                   }
-                  if (!GET_COLORMASK_BIT(ctx->Color.ColorMask, buffer, 2)) {
+                  if (ctx->Color.ColorMask[buffer][BCOMP] == 0) {
                      for (i = 0; i < width; i++)
                         rgba[i][BCOMP] = dest[i][BCOMP];
                   }
-                  if (!GET_COLORMASK_BIT(ctx->Color.ColorMask, buffer, 3)) {
+                  if (ctx->Color.ColorMask[buffer][ACOMP] == 0) {
                      for (i = 0; i < width; i++)
                         rgba[i][ACOMP] = dest[i][ACOMP];
                   }

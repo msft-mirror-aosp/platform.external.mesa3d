@@ -35,6 +35,7 @@
 #include "feedback.h"
 #include "macros.h"
 #include "mtypes.h"
+#include "main/dispatch.h"
 
 
 #define FB_3D		0x01

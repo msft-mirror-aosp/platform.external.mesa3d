@@ -1,4 +1,4 @@
-﻿# Copyright (C) 2014-2018 Intel Corporation.   All Rights Reserved.
+﻿# Copyright (C) 2014-2017 Intel Corporation.   All Rights Reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the "Software"),
@@ -21,7 +21,7 @@
 
 from __future__ import print_function
 import os, sys, re
-from gen_common import *
+from gen_common import MakoTemplateWriter, ArgumentParser
 from argparse import FileType
 
 '''
@@ -143,7 +143,6 @@ def gen_llvm_types(input_file, output_file):
                     is_llvm_typedef = re.search(r'@llvm_typedef', line)
                     if is_llvm_typedef is not None:
                         is_llvm_typedef = True
-                        continue
                     else:
                         is_llvm_typedef = False
 
@@ -333,29 +332,8 @@ def main():
             help='Path to output file', required=True)
     args = parser.parse_args()
 
-    final_output_dir = os.path.dirname(args.output)
-    if MakeDir(final_output_dir):
-        return 1
-
-    final_output_file = args.output
-
-    tmp_dir = MakeTmpDir('_codegen')
-    args.output = os.path.join(tmp_dir, os.path.basename(args.output))
-
-    rval = 0
-    try:
-        gen_llvm_types(args.input, args.output)
-
-        rval = CopyFileIfDifferent(args.output, final_output_file)
-    except:
-        print('ERROR: Could not generate llvm types', file=sys.stderr)
-        rval = 1
-
-    finally:
-        DeleteDirTree(tmp_dir)
-
-    return rval
+    gen_llvm_types(args.input, args.output)
 
 if __name__ == '__main__':
-    sys.exit(main())
+    main()
 # END OF FILE

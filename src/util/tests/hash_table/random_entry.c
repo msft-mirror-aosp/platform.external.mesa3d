@@ -24,15 +24,11 @@
  *    Eric Anholt <eric@anholt.net>
  */
 
-#undef NDEBUG
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
 #include "hash_table.h"
-
-#define SIZE 10000
 
 static uint32_t
 key_value(const void *key)
@@ -57,7 +53,8 @@ main(int argc, char **argv)
 {
    struct hash_table *ht;
    struct hash_entry *entry;
-   uint32_t keys[SIZE];
+   unsigned size = 10000;
+   uint32_t keys[size];
    uint32_t i, random_value;
 
    (void) argc;
@@ -65,7 +62,7 @@ main(int argc, char **argv)
 
    ht = _mesa_hash_table_create(NULL, key_value, uint32_t_key_equals);
 
-   for (i = 0; i < SIZE; i++) {
+   for (i = 0; i < size; i++) {
       keys[i] = i;
 
       _mesa_hash_table_insert(ht, keys + i, NULL);

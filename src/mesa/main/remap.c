@@ -44,7 +44,6 @@
 
 #define need_MESA_remap_table
 #include "main/remap_helper.h"
-#include "errors.h"
 
 
 /* this is global for quick access */

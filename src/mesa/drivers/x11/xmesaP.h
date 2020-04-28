@@ -358,8 +358,7 @@ xmesa_MapRenderbuffer(struct gl_context *ctx,
                       struct gl_renderbuffer *rb,
                       GLuint x, GLuint y, GLuint w, GLuint h,
                       GLbitfield mode,
-                      GLubyte **mapOut, GLint *rowStrideOut,
-                      bool flip_y);
+                      GLubyte **mapOut, GLint *rowStrideOut);
 
 extern void
 xmesa_UnmapRenderbuffer(struct gl_context *ctx, struct gl_renderbuffer *rb);

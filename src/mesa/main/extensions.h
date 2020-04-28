@@ -36,7 +36,7 @@
 #ifndef _EXTENSIONS_H_
 #define _EXTENSIONS_H_
 
-#include "mtypes.h"
+#include "glheader.h"
 
 #ifdef __cplusplus
 extern "C" {

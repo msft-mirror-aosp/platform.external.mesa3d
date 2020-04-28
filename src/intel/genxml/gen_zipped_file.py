@@ -23,6 +23,7 @@
 #
 
 from __future__ import print_function
+import os
 import sys
 import zlib
 import xml.etree.cElementTree as et
@@ -41,10 +42,10 @@ def main():
     print("} genxml_files_table[] = {")
 
     xml_offset = 0
-    compressed_data = b''
+    compressed_data = ''
     for i in range(1, len(sys.argv)):
         filename = sys.argv[i]
-        xml = open(filename, "rb").read()
+        xml = open(filename).read()
         xml_length = len(xml)
         root = et.fromstring(xml)
 
@@ -61,8 +62,8 @@ def main():
     print("")
     print("static const uint8_t compress_genxmls[] = {")
     print("   ", end='')
-    for i, c in enumerate(bytearray(compressed_data), start=1):
-        print("0x%.2x, " % c, end='\n   ' if not i % 12 else '')
+    for i, c in enumerate(compressed_data, start=1):
+        print("0x%.2x, " % ord(c), end='\n   ' if not i % 12 else '')
     print('\n};')
 
 

@@ -113,7 +113,8 @@ public:
    {
       this->num_loop_jumps = 0;
       this->contains_calls = false;
-      this->var_hash = _mesa_pointer_hash_table_create(NULL);
+      this->var_hash = _mesa_hash_table_create(NULL, _mesa_hash_pointer,
+                                               _mesa_key_pointer_equal);
       this->limiting_terminator = NULL;
    }
 

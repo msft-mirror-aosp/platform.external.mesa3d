@@ -47,14 +47,14 @@ extern "C" {
 extern void *
 util_make_vertex_passthrough_shader(struct pipe_context *pipe,
                                     uint num_attribs,
-                                    const enum tgsi_semantic *semantic_names,
+                                    const uint *semantic_names,
                                     const uint *semantic_indexes,
                                     bool window_space);
 
 extern void *
 util_make_vertex_passthrough_shader_with_so(struct pipe_context *pipe,
                                     uint num_attribs,
-                                    const enum tgsi_semantic *semantic_names,
+                                    const uint *semantic_names,
                                     const uint *semantic_indexes,
                                     bool window_space, bool layered,
                                     const struct pipe_stream_output_info *so);
@@ -68,14 +68,10 @@ util_make_layered_clear_helper_vertex_shader(struct pipe_context *pipe);
 extern void *
 util_make_layered_clear_geometry_shader(struct pipe_context *pipe);
 
-void *
-util_make_fragment_tex_shader_xrbias(struct pipe_context *pipe,
-                                     enum tgsi_texture_type tex_target);
-
 extern void *
 util_make_fragment_tex_shader_writemask(struct pipe_context *pipe,
-                                        enum tgsi_texture_type tex_target,
-                                        enum tgsi_interpolate_mode interp_mode,
+                                        unsigned tex_target,
+                                        unsigned interp_mode,
                                         unsigned writemask,
                                         enum tgsi_return_type stype,
                                         enum tgsi_return_type dtype,
@@ -83,9 +79,8 @@ util_make_fragment_tex_shader_writemask(struct pipe_context *pipe,
                                         bool use_txf);
 
 extern void *
-util_make_fragment_tex_shader(struct pipe_context *pipe,
-                              enum tgsi_texture_type tex_target,
-                              enum tgsi_interpolate_mode interp_mode,
+util_make_fragment_tex_shader(struct pipe_context *pipe, unsigned tex_target,
+                              unsigned interp_mode,
                               enum tgsi_return_type stype,
                               enum tgsi_return_type dtype,
                               bool load_level_zero,
@@ -93,26 +88,26 @@ util_make_fragment_tex_shader(struct pipe_context *pipe,
 
 extern void *
 util_make_fragment_tex_shader_writedepth(struct pipe_context *pipe,
-                                         enum tgsi_texture_type tex_target,
-                                         enum tgsi_interpolate_mode interp_mode,
+                                         unsigned tex_target,
+                                         unsigned interp_mode,
                                          bool load_level_zero,
                                          bool use_txf);
 
 
 extern void *
 util_make_fragment_tex_shader_writedepthstencil(struct pipe_context *pipe,
-                                         enum tgsi_texture_type tex_target,
-                                         enum tgsi_interpolate_mode interp_mode,
-                                         bool load_level_zero,
-                                         bool use_txf);
+                                                unsigned tex_target,
+                                                unsigned interp_mode,
+                                                bool load_level_zero,
+                                                bool use_txf);
 
 
 extern void *
 util_make_fragment_tex_shader_writestencil(struct pipe_context *pipe,
-                                         enum tgsi_texture_type tex_target,
-                                         enum tgsi_interpolate_mode interp_mode,
-                                         bool load_level_zero,
-                                         bool use_txf);
+                                           unsigned tex_target,
+                                           unsigned interp_mode,
+                                           bool load_level_zero,
+                                           bool use_txf);
 
 
 extern void *

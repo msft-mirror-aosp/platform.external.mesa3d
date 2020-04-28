@@ -617,6 +617,12 @@ DIV2DOWN(int todiv)
    return (todiv&~1)/2;
 }
 
+static inline int
+DIV2UP(int todiv)
+{
+   return (todiv+1)/2;
+}
+
 static inline void
 motion_vector(struct vl_mpg12_bs *bs, int r, int s, int dmv, short delta[2], short dmvector[2])
 {

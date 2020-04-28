@@ -25,6 +25,7 @@
 #ifndef S_EXPRESSION_H
 #define S_EXPRESSION_H
 
+#include "main/core.h" /* for Elements */
 #include "util/strtod.h"
 #include "list.h"
 

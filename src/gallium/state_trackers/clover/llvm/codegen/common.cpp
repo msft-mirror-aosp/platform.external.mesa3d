@@ -33,7 +33,6 @@
 #include "llvm/codegen.hpp"
 #include "llvm/metadata.hpp"
 
-#define CL_TARGET_OPENCL_VERSION 220
 #include "CL/cl.h"
 
 #include "pipe/p_state.h"
@@ -86,7 +85,8 @@ namespace {
          const unsigned arg_store_size = dl.getTypeStoreSize(arg_type);
          const unsigned arg_api_size = dl.getTypeAllocSize(arg_type);
 
-         const auto target_type = compat::get_abi_type(arg_type, mod);
+         const auto target_type = !arg_type->isIntegerTy() ? arg_type :
+            dl.getSmallestLegalIntType(mod.getContext(), arg_store_size * 8);
          const unsigned target_size = dl.getTypeStoreSize(target_type);
          const unsigned target_align = dl.getABITypeAlignment(target_type);
 

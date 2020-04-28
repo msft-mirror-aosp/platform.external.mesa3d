@@ -25,10 +25,6 @@
  *
  **************************************************************************/
 
-#ifdef HAVE_PIPE_LOADER_KMS
-#include <fcntl.h>
-#endif
-
 #include "pipe_loader_priv.h"
 
 #include "util/u_memory.h"
@@ -132,7 +128,7 @@ pipe_loader_sw_probe_teardown_common(struct pipe_loader_sw_device *sdev)
 
 #ifdef HAVE_PIPE_LOADER_DRI
 bool
-pipe_loader_sw_probe_dri(struct pipe_loader_device **devs, const struct drisw_loader_funcs *drisw_lf)
+pipe_loader_sw_probe_dri(struct pipe_loader_device **devs, struct drisw_loader_funcs *drisw_lf)
 {
    struct pipe_loader_sw_device *sdev = CALLOC_STRUCT(pipe_loader_sw_device);
    int i;
@@ -175,12 +171,11 @@ pipe_loader_sw_probe_kms(struct pipe_loader_device **devs, int fd)
    if (!pipe_loader_sw_probe_init_common(sdev))
       goto fail;
 
-   if (fd < 0 || (sdev->fd = fcntl(fd, F_DUPFD_CLOEXEC, 3)) < 0)
-      goto fail;
+   sdev->fd = fd;
 
    for (i = 0; sdev->dd->winsys[i].name; i++) {
       if (strcmp(sdev->dd->winsys[i].name, "kms_dri") == 0) {
-         sdev->ws = sdev->dd->winsys[i].create_winsys(sdev->fd);
+         sdev->ws = sdev->dd->winsys[i].create_winsys(fd);
          break;
       }
    }
@@ -192,8 +187,6 @@ pipe_loader_sw_probe_kms(struct pipe_loader_device **devs, int fd)
 
 fail:
    pipe_loader_sw_probe_teardown_common(sdev);
-   if (sdev->fd != -1)
-      close(sdev->fd);
    FREE(sdev);
    return false;
 }
@@ -293,8 +286,9 @@ pipe_loader_sw_release(struct pipe_loader_device **dev)
    pipe_loader_base_release(dev);
 }
 
-static const char *
-pipe_loader_sw_get_driconf_xml(struct pipe_loader_device *dev)
+static const struct drm_conf_ret *
+pipe_loader_sw_configuration(struct pipe_loader_device *dev,
+                             enum drm_conf conf)
 {
    return NULL;
 }
@@ -315,6 +309,6 @@ pipe_loader_sw_create_screen(struct pipe_loader_device *dev,
 
 static const struct pipe_loader_ops pipe_loader_sw_ops = {
    .create_screen = pipe_loader_sw_create_screen,
-   .get_driconf_xml = pipe_loader_sw_get_driconf_xml,
+   .configuration = pipe_loader_sw_configuration,
    .release = pipe_loader_sw_release
 };

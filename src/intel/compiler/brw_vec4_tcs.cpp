@@ -30,7 +30,7 @@
 #include "brw_nir.h"
 #include "brw_vec4_tcs.h"
 #include "brw_fs.h"
-#include "dev/gen_debug.h"
+#include "common/gen_debug.h"
 
 namespace brw {
 
@@ -260,8 +260,10 @@ vec4_tcs_visitor::nir_emit_intrinsic(nir_intrinsic_instr *instr)
       src_reg indirect_offset = get_indirect_offset(instr);
       unsigned imm_offset = instr->const_index[0];
 
-      src_reg vertex_index = retype(get_nir_src_imm(instr->src[0]),
-                                    BRW_REGISTER_TYPE_UD);
+      nir_const_value *vertex_const = nir_src_as_const_value(instr->src[0]);
+      src_reg vertex_index =
+         vertex_const ? src_reg(brw_imm_ud(vertex_const->u32[0]))
+                      : get_nir_src(instr->src[0], BRW_REGISTER_TYPE_UD, 1);
 
       unsigned first_component = nir_intrinsic_component(instr);
       if (nir_dest_bit_size(instr->dest) == 64) {
@@ -378,7 +380,7 @@ brw_compile_tcs(const struct brw_compiler *compiler,
                 void *mem_ctx,
                 const struct brw_tcs_prog_key *key,
                 struct brw_tcs_prog_data *prog_data,
-                nir_shader *nir,
+                const nir_shader *src_shader,
                 int shader_time_index,
                 char **error_str)
 {
@@ -387,6 +389,7 @@ brw_compile_tcs(const struct brw_compiler *compiler,
    const bool is_scalar = compiler->scalar_stage[MESA_SHADER_TESS_CTRL];
    const unsigned *assembly;
 
+   nir_shader *nir = nir_shader_clone(mem_ctx, src_shader);
    nir->info.outputs_written = key->outputs_written;
    nir->info.patch_outputs_written = key->patch_outputs_written;
 
@@ -471,7 +474,7 @@ brw_compile_tcs(const struct brw_compiler *compiler,
       prog_data->base.base.dispatch_grf_start_reg = v.payload.num_regs;
       prog_data->base.dispatch_mode = DISPATCH_MODE_SIMD8;
 
-      fs_generator g(compiler, log_data, mem_ctx,
+      fs_generator g(compiler, log_data, mem_ctx, (void *) key,
                      &prog_data->base.base, v.promoted_constants, false,
                      MESA_SHADER_TESS_CTRL);
       if (unlikely(INTEL_DEBUG & DEBUG_TCS)) {
@@ -484,7 +487,7 @@ brw_compile_tcs(const struct brw_compiler *compiler,
 
       g.generate_code(v.cfg, 8);
 
-      assembly = g.get_assembly();
+      assembly = g.get_assembly(&prog_data->base.base.program_size);
    } else {
       vec4_tcs_visitor v(compiler, log_data, key, prog_data,
                          nir, mem_ctx, shader_time_index, &input_vue_map);
@@ -499,7 +502,8 @@ brw_compile_tcs(const struct brw_compiler *compiler,
 
 
       assembly = brw_vec4_generate_assembly(compiler, log_data, mem_ctx, nir,
-                                            &prog_data->base, v.cfg);
+                                            &prog_data->base, v.cfg,
+                                            &prog_data->base.base.program_size);
    }
 
    return assembly;

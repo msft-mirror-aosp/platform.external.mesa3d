@@ -61,13 +61,7 @@ class Channel:
       return s
 
    def __eq__(self, other):
-      if other is None:
-         return False
-
       return self.type == other.type and self.norm == other.norm and self.size == other.size
-
-   def __ne__(self, other):
-      return not self.__eq__(other)
 
    def max(self):
       """Returns the maximum representable number."""
@@ -222,8 +216,8 @@ class Swizzle:
       component, exactly as you would expect.
       """
       rev = [Swizzle.SWIZZLE_NONE] * 4
-      for i in range(4):
-         for j in range(4):
+      for i in xrange(4):
+         for j in xrange(4):
             if self.__list[j] == i and rev[i] == Swizzle.SWIZZLE_NONE:
                rev[i] = j
       return Swizzle(rev)

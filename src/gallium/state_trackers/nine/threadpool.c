@@ -37,7 +37,6 @@
 #include "os/os_thread.h"
 #include "threadpool.h"
 
-/* POSIX thread function */
 static void *
 threadpool_worker(void *data)
 {
@@ -52,8 +51,10 @@ threadpool_worker(void *data)
         while (!pool->workqueue && !pool->shutdown)
             pthread_cond_wait(&pool->new_work, &pool->m);
 
-        if (pool->shutdown)
-            break;
+        if (pool->shutdown) {
+            pthread_mutex_unlock(&pool->m);
+            return NULL;
+        }
 
         /* Pull the first task from the list.  We don't free it -- it now lacks
          * a reference other than the worker creator's, whose responsibility it
@@ -75,15 +76,6 @@ threadpool_worker(void *data)
     return NULL;
 }
 
-/* Windows thread function */
-static DWORD NINE_WINAPI
-wthreadpool_worker(void *data)
-{
-    threadpool_worker(data);
-
-    return 0;
-}
-
 struct threadpool *
 _mesa_threadpool_create(struct NineSwapChain9 *swapchain)
 {
@@ -95,9 +87,7 @@ _mesa_threadpool_create(struct NineSwapChain9 *swapchain)
     pthread_mutex_init(&pool->m, NULL);
     pthread_cond_init(&pool->new_work, NULL);
 
-    /* This uses WINE's CreateThread, so the thread function needs to use
-     * the Windows ABI */
-    pool->wthread = NineSwapChain9_CreateThread(swapchain, wthreadpool_worker, pool);
+    pool->wthread = NineSwapChain9_CreateThread(swapchain, threadpool_worker, pool);
     if (!pool->wthread) {
         /* using pthread as fallback */
         pthread_create(&pool->pthread, NULL, threadpool_worker, pool);

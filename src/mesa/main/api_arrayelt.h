@@ -27,13 +27,20 @@
 #ifndef API_ARRAYELT_H
 #define API_ARRAYELT_H
 
-#include <stdbool.h>
-#include "dd.h"
 
-struct _glapi_table;
+#include "main/mtypes.h"
 
-extern void _mesa_array_element(struct gl_context *ctx, GLint elt);
+
+extern GLboolean _ae_create_context( struct gl_context *ctx );
+extern void _ae_destroy_context( struct gl_context *ctx );
+extern void _ae_invalidate_state(struct gl_context *ctx);
+extern bool _ae_is_state_dirty(struct gl_context *ctx);
 extern void GLAPIENTRY _ae_ArrayElement( GLint elt );
+
+/* May optionally be called before a batch of element calls:
+ */
+extern void _ae_map_vbos( struct gl_context *ctx );
+extern void _ae_unmap_vbos( struct gl_context *ctx );
 
 extern void
 _mesa_install_arrayelt_vtxfmt(struct _glapi_table *disp,

@@ -34,13 +34,8 @@ LOCAL_SRC_FILES := \
 	$(RENDERONLY_SOURCES) \
 	$(VL_STUB_SOURCES)
 
-ifeq ($(USE_LIBBACKTRACE),true)
-	LOCAL_SRC_FILES += util/u_debug_stack_android.cpp
-endif
-
 LOCAL_C_INCLUDES := \
-	$(GALLIUM_TOP)/auxiliary/util \
-	$(MESA_TOP)/src/util
+	$(GALLIUM_TOP)/auxiliary/util
 
 ifeq ($(MESA_ENABLE_LLVM),true)
 LOCAL_SRC_FILES += \

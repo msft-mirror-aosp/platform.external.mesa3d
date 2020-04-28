@@ -22,9 +22,6 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef TEXCOMPRESS_S3TC_TMP_H
-#define TEXCOMPRESS_S3TC_TMP_H
-
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
 #else
@@ -990,5 +987,3 @@ static void tx_compress_dxtn(GLint srccomps, GLint width, GLint height, const GL
       return;
    }
 }
-
-#endif

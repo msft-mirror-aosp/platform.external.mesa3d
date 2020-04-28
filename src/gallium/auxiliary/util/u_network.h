@@ -4,7 +4,10 @@
 
 #include "pipe/p_compiler.h"
 
-#if defined(PIPE_SUBSYSTEM_WINDOWS_USER) || defined(PIPE_OS_UNIX)
+#if defined(PIPE_SUBSYSTEM_WINDOWS_USER)
+#  define PIPE_HAVE_SOCKETS
+#elif defined(PIPE_OS_LINUX) || defined(PIPE_OS_HAIKU) || \
+    defined(PIPE_OS_APPLE) || defined(PIPE_OS_SOLARIS)
 #  define PIPE_HAVE_SOCKETS
 #endif
 

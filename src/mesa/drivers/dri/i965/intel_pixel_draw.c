@@ -127,8 +127,8 @@ do_blit_drawpixels(struct gl_context * ctx,
                            pbo_mt, 0, 0,
                            0, 0, src_flip,
                            irb->mt, irb->mt_level, irb->mt_layer,
-                           x, y, ctx->DrawBuffer->FlipY,
-                           width, height, COLOR_LOGICOP_COPY)) {
+                           x, y, _mesa_is_winsys_fbo(ctx->DrawBuffer),
+                           width, height, GL_COPY)) {
       DBG("%s: blit failed\n", __func__);
       intel_miptree_release(&pbo_mt);
       return false;
@@ -163,8 +163,7 @@ intelDrawPixels(struct gl_context * ctx,
       return;
    }
 
-   if (brw->screen->devinfo.gen < 6 &&
-       _mesa_is_bufferobj(unpack->BufferObj)) {
+   if (_mesa_is_bufferobj(unpack->BufferObj)) {
       if (do_blit_drawpixels(ctx, x, y, width, height, format, type, unpack,
 			     pixels)) {
 	 return;

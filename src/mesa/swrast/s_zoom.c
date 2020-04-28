@@ -22,7 +22,6 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "main/errors.h"
 #include "main/glheader.h"
 #include "main/macros.h"
 #include "main/imports.h"

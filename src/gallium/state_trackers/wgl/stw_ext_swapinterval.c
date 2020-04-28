@@ -48,7 +48,7 @@ wglSwapIntervalEXT(int interval)
       SetLastError(ERROR_INVALID_DATA);
       return FALSE;
    }
-   if (stw_dev && !os_get_option("WGL_SWAP_INTERVAL")) {
+   if (stw_dev) {
       stw_dev->swap_interval = interval;
    }
    return TRUE;

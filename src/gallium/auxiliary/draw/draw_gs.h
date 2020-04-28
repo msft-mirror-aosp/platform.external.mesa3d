@@ -57,13 +57,6 @@ struct draw_gs_inputs {
 /**
  * Private version of the compiled geometry shader
  */
-struct draw_vertex_stream {
-   unsigned *primitive_lengths;
-   unsigned emitted_vertices;
-   unsigned emitted_primitives;
-   float (*tmp_output)[4];
-};
-
 struct draw_geometry_shader {
    struct draw_context *draw;
 
@@ -81,10 +74,13 @@ struct draw_geometry_shader {
    unsigned primitive_boundary;
    unsigned input_primitive;
    unsigned output_primitive;
-   unsigned vertex_size;
 
-   struct draw_vertex_stream stream[TGSI_MAX_VERTEX_STREAMS];
-   unsigned num_vertex_streams;
+   unsigned *primitive_lengths;
+   unsigned emitted_vertices;
+   unsigned emitted_primitives;
+
+   float (*tmp_output)[4];
+   unsigned vertex_size;
 
    unsigned in_prim_idx;
    unsigned input_vertex_stride;
@@ -113,15 +109,14 @@ struct draw_geometry_shader {
                         unsigned num_vertices,
                         unsigned prim_idx);
    void (*fetch_outputs)(struct draw_geometry_shader *shader,
-                         unsigned vertex_stream,
                          unsigned num_primitives,
                          float (**p_output)[4]);
 
    void     (*prepare)(struct draw_geometry_shader *shader,
                        const void *constants[PIPE_MAX_CONSTANT_BUFFERS], 
                        const unsigned constants_size[PIPE_MAX_CONSTANT_BUFFERS]);
-   void (*run)(struct draw_geometry_shader *shader,
-               unsigned input_primitives, unsigned *out_prims);
+   unsigned (*run)(struct draw_geometry_shader *shader,
+                   unsigned input_primitives);
 };
 
 void draw_geometry_shader_new_instance(struct draw_geometry_shader *gs);

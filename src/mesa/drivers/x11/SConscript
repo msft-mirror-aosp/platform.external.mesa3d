@@ -21,8 +21,6 @@ env.Prepend(LIBS = [
     compiler,
     glsl,
     mesa,
-    spirv,
-    nir,
 ])
 
 sources = [

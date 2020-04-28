@@ -1,36 +1,35 @@
 /******************************************************************************
- * Copyright (C) 2015-2018 Intel Corporation.   All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
- *
- * @file ${filename}.h
- *
- * @brief Dynamic Knobs for Core.
- *
- * ======================= AUTO GENERATED: DO NOT EDIT !!! ====================
- *
- * Generation Command Line:
- *  ${'\n *    '.join(cmdline)}
- *
- ******************************************************************************/
-// clang-format off
+* Copyright (C) 2015-2017 Intel Corporation.   All Rights Reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice (including the next
+* paragraph) shall be included in all copies or substantial portions of the
+* Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+* IN THE SOFTWARE.
+*
+* @file ${filename}.h
+*
+* @brief Dynamic Knobs for Core.
+*
+* ======================= AUTO GENERATED: DO NOT EDIT !!! ====================
+*
+* Generation Command Line:
+*  ${'\n*    '.join(cmdline)}
+*
+******************************************************************************/
 <% calc_max_knob_len(knobs) %>
 #pragma once
 #include <string>
@@ -39,11 +38,11 @@ struct KnobBase
 {
 private:
     // Update the input string.
-    static void autoExpandEnvironmentVariables(std::string& text);
+    static void autoExpandEnvironmentVariables(std::string &text);
 
 protected:
     // Leave input alone and return new string.
-    static std::string expandEnvironmentVariables(std::string const& input)
+    static std::string expandEnvironmentVariables(std::string const &input)
     {
         std::string text = input;
         autoExpandEnvironmentVariables(text);
@@ -51,7 +50,7 @@ protected:
     }
 
     template <typename T>
-    static T expandEnvironmentVariables(T const& input)
+    static T expandEnvironmentVariables(T const &input)
     {
         return input;
     }
@@ -61,8 +60,8 @@ template <typename T>
 struct Knob : KnobBase
 {
 public:
-    const T& Value() const { return m_Value; }
-    const T& Value(T const& newValue)
+    const   T&  Value() const               { return m_Value; }
+    const   T&  Value(T const &newValue)
     {
         m_Value = expandEnvironmentVariables(newValue);
         return Value();
@@ -72,7 +71,7 @@ private:
     T m_Value;
 };
 
-#define DEFINE_KNOB(_name, _type)                               \\
+#define DEFINE_KNOB(_name, _type, _default)                     \\
 
     struct Knob_##_name : Knob<_type>                           \\
 
@@ -80,11 +79,7 @@ private:
 
         static const char* Name() { return "KNOB_" #_name; }    \\
 
-        static _type DefaultValue() { return (m_default); }     \\
-
-    private:                                                    \\
-
-        static _type m_default;                                 \\
+        static _type DefaultValue() { return (_default); }      \\
 
     } _name;
 
@@ -109,7 +104,11 @@ struct GlobalKnobs
     % endfor
     % endif
     //
-    DEFINE_KNOB(${knob[0]}, ${knob[1]['type']});
+    % if knob[1]['type'] == 'std::string':
+    DEFINE_KNOB(${knob[0]}, ${knob[1]['type']}, "${repr(knob[1]['default'])[1:-1]}");
+    % else:
+    DEFINE_KNOB(${knob[0]}, ${knob[1]['type']}, ${knob[1]['default']});
+    % endif
 
     % endfor
 
@@ -151,4 +150,3 @@ extern GlobalKnobs g_GlobalKnobs;
         name_len = len(name)
         return ' '*(max_len - name_len)
 %>
-// clang-format on

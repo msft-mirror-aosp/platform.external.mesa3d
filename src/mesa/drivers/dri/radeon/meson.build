@@ -82,3 +82,6 @@ libr100 = static_library(
   cpp_args : [cpp_vis_args],
   dependencies : [dep_libdrm, dep_libdrm_radeon],
 )
+
+dri_drivers += libr100
+dri_link += 'radeon_dri.so'

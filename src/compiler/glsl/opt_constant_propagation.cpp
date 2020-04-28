@@ -77,6 +77,23 @@ public:
 };
 
 
+class kill_entry : public exec_node
+{
+public:
+   /* override operator new from exec_node */
+   DECLARE_LINEAR_ZALLOC_CXX_OPERATORS(kill_entry)
+
+   kill_entry(ir_variable *var, unsigned write_mask)
+   {
+      assert(var);
+      this->var = var;
+      this->write_mask = write_mask;
+   }
+
+   ir_variable *var;
+   unsigned write_mask;
+};
+
 class ir_constant_propagation_visitor : public ir_rvalue_visitor {
 public:
    ir_constant_propagation_visitor()
@@ -86,7 +103,8 @@ public:
       mem_ctx = ralloc_context(0);
       this->lin_ctx = linear_alloc_parent(this->mem_ctx, 0);
       this->acp = new(mem_ctx) exec_list;
-      this->kills = _mesa_pointer_hash_table_create(mem_ctx);
+      this->kills = _mesa_hash_table_create(mem_ctx, _mesa_hash_pointer,
+                                            _mesa_key_pointer_equal);
    }
    ~ir_constant_propagation_visitor()
    {
@@ -104,15 +122,15 @@ public:
    void constant_folding(ir_rvalue **rvalue);
    void constant_propagation(ir_rvalue **rvalue);
    void kill(ir_variable *ir, unsigned write_mask);
-   void handle_if_block(exec_list *instructions, hash_table *kills, bool *killed_all);
-   void handle_loop(class ir_loop *, bool keep_acp);
+   void handle_if_block(exec_list *instructions);
    void handle_rvalue(ir_rvalue **rvalue);
 
    /** List of acp_entry: The available constants to propagate */
    exec_list *acp;
 
    /**
-    * Hash table of killed entries: maps variables to the mask of killed channels.
+    * Hash table of kill_entry: The masks of variables whose values were
+    * killed in this block.
     */
    hash_table *kills;
 
@@ -255,7 +273,8 @@ ir_constant_propagation_visitor::visit_enter(ir_function_signature *ir)
    bool orig_killed_all = this->killed_all;
 
    this->acp = new(mem_ctx) exec_list;
-   this->kills = _mesa_pointer_hash_table_create(mem_ctx);
+   this->kills = _mesa_hash_table_create(mem_ctx, _mesa_hash_pointer,
+                                         _mesa_key_pointer_equal);
    this->killed_all = false;
 
    visit_list_elements(this, &ir->body);
@@ -337,14 +356,15 @@ ir_constant_propagation_visitor::visit_enter(ir_call *ir)
 }
 
 void
-ir_constant_propagation_visitor::handle_if_block(exec_list *instructions, hash_table *kills, bool *killed_all)
+ir_constant_propagation_visitor::handle_if_block(exec_list *instructions)
 {
    exec_list *orig_acp = this->acp;
    hash_table *orig_kills = this->kills;
    bool orig_killed_all = this->killed_all;
 
    this->acp = new(mem_ctx) exec_list;
-   this->kills = kills;
+   this->kills = _mesa_hash_table_create(mem_ctx, _mesa_hash_pointer,
+                                         _mesa_key_pointer_equal);
    this->killed_all = false;
 
    /* Populate the initial acp with a constant of the original */
@@ -354,10 +374,20 @@ ir_constant_propagation_visitor::handle_if_block(exec_list *instructions, hash_t
 
    visit_list_elements(this, instructions);
 
-   *killed_all = this->killed_all;
+   if (this->killed_all) {
+      orig_acp->make_empty();
+   }
+
+   hash_table *new_kills = this->kills;
    this->kills = orig_kills;
    this->acp = orig_acp;
-   this->killed_all = orig_killed_all;
+   this->killed_all = this->killed_all || orig_killed_all;
+
+   hash_entry *htk;
+   hash_table_foreach(new_kills, htk) {
+      kill_entry *k = (kill_entry *) htk->data;
+      kill(k->var, k->write_mask);
+   }
 }
 
 ir_visitor_status
@@ -366,43 +396,28 @@ ir_constant_propagation_visitor::visit_enter(ir_if *ir)
    ir->condition->accept(this);
    handle_rvalue(&ir->condition);
 
-   hash_table *new_kills = _mesa_pointer_hash_table_create(mem_ctx);
-   bool then_killed_all = false;
-   bool else_killed_all = false;
-
-   handle_if_block(&ir->then_instructions, new_kills, &then_killed_all);
-   handle_if_block(&ir->else_instructions, new_kills, &else_killed_all);
-
-   if (then_killed_all || else_killed_all) {
-      acp->make_empty();
-      killed_all = true;
-   } else {
-      hash_table_foreach(new_kills, htk)
-         kill((ir_variable *) htk->key, (uintptr_t) htk->data);
-   }
-
-   _mesa_hash_table_destroy(new_kills, NULL);
+   handle_if_block(&ir->then_instructions);
+   handle_if_block(&ir->else_instructions);
 
    /* handle_if_block() already descended into the children. */
    return visit_continue_with_parent;
 }
 
-void
-ir_constant_propagation_visitor::handle_loop(ir_loop *ir, bool keep_acp)
+ir_visitor_status
+ir_constant_propagation_visitor::visit_enter(ir_loop *ir)
 {
    exec_list *orig_acp = this->acp;
    hash_table *orig_kills = this->kills;
    bool orig_killed_all = this->killed_all;
 
+   /* FINISHME: For now, the initial acp for loops is totally empty.
+    * We could go through once, then go through again with the acp
+    * cloned minus the killed entries after the first run through.
+    */
    this->acp = new(mem_ctx) exec_list;
-   this->kills = _mesa_pointer_hash_table_create(mem_ctx);
+   this->kills = _mesa_hash_table_create(mem_ctx, _mesa_hash_pointer,
+                                         _mesa_key_pointer_equal);
    this->killed_all = false;
-
-   if (keep_acp) {
-      foreach_in_list(acp_entry, a, orig_acp) {
-         this->acp->push_tail(new(this->lin_ctx) acp_entry(a));
-      }
-   }
 
    visit_list_elements(this, &ir->body_instructions);
 
@@ -415,23 +430,11 @@ ir_constant_propagation_visitor::handle_loop(ir_loop *ir, bool keep_acp)
    this->acp = orig_acp;
    this->killed_all = this->killed_all || orig_killed_all;
 
+   hash_entry *htk;
    hash_table_foreach(new_kills, htk) {
-      kill((ir_variable *) htk->key, (uintptr_t) htk->data);
+      kill_entry *k = (kill_entry *) htk->data;
+      kill(k->var, k->write_mask);
    }
-}
-
-ir_visitor_status
-ir_constant_propagation_visitor::visit_enter(ir_loop *ir)
-{
-   /* Make a conservative first pass over the loop with an empty ACP set.
-    * This also removes any killed entries from the original ACP set.
-    */
-   handle_loop(ir, false);
-
-   /* Then, run it again with the real ACP set, minus any killed entries.
-    * This takes care of propagating values from before the loop into it.
-    */
-   handle_loop(ir, true);
 
    /* already descended into the children. */
    return visit_continue_with_parent;
@@ -460,12 +463,13 @@ ir_constant_propagation_visitor::kill(ir_variable *var, unsigned write_mask)
     */
    hash_entry *kill_hash_entry = _mesa_hash_table_search(this->kills, var);
    if (kill_hash_entry) {
-      uintptr_t new_write_mask = ((uintptr_t) kill_hash_entry->data) | write_mask;
-      kill_hash_entry->data = (void *) new_write_mask;
+      kill_entry *entry = (kill_entry *) kill_hash_entry->data;
+      entry->write_mask |= write_mask;
       return;
    }
    /* Not already in the hash table.  Make new entry. */
-   _mesa_hash_table_insert(this->kills, var, (void *) uintptr_t(write_mask));
+   _mesa_hash_table_insert(this->kills, var,
+                           new(this->lin_ctx) kill_entry(var, write_mask));
 }
 
 /**

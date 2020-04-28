@@ -196,10 +196,8 @@ hud_diskstat_graph_install(struct hud_pane *pane, const char *dev_name,
    else if (dsi->mode == DISKSTAT_WR) {
       snprintf(gr->name, sizeof(gr->name), "%s-Write-MB/s", dsi->name);
    }
-   else {
-      free(gr);
+   else
       return;
-   }
 
    gr->query_data = dsi;
    gr->query_new_value = query_dsi_load;
@@ -213,7 +211,7 @@ add_object_part(const char *basename, const char *name, int objmode)
 {
    struct diskstat_info *dsi = CALLOC_STRUCT(diskstat_info);
 
-   snprintf(dsi->name, sizeof(dsi->name), "%s", name);
+   strcpy(dsi->name, name);
    snprintf(dsi->sysfs_filename, sizeof(dsi->sysfs_filename), "%s/%s/stat",
       basename, name);
    dsi->mode = objmode;
@@ -226,7 +224,7 @@ add_object(const char *basename, const char *name, int objmode)
 {
    struct diskstat_info *dsi = CALLOC_STRUCT(diskstat_info);
 
-   snprintf(dsi->name, sizeof(dsi->name), "%s", name);
+   strcpy(dsi->name, name);
    snprintf(dsi->sysfs_filename, sizeof(dsi->sysfs_filename), "%s/stat",
       basename);
    dsi->mode = objmode;

@@ -185,8 +185,6 @@ const char *tgsi_interpolate_locations[TGSI_INTERPOLATE_LOC_COUNT] =
    "SAMPLE",
 };
 
-const char *tgsi_invariant_name = "INVARIANT";
-
 const char *tgsi_primitive_names[PIPE_PRIM_MAX] =
 {
    "POINTS",
@@ -228,16 +226,15 @@ const char *tgsi_immediate_type_names[6] =
    "INT64",
 };
 
-const char *tgsi_memory_names[4] =
+const char *tgsi_memory_names[3] =
 {
    "COHERENT",
    "RESTRICT",
    "VOLATILE",
-   "STREAM_CACHE_POLICY",
 };
 
 
-UNUSED static inline void
+static inline void
 tgsi_strings_check(void)
 {
    STATIC_ASSERT(ARRAY_SIZE(tgsi_semantic_names) == TGSI_SEMANTIC_COUNT);

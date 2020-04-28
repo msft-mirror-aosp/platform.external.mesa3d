@@ -2,7 +2,6 @@
 #include "g_egldispatchstubs.h"
 
 #include <string.h>
-#include <stdlib.h>
 
 #include "eglcurrent.h"
 
@@ -11,21 +10,26 @@ static const __EGLapiExports *exports;
 const int __EGL_DISPATCH_FUNC_COUNT = __EGL_DISPATCH_COUNT;
 int __EGL_DISPATCH_FUNC_INDICES[__EGL_DISPATCH_COUNT + 1];
 
-static int Compare(const void *l, const void *r)
-{
-    const char *s = *(const char **)r;
-    return strcmp(l, s);
-}
-
 static int FindProcIndex(const char *name)
 {
-    const char **match = bsearch(name, __EGL_DISPATCH_FUNC_NAMES,
-            __EGL_DISPATCH_COUNT, sizeof(const char *), Compare);
+    unsigned first = 0;
+    unsigned last = __EGL_DISPATCH_COUNT - 1;
 
-    if (match == NULL)
-        return __EGL_DISPATCH_COUNT;
+    while (first <= last) {
+        unsigned middle = (first + last) / 2;
+        int comp = strcmp(name,
+                          __EGL_DISPATCH_FUNC_NAMES[middle]);
 
-    return match - __EGL_DISPATCH_FUNC_NAMES;
+        if (comp > 0)
+            first = middle + 1;
+        else if (comp < 0)
+            last = middle - 1;
+        else
+            return middle;
+    }
+
+    /* Just point to the dummy entry at the end of the respective table */
+    return __EGL_DISPATCH_COUNT;
 }
 
 void __eglInitDispatchStubs(const __EGLapiExports *exportsTable)
@@ -59,11 +63,6 @@ static __eglMustCastToProperFunctionPointerType FetchVendorFunc(__EGLvendorInfo 
     }
     if (func == NULL) {
         if (errorCode != EGL_SUCCESS) {
-            // Since we have no vendor, the follow-up eglGetError() call will
-            // end up using the GLVND error code. Set it here.
-            if (vendor == NULL) {
-                exports->setEGLError(errorCode);
-            }
             _eglError(errorCode, __EGL_DISPATCH_FUNC_NAMES[index]);
         }
         return NULL;

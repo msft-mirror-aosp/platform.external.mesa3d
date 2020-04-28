@@ -24,8 +24,6 @@
 #ifndef BULITIN_FUNCTIONS_H
 #define BULITIN_FUNCTIONS_H
 
-struct gl_shader;
-
 extern void
 _mesa_glsl_initialize_builtin_functions();
 

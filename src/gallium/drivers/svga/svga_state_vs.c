@@ -105,9 +105,6 @@ get_compiled_dummy_vertex_shader(struct svga_context *svga,
    FREE((void *) vs->base.tokens);
    vs->base.tokens = dummy;
 
-   tgsi_scan_shader(vs->base.tokens, &vs->base.info);
-   vs->generic_outputs = svga_get_generic_outputs_mask(&vs->base.info);
-
    variant = translate_vertex_program(svga, vs, key);
    return variant;
 }
@@ -138,7 +135,7 @@ compile_vs(struct svga_context *svga,
                    (unsigned) (variant->nr_tokens
                                * sizeof(variant->tokens[0])));
       /* Free the too-large variant */
-      svga_destroy_shader_variant(svga, variant);
+      svga_destroy_shader_variant(svga, SVGA3D_SHADERTYPE_VS, variant);
       /* Use simple pass-through shader instead */
       variant = get_compiled_dummy_vertex_shader(svga, vs, key);
    }
@@ -147,9 +144,9 @@ compile_vs(struct svga_context *svga,
       return PIPE_ERROR;
    }
 
-   ret = svga_define_shader(svga, variant);
+   ret = svga_define_shader(svga, SVGA3D_SHADERTYPE_VS, variant);
    if (ret != PIPE_OK) {
-      svga_destroy_shader_variant(svga, variant);
+      svga_destroy_shader_variant(svga, SVGA3D_SHADERTYPE_VS, variant);
       return ret;
    }
 
@@ -227,15 +224,16 @@ svga_reemit_vs_bindings(struct svga_context *svga)
    if (!svga_need_to_rebind_resources(svga)) {
       ret =  svga->swc->resource_rebind(svga->swc, NULL, gbshader,
                                         SVGA_RELOC_READ);
-   }
-   else {
-      if (svga_have_vgpu10(svga))
-         ret = SVGA3D_vgpu10_SetShader(svga->swc, SVGA3D_SHADERTYPE_VS,
-                                       gbshader, shaderId);
-      else
-         ret = SVGA3D_SetGBShader(svga->swc, SVGA3D_SHADERTYPE_VS, gbshader);
+      goto out;
    }
 
+   if (svga_have_vgpu10(svga))
+      ret = SVGA3D_vgpu10_SetShader(svga->swc, SVGA3D_SHADERTYPE_VS,
+                                    gbshader, shaderId);
+   else
+      ret = SVGA3D_SetGBShader(svga->swc, SVGA3D_SHADERTYPE_VS, gbshader);
+
+ out:
    if (ret != PIPE_OK)
       return ret;
 

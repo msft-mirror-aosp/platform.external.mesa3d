@@ -21,11 +21,7 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#undef NDEBUG
-
 #include "hash_table.h"
-
-#define SIZE 1000
 
 static void *make_key(uint32_t i)
 {
@@ -57,12 +53,14 @@ static void delete_function(struct hash_entry *entry)
 int main()
 {
    struct hash_table *ht;
-   bool flags[SIZE];
+   struct hash_entry *entry;
+   const uint32_t size = 1000;
+   bool flags[size];
    uint32_t i;
 
    ht = _mesa_hash_table_create(NULL, key_hash, key_equal);
 
-   for (i = 0; i < SIZE; ++i) {
+   for (i = 0; i < size; ++i) {
       flags[i] = false;
       _mesa_hash_table_insert(ht, make_key(i), &flags[i]);
    }
@@ -72,19 +70,19 @@ int main()
 
    /* Check that delete_function was called and that repopulating the table
     * works. */
-   for (i = 0; i < SIZE; ++i) {
+   for (i = 0; i < size; ++i) {
       assert(flags[i]);
       flags[i] = false;
       _mesa_hash_table_insert(ht, make_key(i), &flags[i]);
    }
 
    /* Check that exactly the right set of entries is in the table. */
-   for (i = 0; i < SIZE; ++i) {
+   for (i = 0; i < size; ++i) {
       assert(_mesa_hash_table_search(ht, make_key(i)));
    }
 
    hash_table_foreach(ht, entry) {
-      assert(key_id(entry->key) < SIZE);
+      assert(key_id(entry->key) < size);
    }
 
    _mesa_hash_table_destroy(ht, NULL);

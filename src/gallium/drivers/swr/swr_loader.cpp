@@ -21,7 +21,6 @@
  * IN THE SOFTWARE.
  ***************************************************************************/
 
-#include "memory/InitMemory.h"
 #include "util/u_cpu_detect.h"
 #include "util/u_dl.h"
 #include "swr_public.h"
@@ -36,7 +35,6 @@ swr_initialize_screen_interface(struct swr_screen *screen, const char arch[])
 #ifdef HAVE_SWR_BUILTIN
    screen->pLibrary = NULL;
    screen->pfnSwrGetInterface = SwrGetInterface;
-   InitTilesTable();
    fprintf(stderr, "(using: builtin).\n");
 #else
    char filename[256] = { 0 };
@@ -50,9 +48,7 @@ swr_initialize_screen_interface(struct swr_screen *screen, const char arch[])
 
    util_dl_proc pApiProc = util_dl_get_proc_address(screen->pLibrary,
       "SwrGetInterface");
-   util_dl_proc pInitFunc = util_dl_get_proc_address(screen->pLibrary,
-      "InitTilesTable");
-   if (!pApiProc || !pInitFunc) {
+   if (!pApiProc) {
       fprintf(stderr, "(skipping: %s).\n", util_dl_error());
       util_dl_close(screen->pLibrary);
       screen->pLibrary = NULL;
@@ -60,8 +56,6 @@ swr_initialize_screen_interface(struct swr_screen *screen, const char arch[])
    }
 
    screen->pfnSwrGetInterface = (PFNSwrGetInterface)pApiProc;
-   pInitFunc();
-
    fprintf(stderr, "(using: %s).\n", filename);
 #endif
    return true;

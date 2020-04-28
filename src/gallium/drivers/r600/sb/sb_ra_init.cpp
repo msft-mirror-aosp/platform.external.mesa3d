@@ -545,13 +545,10 @@ void ra_split::split_phi_src(container_node *loc, container_node *c,
 			continue;
 
 		value *t = sh.create_temp_value();
-		alu_node* n = sh.create_copy_mov(t, v);
-		if (loop)
-			n->flags |= NF_DONT_MOVE;
 		if (loop && id == 0)
-			loc->insert_before(n);
+			loc->insert_before(sh.create_copy_mov(t, v));
 		else
-			loc->push_back(n);
+			loc->push_back(sh.create_copy_mov(t, v));
 		v = t;
 
 		sh.coal.add_edge(v, d, coalescer::phi_cost);
@@ -569,10 +566,9 @@ void ra_split::split_phi_dst(node* loc, container_node *c, bool loop) {
 
 		value *t = sh.create_temp_value();
 		node *cp = sh.create_copy_mov(v, t);
-		if (loop) {
-			cp->flags |= NF_DONT_MOVE;
+		if (loop)
 			static_cast<container_node*>(loc)->push_front(cp);
-		} else
+		else
 			loc->insert_after(cp);
 		v = t;
 	}
@@ -712,7 +708,7 @@ void ra_split::split_vec(vvec &vv, vvec &v1, vvec &v2, bool allow_swz) {
 
 			assert(!o->is_dead());
 
-			if (o->is_undef() || o->is_geometry_emit() || o->is_scratch())
+			if (o->is_undef() || o->is_geometry_emit())
 				continue;
 
 			if (allow_swz && o->is_float_0_or_1())

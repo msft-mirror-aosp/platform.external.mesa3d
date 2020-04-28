@@ -31,6 +31,7 @@
 #include "imports.h"
 #include "queryobj.h"
 #include "mtypes.h"
+#include "main/dispatch.h"
 
 
 /**
@@ -146,10 +147,11 @@ static struct gl_query_object **
 get_pipe_stats_binding_point(struct gl_context *ctx,
                              GLenum target)
 {
-   const int which = target - GL_VERTICES_SUBMITTED;
+   const int which = target - GL_VERTICES_SUBMITTED_ARB;
    assert(which < MAX_PIPELINE_STATISTICS);
 
-   if (!_mesa_has_ARB_pipeline_statistics_query(ctx))
+   if (!_mesa_is_desktop_gl(ctx) ||
+       !ctx->Extensions.ARB_pipeline_statistics_query)
       return NULL;
 
    return &ctx->Query.pipeline_stats[which];
@@ -163,80 +165,89 @@ get_pipe_stats_binding_point(struct gl_context *ctx,
 static struct gl_query_object **
 get_query_binding_point(struct gl_context *ctx, GLenum target, GLuint index)
 {
+
+   /* From GL_EXT_occlusion_query_boolean spec:
+    *
+    *    "Accepted by the <target> parameter of BeginQueryEXT, EndQueryEXT,
+    *    and GetQueryivEXT:
+    *
+    *   ANY_SAMPLES_PASSED_EXT                         0x8C2F
+    *   ANY_SAMPLES_PASSED_CONSERVATIVE_EXT            0x8D6A"
+    */
+   if ((_mesa_is_gles(ctx) && ctx->Version == 20) &&
+       (target != GL_ANY_SAMPLES_PASSED &&
+        target != GL_ANY_SAMPLES_PASSED_CONSERVATIVE))
+      return NULL;
+
    switch (target) {
-   case GL_SAMPLES_PASSED:
-      if (_mesa_has_ARB_occlusion_query(ctx) ||
-          _mesa_has_ARB_occlusion_query2(ctx))
+   case GL_SAMPLES_PASSED_ARB:
+      if (ctx->Extensions.ARB_occlusion_query)
          return &ctx->Query.CurrentOcclusionObject;
       else
          return NULL;
    case GL_ANY_SAMPLES_PASSED:
-      if (_mesa_has_ARB_occlusion_query2(ctx) ||
-          _mesa_has_EXT_occlusion_query_boolean(ctx))
+      if (ctx->Extensions.ARB_occlusion_query2)
          return &ctx->Query.CurrentOcclusionObject;
       else
          return NULL;
    case GL_ANY_SAMPLES_PASSED_CONSERVATIVE:
-      if (_mesa_has_ARB_ES3_compatibility(ctx) ||
-          _mesa_has_EXT_occlusion_query_boolean(ctx))
+      if (ctx->Extensions.ARB_ES3_compatibility
+          || (ctx->API == API_OPENGLES2 && ctx->Version >= 30))
          return &ctx->Query.CurrentOcclusionObject;
       else
          return NULL;
-   case GL_TIME_ELAPSED:
-      if (_mesa_has_EXT_timer_query(ctx) ||
-          _mesa_has_EXT_disjoint_timer_query(ctx))
+   case GL_TIME_ELAPSED_EXT:
+      if (ctx->Extensions.EXT_timer_query)
          return &ctx->Query.CurrentTimerObject;
       else
          return NULL;
    case GL_PRIMITIVES_GENERATED:
-      if (_mesa_has_EXT_transform_feedback(ctx) ||
-          _mesa_has_EXT_tessellation_shader(ctx) ||
-          _mesa_has_OES_geometry_shader(ctx))
+      if (ctx->Extensions.EXT_transform_feedback)
          return &ctx->Query.PrimitivesGenerated[index];
       else
          return NULL;
    case GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN:
-      if (_mesa_has_EXT_transform_feedback(ctx) || _mesa_is_gles3(ctx))
+      if (ctx->Extensions.EXT_transform_feedback)
          return &ctx->Query.PrimitivesWritten[index];
       else
          return NULL;
-   case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW:
-      if (_mesa_has_ARB_transform_feedback_overflow_query(ctx))
+   case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB:
+      if (ctx->Extensions.ARB_transform_feedback_overflow_query)
          return &ctx->Query.TransformFeedbackOverflow[index];
       else
          return NULL;
-   case GL_TRANSFORM_FEEDBACK_OVERFLOW:
-      if (_mesa_has_ARB_transform_feedback_overflow_query(ctx))
+   case GL_TRANSFORM_FEEDBACK_OVERFLOW_ARB:
+      if (ctx->Extensions.ARB_transform_feedback_overflow_query)
          return &ctx->Query.TransformFeedbackOverflowAny;
       else
          return NULL;
 
-   case GL_VERTICES_SUBMITTED:
-   case GL_PRIMITIVES_SUBMITTED:
-   case GL_VERTEX_SHADER_INVOCATIONS:
-   case GL_FRAGMENT_SHADER_INVOCATIONS:
-   case GL_CLIPPING_INPUT_PRIMITIVES:
-   case GL_CLIPPING_OUTPUT_PRIMITIVES:
+   case GL_VERTICES_SUBMITTED_ARB:
+   case GL_PRIMITIVES_SUBMITTED_ARB:
+   case GL_VERTEX_SHADER_INVOCATIONS_ARB:
+   case GL_FRAGMENT_SHADER_INVOCATIONS_ARB:
+   case GL_CLIPPING_INPUT_PRIMITIVES_ARB:
+   case GL_CLIPPING_OUTPUT_PRIMITIVES_ARB:
          return get_pipe_stats_binding_point(ctx, target);
 
    case GL_GEOMETRY_SHADER_INVOCATIONS:
       /* GL_GEOMETRY_SHADER_INVOCATIONS is defined in a non-sequential order */
-      target = GL_VERTICES_SUBMITTED + MAX_PIPELINE_STATISTICS - 1;
+      target = GL_VERTICES_SUBMITTED_ARB + MAX_PIPELINE_STATISTICS - 1;
       /* fallthrough */
-   case GL_GEOMETRY_SHADER_PRIMITIVES_EMITTED:
+   case GL_GEOMETRY_SHADER_PRIMITIVES_EMITTED_ARB:
       if (_mesa_has_geometry_shaders(ctx))
          return get_pipe_stats_binding_point(ctx, target);
       else
          return NULL;
 
-   case GL_TESS_CONTROL_SHADER_PATCHES:
-   case GL_TESS_EVALUATION_SHADER_INVOCATIONS:
+   case GL_TESS_CONTROL_SHADER_PATCHES_ARB:
+   case GL_TESS_EVALUATION_SHADER_INVOCATIONS_ARB:
       if (_mesa_has_tessellation(ctx))
          return get_pipe_stats_binding_point(ctx, target);
       else
          return NULL;
 
-   case GL_COMPUTE_SHADER_INVOCATIONS:
+   case GL_COMPUTE_SHADER_INVOCATIONS_ARB:
       if (_mesa_has_compute_shaders(ctx))
          return get_pipe_stats_binding_point(ctx, target);
       else
@@ -306,8 +317,8 @@ _mesa_CreateQueries(GLenum target, GLsizei n, GLuint *ids)
    case GL_TIMESTAMP:
    case GL_PRIMITIVES_GENERATED:
    case GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN:
-   case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW:
-   case GL_TRANSFORM_FEEDBACK_OVERFLOW:
+   case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB:
+   case GL_TRANSFORM_FEEDBACK_OVERFLOW_ARB:
       break;
    default:
       _mesa_error(ctx, GL_INVALID_ENUM, "glCreateQueries(invalid target = %s)",
@@ -383,7 +394,7 @@ query_error_check_index(struct gl_context *ctx, GLenum target, GLuint index)
    switch (target) {
    case GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN:
    case GL_PRIMITIVES_GENERATED:
-   case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW:
+   case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB:
       if (index >= ctx->Const.MaxVertexStreams) {
          _mesa_error(ctx, GL_INVALID_VALUE,
                      "glBeginQueryIndexed(index>=MaxVertexStreams)");
@@ -666,8 +677,7 @@ _mesa_GetQueryIndexediv(GLenum target, GLuint index, GLenum pname,
    }
 
    if (target == GL_TIMESTAMP) {
-      if (!_mesa_has_ARB_timer_query(ctx) &&
-          !_mesa_has_EXT_disjoint_timer_query(ctx)) {
+      if (!ctx->Extensions.ARB_timer_query) {
          _mesa_error(ctx, GL_INVALID_ENUM, "glGetQueryARB(target)");
          return;
       }
@@ -683,13 +693,12 @@ _mesa_GetQueryIndexediv(GLenum target, GLuint index, GLenum pname,
    }
 
    switch (pname) {
-      case GL_QUERY_COUNTER_BITS:
+      case GL_QUERY_COUNTER_BITS_ARB:
          switch (target) {
          case GL_SAMPLES_PASSED:
             *params = ctx->Const.QueryCounterBits.SamplesPassed;
             break;
          case GL_ANY_SAMPLES_PASSED:
-         case GL_ANY_SAMPLES_PASSED_CONSERVATIVE:
             /* The minimum value of this is 1 if it's nonzero, and the value
              * is only ever GL_TRUE or GL_FALSE, so no sense in reporting more
              * bits.
@@ -708,45 +717,45 @@ _mesa_GetQueryIndexediv(GLenum target, GLuint index, GLenum pname,
          case GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN:
             *params = ctx->Const.QueryCounterBits.PrimitivesWritten;
             break;
-         case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW:
-         case GL_TRANSFORM_FEEDBACK_OVERFLOW:
+         case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB:
+         case GL_TRANSFORM_FEEDBACK_OVERFLOW_ARB:
             /* The minimum value of this is 1 if it's nonzero, and the value
              * is only ever GL_TRUE or GL_FALSE, so no sense in reporting more
              * bits.
              */
             *params = 1;
             break;
-         case GL_VERTICES_SUBMITTED:
+         case GL_VERTICES_SUBMITTED_ARB:
             *params = ctx->Const.QueryCounterBits.VerticesSubmitted;
             break;
-         case GL_PRIMITIVES_SUBMITTED:
+         case GL_PRIMITIVES_SUBMITTED_ARB:
             *params = ctx->Const.QueryCounterBits.PrimitivesSubmitted;
             break;
-         case GL_VERTEX_SHADER_INVOCATIONS:
+         case GL_VERTEX_SHADER_INVOCATIONS_ARB:
             *params = ctx->Const.QueryCounterBits.VsInvocations;
             break;
-         case GL_TESS_CONTROL_SHADER_PATCHES:
+         case GL_TESS_CONTROL_SHADER_PATCHES_ARB:
             *params = ctx->Const.QueryCounterBits.TessPatches;
             break;
-         case GL_TESS_EVALUATION_SHADER_INVOCATIONS:
+         case GL_TESS_EVALUATION_SHADER_INVOCATIONS_ARB:
             *params = ctx->Const.QueryCounterBits.TessInvocations;
             break;
          case GL_GEOMETRY_SHADER_INVOCATIONS:
             *params = ctx->Const.QueryCounterBits.GsInvocations;
             break;
-         case GL_GEOMETRY_SHADER_PRIMITIVES_EMITTED:
+         case GL_GEOMETRY_SHADER_PRIMITIVES_EMITTED_ARB:
             *params = ctx->Const.QueryCounterBits.GsPrimitives;
             break;
-         case GL_FRAGMENT_SHADER_INVOCATIONS:
+         case GL_FRAGMENT_SHADER_INVOCATIONS_ARB:
             *params = ctx->Const.QueryCounterBits.FsInvocations;
             break;
-         case GL_COMPUTE_SHADER_INVOCATIONS:
+         case GL_COMPUTE_SHADER_INVOCATIONS_ARB:
             *params = ctx->Const.QueryCounterBits.ComputeInvocations;
             break;
-         case GL_CLIPPING_INPUT_PRIMITIVES:
+         case GL_CLIPPING_INPUT_PRIMITIVES_ARB:
             *params = ctx->Const.QueryCounterBits.ClInPrimitives;
             break;
-         case GL_CLIPPING_OUTPUT_PRIMITIVES:
+         case GL_CLIPPING_OUTPUT_PRIMITIVES_ARB:
             *params = ctx->Const.QueryCounterBits.ClOutPrimitives;
             break;
          default:
@@ -757,7 +766,7 @@ _mesa_GetQueryIndexediv(GLenum target, GLuint index, GLenum pname,
             break;
          }
          break;
-      case GL_CURRENT_QUERY:
+      case GL_CURRENT_QUERY_ARB:
          *params = (q && q->Target == target) ? q->Id : 0;
          break;
       default:
@@ -813,7 +822,8 @@ get_query_object(struct gl_context *ctx, const char *func,
    if (buf && buf != ctx->Shared->NullBufferObj) {
       bool is_64bit = ptype == GL_INT64_ARB ||
          ptype == GL_UNSIGNED_INT64_ARB;
-      if (!_mesa_has_ARB_query_buffer_object(ctx)) {
+      if (!ctx->Extensions.ARB_query_buffer_object &&
+          !ctx->Extensions.EXT_disjoint_timer_query) {
          _mesa_error(ctx, GL_INVALID_OPERATION, "%s(not supported)", func);
          return;
       }
@@ -846,7 +856,7 @@ get_query_object(struct gl_context *ctx, const char *func,
       value = q->Result;
       break;
    case GL_QUERY_RESULT_NO_WAIT:
-      if (!_mesa_has_ARB_query_buffer_object(ctx))
+      if (!ctx->Extensions.ARB_query_buffer_object)
          goto invalid_enum;
       ctx->Driver.CheckQuery(ctx, q);
       if (!q->Ready)

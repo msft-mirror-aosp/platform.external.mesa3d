@@ -24,11 +24,15 @@
 #ifndef DISASM_H_
 #define DISASM_H_
 
-#include <stdio.h>
-#include <stdbool.h>
-
-#include "compiler/shader_enums.h"
-#include "util/u_debug.h"
+enum shader_t {
+	SHADER_VERTEX,
+	SHADER_TCS,
+	SHADER_TES,
+	SHADER_GEOM,
+	SHADER_FRAGMENT,
+	SHADER_COMPUTE,
+	SHADER_MAX,
+};
 
 /* bitmask of debug flags */
 enum debug_t {
@@ -36,8 +40,8 @@ enum debug_t {
 	PRINT_VERBOSE  = 0x2,
 };
 
-int disasm_a2xx(uint32_t *dwords, int sizedwords, int level, gl_shader_stage type);
-int disasm_a3xx(uint32_t *dwords, int sizedwords, int level, FILE *out, unsigned gpu_id);
+int disasm_a2xx(uint32_t *dwords, int sizedwords, int level, enum shader_t type);
+int disasm_a3xx(uint32_t *dwords, int sizedwords, int level, enum shader_t type);
 void disasm_set_debug(enum debug_t debug);
 
 #endif /* DISASM_H_ */

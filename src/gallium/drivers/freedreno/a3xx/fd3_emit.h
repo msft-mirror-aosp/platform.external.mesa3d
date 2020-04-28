@@ -1,3 +1,5 @@
+/* -*- mode: C; c-file-style: "k&r"; tab-width 4; indent-tabs-mode: t; -*- */
+
 /*
  * Copyright (C) 2013 Rob Clark <robclark@freedesktop.org>
  *
@@ -32,7 +34,7 @@
 #include "freedreno_context.h"
 #include "fd3_format.h"
 #include "fd3_program.h"
-#include "ir3_gallium.h"
+#include "ir3_shader.h"
 
 struct fd_ringbuffer;
 
@@ -45,7 +47,6 @@ struct fd3_emit {
 	const struct fd_vertex_state *vtx;
 	const struct fd_program_stateobj *prog;
 	const struct pipe_draw_info *info;
-	bool binning_pass;
 	struct ir3_shader_key key;
 	enum fd_dirty_3d_state dirty;
 
@@ -61,9 +62,8 @@ static inline const struct ir3_shader_variant *
 fd3_emit_get_vp(struct fd3_emit *emit)
 {
 	if (!emit->vp) {
-		struct ir3_shader *shader = emit->prog->vp;
-		emit->vp = ir3_shader_variant(shader, emit->key,
-				emit->binning_pass, emit->debug);
+		struct fd3_shader_stateobj *so = emit->prog->vp;
+		emit->vp = ir3_shader_variant(so->shader, emit->key, emit->debug);
 	}
 	return emit->vp;
 }
@@ -72,14 +72,13 @@ static inline const struct ir3_shader_variant *
 fd3_emit_get_fp(struct fd3_emit *emit)
 {
 	if (!emit->fp) {
-		if (emit->binning_pass) {
+		if (emit->key.binning_pass) {
 			/* use dummy stateobj to simplify binning vs non-binning: */
 			static const struct ir3_shader_variant binning_fp = {};
 			emit->fp = &binning_fp;
 		} else {
-			struct ir3_shader *shader = emit->prog->fp;
-			emit->fp = ir3_shader_variant(shader, emit->key,
-					false, emit->debug);
+			struct fd3_shader_stateobj *so = emit->prog->fp;
+			emit->fp = ir3_shader_variant(so->shader, emit->key, emit->debug);
 		}
 	}
 	return emit->fp;

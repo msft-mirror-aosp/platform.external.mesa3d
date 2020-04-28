@@ -21,9 +21,6 @@
  * IN THE SOFTWARE.
  */
 
-#ifndef IR_BUILDER_H
-#define IR_BUILDER_H
-
 #include "ir.h"
 
 namespace ir_builder {
@@ -239,5 +236,3 @@ ir_if *if_tree(operand condition,
                ir_instruction *else_branch);
 
 } /* namespace ir_builder */
-
-#endif

@@ -507,14 +507,15 @@ end:
 }
 
 
-void lp_scene_begin_binning(struct lp_scene *scene,
-                            struct pipe_framebuffer_state *fb)
+void lp_scene_begin_binning( struct lp_scene *scene,
+                             struct pipe_framebuffer_state *fb, boolean discard )
 {
    int i;
    unsigned max_layer = ~0;
 
    assert(lp_scene_is_empty(scene));
 
+   scene->discard = discard;
    util_copy_framebuffer_state(&scene->fb, fb);
 
    scene->tiles_x = align(fb->width, TILE_SIZE) / TILE_SIZE;

@@ -28,11 +28,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#include "dev/gen_device_info.h"
+#include "common/gen_device_info.h"
 #include "util/hash_table.h"
-#include "util/bitset.h"
-
-#include "drm-uapi/i915_drm.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,8 +39,6 @@ struct gen_spec;
 struct gen_group;
 struct gen_field;
 union gen_field_value;
-
-#define I915_ENGINE_CLASS_TO_MASK(x) BITSET_BIT(x)
 
 static inline uint32_t gen_make_gen(uint32_t major, uint32_t minor)
 {
@@ -56,9 +51,7 @@ struct gen_spec *gen_spec_load_from_path(const struct gen_device_info *devinfo,
                                          const char *path);
 void gen_spec_destroy(struct gen_spec *spec);
 uint32_t gen_spec_get_gen(struct gen_spec *spec);
-struct gen_group *gen_spec_find_instruction(struct gen_spec *spec,
-                                            enum drm_i915_gem_engine_class engine,
-                                            const uint32_t *p);
+struct gen_group *gen_spec_find_instruction(struct gen_spec *spec, const uint32_t *p);
 struct gen_group *gen_spec_find_register(struct gen_spec *spec, uint32_t offset);
 struct gen_group *gen_spec_find_register_by_name(struct gen_spec *spec, const char *name);
 struct gen_enum *gen_spec_find_enum(struct gen_spec *spec, const char *name);
@@ -80,8 +73,7 @@ struct gen_field_iterator {
    const uint32_t *p;
    int p_bit; /**< bit offset into p */
    const uint32_t *p_end;
-   int start_bit; /**< current field starts at this bit offset into p */
-   int end_bit; /**< current field ends at this bit offset into p */
+   int bit; /**< current field starts at this bit offset into p */
 
    int group_iter;
 
@@ -106,15 +98,11 @@ struct gen_group {
    char *name;
 
    struct gen_field *fields; /* linked list of fields */
-   struct gen_field *dword_length_field; /* <instruction> specific */
 
    uint32_t dw_length;
-   uint32_t engine_mask; /* <instruction> specific */
-   uint32_t bias; /* <instruction> specific */
    uint32_t group_offset, group_count;
    uint32_t group_size;
-   bool variable; /* <group> specific */
-   bool fixed_length; /* True for <struct> & <register> */
+   bool variable;
 
    struct gen_group *parent;
    struct gen_group *next;
@@ -122,7 +110,8 @@ struct gen_group {
    uint32_t opcode_mask;
    uint32_t opcode;
 
-   uint32_t register_offset; /* <register> specific */
+   /* Register specific */
+   uint32_t register_offset;
 };
 
 struct gen_value {
@@ -212,16 +201,11 @@ struct gen_batch_decode_bo {
    const void *map;
 };
 
+struct gen_disasm *disasm;
+
 struct gen_batch_decode_ctx {
-   /**
-    * Return information about the buffer containing the given address.
-    *
-    * If the given address is inside a buffer, the map pointer should be
-    * offset accordingly so it points at the data corresponding to address.
-    */
-   struct gen_batch_decode_bo (*get_bo)(void *user_data, bool ppgtt, uint64_t address);
-   unsigned (*get_state_size)(void *user_data,
-                              uint32_t offset_from_dynamic_state_base_addr);
+   struct gen_batch_decode_bo (*get_bo)(void *user_data,
+                                        uint64_t base_address);
    void *user_data;
 
    FILE *fp;
@@ -230,15 +214,9 @@ struct gen_batch_decode_ctx {
 
    struct gen_disasm *disasm;
 
-   uint64_t surface_base;
-   uint64_t dynamic_base;
-   uint64_t instruction_base;
-
-   int max_vbo_decoded_lines;
-
-   enum drm_i915_gem_engine_class engine;
-
-   int n_batch_buffer_start;
+   struct gen_batch_decode_bo surface_base;
+   struct gen_batch_decode_bo dynamic_base;
+   struct gen_batch_decode_bo instruction_base;
 };
 
 void gen_batch_decode_ctx_init(struct gen_batch_decode_ctx *ctx,
@@ -246,17 +224,14 @@ void gen_batch_decode_ctx_init(struct gen_batch_decode_ctx *ctx,
                                FILE *fp, enum gen_batch_decode_flags flags,
                                const char *xml_path,
                                struct gen_batch_decode_bo (*get_bo)(void *,
-                                                                    bool,
                                                                     uint64_t),
-
-                               unsigned (*get_state_size)(void *, uint32_t),
                                void *user_data);
 void gen_batch_decode_ctx_finish(struct gen_batch_decode_ctx *ctx);
 
 
 void gen_print_batch(struct gen_batch_decode_ctx *ctx,
                      const uint32_t *batch, uint32_t batch_size,
-                     uint64_t batch_addr, bool from_ring);
+                     uint64_t batch_addr);
 
 #ifdef __cplusplus
 }

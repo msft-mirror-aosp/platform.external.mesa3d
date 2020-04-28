@@ -392,12 +392,14 @@ _is_target_supported(struct gl_context *ctx, GLenum target)
     *     implementation the "unsupported" answer should be given.
     *     This is not an error."
     *
-    * Note that legality of targets has already been verified.
+    * For OpenGL ES, queries can only be used with GL_RENDERBUFFER or MS.
     */
    switch(target){
    case GL_TEXTURE_1D:
    case GL_TEXTURE_2D:
    case GL_TEXTURE_3D:
+      if (!_mesa_is_desktop_gl(ctx))
+         return false;
       break;
 
    case GL_TEXTURE_1D_ARRAY:
@@ -501,7 +503,8 @@ _is_resource_supported(struct gl_context *ctx, GLenum target,
 
       /* additional checks for compressed textures */
       if (_mesa_is_compressed_format(ctx, internalformat) &&
-          !_mesa_target_can_be_compressed(ctx, target, internalformat, NULL))
+          (!_mesa_target_can_be_compressed(ctx, target, internalformat, NULL) ||
+           _mesa_format_no_online_compression(ctx, internalformat)))
          return false;
 
       break;
@@ -557,29 +560,15 @@ _is_internalformat_supported(struct gl_context *ctx, GLenum target,
     *         implementation accepts it for any texture specification commands, and
     *         - unsized or base internal format, if the implementation accepts
     *         it for texture or image specification.
-    *
-    * But also:
-    * "If the particualar <target> and <internalformat> combination do not make
-    * sense, or if a particular type of <target> is not supported by the
-    * implementation the "unsupported" answer should be given. This is not an
-    * error.
     */
    GLint buffer[1];
 
-   if (target == GL_RENDERBUFFER) {
-      if (_mesa_base_fbo_format(ctx, internalformat) == 0) {
-         return false;
-      }
-   } else if (target == GL_TEXTURE_BUFFER) {
-      if (_mesa_validate_texbuffer_format(ctx, internalformat) ==
-          MESA_FORMAT_NONE) {
-         return false;
-      }
-   } else {
-      if (_mesa_base_tex_format(ctx, internalformat) < 0) {
-         return false;
-      }
-   }
+   /* At this point an internalformat is valid if it is valid as a texture or
+    * as a renderbuffer format. The checks are different because those methods
+    * return different values when passing non supported internalformats */
+   if (_mesa_base_tex_format(ctx, internalformat) < 0 &&
+       _mesa_base_fbo_format(ctx, internalformat) == 0)
+      return false;
 
    /* Let the driver have the final word */
    ctx->Driver.QueryInternalFormat(ctx, target, internalformat,
@@ -713,12 +702,6 @@ _mesa_query_internal_format_default(struct gl_context *ctx, GLenum target,
    case GL_FRAMEBUFFER_RENDERABLE_LAYERED:
    case GL_FRAMEBUFFER_BLEND:
    case GL_FILTER:
-      /*
-       * TODO seems a tad optimistic just saying yes to everything here.
-       * Even for combinations which make no sense...
-       * And things like TESS_CONTROL_TEXTURE should definitely default to
-       * NONE if the driver doesn't even support tessellation...
-       */
       params[0] = GL_FULL_SUPPORT;
       break;
    case GL_NUM_TILING_TYPES_EXT:
@@ -959,6 +942,9 @@ _mesa_GetInternalformativ(GLenum target, GLenum internalformat, GLenum pname,
       mesa_format texformat;
 
       if (target != GL_RENDERBUFFER) {
+         if (!_mesa_legal_get_tex_level_parameter_target(ctx, target, true))
+            goto end;
+
          baseformat = _mesa_base_tex_format(ctx, internalformat);
       } else {
          baseformat = _mesa_base_fbo_format(ctx, internalformat);
@@ -979,7 +965,10 @@ _mesa_GetInternalformativ(GLenum target, GLenum internalformat, GLenum pname,
        * and glGetRenderbufferParameteriv functions.
        */
       if (pname == GL_INTERNALFORMAT_SHARED_SIZE) {
-         if (texformat == MESA_FORMAT_R9G9B9E5_FLOAT) {
+         if (_mesa_has_EXT_texture_shared_exponent(ctx) &&
+             target != GL_TEXTURE_BUFFER &&
+             target != GL_RENDERBUFFER &&
+             texformat == MESA_FORMAT_R9G9B9E5_FLOAT) {
             buffer[0] = 5;
          }
          goto end;
@@ -1241,7 +1230,7 @@ _mesa_GetInternalformativ(GLenum target, GLenum internalformat, GLenum pname,
       break;
 
    case GL_SRGB_WRITE:
-      if (!ctx->Extensions.EXT_sRGB ||
+      if (!_mesa_has_EXT_framebuffer_sRGB(ctx) ||
           !_mesa_is_color_format(internalformat)) {
          goto end;
       }

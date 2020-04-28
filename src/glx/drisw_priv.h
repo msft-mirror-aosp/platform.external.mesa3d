@@ -23,11 +23,6 @@
  * SOFTWARE.
  */
 
-#ifndef DRISW_PRIV_H
-#define DRISW_PRIV_H
-
-#include <X11/extensions/XShm.h>
-
 struct drisw_display
 {
    __GLXDRIdisplay base;
@@ -67,7 +62,6 @@ struct drisw_drawable
    __DRIdrawable *driDrawable;
    XVisualInfo *visinfo;
    XImage *ximage;
-   XShmSegmentInfo shminfo;
 };
 
 _X_HIDDEN int
@@ -76,5 +70,3 @@ drisw_query_renderer_integer(struct glx_screen *base, int attribute,
 _X_HIDDEN int
 drisw_query_renderer_string(struct glx_screen *base, int attribute,
                             const char **value);
-
-#endif

@@ -99,6 +99,9 @@ def generate(env):
             return
 
         env.Prepend(CPPPATH = [os.path.join(llvm_dir, 'include')])
+        env.AppendUnique(CPPDEFINES = [
+            'HAVE_STDINT_H',
+        ])
         env.Prepend(LIBPATH = [os.path.join(llvm_dir, 'lib')])
         # LIBS should match the output of `llvm-config --libs engine mcjit bitwriter x86asmprinter irreader`
         if llvm_version >= distutils.version.LooseVersion('5.0'):
@@ -120,10 +123,6 @@ def generate(env):
                 'LLVMDemangle', 'LLVMGlobalISel', 'LLVMDebugInfoMSF',
                 'LLVMBinaryFormat',
             ])
-            if env['platform'] == 'windows' and env['crosscompile']:
-                # LLVM 5.0 requires MinGW w/ pthreads due to use of std::thread and friends.
-                assert env['gcc']
-                env['CXX'] = env['CXX'] + '-posix'
         elif llvm_version >= distutils.version.LooseVersion('4.0'):
             env.Prepend(LIBS = [
                 'LLVMX86Disassembler', 'LLVMX86AsmParser',
@@ -212,11 +211,8 @@ def generate(env):
             'imagehlp',
             'psapi',
             'shell32',
-            'advapi32',
-            'ole32',
-            'uuid',
+            'advapi32'
         ])
-
         if env['msvc']:
             # Some of the LLVM C headers use the inline keyword without
             # defining it.

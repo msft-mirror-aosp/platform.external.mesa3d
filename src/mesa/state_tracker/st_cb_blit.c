@@ -41,7 +41,6 @@
 #include "st_cb_fbo.h"
 #include "st_manager.h"
 #include "st_scissor.h"
-#include "st_util.h"
 
 #include "util/u_format.h"
 
@@ -175,29 +174,53 @@ st_BlitFramebuffer(struct gl_context *ctx,
    if (mask & GL_COLOR_BUFFER_BIT) {
       struct gl_renderbuffer_attachment *srcAtt =
          &readFB->Attachment[readFB->_ColorReadBufferIndex];
-      GLuint i;
 
       blit.mask = PIPE_MASK_RGBA;
 
       if (srcAtt->Type == GL_TEXTURE) {
          struct st_texture_object *srcObj = st_texture_object(srcAtt->Texture);
+         GLuint i;
 
          if (!srcObj || !srcObj->pt) {
             return;
          }
 
-         blit.src.resource = srcObj->pt;
-         blit.src.level = srcAtt->TextureLevel;
-         blit.src.box.z = srcAtt->Zoffset + srcAtt->CubeMapFace;
-         blit.src.format = srcObj->pt->format;
+         for (i = 0; i < drawFB->_NumColorDrawBuffers; i++) {
+            struct st_renderbuffer *dstRb =
+               st_renderbuffer(drawFB->_ColorDrawBuffers[i]);
 
-         if (!ctx->Color.sRGBEnabled)
-            blit.src.format = util_format_linear(blit.src.format);
+            if (dstRb) {
+               struct pipe_surface *dstSurf;
+
+               st_update_renderbuffer_surface(st, dstRb);
+
+               dstSurf = dstRb->surface;
+
+               if (dstSurf) {
+                  blit.dst.resource = dstSurf->texture;
+                  blit.dst.level = dstSurf->u.tex.level;
+                  blit.dst.box.z = dstSurf->u.tex.first_layer;
+                  blit.dst.format = dstSurf->format;
+
+                  blit.src.resource = srcObj->pt;
+                  blit.src.level = srcAtt->TextureLevel;
+                  blit.src.box.z = srcAtt->Zoffset + srcAtt->CubeMapFace;
+                  blit.src.format = srcObj->pt->format;
+
+                  if (!ctx->Color.sRGBEnabled)
+                     blit.src.format = util_format_linear(blit.src.format);
+
+                  st->pipe->blit(st->pipe, &blit);
+                  dstRb->defined = true; /* front buffer tracking */
+               }
+            }
+         }
       }
       else {
          struct st_renderbuffer *srcRb =
             st_renderbuffer(readFB->_ColorReadBuffer);
          struct pipe_surface *srcSurf;
+         GLuint i;
 
          if (!srcRb)
             return;
@@ -209,31 +232,31 @@ st_BlitFramebuffer(struct gl_context *ctx,
 
          srcSurf = srcRb->surface;
 
-         blit.src.resource = srcSurf->texture;
-         blit.src.level = srcSurf->u.tex.level;
-         blit.src.box.z = srcSurf->u.tex.first_layer;
-         blit.src.format = srcSurf->format;
-      }
+         for (i = 0; i < drawFB->_NumColorDrawBuffers; i++) {
+            struct st_renderbuffer *dstRb =
+               st_renderbuffer(drawFB->_ColorDrawBuffers[i]);
 
-      for (i = 0; i < drawFB->_NumColorDrawBuffers; i++) {
-         struct st_renderbuffer *dstRb =
-            st_renderbuffer(drawFB->_ColorDrawBuffers[i]);
+            if (dstRb) {
+               struct pipe_surface *dstSurf;
 
-         if (dstRb) {
-            struct pipe_surface *dstSurf;
+               st_update_renderbuffer_surface(st, dstRb);
 
-            st_update_renderbuffer_surface(st, dstRb);
+               dstSurf = dstRb->surface;
 
-            dstSurf = dstRb->surface;
+               if (dstSurf) {
+                  blit.dst.resource = dstSurf->texture;
+                  blit.dst.level = dstSurf->u.tex.level;
+                  blit.dst.box.z = dstSurf->u.tex.first_layer;
+                  blit.dst.format = dstSurf->format;
 
-            if (dstSurf) {
-               blit.dst.resource = dstSurf->texture;
-               blit.dst.level = dstSurf->u.tex.level;
-               blit.dst.box.z = dstSurf->u.tex.first_layer;
-               blit.dst.format = dstSurf->format;
+                  blit.src.resource = srcSurf->texture;
+                  blit.src.level = srcSurf->u.tex.level;
+                  blit.src.box.z = srcSurf->u.tex.first_layer;
+                  blit.src.format = srcSurf->format;
 
-               st->pipe->blit(st->pipe, &blit);
-               dstRb->defined = true; /* front buffer tracking */
+                  st->pipe->blit(st->pipe, &blit);
+                  dstRb->defined = true; /* front buffer tracking */
+               }
             }
          }
       }

@@ -31,7 +31,6 @@
 #ifndef FORMAT_UTILS_H
 #define FORMAT_UTILS_H
 
-#include "formats.h"
 #include "imports.h"
 #include "macros.h"
 #include "util/rounding.h"

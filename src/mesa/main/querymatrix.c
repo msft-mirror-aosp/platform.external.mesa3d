@@ -17,7 +17,6 @@
 #include "glheader.h"
 #include "querymatrix.h"
 #include "main/get.h"
-#include "util/macros.h"
 
 
 /**

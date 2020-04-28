@@ -13,7 +13,6 @@ private:
    bool handleDFDX(Instruction *);
    bool handlePFETCH(Instruction *);
    bool handlePOPCNT(Instruction *);
-   bool handleSUQ(TexInstruction *);
 };
 
 class GM107LegalizeSSA : public NVC0LegalizeSSA

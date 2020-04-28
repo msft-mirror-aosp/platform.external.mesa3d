@@ -24,11 +24,10 @@
 #include "brw_cfg.h"
 #include "brw_eu.h"
 #include "brw_disasm_info.h"
-#include "dev/gen_debug.h"
+#include "common/gen_debug.h"
 #include "compiler/nir/nir.h"
 
-__attribute__((weak)) void nir_print_instr(UNUSED const nir_instr *instr,
-                                           UNUSED FILE *fp) {}
+__attribute__((weak)) void nir_print_instr(const nir_instr *instr, FILE *fp) {}
 
 void
 dump_assembly(void *assembly, struct disasm_info *disasm)
@@ -124,8 +123,8 @@ disasm_annotate(struct disasm_info *disasm,
    struct inst_group *group;
    if (!disasm->use_tail) {
       group = disasm_new_inst_group(disasm, offset);
-   } else {
       disasm->use_tail = false;
+   } else {
       group = exec_node_data(struct inst_group,
                              exec_list_get_tail_raw(&disasm->group_list), link);
    }

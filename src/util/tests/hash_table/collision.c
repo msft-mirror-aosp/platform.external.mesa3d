@@ -24,8 +24,6 @@
  *    Eric Anholt <eric@anholt.net>
  */
 
-#undef NDEBUG
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -39,7 +37,7 @@ main(int argc, char **argv)
    const char *str1 = "test1";
    const char *str2 = "test2";
    const char *str3 = "test3";
-   struct hash_entry *entry1, *entry2;
+   struct hash_entry *entry1, *entry2, *search_entry;
    uint32_t bad_hash = 5;
    int i;
 

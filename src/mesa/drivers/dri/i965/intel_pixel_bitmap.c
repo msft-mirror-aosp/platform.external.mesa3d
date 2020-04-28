@@ -158,10 +158,10 @@ static GLuint get_bitmap_rect(GLsizei width, GLsizei height,
 static inline int
 y_flip(struct gl_framebuffer *fb, int y, int height)
 {
-   if (fb->FlipY)
-      return fb->Height - y - height;
-   else
+   if (_mesa_is_user_fbo(fb))
       return y;
+   else
+      return fb->Height - y - height;
 }
 
 /*
@@ -264,8 +264,8 @@ do_blit_bitmap( struct gl_context *ctx,
 	 int h = MIN2(DY, height - py);
 	 int w = MIN2(DX, width - px);
 	 GLuint sz = ALIGN(ALIGN(w,8) * h, 64)/8;
-	 const enum gl_logicop_mode logic_op = ctx->Color.ColorLogicOpEnabled ?
-	    ctx->Color._LogicOp : COLOR_LOGICOP_COPY;
+	 GLenum logic_op = ctx->Color.ColorLogicOpEnabled ?
+	    ctx->Color.LogicOp : GL_COPY;
 
 	 assert(sz <= sizeof(stipple));
 	 memset(stipple, 0, sz);
@@ -283,7 +283,7 @@ do_blit_bitmap( struct gl_context *ctx,
                                      w, h,
                                      (GLubyte *)stipple,
                                      8,
-                                     fb->FlipY);
+                                     _mesa_is_winsys_fbo(fb));
          if (count == 0)
 	    continue;
 
@@ -292,7 +292,7 @@ do_blit_bitmap( struct gl_context *ctx,
 						(GLubyte *)stipple,
 						sz,
 						color,
-						irb->mt->surf.row_pitch_B,
+						irb->mt->surf.row_pitch,
 						irb->mt->bo,
 						irb->mt->offset,
 						irb->mt->surf.tiling,
@@ -348,13 +348,11 @@ intelBitmap(struct gl_context * ctx,
 	    const struct gl_pixelstore_attrib *unpack,
 	    const GLubyte * pixels)
 {
-   struct brw_context *brw = brw_context(ctx);
-
    if (!_mesa_check_conditional_render(ctx))
       return;
 
-   if (brw->screen->devinfo.gen < 6 &&
-       do_blit_bitmap(ctx, x, y, width, height, unpack, pixels))
+   if (do_blit_bitmap(ctx, x, y, width, height,
+                          unpack, pixels))
       return;
 
    _mesa_meta_Bitmap(ctx, x, y, width, height, unpack, pixels);

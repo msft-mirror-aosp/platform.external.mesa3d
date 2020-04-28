@@ -34,7 +34,6 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "errors.h"
 #include "glheader.h"
 #include "hash.h"
 #include "util/hash_table.h"
@@ -283,6 +282,8 @@ _mesa_HashDeleteAll(struct _mesa_HashTable *table,
                     void (*callback)(GLuint key, void *data, void *userData),
                     void *userData)
 {
+   struct hash_entry *entry;
+
    assert(callback);
    _mesa_HashLockMutex(table);
    table->InDeleteAll = GL_TRUE;
@@ -314,6 +315,7 @@ hash_walk_unlocked(const struct _mesa_HashTable *table,
    assert(table);
    assert(callback);
 
+   struct hash_entry *entry;
    hash_table_foreach(table->ht, entry) {
       callback((uintptr_t)entry->key, entry->data, userData);
    }

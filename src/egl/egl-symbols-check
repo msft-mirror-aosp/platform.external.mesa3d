@@ -1,19 +1,14 @@
 #!/bin/sh
 set -eu
 
-if [ "$(uname)" = "Darwin" ]
-then
-  LIB=${1-.libs/libEGL.dylib}
-else
-  LIB=${1-.libs/libEGL.so}
-fi
+LIB=${1-.libs/libEGL.so}
 
 if ! [ -f "$LIB" ]
 then
   exit 1
 fi
 
-FUNCS=$($NM -D --defined-only $LIB | grep -o "T .*" | cut -c 3- | while read func; do
+FUNCS=$(nm -D --defined-only $LIB | grep -o "T .*" | cut -c 3- | while read func; do
 ( grep -q "^$func$" || echo $func )  <<EOF
 eglBindAPI
 eglBindTexImage

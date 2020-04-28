@@ -52,7 +52,6 @@
 #include "main/version.h"
 #include "xfonts.h"
 #include "xmesaP.h"
-#include "util/u_math.h"
 
 /* This indicates the client-side GLX API and GLX encoder version. */
 #define CLIENT_MAJOR_VERSION 1
@@ -511,9 +510,9 @@ get_visual( Display *dpy, int scr, unsigned int depth, int xclass )
     * 10 bits per color channel.  Mesa's limited to a max of 8 bits/channel.
     */
    if (vis && depth > 24 && (xclass==TrueColor || xclass==DirectColor)) {
-      if (util_bitcount((GLuint) vis->red_mask  ) <= 8 &&
-          util_bitcount((GLuint) vis->green_mask) <= 8 &&
-          util_bitcount((GLuint) vis->blue_mask ) <= 8) {
+      if (_mesa_bitcount((GLuint) vis->red_mask  ) <= 8 &&
+          _mesa_bitcount((GLuint) vis->green_mask) <= 8 &&
+          _mesa_bitcount((GLuint) vis->blue_mask ) <= 8) {
          return vis;
       }
       else {
@@ -2684,6 +2683,39 @@ Fake_glXAssociateDMPbufferSGIX(Display *dpy, GLXPbufferSGIX pbuffer, DMparams *p
 #endif
 
 
+/*** GLX_SGIX_swap_group ***/
+
+static void
+Fake_glXJoinSwapGroupSGIX(Display *dpy, GLXDrawable drawable, GLXDrawable member)
+{
+   (void) dpy;
+   (void) drawable;
+   (void) member;
+}
+
+
+
+/*** GLX_SGIX_swap_barrier ***/
+
+static void
+Fake_glXBindSwapBarrierSGIX(Display *dpy, GLXDrawable drawable, int barrier)
+{
+   (void) dpy;
+   (void) drawable;
+   (void) barrier;
+}
+
+static Bool
+Fake_glXQueryMaxSwapBarriersSGIX(Display *dpy, int screen, int *max)
+{
+   (void) dpy;
+   (void) screen;
+   (void) max;
+   return False;
+}
+
+
+
 /*** GLX_SUN_get_transparent_index ***/
 
 static Status
@@ -2715,6 +2747,16 @@ Fake_glXReleaseBuffersMESA( Display *dpy, GLXDrawable d )
    return False;
 }
 
+
+
+/*** GLX_MESA_agp_offset ***/
+
+static GLuint
+Fake_glXGetAGPOffsetMESA( const GLvoid *pointer )
+{
+   (void) pointer;
+   return ~0;
+}
 
 
 /*** GLX_EXT_texture_from_pixmap ***/
@@ -2913,6 +2955,13 @@ _mesa_GetGLXDispatchTable(void)
 #if defined(_DM_BUFFER_H_)
    glx.AssociateDMPbufferSGIX = NULL;
 #endif
+
+   /*** GLX_SGIX_swap_group ***/
+   glx.JoinSwapGroupSGIX = Fake_glXJoinSwapGroupSGIX;
+
+   /*** GLX_SGIX_swap_barrier ***/
+   glx.BindSwapBarrierSGIX = Fake_glXBindSwapBarrierSGIX;
+   glx.QueryMaxSwapBarriersSGIX = Fake_glXQueryMaxSwapBarriersSGIX;
 
    /*** GLX_SUN_get_transparent_index ***/
    glx.GetTransparentIndexSUN = Fake_glXGetTransparentIndexSUN;

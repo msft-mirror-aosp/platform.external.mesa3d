@@ -153,7 +153,6 @@ struct StoreMacroTileClear
 /// @param x, y - Coordinates to raster tile.
 /// @param pClearColor - Pointer to clear color
 void SwrStoreHotTileClear(
-    HANDLE hWorkerPrivateData,
     SWR_SURFACE_STATE *pDstSurface,
     SWR_RENDERTARGET_ATTACHMENT renderTargetIndex,
     UINT x,

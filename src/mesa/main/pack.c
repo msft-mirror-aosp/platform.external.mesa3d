@@ -42,7 +42,6 @@
 #endif
 
 
-#include "errors.h"
 #include "glheader.h"
 #include "enums.h"
 #include "image.h"

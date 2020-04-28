@@ -35,12 +35,9 @@
 #include "c11/threads.h"
 
 #include "eglglobals.h"
-#include "egldevice.h"
 #include "egldisplay.h"
 #include "egldriver.h"
 #include "egllog.h"
-
-#include "util/macros.h"
 
 #ifdef HAVE_MINCORE
 #include <unistd.h>
@@ -54,20 +51,15 @@ struct _egl_global _eglGlobal =
 {
    .Mutex = &_eglGlobalMutex,
    .DisplayList = NULL,
-   .DeviceList = &_eglSoftwareDevice,
-   .NumAtExitCalls = 3,
+   .NumAtExitCalls = 2,
    .AtExitCalls = {
       /* default AtExitCalls, called in reverse order */
-      _eglFiniDevice, /* always called last */
-      _eglUnloadDrivers,
-      _eglFiniDisplay,
+      _eglUnloadDrivers, /* always called last */
+      _eglFiniDisplay
    },
 
    .ClientOnlyExtensionString =
    "EGL_EXT_client_extensions"
-   " EGL_EXT_device_base"
-   " EGL_EXT_device_enumeration"
-   " EGL_EXT_device_query"
    " EGL_EXT_platform_base"
    " EGL_KHR_client_get_all_proc_addresses"
    " EGL_KHR_debug",

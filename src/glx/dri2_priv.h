@@ -30,9 +30,6 @@
  *   Kristian Høgsberg (krh@redhat.com)
  */
 
-#ifndef DRI2_PRIV_H
-#define DRI2_PRIV_H
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -84,6 +81,4 @@ dri2_interop_export_object(struct glx_context *ctx,
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif

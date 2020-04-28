@@ -25,3 +25,6 @@ libswrast_dri = static_library(
   include_directories : [inc_common, inc_dri_common],
   dependencies : dep_libdrm,
 )
+
+dri_drivers += libswrast_dri
+dri_link += 'swrast_dri.so'

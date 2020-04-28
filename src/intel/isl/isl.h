@@ -389,9 +389,6 @@ enum isl_format {
    ISL_FORMAT_GEN9_CCS_64BPP,
    ISL_FORMAT_GEN9_CCS_128BPP,
 
-   /* An upper bound on the supported format enumerations */
-   ISL_NUM_FORMATS,
-
    /* Hardware doesn't understand this out-of-band value */
    ISL_FORMAT_UNSUPPORTED =                             UINT16_MAX,
 };
@@ -664,8 +661,31 @@ enum isl_aux_usage {
  *
  * Drawing with or without aux enabled may implicitly cause the surface to
  * transition between these states.  There are also four types of auxiliary
- * compression operations which cause an explicit transition which are
- * described by the isl_aux_op enum below.
+ * compression operations which cause an explicit transition:
+ *
+ *    1) Fast Clear:  This operation writes the magic "clear" value to the
+ *       auxiliary surface.  This operation will safely transition any slice
+ *       of a surface from any state to the clear state so long as the entire
+ *       slice is fast cleared at once.  A fast clear that only covers part of
+ *       a slice of a surface is called a partial fast clear.
+ *
+ *    2) Full Resolve:  This operation combines the auxiliary surface data
+ *       with the primary surface data and writes the result to the primary.
+ *       For HiZ, the docs call this a depth resolve.  For CCS, the hardware
+ *       full resolve operation does both a full resolve and an ambiguate so
+ *       it actually takes you all the way to the pass-through state.
+ *
+ *    3) Partial Resolve:  This operation considers blocks which are in the
+ *       "clear" state and writes the clear value directly into the primary or
+ *       auxiliary surface.  Once this operation completes, the surface is
+ *       still compressed but no longer references the clear color.  This
+ *       operation is only available for CCS.
+ *
+ *    4) Ambiguate:  This operation throws away the current auxiliary data and
+ *       replaces it with the magic pass-through value.  If an ambiguate
+ *       operation is performed when the primary surface does not contain 100%
+ *       of the data, data will be lost.  This operation is only implemented
+ *       in hardware for depth where it is called a HiZ resolve.
  *
  * Not all operations are valid or useful in all states.  The diagram below
  * contains a complete description of the states and all valid and useful
@@ -765,53 +785,6 @@ enum isl_aux_state {
    ISL_AUX_STATE_RESOLVED,
    ISL_AUX_STATE_PASS_THROUGH,
    ISL_AUX_STATE_AUX_INVALID,
-};
-
-/**
- * Enum which describes explicit aux transition operations.
- */
-enum isl_aux_op {
-   ISL_AUX_OP_NONE,
-
-   /** Fast Clear
-    *
-    * This operation writes the magic "clear" value to the auxiliary surface.
-    * This operation will safely transition any slice of a surface from any
-    * state to the clear state so long as the entire slice is fast cleared at
-    * once.  A fast clear that only covers part of a slice of a surface is
-    * called a partial fast clear.
-    */
-   ISL_AUX_OP_FAST_CLEAR,
-
-   /** Full Resolve
-    *
-    * This operation combines the auxiliary surface data with the primary
-    * surface data and writes the result to the primary.  For HiZ, the docs
-    * call this a depth resolve.  For CCS, the hardware full resolve operation
-    * does both a full resolve and an ambiguate so it actually takes you all
-    * the way to the pass-through state.
-    */
-   ISL_AUX_OP_FULL_RESOLVE,
-
-   /** Partial Resolve
-    *
-    * This operation considers blocks which are in the "clear" state and
-    * writes the clear value directly into the primary or auxiliary surface.
-    * Once this operation completes, the surface is still compressed but no
-    * longer references the clear color.  This operation is only available
-    * for CCS_E.
-    */
-   ISL_AUX_OP_PARTIAL_RESOLVE,
-
-   /** Ambiguate
-    *
-    * This operation throws away the current auxiliary data and replaces it
-    * with the magic pass-through value.  If an ambiguate operation is
-    * performed when the primary surface does not contain 100% of the data,
-    * data will be lost.  This operation is only implemented in hardware for
-    * depth where it is called a HiZ resolve.
-    */
-   ISL_AUX_OP_AMBIGUATE,
 };
 
 /* TODO(chadv): Explain */
@@ -949,12 +922,6 @@ enum isl_msaa_layout {
    ISL_MSAA_LAYOUT_ARRAY,
 };
 
-typedef enum {
-  ISL_MEMCPY = 0,
-  ISL_MEMCPY_BGRA8,
-  ISL_MEMCPY_STREAMING_LOAD,
-  ISL_MEMCPY_INVALID,
-} isl_memcpy_type;
 
 struct isl_device {
    const struct gen_device_info *info;
@@ -972,12 +939,6 @@ struct isl_device {
       uint8_t aux_addr_offset;
 
       /* Rounded up to the nearest dword to simplify GPU memcpy operations. */
-
-      /* size of the state buffer used to store the clear color + extra
-       * additional space used by the hardware */
-      uint8_t clear_color_state_size;
-      uint8_t clear_color_state_offset;
-      /* size of the clear color itself - used to copy it to/from a BO */
       uint8_t clear_value_size;
       uint8_t clear_value_offset;
    } ss;
@@ -1014,7 +975,6 @@ struct isl_extent4d {
 
 struct isl_channel_layout {
    enum isl_base_type type;
-   uint8_t start_bit; /**< Bit at which this channel starts */
    uint8_t bits; /**< Size in bits */
 };
 
@@ -1091,7 +1051,7 @@ struct isl_tile_info {
     * always used with ISL_FORMAT_R8) has a logical size of 64el x 64el but
     * its physical size is 128B x 32rows, the same as a Y-tile.
     *
-    * @see isl_surf::row_pitch_B
+    * @see isl_surf::row_pitch
     */
    struct isl_extent2d phys_extent_B;
 };
@@ -1141,13 +1101,13 @@ struct isl_surf_init_info {
    uint32_t samples;
 
    /** Lower bound for isl_surf::alignment, in bytes. */
-   uint32_t min_alignment_B;
+   uint32_t min_alignment;
 
    /**
     * Exact value for isl_surf::row_pitch. Ignored if zero.  isl_surf_init()
     * will fail if this is misaligned or out of bounds.
     */
-   uint32_t row_pitch_B;
+   uint32_t row_pitch;
 
    isl_surf_usage_flags_t usage;
 
@@ -1176,7 +1136,7 @@ struct isl_surf {
 
    /**
     * Physical extent of the surface's base level, in units of physical
-    * surface samples.
+    * surface samples and aligned to the format's compression block.
     *
     * Consider isl_dim_layout as an operator that transforms a logical surface
     * layout to a physical surface layout. Then
@@ -1190,17 +1150,17 @@ struct isl_surf {
    uint32_t samples;
 
    /** Total size of the surface, in bytes. */
-   uint64_t size_B;
+   uint64_t size;
 
    /** Required alignment for the surface's base address. */
-   uint32_t alignment_B;
+   uint32_t alignment;
 
    /**
     * The interpretation of this field depends on the value of
     * isl_tile_info::physical_extent_B.  In particular, the width of the
-    * surface in tiles is row_pitch_B / isl_tile_info::physical_extent_B.width
+    * surface in tiles is row_pitch / isl_tile_info::physical_extent_B.width
     * and the distance in bytes between vertically adjacent tiles in the image
-    * is given by row_pitch_B * isl_tile_info::physical_extent_B.height.
+    * is given by row_pitch * isl_tile_info::physical_extent_B.height.
     *
     * For linear images where isl_tile_info::physical_extent_B.height == 1,
     * this cleanly reduces to being the distance, in bytes, between vertically
@@ -1208,7 +1168,7 @@ struct isl_surf {
     *
     * @see isl_tile_info::phys_extent_B;
     */
-   uint32_t row_pitch_B;
+   uint32_t row_pitch;
 
    /**
     * Pitch between physical array slices, in rows of surface elements.
@@ -1318,15 +1278,6 @@ struct isl_surf_fill_state_info {
    union isl_color_value clear_color;
 
    /**
-    * Send only the clear value address
-    *
-    * If set, we only pass the clear address to the GPU and it will fetch it
-    * from wherever it is.
-    */
-   bool use_clear_address;
-   uint64_t clear_address;
-
-   /**
     * Surface write disables for gen4-5
     */
    isl_channel_mask_t write_disables;
@@ -1344,7 +1295,7 @@ struct isl_buffer_fill_state_info {
    /**
     * The size of the buffer
     */
-   uint64_t size_B;
+   uint64_t size;
 
    /**
     * The Memory Object Control state for the filled surface state.
@@ -1361,12 +1312,7 @@ struct isl_buffer_fill_state_info {
     */
    enum isl_format format;
 
-   /**
-    * The swizzle to use in the surface state
-    */
-   struct isl_swizzle swizzle;
-
-   uint32_t stride_B;
+   uint32_t stride;
 };
 
 struct isl_depth_stencil_hiz_emit_info {
@@ -1437,17 +1383,13 @@ isl_device_get_sample_counts(struct isl_device *dev);
 static inline const struct isl_format_layout * ATTRIBUTE_CONST
 isl_format_get_layout(enum isl_format fmt)
 {
-   assert(fmt != ISL_FORMAT_UNSUPPORTED);
-   assert(fmt < ISL_NUM_FORMATS);
    return &isl_format_layouts[fmt];
 }
-
-bool isl_format_is_valid(enum isl_format);
 
 static inline const char * ATTRIBUTE_CONST
 isl_format_get_name(enum isl_format fmt)
 {
-   return isl_format_get_layout(fmt)->name;
+   return isl_format_layouts[fmt].name;
 }
 
 bool isl_format_supports_rendering(const struct gen_device_info *devinfo,
@@ -1502,9 +1444,6 @@ isl_format_has_int_channel(enum isl_format fmt)
    return isl_format_has_uint_channel(fmt) ||
           isl_format_has_sint_channel(fmt);
 }
-
-bool isl_format_has_color_component(enum isl_format fmt,
-                                    int component) ATTRIBUTE_CONST;
 
 unsigned isl_format_get_num_channels(enum isl_format fmt);
 
@@ -1565,7 +1504,7 @@ isl_format_block_is_1x1x1(enum isl_format fmt)
 static inline bool
 isl_format_is_srgb(enum isl_format fmt)
 {
-   return isl_format_get_layout(fmt)->colorspace == ISL_COLORSPACE_SRGB;
+   return isl_format_layouts[fmt].colorspace == ISL_COLORSPACE_SRGB;
 }
 
 enum isl_format isl_format_srgb_to_linear(enum isl_format fmt);
@@ -1575,37 +1514,14 @@ isl_format_is_rgb(enum isl_format fmt)
 {
    if (isl_format_is_yuv(fmt))
       return false;
-
-   const struct isl_format_layout *fmtl = isl_format_get_layout(fmt);
-
-   return fmtl->channels.r.bits > 0 &&
-          fmtl->channels.g.bits > 0 &&
-          fmtl->channels.b.bits > 0 &&
-          fmtl->channels.a.bits == 0;
-}
-
-static inline bool
-isl_format_is_rgbx(enum isl_format fmt)
-{
-   const struct isl_format_layout *fmtl = isl_format_get_layout(fmt);
-
-   return fmtl->channels.r.bits > 0 &&
-          fmtl->channels.g.bits > 0 &&
-          fmtl->channels.b.bits > 0 &&
-          fmtl->channels.a.bits > 0 &&
-          fmtl->channels.a.type == ISL_VOID;
+   return isl_format_layouts[fmt].channels.r.bits > 0 &&
+          isl_format_layouts[fmt].channels.g.bits > 0 &&
+          isl_format_layouts[fmt].channels.b.bits > 0 &&
+          isl_format_layouts[fmt].channels.a.bits == 0;
 }
 
 enum isl_format isl_format_rgb_to_rgba(enum isl_format rgb) ATTRIBUTE_CONST;
 enum isl_format isl_format_rgb_to_rgbx(enum isl_format rgb) ATTRIBUTE_CONST;
-enum isl_format isl_format_rgbx_to_rgba(enum isl_format rgb) ATTRIBUTE_CONST;
-
-void isl_color_value_pack(const union isl_color_value *value,
-                          enum isl_format format,
-                          uint32_t *data_out);
-void isl_color_value_unpack(union isl_color_value *value,
-                            enum isl_format format,
-                            const uint32_t *data_in);
 
 bool isl_is_storage_image_format(enum isl_format fmt);
 
@@ -1649,25 +1565,10 @@ isl_drm_modifier_has_aux(uint64_t modifier)
 
 /** Returns the default isl_aux_state for the given modifier.
  *
- * If we have a modifier which supports compression, then the auxiliary data
- * could be in state other than ISL_AUX_STATE_AUX_INVALID.  In particular, it
- * can be in any of the following:
- *
- *  - ISL_AUX_STATE_CLEAR
- *  - ISL_AUX_STATE_PARTIAL_CLEAR
- *  - ISL_AUX_STATE_COMPRESSED_CLEAR
- *  - ISL_AUX_STATE_COMPRESSED_NO_CLEAR
- *  - ISL_AUX_STATE_RESOLVED
- *  - ISL_AUX_STATE_PASS_THROUGH
- *
- * If the modifier does not support fast-clears, then we are guaranteed
- * that the surface is at least partially resolved and the first three not
- * possible.  We return ISL_AUX_STATE_COMPRESSED_CLEAR if the modifier
- * supports fast clears and ISL_AUX_STATE_COMPRESSED_NO_CLEAR if it does not
- * because they are the least common denominator of the set of possible aux
- * states and will yield a valid interpretation of the aux data.
- *
- * For modifiers with no aux support, ISL_AUX_STATE_AUX_INVALID is returned.
+ * All modified images are required to be kept out of the AUX_INVALID state
+ * but they may or may not actually be compressed and may or may not have
+ * clear color.  This function returns the worst case aux_state that we need
+ * to assume when getting a surface from another process or API.
  */
 static inline enum isl_aux_state
 isl_drm_modifier_get_default_aux_state(uint64_t modifier)
@@ -1678,7 +1579,6 @@ isl_drm_modifier_get_default_aux_state(uint64_t modifier)
    if (!mod_info || mod_info->aux_usage == ISL_AUX_USAGE_NONE)
       return ISL_AUX_STATE_AUX_INVALID;
 
-   assert(mod_info->aux_usage == ISL_AUX_USAGE_CCS_E);
    return mod_info->supports_clear_color ? ISL_AUX_STATE_COMPRESSED_CLEAR :
                                            ISL_AUX_STATE_COMPRESSED_NO_CLEAR;
 }
@@ -1774,24 +1674,6 @@ bool isl_color_value_is_zero(union isl_color_value value,
 bool isl_color_value_is_zero_one(union isl_color_value value,
                                  enum isl_format format);
 
-static inline bool
-isl_swizzle_is_identity(struct isl_swizzle swizzle)
-{
-   return swizzle.r == ISL_CHANNEL_SELECT_RED &&
-          swizzle.g == ISL_CHANNEL_SELECT_GREEN &&
-          swizzle.b == ISL_CHANNEL_SELECT_BLUE &&
-          swizzle.a == ISL_CHANNEL_SELECT_ALPHA;
-}
-
-bool
-isl_swizzle_supports_rendering(const struct gen_device_info *devinfo,
-                               struct isl_swizzle swizzle);
-
-struct isl_swizzle
-isl_swizzle_compose(struct isl_swizzle first, struct isl_swizzle second);
-struct isl_swizzle
-isl_swizzle_invert(struct isl_swizzle swizzle);
-
 #define isl_surf_init(dev, surf, ...) \
    isl_surf_init_s((dev), (surf), \
                    &(struct isl_surf_init_info) {  __VA_ARGS__ });
@@ -1819,7 +1701,7 @@ bool
 isl_surf_get_ccs_surf(const struct isl_device *dev,
                       const struct isl_surf *surf,
                       struct isl_surf *ccs_surf,
-                      uint32_t row_pitch_B /**< Ignored if 0 */);
+                      uint32_t row_pitch /**< Ignored if 0 */);
 
 #define isl_surf_fill_state(dev, state, ...) \
    isl_surf_fill_state_s((dev), (state), \
@@ -1886,40 +1768,12 @@ isl_surf_get_image_alignment_sa(const struct isl_surf *surf)
 }
 
 /**
- * Logical extent of level 0 in units of surface elements.
- */
-static inline struct isl_extent4d
-isl_surf_get_logical_level0_el(const struct isl_surf *surf)
-{
-   const struct isl_format_layout *fmtl = isl_format_get_layout(surf->format);
-
-   return isl_extent4d(DIV_ROUND_UP(surf->logical_level0_px.w, fmtl->bw),
-                       DIV_ROUND_UP(surf->logical_level0_px.h, fmtl->bh),
-                       DIV_ROUND_UP(surf->logical_level0_px.d, fmtl->bd),
-                       surf->logical_level0_px.a);
-}
-
-/**
- * Physical extent of level 0 in units of surface elements.
- */
-static inline struct isl_extent4d
-isl_surf_get_phys_level0_el(const struct isl_surf *surf)
-{
-   const struct isl_format_layout *fmtl = isl_format_get_layout(surf->format);
-
-   return isl_extent4d(DIV_ROUND_UP(surf->phys_level0_sa.w, fmtl->bw),
-                       DIV_ROUND_UP(surf->phys_level0_sa.h, fmtl->bh),
-                       DIV_ROUND_UP(surf->phys_level0_sa.d, fmtl->bd),
-                       surf->phys_level0_sa.a);
-}
-
-/**
  * Pitch between vertically adjacent surface elements, in bytes.
  */
 static inline uint32_t
-isl_surf_get_row_pitch_B(const struct isl_surf *surf)
+isl_surf_get_row_pitch(const struct isl_surf *surf)
 {
-   return surf->row_pitch_B;
+   return surf->row_pitch;
 }
 
 /**
@@ -1930,8 +1784,8 @@ isl_surf_get_row_pitch_el(const struct isl_surf *surf)
 {
    const struct isl_format_layout *fmtl = isl_format_get_layout(surf->format);
 
-   assert(surf->row_pitch_B % (fmtl->bpb / 8) == 0);
-   return surf->row_pitch_B / (fmtl->bpb / 8);
+   assert(surf->row_pitch % (fmtl->bpb / 8) == 0);
+   return surf->row_pitch / (fmtl->bpb / 8);
 }
 
 /**
@@ -1969,7 +1823,7 @@ isl_surf_get_array_pitch_sa_rows(const struct isl_surf *surf)
 static inline uint32_t
 isl_surf_get_array_pitch(const struct isl_surf *surf)
 {
-   return isl_surf_get_array_pitch_sa_rows(surf) * surf->row_pitch_B;
+   return isl_surf_get_array_pitch_sa_rows(surf) * surf->row_pitch;
 }
 
 /**
@@ -2061,7 +1915,7 @@ isl_surf_get_image_surf(const struct isl_device *dev,
 void
 isl_tiling_get_intratile_offset_el(enum isl_tiling tiling,
                                    uint32_t bpb,
-                                   uint32_t row_pitch_B,
+                                   uint32_t row_pitch,
                                    uint32_t total_x_offset_el,
                                    uint32_t total_y_offset_el,
                                    uint32_t *base_address_offset,
@@ -2071,7 +1925,7 @@ isl_tiling_get_intratile_offset_el(enum isl_tiling tiling,
 static inline void
 isl_tiling_get_intratile_offset_sa(enum isl_tiling tiling,
                                    enum isl_format format,
-                                   uint32_t row_pitch_B,
+                                   uint32_t row_pitch,
                                    uint32_t total_x_offset_sa,
                                    uint32_t total_y_offset_sa,
                                    uint32_t *base_address_offset,
@@ -2089,7 +1943,7 @@ isl_tiling_get_intratile_offset_sa(enum isl_tiling tiling,
    const uint32_t total_x_offset = total_x_offset_sa / fmtl->bw;
    const uint32_t total_y_offset = total_y_offset_sa / fmtl->bh;
 
-   isl_tiling_get_intratile_offset_el(tiling, fmtl->bpb, row_pitch_B,
+   isl_tiling_get_intratile_offset_el(tiling, fmtl->bpb, row_pitch,
                                       total_x_offset, total_y_offset,
                                       base_address_offset,
                                       x_offset_sa, y_offset_sa);
@@ -2106,32 +1960,6 @@ isl_tiling_get_intratile_offset_sa(enum isl_tiling tiling,
 uint32_t
 isl_surf_get_depth_format(const struct isl_device *dev,
                           const struct isl_surf *surf);
-
-/**
- * @brief performs a copy from linear to tiled surface
- *
- */
-void
-isl_memcpy_linear_to_tiled(uint32_t xt1, uint32_t xt2,
-                           uint32_t yt1, uint32_t yt2,
-                           char *dst, const char *src,
-                           uint32_t dst_pitch, int32_t src_pitch,
-                           bool has_swizzling,
-                           enum isl_tiling tiling,
-                           isl_memcpy_type copy_type);
-
-/**
- * @brief performs a copy from tiled to linear surface
- *
- */
-void
-isl_memcpy_tiled_to_linear(uint32_t xt1, uint32_t xt2,
-                           uint32_t yt1, uint32_t yt2,
-                           char *dst, const char *src,
-                           int32_t dst_pitch, uint32_t src_pitch,
-                           bool has_swizzling,
-                           enum isl_tiling tiling,
-                           isl_memcpy_type copy_type);
 
 #ifdef __cplusplus
 }

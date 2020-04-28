@@ -62,8 +62,7 @@ static struct pipe_query *r300_create_query(struct pipe_context *pipe,
     q->buf = r300->rws->buffer_create(r300->rws,
                                       r300screen->info.gart_page_size,
                                       r300screen->info.gart_page_size,
-                                      RADEON_DOMAIN_GTT,
-                                      RADEON_FLAG_NO_INTERPROCESS_SHARING);
+                                      RADEON_DOMAIN_GTT, 0);
     if (!q->buf) {
         FREE(q);
         return NULL;

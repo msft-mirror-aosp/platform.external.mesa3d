@@ -41,7 +41,6 @@ enum hud_counter {
 
 struct hud_context {
    int refcount;
-   bool simple;
 
    /* Context where queries are executed. */
    struct pipe_context *record_pipe;
@@ -119,7 +118,7 @@ struct hud_graph {
 struct hud_pane {
    struct list_head head;
    struct hud_context *hud;
-   unsigned x1, y1, x2, y2, y_simple;
+   unsigned x1, y1, x2, y2;
    unsigned inner_x1;
    unsigned inner_y1;
    unsigned inner_x2;
@@ -157,7 +156,6 @@ struct hud_batch_query_context;
 int hud_get_num_cpus(void);
 
 void hud_fps_graph_install(struct hud_pane *pane);
-void hud_frametime_graph_install(struct hud_pane *pane);
 void hud_cpu_graph_install(struct hud_pane *pane, unsigned cpu_index);
 void hud_thread_busy_install(struct hud_pane *pane, const char *name, bool main);
 void hud_thread_counter_install(struct hud_pane *pane, const char *name,

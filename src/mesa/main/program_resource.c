@@ -31,7 +31,6 @@
 #include "main/context.h"
 #include "program_resource.h"
 #include "compiler/glsl/ir_uniform.h"
-
 static bool
 supported_interface_enum(struct gl_context *ctx, GLenum iface)
 {
@@ -77,7 +76,7 @@ lookup_linked_program(GLuint program, const char *caller)
    if (!prog)
       return NULL;
 
-   if (prog->data->LinkStatus == LINKING_FAILURE) {
+   if (prog->data->LinkStatus == linking_failure) {
       _mesa_error(ctx, GL_INVALID_OPERATION, "%s(program not linked)",
                   caller);
       return NULL;

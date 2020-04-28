@@ -120,6 +120,7 @@
  *
  * \author Ian Romanick <ian.d.romanick@intel.com>
  */
+#include "main/core.h"
 #include "ir.h"
 #include "glsl_parser_extras.h"
 #include "linker.h"
@@ -158,7 +159,8 @@ public:
    {
       progress = false;
       this->mem_ctx = ralloc_context(NULL);
-      this->function_hash = _mesa_pointer_hash_table_create(NULL);
+      this->function_hash = _mesa_hash_table_create(NULL, _mesa_hash_pointer,
+                                                    _mesa_key_pointer_equal);
    }
 
    ~has_recursion_visitor()

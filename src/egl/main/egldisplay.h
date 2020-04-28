@@ -92,7 +92,6 @@ struct _egl_resource
 struct _egl_extensions
 {
    /* Please keep these sorted alphabetically. */
-   EGLBoolean ANDROID_blob_cache;
    EGLBoolean ANDROID_framebuffer_target;
    EGLBoolean ANDROID_image_native_buffer;
    EGLBoolean ANDROID_native_fence_sync;
@@ -105,8 +104,6 @@ struct _egl_extensions
    EGLBoolean EXT_image_dma_buf_import;
    EGLBoolean EXT_image_dma_buf_import_modifiers;
    EGLBoolean EXT_pixel_format_float;
-   EGLBoolean EXT_surface_CTA861_3_metadata;
-   EGLBoolean EXT_surface_SMPTE2086_metadata;
    EGLBoolean EXT_swap_buffers_with_damage;
 
    unsigned int IMG_context_priority;
@@ -118,7 +115,6 @@ struct _egl_extensions
    EGLBoolean KHR_config_attribs;
    EGLBoolean KHR_context_flush_control;
    EGLBoolean KHR_create_context;
-   EGLBoolean KHR_create_context_no_error;
    EGLBoolean KHR_fence_sync;
    EGLBoolean KHR_get_all_proc_addresses;
    EGLBoolean KHR_gl_colorspace;
@@ -129,16 +125,15 @@ struct _egl_extensions
    EGLBoolean KHR_image;
    EGLBoolean KHR_image_base;
    EGLBoolean KHR_image_pixmap;
-   EGLBoolean KHR_mutable_render_buffer;
    EGLBoolean KHR_no_config_context;
    EGLBoolean KHR_partial_update;
    EGLBoolean KHR_reusable_sync;
    EGLBoolean KHR_surfaceless_context;
    EGLBoolean KHR_wait_sync;
+   EGLBoolean KHR_create_context_no_error;
 
    EGLBoolean MESA_drm_image;
    EGLBoolean MESA_image_dma_buf_export;
-   EGLBoolean MESA_query_driver;
 
    EGLBoolean NOK_swap_region;
    EGLBoolean NOK_texture_from_pixmap;
@@ -160,7 +155,6 @@ struct _egl_display
    _EGLPlatformType Platform; /**< The type of the platform display */
    void *PlatformDisplay;     /**< A pointer to the platform display */
 
-   _EGLDevice *Device;        /**< Device backing the display */
    _EGLDriver *Driver;        /**< Matched driver of the display */
    EGLBoolean Initialized;    /**< True if the display is initialized */
 
@@ -187,9 +181,6 @@ struct _egl_display
    _EGLResource *ResourceLists[_EGL_NUM_RESOURCES];
 
    EGLLabelKHR Label;
-
-   EGLSetBlobFuncANDROID BlobCacheSet;
-   EGLGetBlobFuncANDROID BlobCacheGet;
 };
 
 
@@ -206,7 +197,7 @@ _eglFindDisplay(_EGLPlatformType plat, void *plat_dpy);
 
 
 extern void
-_eglReleaseDisplayResources(_EGLDriver *drv, _EGLDisplay *disp);
+_eglReleaseDisplayResources(_EGLDriver *drv, _EGLDisplay *dpy);
 
 
 extern void
@@ -218,7 +209,7 @@ _eglCheckDisplayHandle(EGLDisplay dpy);
 
 
 extern EGLBoolean
-_eglCheckResource(void *res, _EGLResourceType type, _EGLDisplay *disp);
+_eglCheckResource(void *res, _EGLResourceType type, _EGLDisplay *dpy);
 
 
 /**
@@ -226,12 +217,12 @@ _eglCheckResource(void *res, _EGLResourceType type, _EGLDisplay *disp);
  * Return NULL if the handle has no corresponding linked display.
  */
 static inline _EGLDisplay *
-_eglLookupDisplay(EGLDisplay dpy)
+_eglLookupDisplay(EGLDisplay display)
 {
-   _EGLDisplay *disp = (_EGLDisplay *) dpy;
-   if (!_eglCheckDisplayHandle(dpy))
-      disp = NULL;
-   return disp;
+   _EGLDisplay *dpy = (_EGLDisplay *) display;
+   if (!_eglCheckDisplayHandle(display))
+      dpy = NULL;
+   return dpy;
 }
 
 
@@ -239,14 +230,14 @@ _eglLookupDisplay(EGLDisplay dpy)
  * Return the handle of a linked display, or EGL_NO_DISPLAY.
  */
 static inline EGLDisplay
-_eglGetDisplayHandle(_EGLDisplay *disp)
+_eglGetDisplayHandle(_EGLDisplay *dpy)
 {
-   return (EGLDisplay) ((disp) ? disp : EGL_NO_DISPLAY);
+   return (EGLDisplay) ((dpy) ? dpy : EGL_NO_DISPLAY);
 }
 
 
 extern void
-_eglInitResource(_EGLResource *res, EGLint size, _EGLDisplay *disp);
+_eglInitResource(_EGLResource *res, EGLint size, _EGLDisplay *dpy);
 
 
 extern void

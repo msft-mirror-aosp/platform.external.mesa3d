@@ -1,8 +1,8 @@
 /**************************************************************************
- *
+ * 
  * Copyright 2007 VMware, Inc.
  * All Rights Reserved.
- *
+ * 
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the
  * "Software"), to deal in the Software without restriction, including
@@ -10,11 +10,11 @@
  * distribute, sub license, and/or sell copies of the Software, and to
  * permit persons to whom the Software is furnished to do so, subject to
  * the following conditions:
- *
+ * 
  * The above copyright notice and this permission notice (including the
  * next paragraph) shall be included in all copies or substantial portions
  * of the Software.
- *
+ * 
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
  * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
@@ -22,7 +22,7 @@
  * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
  * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
+ * 
  **************************************************************************/
 
 #ifndef ST_TEXTURE_H
@@ -39,13 +39,12 @@
 struct pipe_resource;
 
 
-struct st_texture_image_transfer
-{
+struct st_texture_image_transfer {
    struct pipe_transfer *transfer;
 
-   /* For compressed texture fallback. */
-   GLubyte *temp_data; /**< Temporary compressed texture storage. */
-   unsigned temp_stride; /**< Stride of the compressed texture storage. */
+   /* For ETC fallback. */
+   GLubyte *temp_data; /**< Temporary ETC texture storage. */
+   unsigned temp_stride; /**< Stride of the ETC texture storage. */
    GLubyte *map; /**< Saved map pointer of the uncompressed transfer. */
 };
 
@@ -53,12 +52,8 @@ struct st_texture_image_transfer
 /**
  * Container for one context's validated sampler view.
  */
-struct st_sampler_view
-{
+struct st_sampler_view {
    struct pipe_sampler_view *view;
-
-   /** The context which created this view */
-   struct st_context *st;
 
    /** The glsl version of the shader seen during validation */
    bool glsl130_or_later;
@@ -70,14 +65,12 @@ struct st_sampler_view
 /**
  * Container for per-context sampler views of a texture.
  */
-struct st_sampler_views
-{
+struct st_sampler_views {
    struct st_sampler_views *next;
    uint32_t max;
    uint32_t count;
    struct st_sampler_view views[0];
 };
-
 
 /**
  * Subclass of gl_texure_image.
@@ -97,11 +90,10 @@ struct st_texture_image
    struct st_texture_image_transfer *transfer;
    unsigned num_transfers;
 
-   /* For compressed images unsupported by the driver. Keep track of
-    * the original data. This is necessary for mapping/unmapping,
-    * as well as image copies.
+   /* For ETC images, keep track of the original data. This is necessary for
+    * mapping/unmapping, as well as image copies.
     */
-   GLubyte *compressed_data;
+   GLubyte *etc_data;
 };
 
 
@@ -256,7 +248,7 @@ st_get_view_format(struct st_texture_object *stObj)
 extern struct pipe_resource *
 st_texture_create(struct st_context *st,
                   enum pipe_texture_target target,
-                  enum pipe_format format,
+		  enum pipe_format format,
                   GLuint last_level,
                   GLuint width0,
                   GLuint height0,
@@ -323,17 +315,16 @@ void
 st_destroy_bound_image_handles(struct st_context *st);
 
 bool
-st_compressed_format_fallback(struct st_context *st, mesa_format format);
+st_etc_fallback(struct st_context *st, struct gl_texture_image *texImage);
 
 void
 st_convert_image(const struct st_context *st, const struct gl_image_unit *u,
-                 struct pipe_image_view *img, unsigned shader_access);
+                 struct pipe_image_view *img);
 
 void
 st_convert_image_from_unit(const struct st_context *st,
                            struct pipe_image_view *img,
-                           GLuint imgUnit,
-                           unsigned shader_access);
+                           GLuint imgUnit);
 
 void
 st_convert_sampler(const struct st_context *st,

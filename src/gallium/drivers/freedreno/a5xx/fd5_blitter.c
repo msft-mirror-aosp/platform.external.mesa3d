@@ -122,8 +122,7 @@ can_do_blit(const struct pipe_blit_info *info)
 	debug_assert(info->dst.box.height >= 0);
 	debug_assert(info->dst.box.depth >= 0);
 
-	if ((info->dst.resource->nr_samples > 1) ||
-			(info->src.resource->nr_samples > 1))
+	if (info->dst.resource->nr_samples + info->src.resource->nr_samples)
 		return false;
 
 	if (info->scissor_enable)
@@ -450,16 +449,17 @@ emit_blit(struct fd_ringbuffer *ring, const struct pipe_blit_info *info)
 	}
 }
 
-bool
+void
 fd5_blitter_blit(struct fd_context *ctx, const struct pipe_blit_info *info)
 {
 	struct fd_batch *batch;
 
 	if (!can_do_blit(info)) {
-		return false;
+		fd_blitter_blit(ctx, info);
+		return;
 	}
 
-	batch = fd_bc_alloc_batch(&ctx->screen->batch_cache, ctx, true);
+	batch = fd_batch_create(ctx, true);
 
 	fd5_emit_restore(batch, batch->draw);
 	fd5_emit_lrz_flush(batch->draw);
@@ -482,9 +482,6 @@ fd5_blitter_blit(struct fd_context *ctx, const struct pipe_blit_info *info)
 	batch->needs_flush = true;
 
 	fd_batch_flush(batch, false, false);
-	fd_batch_reference(&batch, NULL);
-
-	return true;
 }
 
 unsigned

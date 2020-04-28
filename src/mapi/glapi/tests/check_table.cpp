@@ -22,10 +22,10 @@
  */
 
 #include <gtest/gtest.h>
-#include "main/glheader.h"
+#include "../mesa/main/glheader.h"
 
 #include "glapi/glapi.h"
-#include "glapitable.h"
+#include "glapi/glapitable.h"
 
 struct name_offset {
    const char *name;
@@ -1260,6 +1260,7 @@ const struct name_offset known_dispatch[] = {
    { "glTextureStorage1DEXT", _O(TextureStorage1DEXT) },
    { "glTextureStorage2DEXT", _O(TextureStorage2DEXT) },
    { "glTextureStorage3DEXT", _O(TextureStorage3DEXT) },
+   { "glPolygonOffsetEXT", _O(PolygonOffsetEXT) },
    { "glSampleMaskSGIS", _O(SampleMaskSGIS) },
    { "glSamplePatternSGIS", _O(SamplePatternSGIS) },
    { "glColorPointerEXT", _O(ColorPointerEXT) },

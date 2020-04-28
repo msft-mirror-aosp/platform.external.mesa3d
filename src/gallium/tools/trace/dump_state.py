@@ -137,7 +137,6 @@ class Translator(model.Visitor):
     def visit_struct(self, node):
         struct = Struct()
         for member_name, member_node in node.members:
-            member_name = member_name.replace('.', '_')
             member_value = self.visit(member_node)
             setattr(struct, member_name, member_value)
         self.result = struct
@@ -186,7 +185,7 @@ class Screen(Dispatcher):
     def destroy(self):
         pass
 
-    def context_create(self, priv=None, flags=0):
+    def context_create(self):
         return Context(self.interpreter)
     
     def is_format_supported(self, format, target, sample_count, bind, geom_flags):
@@ -499,11 +498,10 @@ class Context(Dispatcher):
             vertex = []
             for velem in self._state.vertex_elements:
                 vbuf = self._state.vertex_buffers[velem.vertex_buffer_index]
-                resource = vbuf.buffer_resource
-                if resource is None:
+                if vbuf.buffer is None:
                     continue
 
-                data = resource.data
+                data = vbuf.buffer.data
 
                 offset = vbuf.buffer_offset + velem.src_offset + vbuf.stride*index
                 format = {
@@ -525,7 +523,7 @@ class Context(Dispatcher):
                     'PIPE_FORMAT_R16G16B16_SNORM': '3h',
                 }[velem.src_format]
 
-                data = resource.data
+                data = vbuf.buffer.data
                 attribute = unpack_from(format, data, offset)
                 vertex.append(attribute)
 
@@ -553,7 +551,7 @@ class Context(Dispatcher):
 
         self._state.draw = info
 
-        if info.index_size != 0:
+        if info.indexed:
             min_index, max_index = self._merge_indices(info)
         else:
             min_index = info.start
@@ -638,25 +636,6 @@ class Context(Dispatcher):
     
     def tex_transfer_destroy(self, transfer):
         self.interpreter.unregister_object(transfer)
-
-    def buffer_subdata(self, resource, usage, data, box=None, offset=None, size=None, level=None, stride=None, layer_stride=None):
-        if box is not None:
-            # XXX trace_context_transfer_unmap generates brokens buffer_subdata
-            assert offset is None
-            assert size is None
-            assert level == 0
-            offset = box.x
-            size = box.width
-            box = None
-
-        if resource is not None and resource.target == PIPE_BUFFER:
-            data = data.getValue()
-            assert len(data) >= size
-            assert offset + size <= len(resource.data)
-            resource.data[offset : offset + size] = data[:size]
-
-    def texture_subdata(self, resource, level, usage, box, data, stride, layer_stride):
-        pass
 
     def transfer_inline_write(self, resource, level, usage, box, stride, layer_stride, data):
         if resource is not None and resource.target == PIPE_BUFFER:

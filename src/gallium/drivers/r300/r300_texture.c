@@ -1113,16 +1113,8 @@ r300_texture_create_object(struct r300_screen *rscreen,
 
     /* Create the backing buffer if needed. */
     if (!tex->buf) {
-        /* Only use the first domain for allocation. Multiple domains are not allowed. */
-        unsigned alloc_domain =
-            tex->domain & RADEON_DOMAIN_VRAM ? RADEON_DOMAIN_VRAM :
-                                               RADEON_DOMAIN_GTT;
-
         tex->buf = rws->buffer_create(rws, tex->tex.size_in_bytes, 2048,
-                                      alloc_domain,
-                                      RADEON_FLAG_NO_SUBALLOC |
-                                      /* Use the reusable pool: */
-                                      RADEON_FLAG_NO_INTERPROCESS_SHARING);
+                                      tex->domain, RADEON_FLAG_NO_SUBALLOC);
 
         if (!tex->buf) {
             goto fail;
@@ -1190,7 +1182,7 @@ struct pipe_resource *r300_texture_from_handle(struct pipe_screen *screen,
         return NULL;
     }
 
-    buffer = rws->buffer_from_handle(rws, whandle, 0, &stride, NULL);
+    buffer = rws->buffer_from_handle(rws, whandle, &stride, NULL);
     if (!buffer)
         return NULL;
 

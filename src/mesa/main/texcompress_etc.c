@@ -41,7 +41,6 @@
 #include "texcompress.h"
 #include "texcompress_etc.h"
 #include "texstore.h"
-#include "config.h"
 #include "macros.h"
 #include "format_unpack.h"
 #include "util/format_srgb.h"
@@ -106,7 +105,7 @@ static const int etc2_modifier_tables_non_opaque[8][4] = {
 #undef UINT8_TYPE
 
 GLboolean
-_mesa_texstore_etc1_rgb8(UNUSED_TEXSTORE_PARAMS)
+_mesa_texstore_etc1_rgb8(TEXSTORE_PARAMS)
 {
    /* GL_ETC1_RGB8_OES is only valid in glCompressedTexImage2D */
    assert(0);
@@ -719,8 +718,7 @@ etc2_unpack_srgb8(uint8_t *dst_row,
                   const uint8_t *src_row,
                   unsigned src_stride,
                   unsigned width,
-		  unsigned height,
-		  bool bgra)
+                  unsigned height)
 {
    const unsigned bw = 4, bh = 4, bs = 8, comps = 4;
    struct etc2_block block;
@@ -742,14 +740,11 @@ etc2_unpack_srgb8(uint8_t *dst_row,
             for (i = 0; i < w; i++) {
                etc2_rgb8_fetch_texel(&block, i, j, dst,
                                      false /* punchthrough_alpha */);
-
-	       if (bgra) {
-		  /* Convert to MESA_FORMAT_B8G8R8A8_SRGB */
-		  tmp = dst[0];
-		  dst[0] = dst[2];
-		  dst[2] = tmp;
-		  dst[3] = 255;
-	       }
+               /* Convert to MESA_FORMAT_B8G8R8A8_SRGB */
+               tmp = dst[0];
+               dst[0] = dst[2];
+               dst[2] = tmp;
+               dst[3] = 255;
 
                dst += comps;
             }
@@ -805,8 +800,7 @@ etc2_unpack_srgb8_alpha8(uint8_t *dst_row,
                          const uint8_t *src_row,
                          unsigned src_stride,
                          unsigned width,
-			 unsigned height,
-			 bool bgra)
+                         unsigned height)
 {
    /* If internalformat is COMPRESSED_SRGB8_ALPHA8_ETC2_EAC, each 4 × 4 block
     * of RGBA8888 information is compressed to 128 bits. To decode a block, the
@@ -830,13 +824,11 @@ etc2_unpack_srgb8_alpha8(uint8_t *dst_row,
             for (i = 0; i < w; i++) {
                etc2_rgba8_fetch_texel(&block, i, j, dst);
 
-	       if (bgra) {
-		  /* Convert to MESA_FORMAT_B8G8R8A8_SRGB */
-		  tmp = dst[0];
-		  dst[0] = dst[2];
-		  dst[2] = tmp;
-		  dst[3] = dst[3];
-	       }
+               /* Convert to MESA_FORMAT_B8G8R8A8_SRGB */
+               tmp = dst[0];
+               dst[0] = dst[2];
+               dst[2] = tmp;
+               dst[3] = dst[3];
 
                dst += comps;
             }
@@ -1065,8 +1057,7 @@ etc2_unpack_srgb8_punchthrough_alpha1(uint8_t *dst_row,
                                      const uint8_t *src_row,
                                      unsigned src_stride,
                                      unsigned width,
-				     unsigned height,
-				     bool bgra)
+                                     unsigned height)
 {
    const unsigned bw = 4, bh = 4, bs = 8, comps = 4;
    struct etc2_block block;
@@ -1086,14 +1077,11 @@ etc2_unpack_srgb8_punchthrough_alpha1(uint8_t *dst_row,
             for (i = 0; i < w; i++) {
                etc2_rgb8_fetch_texel(&block, i, j, dst,
                                      true /* punchthrough_alpha */);
-
-	       if (bgra) {
-		  /* Convert to MESA_FORMAT_B8G8R8A8_SRGB */
-		  tmp = dst[0];
-		  dst[0] = dst[2];
-		  dst[2] = tmp;
-		  dst[3] = dst[3];
-	       }
+               /* Convert to MESA_FORMAT_B8G8R8A8_SRGB */
+               tmp = dst[0];
+               dst[0] = dst[2];
+               dst[2] = tmp;
+               dst[3] = dst[3];
 
                dst += comps;
             }
@@ -1109,7 +1097,7 @@ etc2_unpack_srgb8_punchthrough_alpha1(uint8_t *dst_row,
 /* ETC2 texture formats are valid in glCompressedTexImage2D and
  * glCompressedTexSubImage2D functions */
 GLboolean
-_mesa_texstore_etc2_rgb8(UNUSED_TEXSTORE_PARAMS)
+_mesa_texstore_etc2_rgb8(TEXSTORE_PARAMS)
 {
    assert(0);
 
@@ -1117,7 +1105,7 @@ _mesa_texstore_etc2_rgb8(UNUSED_TEXSTORE_PARAMS)
 }
 
 GLboolean
-_mesa_texstore_etc2_srgb8(UNUSED_TEXSTORE_PARAMS)
+_mesa_texstore_etc2_srgb8(TEXSTORE_PARAMS)
 {
    assert(0);
 
@@ -1125,7 +1113,7 @@ _mesa_texstore_etc2_srgb8(UNUSED_TEXSTORE_PARAMS)
 }
 
 GLboolean
-_mesa_texstore_etc2_rgba8_eac(UNUSED_TEXSTORE_PARAMS)
+_mesa_texstore_etc2_rgba8_eac(TEXSTORE_PARAMS)
 {
    assert(0);
 
@@ -1133,7 +1121,7 @@ _mesa_texstore_etc2_rgba8_eac(UNUSED_TEXSTORE_PARAMS)
 }
 
 GLboolean
-_mesa_texstore_etc2_srgb8_alpha8_eac(UNUSED_TEXSTORE_PARAMS)
+_mesa_texstore_etc2_srgb8_alpha8_eac(TEXSTORE_PARAMS)
 {
    assert(0);
 
@@ -1141,7 +1129,7 @@ _mesa_texstore_etc2_srgb8_alpha8_eac(UNUSED_TEXSTORE_PARAMS)
 }
 
 GLboolean
-_mesa_texstore_etc2_r11_eac(UNUSED_TEXSTORE_PARAMS)
+_mesa_texstore_etc2_r11_eac(TEXSTORE_PARAMS)
 {
    assert(0);
 
@@ -1149,7 +1137,7 @@ _mesa_texstore_etc2_r11_eac(UNUSED_TEXSTORE_PARAMS)
 }
 
 GLboolean
-_mesa_texstore_etc2_signed_r11_eac(UNUSED_TEXSTORE_PARAMS)
+_mesa_texstore_etc2_signed_r11_eac(TEXSTORE_PARAMS)
 {
    assert(0);
 
@@ -1157,7 +1145,7 @@ _mesa_texstore_etc2_signed_r11_eac(UNUSED_TEXSTORE_PARAMS)
 }
 
 GLboolean
-_mesa_texstore_etc2_rg11_eac(UNUSED_TEXSTORE_PARAMS)
+_mesa_texstore_etc2_rg11_eac(TEXSTORE_PARAMS)
 {
    assert(0);
 
@@ -1165,7 +1153,7 @@ _mesa_texstore_etc2_rg11_eac(UNUSED_TEXSTORE_PARAMS)
 }
 
 GLboolean
-_mesa_texstore_etc2_signed_rg11_eac(UNUSED_TEXSTORE_PARAMS)
+_mesa_texstore_etc2_signed_rg11_eac(TEXSTORE_PARAMS)
 {
    assert(0);
 
@@ -1173,7 +1161,7 @@ _mesa_texstore_etc2_signed_rg11_eac(UNUSED_TEXSTORE_PARAMS)
 }
 
 GLboolean
-_mesa_texstore_etc2_rgb8_punchthrough_alpha1(UNUSED_TEXSTORE_PARAMS)
+_mesa_texstore_etc2_rgb8_punchthrough_alpha1(TEXSTORE_PARAMS)
 {
    assert(0);
 
@@ -1181,7 +1169,7 @@ _mesa_texstore_etc2_rgb8_punchthrough_alpha1(UNUSED_TEXSTORE_PARAMS)
 }
 
 GLboolean
-_mesa_texstore_etc2_srgb8_punchthrough_alpha1(UNUSED_TEXSTORE_PARAMS)
+_mesa_texstore_etc2_srgb8_punchthrough_alpha1(TEXSTORE_PARAMS)
 {
    assert(0);
 
@@ -1217,8 +1205,7 @@ _mesa_unpack_etc2_format(uint8_t *dst_row,
                          unsigned src_stride,
                          unsigned src_width,
                          unsigned src_height,
-			 mesa_format format,
-			 bool bgra)
+                         mesa_format format)
 {
    if (format == MESA_FORMAT_ETC2_RGB8)
       etc2_unpack_rgb8(dst_row, dst_stride,
@@ -1227,7 +1214,7 @@ _mesa_unpack_etc2_format(uint8_t *dst_row,
    else if (format == MESA_FORMAT_ETC2_SRGB8)
       etc2_unpack_srgb8(dst_row, dst_stride,
                         src_row, src_stride,
-			src_width, src_height, bgra);
+                        src_width, src_height);
    else if (format == MESA_FORMAT_ETC2_RGBA8_EAC)
       etc2_unpack_rgba8(dst_row, dst_stride,
                         src_row, src_stride,
@@ -1235,7 +1222,7 @@ _mesa_unpack_etc2_format(uint8_t *dst_row,
    else if (format == MESA_FORMAT_ETC2_SRGB8_ALPHA8_EAC)
       etc2_unpack_srgb8_alpha8(dst_row, dst_stride,
                                src_row, src_stride,
-			       src_width, src_height, bgra);
+                               src_width, src_height);
    else if (format == MESA_FORMAT_ETC2_R11_EAC)
       etc2_unpack_r11(dst_row, dst_stride,
                       src_row, src_stride,
@@ -1259,7 +1246,7 @@ _mesa_unpack_etc2_format(uint8_t *dst_row,
    else if (format == MESA_FORMAT_ETC2_SRGB8_PUNCHTHROUGH_ALPHA1)
       etc2_unpack_srgb8_punchthrough_alpha1(dst_row, dst_stride,
                                             src_row, src_stride,
-					    src_width, src_height, bgra);
+                                            src_width, src_height);
 }
 
 

@@ -29,6 +29,7 @@
 
 #include "brw_context.h"
 #include "intel_mipmap_tree.h"
+#include "intel_blit.h"
 #include "intel_tex.h"
 
 #define FILE_DEBUG_FLAG DEBUG_TEXTURE
@@ -42,10 +43,10 @@
  * allow sampling beyond level 0.
  */
 static void
-intel_update_max_level(struct gl_texture_object *tObj,
+intel_update_max_level(struct intel_texture_object *intelObj,
 		       struct gl_sampler_object *sampler)
 {
-   struct intel_texture_object *intelObj = intel_texture_object(tObj);
+   struct gl_texture_object *tObj = &intelObj->base;
 
    if (!tObj->_MipmapComplete ||
        (tObj->_RenderToTexture &&
@@ -64,10 +65,12 @@ intel_update_max_level(struct gl_texture_object *tObj,
  * stored in other miptrees.
  */
 void
-intel_finalize_mipmap_tree(struct brw_context *brw,
-                           struct gl_texture_object *tObj)
+intel_finalize_mipmap_tree(struct brw_context *brw, GLuint unit)
 {
+   struct gl_context *ctx = &brw->ctx;
+   struct gl_texture_object *tObj = ctx->Texture.Unit[unit]._Current;
    struct intel_texture_object *intelObj = intel_texture_object(tObj);
+   struct gl_sampler_object *sampler = _mesa_get_samplerobj(ctx, unit);
    GLuint face, i;
    GLuint nr_faces = 0;
    struct intel_texture_image *firstImage;
@@ -76,6 +79,13 @@ intel_finalize_mipmap_tree(struct brw_context *brw,
    /* TBOs require no validation -- they always just point to their BO. */
    if (tObj->Target == GL_TEXTURE_BUFFER)
       return;
+
+   /* We know that this is true by now, and if it wasn't, we might have
+    * mismatched level sizes and the copies would fail.
+    */
+   assert(intelObj->base._BaseComplete);
+
+   intel_update_max_level(intelObj, sampler);
 
    /* What levels does this validated texture image require? */
    int validate_first_level = tObj->BaseLevel;
@@ -119,32 +129,8 @@ intel_finalize_mipmap_tree(struct brw_context *brw,
    /* May need to create a new tree:
     */
    if (!intelObj->mt) {
-      const unsigned level = firstImage->base.Base.Level;
       intel_get_image_dims(&firstImage->base.Base, &width, &height, &depth);
-      /* Figure out image dimensions at start level. */
-      switch(intelObj->base.Target) {
-      case GL_TEXTURE_2D_MULTISAMPLE:
-      case GL_TEXTURE_2D_MULTISAMPLE_ARRAY:
-      case GL_TEXTURE_RECTANGLE:
-      case GL_TEXTURE_EXTERNAL_OES:
-          assert(level == 0);
-          break;
-      case GL_TEXTURE_3D:
-          depth = depth << level;
-          /* Fall through */
-      case GL_TEXTURE_2D:
-      case GL_TEXTURE_2D_ARRAY:
-      case GL_TEXTURE_CUBE_MAP:
-      case GL_TEXTURE_CUBE_MAP_ARRAY:
-          height = height << level;
-          /* Fall through */
-      case GL_TEXTURE_1D:
-      case GL_TEXTURE_1D_ARRAY:
-          width = width << level;
-          break;
-      default:
-          unreachable("Unexpected target");
-      }
+
       perf_debug("Creating new %s %dx%dx%d %d-level miptree to handle "
                  "finalized texture miptree.\n",
                  _mesa_get_format_name(firstImage->base.Base.TexFormat),
@@ -188,7 +174,7 @@ intel_finalize_mipmap_tree(struct brw_context *brw,
 
    intelObj->validated_first_level = validate_first_level;
    intelObj->validated_last_level = validate_last_level;
-   intelObj->_Format = firstImage->base.Base.TexFormat,
+   intelObj->_Format = intelObj->mt->format;
    intelObj->needs_validate = false;
 }
 
@@ -203,19 +189,10 @@ brw_validate_textures(struct brw_context *brw)
    const int max_enabled_unit = ctx->Texture._MaxEnabledTexImageUnit;
 
    for (int unit = 0; unit <= max_enabled_unit; unit++) {
-      struct gl_texture_object *tex_obj = ctx->Texture.Unit[unit]._Current;
+      struct gl_texture_unit *tex_unit = &ctx->Texture.Unit[unit];
 
-      if (!tex_obj)
-         continue;
-
-      struct gl_sampler_object *sampler = _mesa_get_samplerobj(ctx, unit);
-
-      /* We know that this is true by now, and if it wasn't, we might have
-       * mismatched level sizes and the copies would fail.
-       */
-      assert(tex_obj->_BaseComplete);
-
-      intel_update_max_level(tex_obj, sampler);
-      intel_finalize_mipmap_tree(brw, tex_obj);
+      if (tex_unit->_Current) {
+         intel_finalize_mipmap_tree(brw, unit);
+      }
    }
 }

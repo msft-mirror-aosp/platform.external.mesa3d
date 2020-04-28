@@ -72,19 +72,19 @@ static struct nouveau_attr_info nv10_vertex_attrs[VERT_ATTRIB_MAX] = {
 		.imm_method = NV10_3D_VERTEX_FOG_1F,
 		.imm_fields = 1,
 	},
-	[VERT_ATTRIB_MAT(0)] = {
+	[VERT_ATTRIB_GENERIC0] = {
 		.emit = nv10_emit_material,
 	},
-	[VERT_ATTRIB_MAT(2)] = {
+	[VERT_ATTRIB_GENERIC2] = {
 		.emit = nv10_emit_material,
 	},
-	[VERT_ATTRIB_MAT(4)] = {
+	[VERT_ATTRIB_GENERIC4] = {
 		.emit = nv10_emit_material,
 	},
-	[VERT_ATTRIB_MAT(6)] = {
+	[VERT_ATTRIB_GENERIC6] = {
 		.emit = nv10_emit_material,
 	},
-	[VERT_ATTRIB_MAT(8)] = {
+	[VERT_ATTRIB_GENERIC8] = {
 		.emit = nv10_emit_material,
 	},
 };

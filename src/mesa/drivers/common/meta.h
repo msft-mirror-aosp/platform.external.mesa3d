@@ -90,7 +90,7 @@ struct save_state
    GLboolean DitherFlag;
 
    /** MESA_META_COLOR_MASK */
-   GLbitfield ColorMask;
+   GLubyte ColorMask[MAX_DRAW_BUFFERS][4];
 
    /** MESA_META_DEPTH_TEST */
    struct gl_depthbuffer_attrib Depth;
@@ -158,7 +158,7 @@ struct save_state
 
    /** MESA_META_VIEWPORT */
    GLfloat ViewportX, ViewportY, ViewportW, ViewportH;
-   GLclampf DepthNear, DepthFar;
+   GLclampd DepthNear, DepthFar;
 
    /** MESA_META_CLAMP_FRAGMENT_COLOR */
    GLenum ClampFragmentColor;
@@ -190,7 +190,7 @@ struct save_state
    struct gl_framebuffer *ReadBuffer;
 
    /** MESA_META_DRAW_BUFFERS */
-   GLenum16 ColorDrawBuffers[MAX_DRAW_BUFFERS];
+   GLenum ColorDrawBuffers[MAX_DRAW_BUFFERS];
 };
 
 /**

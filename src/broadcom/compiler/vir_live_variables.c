@@ -109,18 +109,24 @@ vir_setup_def(struct v3d_compile *c, struct qblock *block, int ip,
         c->temp_start[var] = MIN2(c->temp_start[var], ip);
         c->temp_end[var] = MAX2(c->temp_end[var], ip);
 
-        /* Mark the block as having a (partial) def of the var. */
-        BITSET_SET(block->defout, var);
-
-        /* If we've already tracked this as a def that screens off previous
-         * uses, or already used it within the block, there's nothing to do.
+        /* If we've already tracked this as a def, or already used it within
+         * the block, there's nothing to do.
          */
         if (BITSET_TEST(block->use, var) || BITSET_TEST(block->def, var))
                 return;
 
-        /* Easy, common case: unconditional full register update.*/
-        if ((inst->qpu.flags.ac == V3D_QPU_COND_NONE &&
-             inst->qpu.flags.mc == V3D_QPU_COND_NONE) &&
+        /* Easy, common case: unconditional full register update.
+         *
+         * We treat conditioning on the exec mask as the same as not being
+         * conditional.  This makes sure that if the register gets set on
+         * either side of an if, it is treated as being screened off before
+         * the if.  Otherwise, if there was no intervening def, its live
+         * interval doesn't extend back to the start of he program, and if too
+         * many registers did that we'd fail to register allocate.
+         */
+        if (((inst->qpu.flags.ac == V3D_QPU_COND_NONE &&
+              inst->qpu.flags.mc == V3D_QPU_COND_NONE) ||
+             inst->cond_is_exec_mask) &&
             inst->qpu.alu.add.output_pack == V3D_QPU_PACK_NONE &&
             inst->qpu.alu.mul.output_pack == V3D_QPU_PACK_NONE) {
                 BITSET_SET(block->def, var);
@@ -174,6 +180,8 @@ vir_setup_def(struct v3d_compile *c, struct qblock *block, int ip,
 static void
 sf_state_clear(struct hash_table *partial_update_ht)
 {
+        struct hash_entry *entry;
+
         hash_table_foreach(partial_update_ht, entry) {
                 struct partial_update_state *state = entry->data;
 
@@ -272,33 +280,6 @@ vir_live_variables_dataflow(struct v3d_compile *c, int bitset_words)
         return cont;
 }
 
-static bool
-vir_live_variables_defin_defout_dataflow(struct v3d_compile *c, int bitset_words)
-{
-        bool cont = false;
-
-        vir_for_each_block_rev(block, c) {
-                /* Propagate defin/defout down the successors to produce the
-                 * union of blocks with a reachable (partial) definition of
-                 * the var.
-                 *
-                 * This keeps a conditional first write to a reg from
-                 * extending its lifetime back to the start of the program.
-                 */
-                vir_for_each_successor(succ, block) {
-                        for (int i = 0; i < bitset_words; i++) {
-                                BITSET_WORD new_def = (block->defout[i] &
-                                                       ~succ->defin[i]);
-                                succ->defin[i] |= new_def;
-                                succ->defout[i] |= new_def;
-                                cont |= new_def;
-                        }
-                }
-        }
-
-        return cont;
-}
-
 /**
  * Extend the start/end ranges for each variable to account for the
  * new information calculated from control flow.
@@ -308,16 +289,14 @@ vir_compute_start_end(struct v3d_compile *c, int num_vars)
 {
         vir_for_each_block(block, c) {
                 for (int i = 0; i < num_vars; i++) {
-                        if (BITSET_TEST(block->live_in, i) &&
-                            BITSET_TEST(block->defin, i)) {
+                        if (BITSET_TEST(block->live_in, i)) {
                                 c->temp_start[i] = MIN2(c->temp_start[i],
                                                         block->start_ip);
                                 c->temp_end[i] = MAX2(c->temp_end[i],
                                                       block->start_ip);
                         }
 
-                        if (BITSET_TEST(block->live_out, i) &&
-                            BITSET_TEST(block->defout, i)) {
+                        if (BITSET_TEST(block->live_out, i)) {
                                 c->temp_start[i] = MIN2(c->temp_start[i],
                                                         block->end_ip);
                                 c->temp_end[i] = MAX2(c->temp_end[i],
@@ -332,20 +311,10 @@ vir_calculate_live_intervals(struct v3d_compile *c)
 {
         int bitset_words = BITSET_WORDS(c->num_temps);
 
-        /* We may be called more than once if we've rearranged the program to
-         * try to get register allocation to succeed.
+        /* If we called this function more than once, then we should be
+         * freeing the previous arrays.
          */
-        if (c->temp_start) {
-                ralloc_free(c->temp_start);
-                ralloc_free(c->temp_end);
-
-                vir_for_each_block(block, c) {
-                        ralloc_free(block->def);
-                        ralloc_free(block->use);
-                        ralloc_free(block->live_in);
-                        ralloc_free(block->live_out);
-                }
-        }
+        assert(!c->temp_start);
 
         c->temp_start = rzalloc_array(c, int, c->num_temps);
         c->temp_end = rzalloc_array(c, int, c->num_temps);
@@ -357,8 +326,6 @@ vir_calculate_live_intervals(struct v3d_compile *c)
 
         vir_for_each_block(block, c) {
                 block->def = rzalloc_array(c, BITSET_WORD, bitset_words);
-                block->defin = rzalloc_array(c, BITSET_WORD, bitset_words);
-                block->defout = rzalloc_array(c, BITSET_WORD, bitset_words);
                 block->use = rzalloc_array(c, BITSET_WORD, bitset_words);
                 block->live_in = rzalloc_array(c, BITSET_WORD, bitset_words);
                 block->live_out = rzalloc_array(c, BITSET_WORD, bitset_words);
@@ -369,10 +336,5 @@ vir_calculate_live_intervals(struct v3d_compile *c)
         while (vir_live_variables_dataflow(c, bitset_words))
                 ;
 
-        while (vir_live_variables_defin_defout_dataflow(c, bitset_words))
-                ;
-
         vir_compute_start_end(c, c->num_temps);
-
-        c->live_intervals_valid = true;
 }

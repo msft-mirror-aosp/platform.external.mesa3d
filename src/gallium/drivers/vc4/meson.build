@@ -81,10 +81,8 @@ files_libvc4 = files(
   'vc4_uniforms.c',
 )
 
-vc4_c_args = []
-
 libvc4_neon = []
-if host_machine.cpu_family() == 'arm'
+if with_asm_arch == 'arm'
   libvc4_neon = static_library(
     'vc4_neon',
     'vc4_tiling_lt_neon.c',
@@ -93,11 +91,12 @@ if host_machine.cpu_family() == 'arm'
     ],
     c_args : '-mfpu=neon',
   )
-  vc4_c_args += '-DUSE_ARM_ASM'
 endif
 
+simpenrose_c_args = []
+dep_simpenrose = dependency('simpenrose', required : false)
 if dep_simpenrose.found()
-  vc4_c_args += '-DUSE_VC4_SIMULATOR'
+  simpenrose_c_args = '-DUSE_VC4_SIMULATOR'
 endif
 
 libvc4 = static_library(
@@ -105,10 +104,10 @@ libvc4 = static_library(
   [files_libvc4, v3d_xml_pack],
   include_directories : [
     inc_src, inc_include, inc_gallium, inc_gallium_aux, inc_broadcom,
-    inc_gallium_drivers,
+    inc_gallium_drivers, inc_drm_uapi,
   ],
   link_with: libvc4_neon,
-  c_args : [c_vis_args, vc4_c_args],
+  c_args : [c_vis_args, simpenrose_c_args],
   cpp_args : [cpp_vis_args],
   dependencies : [dep_simpenrose, dep_libdrm, dep_valgrind, idep_nir_headers],
   build_by_default : false,
@@ -116,6 +115,6 @@ libvc4 = static_library(
 
 driver_vc4 = declare_dependency(
   compile_args : '-DGALLIUM_VC4',
-  link_with : [libvc4, libvc4winsys, libbroadcom_cle, libbroadcom_v3d],
+  link_with : [libvc4, libvc4winsys, libbroadcom_cle],
   dependencies : idep_nir,
 )

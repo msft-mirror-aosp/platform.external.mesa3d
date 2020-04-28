@@ -37,7 +37,7 @@
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 
-#include "drm-uapi/drm_fourcc.h"
+#include <drm_fourcc.h>
 
 static void
 etna_bind_sampler_states(struct pipe_context *pctx, enum pipe_shader_type shader,
@@ -172,9 +172,7 @@ etna_resource_sampler_compatible(struct etna_resource *res)
    if (res->layout == ETNA_LAYOUT_SUPER_TILED && VIV_FEATURE(screen, chipMinorFeatures2, SUPERTILED_TEXTURE))
       return true;
 
-   /* This GPU supports texturing from linear textures? */
-   if (res->layout == ETNA_LAYOUT_LINEAR && VIV_FEATURE(screen, chipMinorFeatures1, LINEAR_TEXTURE_SUPPORT))
-      return true;
+   /* TODO: LINEAR_TEXTURE_SUPPORT */
 
    /* Otherwise, only support tiled layouts */
    if (res->layout != ETNA_LAYOUT_TILED)
@@ -205,7 +203,6 @@ etna_texture_handle_incompatible(struct pipe_context *pctx, struct pipe_resource
                            PIPE_BIND_BLENDABLE);
          res->texture =
             etna_resource_alloc(pctx->screen, ETNA_LAYOUT_TILED,
-                                ETNA_ADDRESSING_MODE_TILED,
                                 DRM_FORMAT_MOD_LINEAR, &templat);
       }
 

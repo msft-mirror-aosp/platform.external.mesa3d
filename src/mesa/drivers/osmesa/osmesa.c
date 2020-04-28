@@ -573,8 +573,7 @@ osmesa_MapRenderbuffer(struct gl_context *ctx,
                        struct gl_renderbuffer *rb,
                        GLuint x, GLuint y, GLuint w, GLuint h,
                        GLbitfield mode,
-                       GLubyte **mapOut, GLint *rowStrideOut,
-                       bool flip_y)
+                       GLubyte **mapOut, GLint *rowStrideOut)
 {
    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
 
@@ -602,7 +601,7 @@ osmesa_MapRenderbuffer(struct gl_context *ctx,
    }
    else {
       _swrast_map_soft_renderbuffer(ctx, rb, x, y, w, h, mode,
-                                    mapOut, rowStrideOut, flip_y);
+                                    mapOut, rowStrideOut);
    }
 }
 
@@ -833,7 +832,6 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
 
       /* Initialize device driver function table */
       _mesa_init_driver_functions(&functions);
-      _tnl_init_driver_draw_function(&functions);
       /* override with our functions */
       functions.GetString = get_string;
       functions.UpdateState = osmesa_update_state_wrapper;
@@ -854,7 +852,7 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
       osmesa->gl_buffer = _mesa_create_framebuffer(osmesa->gl_visual);
       if (!osmesa->gl_buffer) {
          _mesa_destroy_visual( osmesa->gl_visual );
-         _mesa_free_context_data(&osmesa->mesa, true);
+         _mesa_free_context_data( &osmesa->mesa );
          free(osmesa);
          return NULL;
       }
@@ -891,7 +889,7 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
              !_tnl_CreateContext( ctx ) ||
              !_swsetup_CreateContext( ctx )) {
             _mesa_destroy_visual(osmesa->gl_visual);
-            _mesa_free_context_data(ctx, true);
+            _mesa_free_context_data(ctx);
             free(osmesa);
             return NULL;
          }
@@ -919,7 +917,7 @@ OSMesaCreateContextAttribs(const int *attribList, OSMesaContext sharelist)
 
          if (ctx->Version < version_major * 10 + version_minor) {
             _mesa_destroy_visual(osmesa->gl_visual);
-            _mesa_free_context_data(ctx, true);
+            _mesa_free_context_data(ctx);
             free(osmesa);
             return NULL;
          }
@@ -955,7 +953,7 @@ OSMesaDestroyContext( OSMesaContext osmesa )
       _mesa_destroy_visual( osmesa->gl_visual );
       _mesa_reference_framebuffer( &osmesa->gl_buffer, NULL );
 
-      _mesa_free_context_data(&osmesa->mesa, true);
+      _mesa_free_context_data( &osmesa->mesa );
       free( osmesa );
    }
 }
@@ -1018,6 +1016,12 @@ OSMesaMakeCurrent( OSMesaContext osmesa, void *buffer, GLenum type,
 #endif
 
    osmesa_update_state( &osmesa->mesa, 0 );
+
+   /* Call this periodically to detect when the user has begun using
+    * GL rendering from multiple threads.
+    */
+   _glapi_check_multithread();
+
 
    /* Create a front/left color buffer which wraps the user-provided buffer.
     * There is no back color buffer.

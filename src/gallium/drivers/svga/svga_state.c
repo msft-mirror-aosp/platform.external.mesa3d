@@ -237,24 +237,19 @@ done:
 }
 
 
-/**
- * Update state.  If the first attempt fails, flush the command buffer
- * and retry.
- * \return  true if success, false if second attempt fails.
- */
-bool
+void
 svga_update_state_retry(struct svga_context *svga, unsigned max_level)
 {
    enum pipe_error ret;
 
    ret = svga_update_state( svga, max_level );
 
-   if (ret != PIPE_OK) {
+   if (ret == PIPE_ERROR_OUT_OF_MEMORY) {
       svga_context_flush(svga, NULL);
       ret = svga_update_state( svga, max_level );
    }
 
-   return ret == PIPE_OK;
+   assert( ret == PIPE_OK );
 }
 
 

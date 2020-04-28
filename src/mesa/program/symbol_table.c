@@ -22,7 +22,6 @@
  */
 
 #include "main/imports.h"
-#include "main/errors.h"
 #include "symbol_table.h"
 #include "../../util/hash_table.h"
 #include "util/u_string.h"

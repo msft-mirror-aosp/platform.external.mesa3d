@@ -32,7 +32,6 @@
  */
 
 #include "c99_math.h"
-#include "main/errors.h"
 #include "main/glheader.h"
 #include "main/format_pack.h"
 #include "main/format_unpack.h"
@@ -769,7 +768,7 @@ clip_span( struct gl_context *ctx, SWspan *span )
           * For arrays of values, shift them left.
           */
          for (i = 0; i < VARYING_SLOT_MAX; i++) {
-            if (span->interpMask & (1u << i)) {
+            if (span->interpMask & (1 << i)) {
                GLuint j;
                for (j = 0; j < 4; j++) {
                   span->attrStart[i][j] += leftClip * span->attrStepX[i][j];
@@ -1134,6 +1133,7 @@ void
 _swrast_write_rgba_span( struct gl_context *ctx, SWspan *span)
 {
    const SWcontext *swrast = SWRAST_CONTEXT(ctx);
+   const GLuint *colorMask = (GLuint *) ctx->Color.ColorMask;
    const GLbitfield origInterpMask = span->interpMask;
    const GLbitfield origArrayMask = span->arrayMask;
    const GLbitfield64 origArrayAttribs = span->arrayAttribs;
@@ -1219,7 +1219,7 @@ _swrast_write_rgba_span( struct gl_context *ctx, SWspan *span)
       if (!(span->arrayMask & SPAN_Z))
          _swrast_span_interpolate_z(ctx, span);
 
-      if (ctx->Transform.DepthClampNear && ctx->Transform.DepthClampFar)
+      if (ctx->Transform.DepthClamp)
 	 _swrast_depth_clamp_span(ctx, span);
 
       if (_mesa_stencil_is_enabled(ctx)) {
@@ -1251,8 +1251,7 @@ _swrast_write_rgba_span( struct gl_context *ctx, SWspan *span)
    /* We had to wait until now to check for glColorMask(0,0,0,0) because of
     * the occlusion test.
     */
-   if (fb->_NumColorDrawBuffers == 1 &&
-       !GET_COLORMASK(ctx->Color.ColorMask, 0)) {
+   if (fb->_NumColorDrawBuffers == 1 && colorMask[0] == 0x0) {
       /* no colors to write */
       goto end;
    }
@@ -1369,7 +1368,7 @@ _swrast_write_rgba_span( struct gl_context *ctx, SWspan *span)
                _swrast_blend_span(ctx, rb, span);
             }
 
-            if (GET_COLORMASK(ctx->Color.ColorMask, buf) != 0xf) {
+            if (colorMask[buf] != 0xffffffff) {
                _swrast_mask_rgba_span(ctx, rb, span, buf);
             }
 

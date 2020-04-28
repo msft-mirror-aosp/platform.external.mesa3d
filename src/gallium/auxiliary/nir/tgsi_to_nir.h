@@ -22,12 +22,13 @@
  */
 
 #include "compiler/nir/nir.h"
-#include "pipe/p_screen.h"
 
 struct nir_shader *
 tgsi_to_nir(const void *tgsi_tokens,
-            struct pipe_screen *screen);
-
-struct nir_shader *
-tgsi_to_nir_noscreen(const void *tgsi_tokens,
-                     const nir_shader_compiler_options *options);
+            const struct nir_shader_compiler_options *options);
+void
+varying_slot_to_tgsi_semantic(gl_varying_slot slot,
+                              unsigned *semantic_name, unsigned *semantic_index);
+void
+frag_result_to_tgsi_semantic(gl_frag_result slot,
+                             unsigned *semantic_name, unsigned *semantic_index);

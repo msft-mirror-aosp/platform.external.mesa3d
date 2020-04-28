@@ -3,7 +3,6 @@
 
 #include "pipe/p_screen.h"
 #include "util/disk_cache.h"
-#include "util/u_atomic.h"
 #include "util/u_memory.h"
 
 #ifdef DEBUG
@@ -17,9 +16,6 @@ extern int nouveau_mesa_debug;
 
 struct nouveau_bo;
 
-#define NOUVEAU_SHADER_CACHE_FLAGS_IR_TGSI 0 << 0
-#define NOUVEAU_SHADER_CACHE_FLAGS_IR_NIR  1 << 0
-
 struct nouveau_screen {
    struct pipe_screen base;
    struct nouveau_drm *drm;
@@ -29,8 +25,6 @@ struct nouveau_screen {
    struct nouveau_pushbuf *pushbuf;
 
    int refcount;
-
-   unsigned transfer_pushbuf_threshold;
 
    unsigned vidmem_bindings; /* PIPE_BIND_* where VRAM placement is desired */
    unsigned sysmem_bindings; /* PIPE_BIND_* where GART placement is desired */
@@ -67,8 +61,6 @@ struct nouveau_screen {
    } firmware_info;
 
    struct disk_cache *disk_shader_cache;
-
-   bool prefer_nir;
 
 #ifdef NOUVEAU_ENABLE_DRIVER_STATISTICS
    union {
@@ -112,10 +104,10 @@ struct nouveau_screen {
 
 #ifdef NOUVEAU_ENABLE_DRIVER_STATISTICS
 # define NOUVEAU_DRV_STAT(s, n, v) do {         \
-      p_atomic_add(&(s)->stats.named.n, (v));   \
+      (s)->stats.named.n += (v);                \
    } while(0)
-# define NOUVEAU_DRV_STAT_RES(r, n, v) do {                                \
-      p_atomic_add(&nouveau_screen((r)->base.screen)->stats.named.n, v);   \
+# define NOUVEAU_DRV_STAT_RES(r, n, v) do {                     \
+      nouveau_screen((r)->base.screen)->stats.named.n += (v);   \
    } while(0)
 # define NOUVEAU_DRV_STAT_IFD(x) x
 #else

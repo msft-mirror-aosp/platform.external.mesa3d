@@ -1,3 +1,5 @@
+/* -*- mode: C; c-file-style: "k&r"; tab-width 4; indent-tabs-mode: t; -*- */
+
 /*
  * Copyright (C) 2012-2013 Rob Clark <robclark@freedesktop.org>
  *
@@ -47,7 +49,7 @@ fd2_rasterizer_state_create(struct pipe_context *pctx,
 
 	if (cso->point_size_per_vertex) {
 		psize_min = util_get_min_point_size(cso);
-		psize_max = 8192.0 - 0.0625;
+		psize_max = 8192;
 	} else {
 		/* Force the point size to be as if the vertex output was disabled. */
 		psize_min = cso->point_size;

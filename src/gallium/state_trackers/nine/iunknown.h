@@ -78,7 +78,6 @@ struct NineUnknownParams
     void (*dtor)(void *data);
     struct NineUnknown *container;
     struct NineDevice9 *device;
-    bool start_with_bind_not_ref;
 };
 
 HRESULT

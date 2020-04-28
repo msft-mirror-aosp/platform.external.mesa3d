@@ -66,8 +66,7 @@ clear_rgba_buffer(struct gl_context *ctx, struct gl_renderbuffer *rb,
 
    /* map dest buffer */
    ctx->Driver.MapRenderbuffer(ctx, rb, x, y, width, height,
-                               mapMode, &map, &rowStride,
-                               ctx->DrawBuffer->FlipY);
+                               mapMode, &map, &rowStride);
    if (!map) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glClear(color)");
       return;
@@ -188,13 +187,7 @@ clear_color_buffers(struct gl_context *ctx)
       if (rb == NULL)
 	 continue;
 
-      const GLubyte colormask[4] = {
-         GET_COLORMASK_BIT(ctx->Color.ColorMask, buf, 0) ? 0xff : 0,
-         GET_COLORMASK_BIT(ctx->Color.ColorMask, buf, 1) ? 0xff : 0,
-         GET_COLORMASK_BIT(ctx->Color.ColorMask, buf, 2) ? 0xff : 0,
-         GET_COLORMASK_BIT(ctx->Color.ColorMask, buf, 3) ? 0xff : 0,
-      };
-      clear_rgba_buffer(ctx, rb, colormask);
+      clear_rgba_buffer(ctx, rb, ctx->Color.ColorMask[buf]);
    }
 }
 

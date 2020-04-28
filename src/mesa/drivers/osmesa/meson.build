@@ -33,8 +33,7 @@ libosmesa = shared_library(
   include_directories : [
     inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux,
   ],
-  link_whole : libglapi_static,
-  link_with : [libmesa_classic, osmesa_link_with],
+  link_with : [libmesa_classic, libglapi_static, osmesa_link_with],
   dependencies : [dep_thread, dep_selinux],
   version : '8.0.0',
   install : true,

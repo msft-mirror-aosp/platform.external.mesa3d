@@ -30,6 +30,7 @@
 
 #include "anv_private.h"
 #include "vk_enum_to_str.h"
+#include "util/debug.h"
 
 /** Log an error message.  */
 void anv_printflike(1, 2)
@@ -56,7 +57,7 @@ __anv_perf_warn(struct anv_instance *instance, const void *object,
 {
    va_list ap;
    char buffer[256];
-   char report[512];
+   char report[256];
 
    va_start(ap, format);
    vsnprintf(buffer, sizeof(buffer), format, ap);
@@ -77,17 +78,20 @@ __anv_perf_warn(struct anv_instance *instance, const void *object,
 }
 
 VkResult
-__vk_errorv(struct anv_instance *instance, const void *object,
-            VkDebugReportObjectTypeEXT type, VkResult error,
-            const char *file, int line, const char *format, va_list ap)
+__vk_errorf(struct anv_instance *instance, const void *object,
+                     VkDebugReportObjectTypeEXT type, VkResult error,
+                     const char *file, int line, const char *format, ...)
 {
+   va_list ap;
    char buffer[256];
-   char report[512];
+   char report[256];
 
    const char *error_str = vk_Result_to_str(error);
 
    if (format) {
+      va_start(ap, format);
       vsnprintf(buffer, sizeof(buffer), format, ap);
+      va_end(ap);
 
       snprintf(report, sizeof(report), "%s:%d: %s (%s)", file, line, buffer,
                error_str);
@@ -108,19 +112,9 @@ __vk_errorv(struct anv_instance *instance, const void *object,
 
    intel_loge("%s", report);
 
-   return error;
-}
-
-VkResult
-__vk_errorf(struct anv_instance *instance, const void *object,
-            VkDebugReportObjectTypeEXT type, VkResult error,
-            const char *file, int line, const char *format, ...)
-{
-   va_list ap;
-
-   va_start(ap, format);
-   __vk_errorv(instance, object, type, error, file, line, format, ap);
-   va_end(ap);
+   if (error == VK_ERROR_DEVICE_LOST &&
+       env_var_as_boolean("ANV_ABORT_ON_DEVICE_LOSS", false))
+      abort();
 
    return error;
 }

@@ -42,13 +42,16 @@ int if_conversion::run() {
 	regions_vec &rv = sh.get_regions();
 
 	unsigned converted = 0;
-	for (regions_vec::reverse_iterator I = rv.rbegin(); I != rv.rend(); ) {
+
+	for (regions_vec::reverse_iterator N, I = rv.rbegin(), E = rv.rend();
+			I != E; I = N) {
+		N = I; ++N;
+
 		region_node *r = *I;
 		if (run_on(r)) {
-			I = regions_vec::reverse_iterator(rv.erase((++I).base()));
+			rv.erase(I.base() - 1);
 			++converted;
-		} else
-			++I;
+		}
 	}
 	return 0;
 }

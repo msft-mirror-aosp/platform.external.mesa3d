@@ -217,9 +217,7 @@ do {							\
 static GLboolean r200UpdateTextureEnv( struct gl_context *ctx, int unit, int slot, GLuint replaceargs )
 {
    r200ContextPtr rmesa = R200_CONTEXT(ctx);
-   const struct gl_texture_unit *rtexUnit = &ctx->Texture.Unit[unit];
-   const struct gl_fixedfunc_texture_unit *texUnit =
-      &ctx->Texture.FixedFuncUnit[unit];
+   const struct gl_texture_unit *texUnit = &ctx->Texture.Unit[unit];
    GLuint color_combine, alpha_combine;
    GLuint color_scale = rmesa->hw.pix[slot].cmd[PIX_PP_TXCBLEND2] &
       ~(R200_TXC_SCALE_MASK | R200_TXC_OUTPUT_REG_MASK | R200_TXC_TFACTOR_SEL_MASK |
@@ -246,7 +244,7 @@ static GLboolean r200UpdateTextureEnv( struct gl_context *ctx, int unit, int slo
 			(unit << R200_TXA_TFACTOR_SEL_SHIFT) |
 			(replaceargs << R200_TXA_TFACTOR1_SEL_SHIFT);
 
-   if ( !rtexUnit->_Current ) {
+   if ( !texUnit->_Current ) {
       assert( unit == 0);
       color_combine = R200_TXC_ARG_A_ZERO | R200_TXC_ARG_B_ZERO
 	  | R200_TXC_ARG_C_DIFFUSE_COLOR | R200_TXC_OP_MADD;
@@ -263,9 +261,9 @@ static GLboolean r200UpdateTextureEnv( struct gl_context *ctx, int unit, int slo
 
 
       const GLint replaceoprgb =
-	 ctx->Texture.FixedFuncUnit[replaceargs]._CurrentCombine->OperandRGB[0] - GL_SRC_COLOR;
+	 ctx->Texture.Unit[replaceargs]._CurrentCombine->OperandRGB[0] - GL_SRC_COLOR;
       const GLint replaceopa =
-	 ctx->Texture.FixedFuncUnit[replaceargs]._CurrentCombine->OperandA[0] - GL_SRC_ALPHA;
+	 ctx->Texture.Unit[replaceargs]._CurrentCombine->OperandA[0] - GL_SRC_ALPHA;
 
       /* Step 1:
        * Extract the color and alpha combine function arguments.
@@ -288,7 +286,7 @@ static GLboolean r200UpdateTextureEnv( struct gl_context *ctx, int unit, int slo
 	 case GL_PREVIOUS:
 	    if (replaceargs != unit) {
 	       const GLint srcRGBreplace =
-		  ctx->Texture.FixedFuncUnit[replaceargs]._CurrentCombine->SourceRGB[0];
+		  ctx->Texture.Unit[replaceargs]._CurrentCombine->SourceRGB[0];
 	       if (op >= 2) {
 		  op = op ^ replaceopa;
 	       }
@@ -375,7 +373,7 @@ static GLboolean r200UpdateTextureEnv( struct gl_context *ctx, int unit, int slo
 	 case GL_PREVIOUS:
 	    if (replaceargs != unit) {
 	       const GLint srcAreplace =
-		  ctx->Texture.FixedFuncUnit[replaceargs]._CurrentCombine->SourceA[0];
+		  ctx->Texture.Unit[replaceargs]._CurrentCombine->SourceA[0];
 	       op = op ^ replaceopa;
 	       switch (srcAreplace) {
 	       case GL_TEXTURE:
@@ -773,9 +771,7 @@ static GLboolean r200UpdateAllTexEnv( struct gl_context *ctx )
    stageref[maxunitused + 1] = REF_COLOR | REF_ALPHA;
 
    for ( j = maxunitused; j >= 0; j-- ) {
-      const struct gl_texture_unit *rtexUnit = &ctx->Texture.Unit[j];
-      const struct gl_fixedfunc_texture_unit *texUnit =
-         &ctx->Texture.FixedFuncUnit[j];
+      const struct gl_texture_unit *texUnit = &ctx->Texture.Unit[j];
 
       rmesa->state.texture.unit[j].outputreg = -1;
 
@@ -797,7 +793,7 @@ static GLboolean r200UpdateAllTexEnv( struct gl_context *ctx )
 
          nextunit[j] = currentnext;
 
-         if (!rtexUnit->_Current) {
+         if (!texUnit->_Current) {
 	 /* the not enabled stages are referenced "indirectly",
             must not cut off the lower stages */
 	    stageref[j] = REF_COLOR | REF_ALPHA;
@@ -884,10 +880,10 @@ static GLboolean r200UpdateAllTexEnv( struct gl_context *ctx )
       if (ctx->Texture.Unit[i]._Current && stageref[i+1]) {
          GLuint replaceunit = i;
 	 /* try to optimize GL_REPLACE away (only one level deep though) */
-	 if (	(ctx->Texture.FixedFuncUnit[i]._CurrentCombine->ModeRGB == GL_REPLACE) &&
-		(ctx->Texture.FixedFuncUnit[i]._CurrentCombine->ModeA == GL_REPLACE) &&
-		(ctx->Texture.FixedFuncUnit[i]._CurrentCombine->ScaleShiftRGB == 0) &&
-		(ctx->Texture.FixedFuncUnit[i]._CurrentCombine->ScaleShiftA == 0) &&
+	 if (	(ctx->Texture.Unit[i]._CurrentCombine->ModeRGB == GL_REPLACE) &&
+		(ctx->Texture.Unit[i]._CurrentCombine->ModeA == GL_REPLACE) &&
+		(ctx->Texture.Unit[i]._CurrentCombine->ScaleShiftRGB == 0) &&
+		(ctx->Texture.Unit[i]._CurrentCombine->ScaleShiftA == 0) &&
 		(nextunit[i] > 0) ) {
 	    /* yippie! can optimize it away! */
 	    replaceunit = i;
@@ -1090,8 +1086,7 @@ static GLuint r200_need_dis_texgen(const GLbitfield texGenEnabled,
 static GLboolean r200_validate_texgen( struct gl_context *ctx, GLuint unit )
 {  
    r200ContextPtr rmesa = R200_CONTEXT(ctx);
-   const struct gl_fixedfunc_texture_unit *texUnit =
-      &ctx->Texture.FixedFuncUnit[unit];
+   const struct gl_texture_unit *texUnit = &ctx->Texture.Unit[unit];
    GLuint inputshift = R200_TEXGEN_0_INPUT_SHIFT + unit*4;
    GLuint tgi, tgcm;
    GLuint mode = 0;
