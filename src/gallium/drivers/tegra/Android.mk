@@ -1,6 +1,6 @@
 # Mesa 3-D graphics library
 #
-# Copyright (C) 2017 Mauro Rossi <issor.oruam@gmail.com>
+# Copyright (C) 2020 The Android Open Source Project
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the "Software"),
@@ -20,37 +20,32 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-# ----------------------------------------------------------------------
-# libmesa_git_sha1
-# ----------------------------------------------------------------------
-
 LOCAL_PATH := $(call my-dir)
+
+# get C_SOURCES
+include $(LOCAL_PATH)/Makefile.sources
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := libmesa_git_sha1
+LOCAL_SRC_FILES := \
+	$(C_SOURCES)
 
-LOCAL_MODULE_CLASS := STATIC_LIBRARIES
-intermediates := $(call local-generated-sources-dir)
+LOCAL_C_INCLUDES := \
+	$(MESA_TOP)/include \
+	$(call generated-sources-dir-for,STATIC_LIBRARIES,libmesa_nir,,)/nir \
+	$(MESA_TOP)/src/compiler/nir \
+	$(MESA_TOP)/src/mapi \
+	$(MESA_TOP)/src/mesa
 
-# dummy.c source file is generated to meet the build system's rules.
-LOCAL_GENERATED_SOURCES += $(intermediates)/dummy.c
+LOCAL_STATIC_LIBRARIES := libmesa_nir
+LOCAL_SHARED_LIBRARIES := libdrm_tegra
+LOCAL_MODULE := libmesa_pipe_tegra
 
-$(intermediates)/dummy.c:
-	@mkdir -p $(dir $@)
-	@echo "Gen Dummy: $(PRIVATE_MODULE) <= $(notdir $(@))"
-	$(hide) touch $@
-
-LOCAL_GENERATED_SOURCES += $(addprefix $(intermediates)/, git_sha1.h)
-
-.KATI_RESTAT: $(intermediates)/git_sha1.h
-$(intermediates)/git_sha1.h: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(MESA_TOP)/bin/git_sha1_gen.py
-$(intermediates)/git_sha1.h: $(wildcard $(MESA_TOP)/.git/logs/HEAD) $(MESA_TOP)/bin/git_sha1_gen.py
-	@mkdir -p $(dir $@)
-	@echo "GIT-SHA1: $(PRIVATE_MODULE) <= git"
-	$(hide) $(PRIVATE_SCRIPT) --output $@
-
-LOCAL_EXPORT_C_INCLUDE_DIRS := $(intermediates)
-
-include $(MESA_COMMON_MK)
+include $(GALLIUM_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
+
+ifneq ($(HAVE_GALLIUM_TEGRA),)
+GALLIUM_TARGET_DRIVERS += tegra
+$(eval GALLIUM_LIBS += $(LOCAL_MODULE) libmesa_winsys_tegra)
+$(eval GALLIUM_SHARED_LIBS += $(LOCAL_SHARED_LIBRARIES))
+endif
