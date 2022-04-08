@@ -38,7 +38,7 @@ struct pipe_context;
 struct pipe_screen *
 rbug_screen_create(struct pipe_screen *screen);
 
-bool
+boolean
 rbug_enabled(void);
 
 #ifdef __cplusplus

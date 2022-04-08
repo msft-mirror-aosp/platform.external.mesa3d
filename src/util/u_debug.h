@@ -38,16 +38,16 @@
 #ifndef U_DEBUG_H_
 #define U_DEBUG_H_
 
-#include <stdarg.h>
-#include <string.h>
-#include "util/os_misc.h"
-#include "util/detect_os.h"
-#include "util/macros.h"
 
-#if DETECT_OS_HAIKU
+#include "util/os_misc.h"
+
+#if defined(PIPE_OS_HAIKU)
 /* Haiku provides debug_printf in libroot with OS.h */
 #include <OS.h>
 #endif
+
+#include "pipe/p_defines.h"
+
 
 #ifdef	__cplusplus
 extern "C" {
@@ -82,7 +82,7 @@ _debug_printf(const char *format, ...)
  * - avoid outputing large strings (512 bytes is the current maximum length
  * that is guaranteed to be printed in all platforms)
  */
-#if !DETECT_OS_HAIKU
+#if !defined(PIPE_OS_HAIKU)
 static inline void
 debug_printf(const char *format, ...) _util_printf_format(1,2);
 
@@ -109,9 +109,9 @@ debug_printf(const char *format, ...)
  */
 #define debug_printf_once(args) \
    do { \
-      static bool once = true; \
+      static boolean once = TRUE; \
       if (once) { \
-         once = false; \
+         once = FALSE; \
          debug_printf args; \
       } \
    } while (0)
@@ -235,11 +235,11 @@ void _debug_assert_fail(const char *expr,
 #ifdef DEBUG
 #define debug_warn_once(__msg) \
    do { \
-      static bool warned = false; \
+      static bool warned = FALSE; \
       if (!warned) { \
          _debug_printf("%s:%u:%s: one time warning: %s\n", \
                        __FILE__, __LINE__, __FUNCTION__, __msg); \
-         warned = true; \
+         warned = TRUE; \
       } \
    } while (0)
 #else
@@ -389,8 +389,8 @@ void debug_funclog_enter_exit(const char* f, const int line, const char* file);
 const char *
 debug_get_option(const char *name, const char *dfault);
 
-bool
-debug_get_bool_option(const char *name, bool dfault);
+boolean
+debug_get_bool_option(const char *name, boolean dfault);
 
 long
 debug_get_num_option(const char *name, long dfault);
@@ -404,23 +404,23 @@ debug_get_flags_option(const char *name,
 static const char * \
 debug_get_option_ ## suffix (void) \
 { \
-   static bool first = true; \
+   static boolean first = TRUE; \
    static const char * value; \
    if (first) { \
-      first = false; \
+      first = FALSE; \
       value = debug_get_option(name, dfault); \
    } \
    return value; \
 }
 
 #define DEBUG_GET_ONCE_BOOL_OPTION(sufix, name, dfault) \
-static bool \
+static boolean \
 debug_get_option_ ## sufix (void) \
 { \
-   static bool first = true; \
-   static bool value; \
+   static boolean first = TRUE; \
+   static boolean value; \
    if (first) { \
-      first = false; \
+      first = FALSE; \
       value = debug_get_bool_option(name, dfault); \
    } \
    return value; \
@@ -430,10 +430,10 @@ debug_get_option_ ## sufix (void) \
 static long \
 debug_get_option_ ## sufix (void) \
 { \
-   static bool first = true; \
+   static boolean first = TRUE; \
    static long value; \
    if (first) { \
-      first = false; \
+      first = FALSE; \
       value = debug_get_num_option(name, dfault); \
    } \
    return value; \
@@ -443,10 +443,10 @@ debug_get_option_ ## sufix (void) \
 static unsigned long \
 debug_get_option_ ## sufix (void) \
 { \
-   static bool first = true; \
+   static boolean first = TRUE; \
    static unsigned long value; \
    if (first) { \
-      first = false; \
+      first = FALSE; \
       value = debug_get_flags_option(name, flags, dfault); \
    } \
    return value; \

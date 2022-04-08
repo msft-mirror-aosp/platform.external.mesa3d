@@ -35,7 +35,6 @@
 #include "context.h"
 #include "enums.h"
 #include "fbobject.h"
-#include "hash.h"
 #include "mtypes.h"
 #include "util/bitscan.h"
 #include "util/u_math.h"
@@ -85,9 +84,14 @@ supported_buffer_bitmask(const struct gl_context *ctx,
    return mask;
 }
 
-GLenum
-_mesa_back_to_front_if_single_buffered(const struct gl_framebuffer *fb,
-                                       GLenum buffer)
+
+/**
+ * Helper routine used by glDrawBuffer and glDrawBuffersARB.
+ * Given a GLenum naming one or more color buffers (such as
+ * GL_FRONT_AND_BACK), return the corresponding bitmask of BUFFER_BIT_* flags.
+ */
+static GLbitfield
+draw_buffer_enum_to_bitmask(const struct gl_context *ctx, GLenum buffer)
 {
    /* If the front buffer is the only buffer, GL_BACK and all other flags
     * that include BACK select the front buffer for drawing. There are
@@ -111,7 +115,7 @@ _mesa_back_to_front_if_single_buffered(const struct gl_framebuffer *fb,
     *    but they are front buffers from the Mesa point of view,
     *    because they are always single buffered.
     */
-   if (!fb->Visual.doubleBufferMode) {
+   if (!ctx->DrawBuffer->Visual.doubleBufferMode) {
       switch (buffer) {
       case GL_BACK:
          buffer = GL_FRONT;
@@ -124,19 +128,6 @@ _mesa_back_to_front_if_single_buffered(const struct gl_framebuffer *fb,
          break;
       }
    }
-
-   return buffer;
-}
-
-/**
- * Helper routine used by glDrawBuffer and glDrawBuffersARB.
- * Given a GLenum naming one or more color buffers (such as
- * GL_FRONT_AND_BACK), return the corresponding bitmask of BUFFER_BIT_* flags.
- */
-static GLbitfield
-draw_buffer_enum_to_bitmask(const struct gl_context *ctx, GLenum buffer)
-{
-   buffer = _mesa_back_to_front_if_single_buffered(ctx->DrawBuffer, buffer);
 
    switch (buffer) {
       case GL_NONE:
@@ -201,12 +192,20 @@ draw_buffer_enum_to_bitmask(const struct gl_context *ctx, GLenum buffer)
 static gl_buffer_index
 read_buffer_enum_to_index(const struct gl_context *ctx, GLenum buffer)
 {
-   buffer = _mesa_back_to_front_if_single_buffered(ctx->ReadBuffer, buffer);
-
    switch (buffer) {
       case GL_FRONT:
          return BUFFER_FRONT_LEFT;
       case GL_BACK:
+         if (_mesa_is_gles(ctx)) {
+            /* In draw_buffer_enum_to_bitmask, when GLES contexts draw to
+             * GL_BACK with a single-buffered configuration, we actually end
+             * up drawing to the sole front buffer in our internal
+             * representation.  For consistency, we must read from that
+             * front left buffer too.
+             */
+            if (!ctx->DrawBuffer->Visual.doubleBufferMode)
+               return BUFFER_FRONT_LEFT;
+         }
          return BUFFER_BACK_LEFT;
       case GL_RIGHT:
          return BUFFER_FRONT_RIGHT;
@@ -375,25 +374,6 @@ _mesa_NamedFramebufferDrawBuffer_no_error(GLuint framebuffer, GLenum buf)
    }
 
    draw_buffer_no_error(ctx, fb, buf, "glNamedFramebufferDrawBuffer");
-}
-
-
-void GLAPIENTRY
-_mesa_FramebufferDrawBufferEXT(GLuint framebuffer, GLenum buf)
-{
-   GET_CURRENT_CONTEXT(ctx);
-   struct gl_framebuffer *fb;
-
-   if (framebuffer) {
-      fb = _mesa_lookup_framebuffer_dsa(ctx, framebuffer,
-                                        "glFramebufferDrawBufferEXT");
-      if (!fb)
-         return;
-   }
-   else
-      fb = ctx->WinSysDrawBuffer;
-
-   draw_buffer_error(ctx, fb, buf, "glFramebufferDrawBufferEXT");
 }
 
 
@@ -670,24 +650,6 @@ _mesa_DrawBuffers(GLsizei n, const GLenum *buffers)
    draw_buffers_error(ctx, ctx->DrawBuffer, n, buffers, "glDrawBuffers");
 }
 
-void GLAPIENTRY
-_mesa_FramebufferDrawBuffersEXT(GLuint framebuffer, GLsizei n,
-                                const GLenum *bufs)
-{
-   GET_CURRENT_CONTEXT(ctx);
-   struct gl_framebuffer *fb;
-
-   if (framebuffer) {
-      fb = _mesa_lookup_framebuffer_dsa(ctx, framebuffer,
-                                        "glFramebufferDrawBuffersEXT");
-      if (!fb)
-         return;
-   }
-   else
-      fb = ctx->WinSysDrawBuffer;
-
-   draw_buffers_error(ctx, fb, n, bufs, "glFramebufferDrawBuffersEXT");
-}
 
 void GLAPIENTRY
 _mesa_NamedFramebufferDrawBuffers_no_error(GLuint framebuffer, GLsizei n,
@@ -995,25 +957,6 @@ _mesa_NamedFramebufferReadBuffer_no_error(GLuint framebuffer, GLenum src)
    }
 
    read_buffer_no_error(ctx, fb, src, "glNamedFramebufferReadBuffer");
-}
-
-
-void GLAPIENTRY
-_mesa_FramebufferReadBufferEXT(GLuint framebuffer, GLenum buf)
-{
-   GET_CURRENT_CONTEXT(ctx);
-   struct gl_framebuffer *fb;
-
-   if (framebuffer) {
-      fb = _mesa_lookup_framebuffer_dsa(ctx, framebuffer,
-                                        "glFramebufferReadBufferEXT");
-      if (!fb)
-         return;
-   }
-   else
-      fb = ctx->WinSysDrawBuffer;
-
-   read_buffer_err(ctx, fb, buf, "glFramebufferReadBufferEXT");
 }
 
 

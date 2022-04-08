@@ -116,8 +116,7 @@ llvmpipe_bind_rasterizer_state(struct pipe_context *pipe, void *handle)
                                   state->lp_state.front_ccw,
                                   state->lp_state.scissor,
                                   state->lp_state.half_pixel_center,
-                                  state->lp_state.bottom_edge_rule,
-                                  state->lp_state.multisample);
+                                  state->lp_state.bottom_edge_rule);
       lp_setup_set_flatshade_first( llvmpipe->setup,
 				    state->lp_state.flatshade_first);
       lp_setup_set_line_state( llvmpipe->setup,

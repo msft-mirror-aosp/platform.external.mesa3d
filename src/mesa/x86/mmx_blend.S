@@ -6,8 +6,7 @@
 
 #ifdef USE_MMX_ASM
 #include "assyntax.h"
-#define MATH_ASM_PTR_SIZE 4
-#include "math/m_vector_asm.h"
+#include "matypes.h"
 
 /* integer multiplication - alpha plus one
  *

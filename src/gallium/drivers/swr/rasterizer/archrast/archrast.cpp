@@ -25,15 +25,11 @@
  * @brief Implementation for archrast.
  *
  ******************************************************************************/
-#include <sys/stat.h>
-
 #include <atomic>
-#include <map>
 
 #include "common/os.h"
 #include "archrast/archrast.h"
 #include "archrast/eventmanager.h"
-#include "gen_ar_event.hpp"
 #include "gen_ar_eventhandlerfile.hpp"
 
 namespace ArchRast
@@ -88,7 +84,6 @@ namespace ArchRast
         uint32_t alphaTestCount  = 0;
         uint32_t alphaBlendCount = 0;
     };
-
 
     //////////////////////////////////////////////////////////////////////////
     /// @brief Event handler that handles API thread events. This is shared
@@ -689,12 +684,10 @@ namespace ArchRast
     // Dispatch event for this thread.
     void Dispatch(HANDLE hThreadContext, const Event& event)
     {
-        if (event.IsEnabled())
-        {
-            EventManager* pManager = reinterpret_cast<EventManager*>(hThreadContext);
-            SWR_ASSERT(pManager != nullptr);
-            pManager->Dispatch(event);
-        }
+        EventManager* pManager = FromHandle(hThreadContext);
+        SWR_ASSERT(pManager != nullptr);
+
+        pManager->Dispatch(event);
     }
 
     // Flush for this thread.

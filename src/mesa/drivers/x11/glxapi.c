@@ -59,7 +59,11 @@ struct display_dispatch {
 
 #define KEYWORD1 PUBLIC
 
+#if defined(USE_MGL_NAMESPACE)
+#define NAME(func)  mgl##func
+#else
 #define NAME(func)  gl##func
+#endif
 
 #define DISPATCH(FUNC, ARGS, MESSAGE)		\
    GET_DISPATCH()->FUNC ARGS
@@ -69,7 +73,7 @@ struct display_dispatch {
 
 /* skip normal ones */
 #define _GLAPI_SKIP_NORMAL_ENTRY_POINTS
-#include "glapitemp.h"
+#include "glapi/glapitemp.h"
 
 #endif /* GLX_INDIRECT_RENDERING */
 
@@ -791,14 +795,14 @@ glXDestroyGLXPbufferSGIX(Display *dpy, GLXPbufferSGIX pbuf)
    t->DestroyGLXPbufferSGIX(dpy, pbuf);
 }
 
-void PUBLIC
+int PUBLIC
 glXQueryGLXPbufferSGIX(Display *dpy, GLXPbufferSGIX pbuf, int attribute, unsigned int *value)
 {
    struct _glxapi_table *t;
    GET_DISPATCH(dpy, t);
    if (!t)
-      return;
-   t->QueryGLXPbufferSGIX(dpy, pbuf, attribute, value);
+      return 0;
+   return t->QueryGLXPbufferSGIX(dpy, pbuf, attribute, value);
 }
 
 void PUBLIC
@@ -909,7 +913,7 @@ glXAssociateDMPbufferSGIX(Display *dpy, GLXPbufferSGIX pbuffer, DMparams *params
 /*** GLX_SUN_get_transparent_index ***/
 
 Status PUBLIC
-glXGetTransparentIndexSUN(Display *dpy, Window overlay, Window underlay, unsigned long *pTransparent)
+glXGetTransparentIndexSUN(Display *dpy, Window overlay, Window underlay, long *pTransparent)
 {
    struct _glxapi_table *t;
    GET_DISPATCH(dpy, t);

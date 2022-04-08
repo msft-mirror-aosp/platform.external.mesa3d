@@ -163,7 +163,12 @@ nir_sweep(nir_shader *nir)
       ralloc_steal(nir, (char *)nir->info.label);
 
    /* Variables and registers are not dead.  Steal them back. */
-   steal_list(nir, nir_variable, &nir->variables);
+   steal_list(nir, nir_variable, &nir->uniforms);
+   steal_list(nir, nir_variable, &nir->inputs);
+   steal_list(nir, nir_variable, &nir->outputs);
+   steal_list(nir, nir_variable, &nir->shared);
+   steal_list(nir, nir_variable, &nir->globals);
+   steal_list(nir, nir_variable, &nir->system_values);
 
    /* Recurse into functions, stealing their contents back. */
    foreach_list_typed(nir_function, func, node, &nir->functions) {

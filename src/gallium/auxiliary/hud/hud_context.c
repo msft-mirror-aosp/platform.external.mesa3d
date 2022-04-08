@@ -27,7 +27,7 @@
 
 /* This head-up display module can draw transparent graphs on top of what
  * the app is rendering, visualizing various data like framerate, cpu load,
- * performance counters, etc. It can be hook up into any gallium frontend.
+ * performance counters, etc. It can be hook up into any state tracker.
  *
  * The HUD is controlled with the GALLIUM_HUD environment variable.
  * Set GALLIUM_HUD=help for more info.
@@ -42,7 +42,7 @@
 
 #include "cso_cache/cso_context.h"
 #include "util/u_draw_quad.h"
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 #include "util/u_math.h"
@@ -55,7 +55,6 @@
 
 /* Control the visibility of all HUD contexts */
 static boolean huds_visible = TRUE;
-static int hud_scale = 1;
 
 
 #ifdef PIPE_OS_UNIX
@@ -73,28 +72,31 @@ hud_draw_colored_prims(struct hud_context *hud, unsigned prim,
                        int xoffset, int yoffset, float yscale)
 {
    struct cso_context *cso = hud->cso;
-   struct pipe_vertex_buffer vbuffer = {0};
+   unsigned size = num_vertices * hud->color_prims.vbuf.stride;
+
+   /* If a recording context is inactive, don't draw anything. */
+   if (size > hud->color_prims.buffer_size)
+      return;
+
+   memcpy(hud->color_prims.vertices, buffer, size);
 
    hud->constants.color[0] = r;
    hud->constants.color[1] = g;
    hud->constants.color[2] = b;
    hud->constants.color[3] = a;
-   hud->constants.translate[0] = (float) (xoffset * hud_scale);
-   hud->constants.translate[1] = (float) (yoffset * hud_scale);
-   hud->constants.scale[0] = hud_scale;
-   hud->constants.scale[1] = yscale * hud_scale;
+   hud->constants.translate[0] = (float) xoffset;
+   hud->constants.translate[1] = (float) yoffset;
+   hud->constants.scale[0] = 1;
+   hud->constants.scale[1] = yscale;
    cso_set_constant_buffer(cso, PIPE_SHADER_VERTEX, 0, &hud->constbuf);
 
-   u_upload_data(hud->pipe->stream_uploader, 0,
-                 num_vertices * 2 * sizeof(float), 16, buffer,
-                 &vbuffer.buffer_offset, &vbuffer.buffer.resource);
-   u_upload_unmap(hud->pipe->stream_uploader);
-   vbuffer.stride = 2 * sizeof(float);
-
-   cso_set_vertex_buffers(cso, 0, 1, &vbuffer);
-   pipe_resource_reference(&vbuffer.buffer.resource, NULL);
+   cso_set_vertex_buffers(cso, 0, 1, &hud->color_prims.vbuf);
    cso_set_fragment_shader_handle(hud->cso, hud->fs_color);
    cso_draw_arrays(cso, prim, 0, num_vertices);
+
+   hud->color_prims.vertices += size / sizeof(float);
+   hud->color_prims.vbuf.buffer_offset += size;
+   hud->color_prims.buffer_size -= size;
 }
 
 static void
@@ -147,7 +149,7 @@ hud_draw_string(struct hud_context *hud, unsigned x, unsigned y,
 
    va_list ap;
    va_start(ap, str);
-   vsnprintf(buf, sizeof(buf), str, ap);
+   util_vsnprintf(buf, sizeof(buf), str, ap);
    va_end(ap);
 
    if (!*s)
@@ -520,7 +522,7 @@ hud_draw_results(struct hud_context *hud, struct pipe_resource *tex)
 
    viewport.scale[0] = 0.5f * hud->fb_width;
    viewport.scale[1] = 0.5f * hud->fb_height;
-   viewport.scale[2] = 0.0f;
+   viewport.scale[2] = 1.0f;
    viewport.translate[0] = 0.5f * hud->fb_width;
    viewport.translate[1] = 0.5f * hud->fb_height;
    viewport.translate[2] = 0.0f;
@@ -536,7 +538,7 @@ hud_draw_results(struct hud_context *hud, struct pipe_resource *tex)
    cso_set_tesseval_shader_handle(cso, NULL);
    cso_set_geometry_shader_handle(cso, NULL);
    cso_set_vertex_shader_handle(cso, hud->vs);
-   cso_set_vertex_elements(cso, &hud->velems);
+   cso_set_vertex_elements(cso, 2, hud->velems);
    cso_set_render_condition(cso, NULL, FALSE, 0);
    cso_set_sampler_views(cso, PIPE_SHADER_FRAGMENT, 1,
                          &hud->font_sampler_view);
@@ -554,11 +556,10 @@ hud_draw_results(struct hud_context *hud, struct pipe_resource *tex)
       hud->constants.color[3] = 0.666f;
       hud->constants.translate[0] = 0;
       hud->constants.translate[1] = 0;
-      hud->constants.scale[0] = hud_scale;
-      hud->constants.scale[1] = hud_scale;
+      hud->constants.scale[0] = 1;
+      hud->constants.scale[1] = 1;
 
       cso_set_constant_buffer(cso, PIPE_SHADER_VERTEX, 0, &hud->constbuf);
-
       cso_set_vertex_buffers(cso, 0, 1, &hud->bg.vbuf);
       cso_draw_arrays(cso, PIPE_PRIM_QUADS, 0, hud->bg.num_vertices);
    }
@@ -589,8 +590,8 @@ hud_draw_results(struct hud_context *hud, struct pipe_resource *tex)
    hud->constants.color[3] = 1;
    hud->constants.translate[0] = 0;
    hud->constants.translate[1] = 0;
-   hud->constants.scale[0] = hud_scale;
-   hud->constants.scale[1] = hud_scale;
+   hud->constants.scale[0] = 1;
+   hud->constants.scale[1] = 1;
    cso_set_constant_buffer(cso, PIPE_SHADER_VERTEX, 0, &hud->constbuf);
 
    if (hud->whitelines.num_vertices) {
@@ -642,6 +643,7 @@ hud_stop_queries(struct hud_context *hud, struct pipe_context *pipe)
    hud_prepare_vertices(hud, &hud->bg, 16 * 256, 2 * sizeof(float));
    hud_prepare_vertices(hud, &hud->whitelines, 4 * 256, 2 * sizeof(float));
    hud_prepare_vertices(hud, &hud->text, 16 * 1024, 4 * sizeof(float));
+   hud_prepare_vertices(hud, &hud->color_prims, 32 * 1024, 2 * sizeof(float));
 
    /* Allocate everything once and divide the storage into 3 portions
     * manually, because u_upload_alloc can unmap memory from previous calls.
@@ -649,7 +651,8 @@ hud_stop_queries(struct hud_context *hud, struct pipe_context *pipe)
    u_upload_alloc(pipe->stream_uploader, 0,
                   hud->bg.buffer_size +
                   hud->whitelines.buffer_size +
-                  hud->text.buffer_size,
+                  hud->text.buffer_size +
+                  hud->color_prims.buffer_size,
                   16, &hud->bg.vbuf.buffer_offset, &hud->bg.vbuf.buffer.resource,
                   (void**)&hud->bg.vertices);
    if (!hud->bg.vertices)
@@ -657,6 +660,7 @@ hud_stop_queries(struct hud_context *hud, struct pipe_context *pipe)
 
    pipe_resource_reference(&hud->whitelines.vbuf.buffer.resource, hud->bg.vbuf.buffer.resource);
    pipe_resource_reference(&hud->text.vbuf.buffer.resource, hud->bg.vbuf.buffer.resource);
+   pipe_resource_reference(&hud->color_prims.vbuf.buffer.resource, hud->bg.vbuf.buffer.resource);
 
    hud->whitelines.vbuf.buffer_offset = hud->bg.vbuf.buffer_offset +
                                         hud->bg.buffer_size;
@@ -667,6 +671,11 @@ hud_stop_queries(struct hud_context *hud, struct pipe_context *pipe)
                                   hud->whitelines.buffer_size;
    hud->text.vertices = hud->whitelines.vertices +
                         hud->whitelines.buffer_size / sizeof(float);
+
+   hud->color_prims.vbuf.buffer_offset = hud->text.vbuf.buffer_offset +
+                                         hud->text.buffer_size;
+   hud->color_prims.vertices = hud->text.vertices +
+                               hud->text.buffer_size / sizeof(float);
 
    /* prepare all graphs */
    hud_batch_query_update(hud->batch_query, pipe);
@@ -687,8 +696,8 @@ hud_stop_queries(struct hud_context *hud, struct pipe_context *pipe)
              */
             if (gr->current_value <
                 LIST_ENTRY(struct hud_graph, next, head)->current_value) {
-               list_del(&gr->head);
-               list_add(&gr->head, &next->head);
+               LIST_DEL(&gr->head);
+               LIST_ADD(&gr->head, &next->head);
             }
          }
       }
@@ -889,7 +898,7 @@ hud_pane_create(struct hud_context *hud,
    pane->sort_items = sort_items;
    pane->initial_max_value = max_value;
    hud_pane_set_max_value(pane, max_value);
-   list_inithead(&pane->graph_list);
+   LIST_INITHEAD(&pane->graph_list);
    return pane;
 }
 
@@ -937,7 +946,7 @@ hud_pane_add_graph(struct hud_pane *pane, struct hud_graph *gr)
    gr->color[1] = colors[color][1];
    gr->color[2] = colors[color][2];
    gr->pane = pane;
-   list_addtail(&gr->head, &pane->graph_list);
+   LIST_ADDTAIL(&gr->head, &pane->graph_list);
    pane->num_graphs++;
    pane->next_color++;
 }
@@ -1186,7 +1195,7 @@ hud_parse_env_var(struct hud_context *hud, struct pipe_screen *screen,
    boolean sort_items = false;
    const char *period_env;
 
-   if (strncmp(env, "simple,", 7) == 0) {
+   if (util_strncmp(env, "simple,", 7) == 0) {
       hud->simple = true;
       env += 7;
    }
@@ -1422,7 +1431,7 @@ hud_parse_env_var(struct hud_context *hud, struct pipe_screen *screen,
          env += num;
 
          strip_hyphens(s);
-         if (added && !list_is_empty(&pane->graph_list)) {
+         if (added && !LIST_IS_EMPTY(&pane->graph_list)) {
             struct hud_graph *graph;
             graph = LIST_ENTRY(struct hud_graph, pane->graph_list.prev, head);
             strncpy(graph->name, s, sizeof(graph->name)-1);
@@ -1449,7 +1458,7 @@ hud_parse_env_var(struct hud_context *hud, struct pipe_screen *screen,
          height = 100;
 
          if (pane && pane->num_graphs) {
-            list_addtail(&pane->head, &hud->pane_list);
+            LIST_ADDTAIL(&pane->head, &hud->pane_list);
             pane = NULL;
          }
          break;
@@ -1462,7 +1471,7 @@ hud_parse_env_var(struct hud_context *hud, struct pipe_screen *screen,
          height = 100;
 
          if (pane && pane->num_graphs) {
-            list_addtail(&pane->head, &hud->pane_list);
+            LIST_ADDTAIL(&pane->head, &hud->pane_list);
             pane = NULL;
          }
 
@@ -1485,7 +1494,7 @@ hud_parse_env_var(struct hud_context *hud, struct pipe_screen *screen,
 
    if (pane) {
       if (pane->num_graphs) {
-         list_addtail(&pane->head, &hud->pane_list);
+         LIST_ADDTAIL(&pane->head, &hud->pane_list);
       }
       else {
          FREE(pane);
@@ -1677,7 +1686,7 @@ hud_set_draw_context(struct hud_context *hud, struct cso_context *cso)
       };
 
       struct tgsi_token tokens[1000];
-      struct pipe_shader_state state = {0};
+      struct pipe_shader_state state;
 
       if (!tgsi_text_translate(fragment_shader_text, tokens, ARRAY_SIZE(tokens))) {
          assert(0);
@@ -1714,7 +1723,7 @@ hud_set_draw_context(struct hud_context *hud, struct cso_context *cso)
       };
 
       struct tgsi_token tokens[1000];
-      struct pipe_shader_state state = {0};
+      struct pipe_shader_state state;
       if (!tgsi_text_translate(vertex_shader_text, tokens, ARRAY_SIZE(tokens))) {
          assert(0);
          goto fail;
@@ -1743,10 +1752,10 @@ hud_unset_record_context(struct hud_context *hud)
 
    LIST_FOR_EACH_ENTRY_SAFE(pane, pane_tmp, &hud->pane_list, head) {
       LIST_FOR_EACH_ENTRY_SAFE(graph, graph_tmp, &pane->graph_list, head) {
-         list_del(&graph->head);
+         LIST_DEL(&graph->head);
          hud_graph_destroy(graph, pipe);
       }
-      list_del(&pane->head);
+      LIST_DEL(&pane->head);
       FREE(pane);
    }
 
@@ -1807,12 +1816,9 @@ hud_create(struct cso_context *cso, struct hud_context *share)
 #ifdef PIPE_OS_UNIX
    unsigned signo = debug_get_num_option("GALLIUM_HUD_TOGGLE_SIGNAL", 0);
    static boolean sig_handled = FALSE;
-   struct sigaction action;
-
-   memset(&action, 0, sizeof(action));
+   struct sigaction action = {};
 #endif
    huds_visible = debug_get_bool_option("GALLIUM_HUD_VISIBLE", TRUE);
-   hud_scale = debug_get_num_option("GALLIUM_HUD_SCALE", 1);
 
    if (!env || !*env)
       return NULL;
@@ -1863,11 +1869,10 @@ hud_create(struct cso_context *cso, struct hud_context *share)
    hud->rasterizer_aa_lines.line_smooth = 1;
 
    /* vertex elements */
-   hud->velems.count = 2;
    for (i = 0; i < 2; i++) {
-      hud->velems.velems[i].src_offset = i * 2 * sizeof(float);
-      hud->velems.velems[i].src_format = PIPE_FORMAT_R32G32_FLOAT;
-      hud->velems.velems[i].vertex_buffer_index = 0;
+      hud->velems[i].src_offset = i * 2 * sizeof(float);
+      hud->velems[i].src_format = PIPE_FORMAT_R32G32_FLOAT;
+      hud->velems[i].vertex_buffer_index = 0;
    }
 
    /* sampler state (for font drawing) */
@@ -1880,7 +1885,7 @@ hud_create(struct cso_context *cso, struct hud_context *share)
    hud->constbuf.buffer_size = sizeof(hud->constants);
    hud->constbuf.user_buffer = &hud->constants;
 
-   list_inithead(&hud->pane_list);
+   LIST_INITHEAD(&hud->pane_list);
 
    /* setup sig handler once for all hud contexts */
 #ifdef PIPE_OS_UNIX

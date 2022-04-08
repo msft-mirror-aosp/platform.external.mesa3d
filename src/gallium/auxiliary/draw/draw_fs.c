@@ -32,7 +32,6 @@
 #include "util/u_prim.h"
 
 #include "tgsi/tgsi_parse.h"
-#include "nir/nir_to_tgsi_info.h"
 
 #include "draw_fs.h"
 #include "draw_private.h"
@@ -48,10 +47,7 @@ draw_create_fragment_shader(struct draw_context *draw,
    dfs = CALLOC_STRUCT(draw_fragment_shader);
    if (dfs) {
       dfs->base = *shader;
-      if (shader->type == PIPE_SHADER_IR_TGSI)
-         tgsi_scan_shader(shader->tokens, &dfs->info);
-      else
-         nir_tgsi_scan_shader(shader->ir.nir, &dfs->info, true);
+      tgsi_scan_shader(shader->tokens, &dfs->info);
    }
 
    return dfs;

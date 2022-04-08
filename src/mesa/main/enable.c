@@ -44,14 +44,20 @@
 #include "varray.h"
 
 
-void
-_mesa_update_derived_primitive_restart_state(struct gl_context *ctx)
+
+#define CHECK_EXTENSION(EXTNAME, CAP)					\
+   if (!ctx->Extensions.EXTNAME) {					\
+      goto invalid_enum_error;						\
+   }
+
+
+static void
+update_derived_primitive_restart_state(struct gl_context *ctx)
 {
-   ctx->Array._PrimitiveRestart = ctx->Array.PrimitiveRestart ||
-                                  ctx->Array.PrimitiveRestartFixedIndex;
-   ctx->Array._RestartIndex[0] = _mesa_primitive_restart_index(ctx, 1);
-   ctx->Array._RestartIndex[1] = _mesa_primitive_restart_index(ctx, 2);
-   ctx->Array._RestartIndex[3] = _mesa_primitive_restart_index(ctx, 4);
+   /* Update derived primitive restart state.
+    */
+   ctx->Array._PrimitiveRestart = ctx->Array.PrimitiveRestart
+      || ctx->Array.PrimitiveRestartFixedIndex;
 }
 
 
@@ -59,13 +65,12 @@ _mesa_update_derived_primitive_restart_state(struct gl_context *ctx)
  * Helper to enable/disable VAO client-side state.
  */
 static void
-vao_state(struct gl_context *ctx, struct gl_vertex_array_object* vao,
-          gl_vert_attrib attr, GLboolean state)
+vao_state(struct gl_context *ctx, gl_vert_attrib attr, GLboolean state)
 {
    if (state)
-      _mesa_enable_vertex_array_attrib(ctx, vao, attr);
+      _mesa_enable_vertex_array_attrib(ctx, ctx->Array.VAO, attr);
    else
-      _mesa_disable_vertex_array_attrib(ctx, vao, attr);
+      _mesa_disable_vertex_array_attrib(ctx, ctx->Array.VAO, attr);
 }
 
 
@@ -73,53 +78,50 @@ vao_state(struct gl_context *ctx, struct gl_vertex_array_object* vao,
  * Helper to enable/disable client-side state.
  */
 static void
-client_state(struct gl_context *ctx, struct gl_vertex_array_object* vao,
-             GLenum cap, GLboolean state)
+client_state(struct gl_context *ctx, GLenum cap, GLboolean state)
 {
    switch (cap) {
       case GL_VERTEX_ARRAY:
-         vao_state(ctx, vao, VERT_ATTRIB_POS, state);
+         vao_state(ctx, VERT_ATTRIB_POS, state);
          break;
       case GL_NORMAL_ARRAY:
-         vao_state(ctx, vao, VERT_ATTRIB_NORMAL, state);
+         vao_state(ctx, VERT_ATTRIB_NORMAL, state);
          break;
       case GL_COLOR_ARRAY:
-         vao_state(ctx, vao, VERT_ATTRIB_COLOR0, state);
+         vao_state(ctx, VERT_ATTRIB_COLOR0, state);
          break;
       case GL_INDEX_ARRAY:
-         vao_state(ctx, vao, VERT_ATTRIB_COLOR_INDEX, state);
+         vao_state(ctx, VERT_ATTRIB_COLOR_INDEX, state);
          break;
       case GL_TEXTURE_COORD_ARRAY:
-         vao_state(ctx, vao, VERT_ATTRIB_TEX(ctx->Array.ActiveTexture), state);
+         vao_state(ctx, VERT_ATTRIB_TEX(ctx->Array.ActiveTexture), state);
          break;
       case GL_EDGE_FLAG_ARRAY:
-         vao_state(ctx, vao, VERT_ATTRIB_EDGEFLAG, state);
+         vao_state(ctx, VERT_ATTRIB_EDGEFLAG, state);
          break;
       case GL_FOG_COORDINATE_ARRAY_EXT:
-         vao_state(ctx, vao, VERT_ATTRIB_FOG, state);
+         vao_state(ctx, VERT_ATTRIB_FOG, state);
          break;
       case GL_SECONDARY_COLOR_ARRAY_EXT:
-         vao_state(ctx, vao, VERT_ATTRIB_COLOR1, state);
+         vao_state(ctx, VERT_ATTRIB_COLOR1, state);
          break;
 
       case GL_POINT_SIZE_ARRAY_OES:
-         if (ctx->VertexProgram.PointSizeEnabled != state) {
-            FLUSH_VERTICES(ctx, _NEW_PROGRAM);
-            ctx->VertexProgram.PointSizeEnabled = state;
-         }
-         vao_state(ctx, vao, VERT_ATTRIB_POINT_SIZE, state);
+         FLUSH_VERTICES(ctx, _NEW_PROGRAM);
+         ctx->VertexProgram.PointSizeEnabled = state;
+         vao_state(ctx, VERT_ATTRIB_POINT_SIZE, state);
          break;
 
       /* GL_NV_primitive_restart */
       case GL_PRIMITIVE_RESTART_NV:
-         if (!_mesa_has_NV_primitive_restart(ctx))
+         if (!ctx->Extensions.NV_primitive_restart)
             goto invalid_enum_error;
          if (ctx->Array.PrimitiveRestart == state)
             return;
 
          FLUSH_VERTICES(ctx, 0);
          ctx->Array.PrimitiveRestart = state;
-         _mesa_update_derived_primitive_restart_state(ctx);
+         update_derived_primitive_restart_state(ctx);
          return;
 
       default:
@@ -138,39 +140,6 @@ invalid_enum_error:
 }
 
 
-/* Helper for GL_EXT_direct_state_access following functions:
- *   - EnableClientStateIndexedEXT
- *   - EnableClientStateiEXT
- *   - DisableClientStateIndexedEXT
- *   - DisableClientStateiEXT
- */
-static void
-client_state_i(struct gl_context *ctx, struct gl_vertex_array_object* vao,
-               GLenum cap, GLuint index, GLboolean state)
-{
-   int saved_active;
-
-   if (cap != GL_TEXTURE_COORD_ARRAY) {
-      _mesa_error(ctx, GL_INVALID_ENUM, "gl%sClientStateiEXT(cap=%s)",
-         state ? "Enable" : "Disable",
-         _mesa_enum_to_string(cap));
-      return;
-   }
-
-   if (index >= ctx->Const.MaxTextureCoordUnits) {
-      _mesa_error(ctx, GL_INVALID_VALUE, "gl%sClientStateiEXT(index=%d)",
-         state ? "Enable" : "Disable",
-         index);
-      return;
-   }
-
-   saved_active = ctx->Array.ActiveTexture;
-   _mesa_ClientActiveTexture(GL_TEXTURE0 + index);
-   client_state(ctx, vao, cap, state);
-   _mesa_ClientActiveTexture(GL_TEXTURE0 + saved_active);
-}
-
-
 /**
  * Enable GL capability.
  * \param cap  state to enable/disable.
@@ -182,46 +151,7 @@ void GLAPIENTRY
 _mesa_EnableClientState( GLenum cap )
 {
    GET_CURRENT_CONTEXT(ctx);
-   client_state( ctx, ctx->Array.VAO, cap, GL_TRUE );
-}
-
-
-void GLAPIENTRY
-_mesa_EnableVertexArrayEXT( GLuint vaobj, GLenum cap )
-{
-   GET_CURRENT_CONTEXT(ctx);
-   struct gl_vertex_array_object* vao = _mesa_lookup_vao_err(ctx, vaobj,
-                                                             true,
-                                                             "glEnableVertexArrayEXT");
-   if (!vao)
-      return;
-
-   /* The EXT_direct_state_access spec says:
-    *    "Additionally EnableVertexArrayEXT and DisableVertexArrayEXT accept
-    *    the tokens TEXTURE0 through TEXTUREn where n is less than the
-    *    implementation-dependent limit of MAX_TEXTURE_COORDS.  For these
-    *    GL_TEXTUREi tokens, EnableVertexArrayEXT and DisableVertexArrayEXT
-    *    act identically to EnableVertexArrayEXT(vaobj, TEXTURE_COORD_ARRAY)
-    *    or DisableVertexArrayEXT(vaobj, TEXTURE_COORD_ARRAY) respectively
-    *    as if the active client texture is set to texture coordinate set i
-    *    based on the token TEXTUREi indicated by array."
-    */
-   if (GL_TEXTURE0 <= cap && cap < GL_TEXTURE0 + ctx->Const.MaxTextureCoordUnits) {
-      GLuint saved_active = ctx->Array.ActiveTexture;
-      _mesa_ClientActiveTexture(cap);
-      client_state(ctx, vao, GL_TEXTURE_COORD_ARRAY, GL_TRUE);
-      _mesa_ClientActiveTexture(GL_TEXTURE0 + saved_active);
-   } else {
-      client_state(ctx, vao, cap, GL_TRUE);
-   }
-}
-
-
-void GLAPIENTRY
-_mesa_EnableClientStateiEXT( GLenum cap, GLuint index )
-{
-   GET_CURRENT_CONTEXT(ctx);
-   client_state_i(ctx, ctx->Array.VAO, cap, index, GL_TRUE);
+   client_state( ctx, cap, GL_TRUE );
 }
 
 
@@ -236,45 +166,20 @@ void GLAPIENTRY
 _mesa_DisableClientState( GLenum cap )
 {
    GET_CURRENT_CONTEXT(ctx);
-   client_state( ctx, ctx->Array.VAO, cap, GL_FALSE );
+   client_state( ctx, cap, GL_FALSE );
 }
 
-void GLAPIENTRY
-_mesa_DisableVertexArrayEXT( GLuint vaobj, GLenum cap )
-{
-   GET_CURRENT_CONTEXT(ctx);
-   struct gl_vertex_array_object* vao = _mesa_lookup_vao_err(ctx, vaobj,
-                                                             true,
-                                                             "glDisableVertexArrayEXT");
-   if (!vao)
-      return;
 
-   /* The EXT_direct_state_access spec says:
-    *    "Additionally EnableVertexArrayEXT and DisableVertexArrayEXT accept
-    *    the tokens TEXTURE0 through TEXTUREn where n is less than the
-    *    implementation-dependent limit of MAX_TEXTURE_COORDS.  For these
-    *    GL_TEXTUREi tokens, EnableVertexArrayEXT and DisableVertexArrayEXT
-    *    act identically to EnableVertexArrayEXT(vaobj, TEXTURE_COORD_ARRAY)
-    *    or DisableVertexArrayEXT(vaobj, TEXTURE_COORD_ARRAY) respectively
-    *    as if the active client texture is set to texture coordinate set i
-    *    based on the token TEXTUREi indicated by array."
-    */
-   if (GL_TEXTURE0 <= cap && cap < GL_TEXTURE0 + ctx->Const.MaxTextureCoordUnits) {
-      GLuint saved_active = ctx->Array.ActiveTexture;
-      _mesa_ClientActiveTexture(cap);
-      client_state(ctx, vao, GL_TEXTURE_COORD_ARRAY, GL_FALSE);
-      _mesa_ClientActiveTexture(GL_TEXTURE0 + saved_active);
-   } else {
-      client_state(ctx, vao, cap, GL_FALSE);
+#undef CHECK_EXTENSION
+#define CHECK_EXTENSION(EXTNAME, CAP)					\
+   if (!ctx->Extensions.EXTNAME) {					\
+      goto invalid_enum_error;						\
    }
-}
 
-void GLAPIENTRY
-_mesa_DisableClientStateiEXT( GLenum cap, GLuint index )
-{
-   GET_CURRENT_CONTEXT(ctx);
-   client_state_i(ctx, ctx->Array.VAO, cap, index, GL_FALSE);
-}
+#define CHECK_EXTENSION2(EXT1, EXT2, CAP)				\
+   if (!ctx->Extensions.EXT1 && !ctx->Extensions.EXT2) {		\
+      goto invalid_enum_error;						\
+   }
 
 /**
  * Return pointer to current texture unit for setting/getting coordinate
@@ -304,7 +209,7 @@ static GLboolean
 enable_texture(struct gl_context *ctx, GLboolean state, GLbitfield texBit)
 {
    struct gl_fixedfunc_texture_unit *texUnit =
-      _mesa_get_fixedfunc_tex_unit(ctx, ctx->Texture.CurrentUnit);
+      _mesa_get_current_fixedfunc_tex_unit(ctx);
    if (!texUnit)
       return GL_FALSE;
 
@@ -405,8 +310,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.AutoNormal == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.AutoNormal = state;
          break;
       case GL_BLEND:
@@ -417,7 +321,6 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
                _mesa_flush_vertices_for_blend_adv(ctx, newEnabled,
                                                ctx->Color._AdvancedBlendMode);
                ctx->Color.BlendEnabled = newEnabled;
-               _mesa_update_allow_draw_out_of_order(ctx);
             }
          }
          break;
@@ -492,7 +395,6 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepth ? 0 : _NEW_DEPTH);
          ctx->NewDriverState |= ctx->DriverFlags.NewDepth;
          ctx->Depth.Test = state;
-         _mesa_update_allow_draw_out_of_order(ctx);
          break;
       case GL_DEBUG_OUTPUT:
       case GL_DEBUG_OUTPUT_SYNCHRONOUS_ARB:
@@ -598,15 +500,13 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          FLUSH_VERTICES(ctx, ctx->DriverFlags.NewLogicOp ? 0 : _NEW_COLOR);
          ctx->NewDriverState |= ctx->DriverFlags.NewLogicOp;
          ctx->Color.ColorLogicOpEnabled = state;
-         _mesa_update_allow_draw_out_of_order(ctx);
          break;
       case GL_MAP1_COLOR_4:
          if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
          if (ctx->Eval.Map1Color4 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map1Color4 = state;
          break;
       case GL_MAP1_INDEX:
@@ -614,8 +514,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map1Index == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map1Index = state;
          break;
       case GL_MAP1_NORMAL:
@@ -623,8 +522,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map1Normal == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map1Normal = state;
          break;
       case GL_MAP1_TEXTURE_COORD_1:
@@ -632,8 +530,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map1TextureCoord1 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map1TextureCoord1 = state;
          break;
       case GL_MAP1_TEXTURE_COORD_2:
@@ -641,8 +538,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map1TextureCoord2 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map1TextureCoord2 = state;
          break;
       case GL_MAP1_TEXTURE_COORD_3:
@@ -650,8 +546,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map1TextureCoord3 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map1TextureCoord3 = state;
          break;
       case GL_MAP1_TEXTURE_COORD_4:
@@ -659,8 +554,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map1TextureCoord4 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map1TextureCoord4 = state;
          break;
       case GL_MAP1_VERTEX_3:
@@ -668,8 +562,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map1Vertex3 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map1Vertex3 = state;
          break;
       case GL_MAP1_VERTEX_4:
@@ -677,8 +570,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map1Vertex4 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map1Vertex4 = state;
          break;
       case GL_MAP2_COLOR_4:
@@ -686,8 +578,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map2Color4 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map2Color4 = state;
          break;
       case GL_MAP2_INDEX:
@@ -695,8 +586,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map2Index == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map2Index = state;
          break;
       case GL_MAP2_NORMAL:
@@ -704,8 +594,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map2Normal == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map2Normal = state;
          break;
       case GL_MAP2_TEXTURE_COORD_1:
@@ -713,8 +602,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map2TextureCoord1 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map2TextureCoord1 = state;
          break;
       case GL_MAP2_TEXTURE_COORD_2:
@@ -722,8 +610,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map2TextureCoord2 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map2TextureCoord2 = state;
          break;
       case GL_MAP2_TEXTURE_COORD_3:
@@ -731,8 +618,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map2TextureCoord3 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map2TextureCoord3 = state;
          break;
       case GL_MAP2_TEXTURE_COORD_4:
@@ -740,8 +626,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map2TextureCoord4 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map2TextureCoord4 = state;
          break;
       case GL_MAP2_VERTEX_3:
@@ -749,8 +634,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map2Vertex3 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map2Vertex3 = state;
          break;
       case GL_MAP2_VERTEX_4:
@@ -758,8 +642,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
             goto invalid_enum_error;
          if (ctx->Eval.Map2Vertex4 == state)
             return;
-         FLUSH_VERTICES(ctx, 0);
-         vbo_exec_update_eval_maps(ctx);
+         FLUSH_VERTICES(ctx, _NEW_EVAL);
          ctx->Eval.Map2Vertex4 = state;
          break;
       case GL_NORMALIZE:
@@ -853,7 +736,6 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          FLUSH_VERTICES(ctx, ctx->DriverFlags.NewStencil ? 0 : _NEW_STENCIL);
          ctx->NewDriverState |= ctx->DriverFlags.NewStencil;
          ctx->Stencil.Enabled = state;
-         _mesa_update_allow_draw_out_of_order(ctx);
          break;
       case GL_TEXTURE_1D:
          if (ctx->API != API_OPENGL_COMPAT)
@@ -927,7 +809,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
       case GL_TEXTURE_COORD_ARRAY:
          if (ctx->API != API_OPENGL_COMPAT && ctx->API != API_OPENGLES)
             goto invalid_enum_error;
-         client_state( ctx, ctx->Array.VAO, cap, state );
+         client_state( ctx, cap, state );
          return;
       case GL_INDEX_ARRAY:
       case GL_EDGE_FLAG_ARRAY:
@@ -935,19 +817,19 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
       case GL_SECONDARY_COLOR_ARRAY_EXT:
          if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
-         client_state( ctx, ctx->Array.VAO, cap, state );
+         client_state( ctx, cap, state );
          return;
       case GL_POINT_SIZE_ARRAY_OES:
          if (ctx->API != API_OPENGLES)
             goto invalid_enum_error;
-         client_state( ctx, ctx->Array.VAO, cap, state );
+         client_state( ctx, cap, state );
          return;
 
       /* GL_ARB_texture_cube_map */
       case GL_TEXTURE_CUBE_MAP:
-         if (!_mesa_has_ARB_texture_cube_map(ctx) &&
-             !_mesa_has_OES_texture_cube_map(ctx))
+         if (ctx->API != API_OPENGL_COMPAT && ctx->API != API_OPENGLES)
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_texture_cube_map, cap);
          if (!enable_texture(ctx, state, TEXTURE_CUBE_BIT)) {
             return;
          }
@@ -1008,8 +890,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
 
       /* GL_ARB_sample_shading */
       case GL_SAMPLE_SHADING:
-         if (!_mesa_has_ARB_sample_shading(ctx) && !_mesa_is_gles3(ctx))
+         if (!_mesa_is_desktop_gl(ctx) && !_mesa_is_gles3(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_sample_shading, cap);
          if (ctx->Multisample.SampleShading == state)
             return;
          FLUSH_VERTICES(ctx, ctx->DriverFlags.NewSampleShading ? 0 :
@@ -1030,11 +913,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
 
       /* GL_NV_point_sprite */
       case GL_POINT_SPRITE_NV:
-         if (!(ctx->API == API_OPENGL_COMPAT &&
-               (_mesa_has_ARB_point_sprite(ctx) ||
-                _mesa_has_NV_point_sprite(ctx))) &&
-             !_mesa_has_OES_point_sprite(ctx))
+         if (ctx->API != API_OPENGL_COMPAT && ctx->API != API_OPENGLES)
             goto invalid_enum_error;
+         CHECK_EXTENSION2(NV_point_sprite, ARB_point_sprite, cap);
          if (ctx->Point.PointSprite == state)
             return;
          FLUSH_VERTICES(ctx, _NEW_POINT);
@@ -1042,8 +923,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          break;
 
       case GL_VERTEX_PROGRAM_ARB:
-         if (!_mesa_has_ARB_vertex_program(ctx))
+         if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_vertex_program, cap);
          if (ctx->VertexProgram.Enabled == state)
             return;
          FLUSH_VERTICES(ctx, _NEW_PROGRAM);
@@ -1054,17 +936,18 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          /* This was added with ARB_vertex_program, but it is also used with
           * GLSL vertex shaders on desktop.
           */
-         if (!_mesa_has_ARB_vertex_program(ctx) &&
-             ctx->API != API_OPENGL_CORE)
+         if (!_mesa_is_desktop_gl(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_vertex_program, cap);
          if (ctx->VertexProgram.PointSizeEnabled == state)
             return;
          FLUSH_VERTICES(ctx, _NEW_PROGRAM);
          ctx->VertexProgram.PointSizeEnabled = state;
          break;
       case GL_VERTEX_PROGRAM_TWO_SIDE_ARB:
-         if (!_mesa_has_ARB_vertex_program(ctx))
+         if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_vertex_program, cap);
          if (ctx->VertexProgram.TwoSideEnabled == state)
             return;
          FLUSH_VERTICES(ctx, _NEW_PROGRAM);
@@ -1073,8 +956,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
 
       /* GL_NV_texture_rectangle */
       case GL_TEXTURE_RECTANGLE_NV:
-         if (!_mesa_has_NV_texture_rectangle(ctx))
+         if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
+         CHECK_EXTENSION(NV_texture_rectangle, cap);
          if (!enable_texture(ctx, state, TEXTURE_RECT_BIT)) {
             return;
          }
@@ -1082,8 +966,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
 
       /* GL_EXT_stencil_two_side */
       case GL_STENCIL_TEST_TWO_SIDE_EXT:
-         if (!_mesa_has_EXT_stencil_two_side(ctx))
+         if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
+         CHECK_EXTENSION(EXT_stencil_two_side, cap);
          if (ctx->Stencil.TestTwoSide == state)
             return;
          FLUSH_VERTICES(ctx, ctx->DriverFlags.NewStencil ? 0 : _NEW_STENCIL);
@@ -1097,8 +982,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          break;
 
       case GL_FRAGMENT_PROGRAM_ARB:
-         if (!_mesa_has_ARB_fragment_program(ctx))
+         if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_fragment_program, cap);
          if (ctx->FragmentProgram.Enabled == state)
             return;
          FLUSH_VERTICES(ctx, _NEW_PROGRAM);
@@ -1107,8 +993,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
 
       /* GL_EXT_depth_bounds_test */
       case GL_DEPTH_BOUNDS_TEST_EXT:
-         if (!_mesa_has_EXT_depth_bounds_test(ctx))
+         if (!_mesa_is_desktop_gl(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(EXT_depth_bounds_test, cap);
          if (ctx->Depth.BoundsTest == state)
             return;
          FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepth ? 0 : _NEW_DEPTH);
@@ -1131,8 +1018,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          break;
 
       case GL_DEPTH_CLAMP_NEAR_AMD:
-         if (!_mesa_has_AMD_depth_clamp_separate(ctx))
+         if (!_mesa_is_desktop_gl(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(AMD_depth_clamp_separate, cap);
          if (ctx->Transform.DepthClampNear == state)
             return;
          FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepthClamp ? 0 :
@@ -1142,8 +1030,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          break;
 
       case GL_DEPTH_CLAMP_FAR_AMD:
-         if (!_mesa_has_AMD_depth_clamp_separate(ctx))
+         if (!_mesa_is_desktop_gl(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(AMD_depth_clamp_separate, cap);
          if (ctx->Transform.DepthClampFar == state)
             return;
          FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepthClamp ? 0 :
@@ -1153,8 +1042,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          break;
 
       case GL_FRAGMENT_SHADER_ATI:
-        if (!_mesa_has_ATI_fragment_shader(ctx))
-           goto invalid_enum_error;
+         if (ctx->API != API_OPENGL_COMPAT)
+            goto invalid_enum_error;
+        CHECK_EXTENSION(ATI_fragment_shader, cap);
         if (ctx->ATIFragmentShader.Enabled == state)
            return;
         FLUSH_VERTICES(ctx, _NEW_PROGRAM);
@@ -1162,8 +1052,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
         break;
 
       case GL_TEXTURE_CUBE_MAP_SEAMLESS:
-         if (!_mesa_has_ARB_seamless_cube_map(ctx))
+         if (!_mesa_is_desktop_gl(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_seamless_cube_map, cap);
          if (ctx->Texture.CubeMapSeamless != state) {
             FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT);
             ctx->Texture.CubeMapSeamless = state;
@@ -1171,8 +1062,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          break;
 
       case GL_RASTERIZER_DISCARD:
-         if (!(_mesa_has_EXT_transform_feedback(ctx) || _mesa_is_gles3(ctx)))
+         if (!_mesa_is_desktop_gl(ctx) && !_mesa_is_gles3(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(EXT_transform_feedback, cap);
          if (ctx->RasterDiscard != state) {
             FLUSH_VERTICES(ctx, 0);
             ctx->NewDriverState |= ctx->DriverFlags.NewRasterizerDiscard;
@@ -1181,8 +1073,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          break;
 
       case GL_TILE_RASTER_ORDER_FIXED_MESA:
-         if (!_mesa_has_MESA_tile_raster_order(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(MESA_tile_raster_order, cap);
          if (ctx->TileRasterOrderFixed != state) {
             FLUSH_VERTICES(ctx, 0);
             ctx->NewDriverState |= ctx->DriverFlags.NewTileRasterOrder;
@@ -1191,8 +1082,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          break;
 
       case GL_TILE_RASTER_ORDER_INCREASING_X_MESA:
-         if (!_mesa_has_MESA_tile_raster_order(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(MESA_tile_raster_order, cap);
          if (ctx->TileRasterOrderIncreasingX != state) {
             FLUSH_VERTICES(ctx, 0);
             ctx->NewDriverState |= ctx->DriverFlags.NewTileRasterOrder;
@@ -1201,8 +1091,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          break;
 
       case GL_TILE_RASTER_ORDER_INCREASING_Y_MESA:
-         if (!_mesa_has_MESA_tile_raster_order(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(MESA_tile_raster_order, cap);
          if (ctx->TileRasterOrderIncreasingY != state) {
             FLUSH_VERTICES(ctx, 0);
             ctx->NewDriverState |= ctx->DriverFlags.NewTileRasterOrder;
@@ -1220,32 +1109,31 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          if (ctx->Array.PrimitiveRestart != state) {
             FLUSH_VERTICES(ctx, 0);
             ctx->Array.PrimitiveRestart = state;
-            _mesa_update_derived_primitive_restart_state(ctx);
+            update_derived_primitive_restart_state(ctx);
          }
          break;
 
       case GL_PRIMITIVE_RESTART_FIXED_INDEX:
-         if (!_mesa_is_gles3(ctx) && !_mesa_has_ARB_ES3_compatibility(ctx))
+         if (!_mesa_is_gles3(ctx) && !ctx->Extensions.ARB_ES3_compatibility)
             goto invalid_enum_error;
          if (ctx->Array.PrimitiveRestartFixedIndex != state) {
             FLUSH_VERTICES(ctx, 0);
             ctx->Array.PrimitiveRestartFixedIndex = state;
-            _mesa_update_derived_primitive_restart_state(ctx);
+            update_derived_primitive_restart_state(ctx);
          }
          break;
 
       /* GL3.0 - GL_framebuffer_sRGB */
       case GL_FRAMEBUFFER_SRGB_EXT:
-         if (!_mesa_has_EXT_framebuffer_sRGB(ctx) &&
-             !_mesa_has_EXT_sRGB_write_control(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(EXT_framebuffer_sRGB, cap);
          _mesa_set_framebuffer_srgb(ctx, state);
          return;
 
       /* GL_OES_EGL_image_external */
       case GL_TEXTURE_EXTERNAL_OES:
-         if (!_mesa_has_OES_EGL_image_external(ctx))
+         if (!_mesa_is_gles(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(OES_EGL_image_external, cap);
          if (!enable_texture(ctx, state, TEXTURE_EXTERNAL_BIT)) {
             return;
          }
@@ -1253,8 +1141,9 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
 
       /* ARB_texture_multisample */
       case GL_SAMPLE_MASK:
-         if (!_mesa_has_ARB_texture_multisample(ctx) && !_mesa_is_gles31(ctx))
+         if (!_mesa_is_desktop_gl(ctx) && !_mesa_is_gles31(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_texture_multisample, cap);
          if (ctx->Multisample.SampleMask == state)
             return;
          FLUSH_VERTICES(ctx, ctx->DriverFlags.NewSampleMask ? 0 :
@@ -1264,22 +1153,12 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
          break;
 
       case GL_BLEND_ADVANCED_COHERENT_KHR:
-         if (!_mesa_has_KHR_blend_equation_advanced_coherent(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(KHR_blend_equation_advanced_coherent, cap);
          if (ctx->Color.BlendCoherent == state)
             return;
          FLUSH_VERTICES(ctx, ctx->DriverFlags.NewBlend ? 0 : _NEW_COLOR);
          ctx->NewDriverState |= ctx->DriverFlags.NewBlend;
          ctx->Color.BlendCoherent = state;
-         break;
-
-      case GL_BLACKHOLE_RENDER_INTEL:
-         if (!_mesa_has_INTEL_blackhole_render(ctx))
-            goto invalid_enum_error;
-         if (ctx->IntelBlackholeRender == state)
-            return;
-         FLUSH_VERTICES(ctx, 0);
-         ctx->IntelBlackholeRender = state;
          break;
 
       default:
@@ -1354,7 +1233,6 @@ _mesa_set_enablei(struct gl_context *ctx, GLenum cap,
          _mesa_flush_vertices_for_blend_adv(ctx, enabled,
                                             ctx->Color._AdvancedBlendMode);
          ctx->Color.BlendEnabled = enabled;
-         _mesa_update_allow_draw_out_of_order(ctx);
       }
       break;
    case GL_SCISSOR_TEST:
@@ -1373,28 +1251,6 @@ _mesa_set_enablei(struct gl_context *ctx, GLenum cap,
             ctx->Scissor.EnableFlags &= ~(1 << index);
       }
       break;
-   /* EXT_direct_state_access */
-   case GL_TEXTURE_1D:
-   case GL_TEXTURE_2D:
-   case GL_TEXTURE_3D:
-   case GL_TEXTURE_CUBE_MAP:
-   case GL_TEXTURE_GEN_S:
-   case GL_TEXTURE_GEN_T:
-   case GL_TEXTURE_GEN_R:
-   case GL_TEXTURE_GEN_Q:
-   case GL_TEXTURE_RECTANGLE_ARB: {
-      const GLuint curTexUnitSave = ctx->Texture.CurrentUnit;
-      if (index >= MAX2(ctx->Const.MaxCombinedTextureImageUnits,
-                        ctx->Const.MaxTextureCoordUnits)) {
-         _mesa_error(ctx, GL_INVALID_VALUE, "%s(index=%u)",
-                     state ? "glEnablei" : "glDisablei", index);
-         return;
-      }
-      _mesa_ActiveTexture(GL_TEXTURE0 + index);
-      _mesa_set_enable( ctx, cap, state );
-      _mesa_ActiveTexture(GL_TEXTURE0 + curTexUnitSave);
-      break;
-   }
    default:
       goto invalid_enum_error;
    }
@@ -1443,29 +1299,6 @@ _mesa_IsEnabledi( GLenum cap, GLuint index )
          return GL_FALSE;
       }
       return (ctx->Scissor.EnableFlags >> index) & 1;
-   /* EXT_direct_state_access */
-   case GL_TEXTURE_1D:
-   case GL_TEXTURE_2D:
-   case GL_TEXTURE_3D:
-   case GL_TEXTURE_CUBE_MAP:
-   case GL_TEXTURE_GEN_S:
-   case GL_TEXTURE_GEN_T:
-   case GL_TEXTURE_GEN_R:
-   case GL_TEXTURE_GEN_Q:
-   case GL_TEXTURE_RECTANGLE_ARB: {
-      GLboolean state;
-      const GLuint curTexUnitSave = ctx->Texture.CurrentUnit;
-      if (index >= MAX2(ctx->Const.MaxCombinedTextureImageUnits,
-                        ctx->Const.MaxTextureCoordUnits)) {
-         _mesa_error(ctx, GL_INVALID_VALUE, "glIsEnabledIndexed(index=%u)",
-                     index);
-         return GL_FALSE;
-      }
-      _mesa_ActiveTexture(GL_TEXTURE0 + index);
-      state = _mesa_IsEnabled(cap);
-      _mesa_ActiveTexture(GL_TEXTURE0 + curTexUnitSave);
-      return state;
-   }
    default:
       _mesa_error(ctx, GL_INVALID_ENUM, "glIsEnabledIndexed(cap=%s)",
                   _mesa_enum_to_string(cap));
@@ -1475,6 +1308,20 @@ _mesa_IsEnabledi( GLenum cap, GLuint index )
 
 
 
+
+#undef CHECK_EXTENSION
+#define CHECK_EXTENSION(EXTNAME)			\
+   if (!ctx->Extensions.EXTNAME) {			\
+      goto invalid_enum_error;				\
+   }
+
+#undef CHECK_EXTENSION2
+#define CHECK_EXTENSION2(EXT1, EXT2)				\
+   if (!ctx->Extensions.EXT1 && !ctx->Extensions.EXT2) {	\
+      goto invalid_enum_error;					\
+   }
+
+
 /**
  * Helper function to determine whether a texture target is enabled.
  */
@@ -1482,7 +1329,7 @@ static GLboolean
 is_texture_enabled(struct gl_context *ctx, GLbitfield bit)
 {
    const struct gl_fixedfunc_texture_unit *const texUnit =
-      _mesa_get_fixedfunc_tex_unit(ctx, ctx->Texture.CurrentUnit);
+      _mesa_get_current_fixedfunc_tex_unit(ctx);
 
    if (!texUnit)
       return GL_FALSE;
@@ -1727,8 +1574,6 @@ _mesa_IsEnabled( GLenum cap )
                return (texUnit->TexGenEnabled & STR_BITS) == STR_BITS
                   ? GL_TRUE : GL_FALSE;
             }
-
-            return GL_FALSE;
          }
 
       /* client-side state */
@@ -1772,9 +1617,7 @@ _mesa_IsEnabled( GLenum cap )
 
       /* GL_ARB_texture_cube_map */
       case GL_TEXTURE_CUBE_MAP:
-         if (!_mesa_has_ARB_texture_cube_map(ctx) &&
-             !_mesa_has_OES_texture_cube_map(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_texture_cube_map);
          return is_texture_enabled(ctx, TEXTURE_CUBE_BIT);
 
       /* GL_EXT_secondary_color */
@@ -1809,51 +1652,54 @@ _mesa_IsEnabled( GLenum cap )
 
       /* GL_NV_point_sprite */
       case GL_POINT_SPRITE_NV:
-         if (!(ctx->API == API_OPENGL_COMPAT &&
-               (_mesa_has_ARB_point_sprite(ctx) ||
-                _mesa_has_NV_point_sprite(ctx))) &&
-             !_mesa_has_OES_point_sprite(ctx))
+         if (ctx->API != API_OPENGL_COMPAT && ctx->API != API_OPENGLES)
             goto invalid_enum_error;
+         CHECK_EXTENSION2(NV_point_sprite, ARB_point_sprite)
          return ctx->Point.PointSprite;
 
       case GL_VERTEX_PROGRAM_ARB:
-         if (!_mesa_has_ARB_vertex_program(ctx))
+         if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_vertex_program);
          return ctx->VertexProgram.Enabled;
       case GL_VERTEX_PROGRAM_POINT_SIZE_ARB:
          /* This was added with ARB_vertex_program, but it is also used with
           * GLSL vertex shaders on desktop.
           */
-         if (!_mesa_has_ARB_vertex_program(ctx) &&
-             ctx->API != API_OPENGL_CORE)
+         if (!_mesa_is_desktop_gl(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_vertex_program);
          return ctx->VertexProgram.PointSizeEnabled;
       case GL_VERTEX_PROGRAM_TWO_SIDE_ARB:
-         if (!_mesa_has_ARB_vertex_program(ctx))
+         if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_vertex_program);
          return ctx->VertexProgram.TwoSideEnabled;
 
       /* GL_NV_texture_rectangle */
       case GL_TEXTURE_RECTANGLE_NV:
-         if (!_mesa_has_NV_texture_rectangle(ctx))
+         if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
+         CHECK_EXTENSION(NV_texture_rectangle);
          return is_texture_enabled(ctx, TEXTURE_RECT_BIT);
 
       /* GL_EXT_stencil_two_side */
       case GL_STENCIL_TEST_TWO_SIDE_EXT:
-         if (!_mesa_has_EXT_stencil_two_side(ctx))
+         if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
+         CHECK_EXTENSION(EXT_stencil_two_side);
          return ctx->Stencil.TestTwoSide;
 
       case GL_FRAGMENT_PROGRAM_ARB:
-         if (!_mesa_has_ARB_fragment_program(ctx))
+         if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
          return ctx->FragmentProgram.Enabled;
 
       /* GL_EXT_depth_bounds_test */
       case GL_DEPTH_BOUNDS_TEST_EXT:
-         if (!_mesa_has_EXT_depth_bounds_test(ctx))
+         if (!_mesa_is_desktop_gl(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(EXT_depth_bounds_test);
          return ctx->Depth.BoundsTest;
 
       /* GL_ARB_depth_clamp */
@@ -1865,34 +1711,40 @@ _mesa_IsEnabled( GLenum cap )
                 ctx->Transform.DepthClampFar;
 
       case GL_DEPTH_CLAMP_NEAR_AMD:
-         if (!_mesa_has_AMD_depth_clamp_separate(ctx))
+         if (!_mesa_is_desktop_gl(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(AMD_depth_clamp_separate);
          return ctx->Transform.DepthClampNear;
 
       case GL_DEPTH_CLAMP_FAR_AMD:
-         if (!_mesa_has_AMD_depth_clamp_separate(ctx))
+         if (!_mesa_is_desktop_gl(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(AMD_depth_clamp_separate);
          return ctx->Transform.DepthClampFar;
 
       case GL_FRAGMENT_SHADER_ATI:
-         if (!_mesa_has_ATI_fragment_shader(ctx))
+         if (ctx->API != API_OPENGL_COMPAT)
             goto invalid_enum_error;
+         CHECK_EXTENSION(ATI_fragment_shader);
          return ctx->ATIFragmentShader.Enabled;
 
       case GL_TEXTURE_CUBE_MAP_SEAMLESS:
-         if (!_mesa_has_ARB_seamless_cube_map(ctx))
+         if (!_mesa_is_desktop_gl(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_seamless_cube_map);
          return ctx->Texture.CubeMapSeamless;
 
       case GL_RASTERIZER_DISCARD:
-         if (!(_mesa_has_EXT_transform_feedback(ctx) || _mesa_is_gles3(ctx)))
+         if (!_mesa_is_desktop_gl(ctx) && !_mesa_is_gles3(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(EXT_transform_feedback);
          return ctx->RasterDiscard;
 
       /* GL_NV_primitive_restart */
       case GL_PRIMITIVE_RESTART_NV:
-         if (!_mesa_has_NV_primitive_restart(ctx))
+         if (ctx->API != API_OPENGL_COMPAT || !ctx->Extensions.NV_primitive_restart) {
             goto invalid_enum_error;
+         }
          return ctx->Array.PrimitiveRestart;
 
       /* GL 3.1 primitive restart */
@@ -1903,69 +1755,60 @@ _mesa_IsEnabled( GLenum cap )
          return ctx->Array.PrimitiveRestart;
 
       case GL_PRIMITIVE_RESTART_FIXED_INDEX:
-         if (!_mesa_is_gles3(ctx) && !_mesa_has_ARB_ES3_compatibility(ctx))
+         if (!_mesa_is_gles3(ctx) && !ctx->Extensions.ARB_ES3_compatibility) {
             goto invalid_enum_error;
+         }
          return ctx->Array.PrimitiveRestartFixedIndex;
 
       /* GL3.0 - GL_framebuffer_sRGB */
       case GL_FRAMEBUFFER_SRGB_EXT:
-         if (!_mesa_has_EXT_framebuffer_sRGB(ctx) &&
-             !_mesa_has_EXT_sRGB_write_control(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(EXT_framebuffer_sRGB);
          return ctx->Color.sRGBEnabled;
 
       /* GL_OES_EGL_image_external */
       case GL_TEXTURE_EXTERNAL_OES:
-         if (!_mesa_has_OES_EGL_image_external(ctx))
+         if (!_mesa_is_gles(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(OES_EGL_image_external);
          return is_texture_enabled(ctx, TEXTURE_EXTERNAL_BIT);
 
       /* ARB_texture_multisample */
       case GL_SAMPLE_MASK:
-         if (!_mesa_has_ARB_texture_multisample(ctx) && !_mesa_is_gles31(ctx))
+         if (!_mesa_is_desktop_gl(ctx) && !_mesa_is_gles31(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_texture_multisample);
          return ctx->Multisample.SampleMask;
 
       /* ARB_sample_shading */
       case GL_SAMPLE_SHADING:
-         if (!_mesa_has_ARB_sample_shading(ctx) && !_mesa_is_gles3(ctx))
+         if (!_mesa_is_desktop_gl(ctx) && !_mesa_is_gles3(ctx))
             goto invalid_enum_error;
+         CHECK_EXTENSION(ARB_sample_shading);
          return ctx->Multisample.SampleShading;
 
       case GL_BLEND_ADVANCED_COHERENT_KHR:
-         if (!_mesa_has_KHR_blend_equation_advanced_coherent(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(KHR_blend_equation_advanced_coherent);
          return ctx->Color.BlendCoherent;
 
       case GL_CONSERVATIVE_RASTERIZATION_INTEL:
-         if (!_mesa_has_INTEL_conservative_rasterization(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(INTEL_conservative_rasterization);
          return ctx->IntelConservativeRasterization;
 
       case GL_CONSERVATIVE_RASTERIZATION_NV:
-         if (!_mesa_has_NV_conservative_raster(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(NV_conservative_raster);
          return ctx->ConservativeRasterization;
 
       case GL_TILE_RASTER_ORDER_FIXED_MESA:
-         if (!_mesa_has_MESA_tile_raster_order(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(MESA_tile_raster_order);
          return ctx->TileRasterOrderFixed;
 
       case GL_TILE_RASTER_ORDER_INCREASING_X_MESA:
-         if (!_mesa_has_MESA_tile_raster_order(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(MESA_tile_raster_order);
          return ctx->TileRasterOrderIncreasingX;
 
       case GL_TILE_RASTER_ORDER_INCREASING_Y_MESA:
-         if (!_mesa_has_MESA_tile_raster_order(ctx))
-            goto invalid_enum_error;
+         CHECK_EXTENSION(MESA_tile_raster_order);
          return ctx->TileRasterOrderIncreasingY;
-
-      case GL_BLACKHOLE_RENDER_INTEL:
-         if (!_mesa_has_INTEL_blackhole_render(ctx))
-            goto invalid_enum_error;
-         return ctx->IntelBlackholeRender;
 
       default:
          goto invalid_enum_error;

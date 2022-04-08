@@ -22,8 +22,6 @@
  * IN THE SOFTWARE.
  */
 
-#include <stdlib.h>
-
 #include "vc4_qpu.h"
 
 static void

@@ -30,7 +30,7 @@
 #include "util/u_inlines.h"
 #include "os/os_thread.h"
 #include "util/u_bitmask.h"
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
 
@@ -54,6 +54,7 @@ svga_texture_copy_region(struct svga_context *svga,
                          unsigned dst_x, unsigned dst_y, unsigned dst_z,
                          unsigned width, unsigned height, unsigned depth)
 {
+   enum pipe_error ret;
    SVGA3dCopyBox box;
 
    assert(svga_have_vgpu10(svga));
@@ -68,9 +69,16 @@ svga_texture_copy_region(struct svga_context *svga,
    box.srcy = src_y;
    box.srcz = src_z;
 
-   SVGA_RETRY(svga, SVGA3D_vgpu10_PredCopyRegion
-              (svga->swc, dst_handle, dstSubResource,
-               src_handle, srcSubResource, &box));
+   ret = SVGA3D_vgpu10_PredCopyRegion(svga->swc,
+                                      dst_handle, dstSubResource,
+                                      src_handle, srcSubResource, &box);
+   if (ret != PIPE_OK) {
+      svga_context_flush(svga, NULL);
+      ret = SVGA3D_vgpu10_PredCopyRegion(svga->swc,
+                                         dst_handle, dstSubResource,
+                                         src_handle, srcSubResource, &box);
+      assert(ret == PIPE_OK);
+   }
 }
 
 
@@ -85,6 +93,7 @@ svga_texture_copy_handle(struct svga_context *svga,
                          unsigned width, unsigned height, unsigned depth)
 {
    struct svga_surface dst, src;
+   enum pipe_error ret;
    SVGA3dCopyBox box, *boxes;
 
    assert(svga);
@@ -115,11 +124,18 @@ svga_texture_copy_handle(struct svga_context *svga,
             dst_handle, dst_level, dst_x, dst_y, dst_z);
 */
 
-   SVGA_RETRY(svga, SVGA3D_BeginSurfaceCopy(svga->swc,
-                                            &src.base,
-                                            &dst.base,
-                                            &boxes, 1));
-
+   ret = SVGA3D_BeginSurfaceCopy(svga->swc,
+                                 &src.base,
+                                 &dst.base,
+                                 &boxes, 1);
+   if (ret != PIPE_OK) {
+      svga_context_flush(svga, NULL);
+      ret = SVGA3D_BeginSurfaceCopy(svga->swc,
+                                    &src.base,
+                                    &dst.base,
+                                    &boxes, 1);
+      assert(ret == PIPE_OK);
+   }
    *boxes = box;
    SVGA_FIFOCommitAll(svga->swc);
 }
@@ -547,7 +563,7 @@ svga_validate_surface_view(struct svga_context *svga, struct svga_surface *s)
     * associated resource. We will then use the cloned surface view for
     * render target.
     */
-   for (shader = PIPE_SHADER_VERTEX; shader <= PIPE_SHADER_TESS_EVAL; shader++) {
+   for (shader = PIPE_SHADER_VERTEX; shader <= PIPE_SHADER_GEOMETRY; shader++) {
       if (svga_check_sampler_view_resource_collision(svga, s->handle, shader)) {
          SVGA_DBG(DEBUG_VIEWS,
                   "same resource used in shaderResource and renderTarget 0x%x\n",
@@ -560,16 +576,6 @@ svga_validate_surface_view(struct svga_context *svga, struct svga_surface *s)
          /* s may be null here if the function failed */
          break;
       }
-   }
-
-   /**
-    * Create an alternate surface view for the specified context if the
-    * view was created for another context.
-    */
-   if (s && s->base.context != &svga->pipe) {
-      struct pipe_surface *surf;
-      surf = svga_create_surface_view(&svga->pipe, s->base.texture, &s->base, FALSE);
-      s = svga_surface(surf);
    }
 
    if (s && s->view_id == SVGA3D_INVALID_ID) {
@@ -585,7 +591,11 @@ svga_validate_surface_view(struct svga_context *svga, struct svga_surface *s)
           * need to update the host-side copy with the invalid
           * content when the associated mob is first bound to the surface.
           */
-         SVGA_RETRY(svga, SVGA3D_InvalidateGBSurface(svga->swc, stex->handle));
+         if (svga->swc->surface_invalidate(svga->swc, stex->handle) != PIPE_OK) {
+            svga_context_flush(svga, NULL);
+            ret = svga->swc->surface_invalidate(svga->swc, stex->handle);
+            assert(ret == PIPE_OK);
+         }
          stex->validated = TRUE;
       }
 
@@ -650,6 +660,7 @@ svga_surface_destroy(struct pipe_context *pipe,
    struct svga_surface *s = svga_surface(surf);
    struct svga_texture *t = svga_texture(surf->texture);
    struct svga_screen *ss = svga_screen(surf->texture->screen);
+   enum pipe_error ret = PIPE_OK;
 
    SVGA_STATS_TIME_PUSH(ss->sws, SVGA_STATS_TIME_DESTROYSURFACE);
 
@@ -668,6 +679,8 @@ svga_surface_destroy(struct pipe_context *pipe,
    }
 
    if (s->view_id != SVGA3D_INVALID_ID) {
+      unsigned try;
+
       /* The SVGA3D device will generate a device error if the
        * render target view or depth stencil view is destroyed from
        * a context other than the one it was created with.
@@ -679,14 +692,18 @@ svga_surface_destroy(struct pipe_context *pipe,
       }
       else {
          assert(svga_have_vgpu10(svga));
-         if (util_format_is_depth_or_stencil(s->base.format)) {
-            SVGA_RETRY(svga, SVGA3D_vgpu10_DestroyDepthStencilView(svga->swc,
-                                                                   s->view_id));
+         for (try = 0; try < 2; try++) {
+            if (util_format_is_depth_or_stencil(s->base.format)) {
+               ret = SVGA3D_vgpu10_DestroyDepthStencilView(svga->swc, s->view_id);
+            }
+            else {
+               ret = SVGA3D_vgpu10_DestroyRenderTargetView(svga->swc, s->view_id);
+            }
+            if (ret == PIPE_OK)
+               break;
+            svga_context_flush(svga, NULL);
          }
-         else {
-            SVGA_RETRY(svga, SVGA3D_vgpu10_DestroyRenderTargetView(svga->swc,
-                                                                   s->view_id));
-         }
+         assert(ret == PIPE_OK);
          util_bitmask_clear(svga->surface_view_id_bm, s->view_id);
       }
    }

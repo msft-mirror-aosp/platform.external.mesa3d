@@ -31,8 +31,7 @@
 #include "os/os_thread.h"
 
 #include "virgl/virgl_winsys.h"
-#include "vtest/vtest_protocol.h"
-#include "virgl_resource_cache.h"
+#include "vtest_protocol.h"
 
 struct pipe_fence_handle;
 struct sw_winsys;
@@ -46,7 +45,9 @@ struct virgl_vtest_winsys {
    /* fd to remote renderer */
    int sock_fd;
 
-   struct virgl_resource_cache cache;
+   struct list_head delayed;
+   int num_delayed;
+   unsigned usecs;
    mtx_t mutex;
 
    unsigned protocol_version;
@@ -68,8 +69,10 @@ struct virgl_hw_res {
    struct sw_displaytarget *dt;
    void *mapped;
 
+   struct list_head head;
    uint32_t bind;
-   struct virgl_resource_cache_entry cache_entry;
+   boolean cacheable;
+   int64_t start, end;
 };
 
 struct virgl_vtest_cmd_buf {

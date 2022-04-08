@@ -33,7 +33,6 @@
 #include "brw_defines.h"
 #include "brw_state.h"
 #include "main/transformfeedback.h"
-#include "util/u_memory.h"
 
 static void
 gen6_update_sol_surfaces(struct brw_context *brw)
@@ -212,10 +211,14 @@ brw_delete_transform_feedback(struct gl_context *ctx,
    struct brw_transform_feedback_object *brw_obj =
       (struct brw_transform_feedback_object *) obj;
 
+   for (unsigned i = 0; i < ARRAY_SIZE(obj->Buffers); i++) {
+      _mesa_reference_buffer_object(ctx, &obj->Buffers[i], NULL);
+   }
+
    brw_bo_unreference(brw_obj->offset_bo);
    brw_bo_unreference(brw_obj->prim_count_bo);
 
-   _mesa_delete_transform_feedback_object(ctx, obj);
+   free(brw_obj);
 }
 
 /**

@@ -139,7 +139,7 @@ emit_tex_binding_unit(struct svga_context *svga,
 
 
 static enum pipe_error
-update_tss_binding(struct svga_context *svga, uint64_t dirty )
+update_tss_binding(struct svga_context *svga, unsigned dirty)
 {
    const enum pipe_shader_type shader = PIPE_SHADER_FRAGMENT;
    boolean reemit = svga->rebind.flags.texture_samplers;
@@ -149,7 +149,8 @@ update_tss_binding(struct svga_context *svga, uint64_t dirty )
 
    struct bind_queue queue;
 
-   assert(!svga_have_vgpu10(svga));
+   if (svga_have_vgpu10(svga))
+      return PIPE_OK;
 
    queue.bind_count = 0;
 
@@ -166,8 +167,7 @@ update_tss_binding(struct svga_context *svga, uint64_t dirty )
 
    /* Polygon stipple */
    if (svga->curr.rast->templ.poly_stipple_enable) {
-      const unsigned unit =
-         svga_fs_variant(svga->state.hw_draw.fs)->pstipple_sampler_unit;
+      const unsigned unit = svga->state.hw_draw.fs->pstipple_sampler_unit;
       emit_tex_binding_unit(svga, unit,
                             svga->polygon_stipple.sampler,
                             &svga->polygon_stipple.sampler_view->base,
@@ -257,8 +257,7 @@ svga_reemit_tss_bindings(struct svga_context *svga)
 
    /* Polygon stipple */
    if (svga->curr.rast && svga->curr.rast->templ.poly_stipple_enable) {
-      const unsigned unit =
-         svga_fs_variant(svga->state.hw_draw.fs)->pstipple_sampler_unit;
+      const unsigned unit = svga->state.hw_draw.fs->pstipple_sampler_unit;
       struct svga_hw_view_state *view = &svga->state.hw_draw.views[unit];
 
       if (view->v) {
@@ -381,13 +380,14 @@ emit_tss_unit(struct svga_context *svga, unsigned unit,
 }
 
 static enum pipe_error
-update_tss(struct svga_context *svga, uint64_t dirty )
+update_tss(struct svga_context *svga, unsigned dirty)
 {
    const enum pipe_shader_type shader = PIPE_SHADER_FRAGMENT;
    unsigned i;
    struct ts_queue queue;
 
-   assert(!svga_have_vgpu10(svga));
+   if (svga_have_vgpu10(svga))
+      return PIPE_OK;
 
    queue.ts_count = 0;
    for (i = 0; i < svga->curr.num_samplers[shader]; i++) {
@@ -400,7 +400,7 @@ update_tss(struct svga_context *svga, uint64_t dirty )
    /* polygon stipple sampler */
    if (svga->curr.rast->templ.poly_stipple_enable) {
       emit_tss_unit(svga,
-                    svga_fs_variant(svga->state.hw_draw.fs)->pstipple_sampler_unit,
+                    svga->state.hw_draw.fs->pstipple_sampler_unit,
                     svga->polygon_stipple.sampler,
                     &queue);
    }

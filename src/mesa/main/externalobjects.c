@@ -30,7 +30,6 @@
 #include "texobj.h"
 #include "glformats.h"
 #include "texstorage.h"
-#include "util/u_memory.h"
 
 /**
  * Allocate and initialize a new memory object.  But don't put it into the
@@ -164,9 +163,12 @@ _mesa_CreateMemoryObjectsEXT(GLsizei n, GLuint *memoryObjects)
       return;
 
    _mesa_HashLockMutex(ctx->Shared->MemoryObjects);
-   if (_mesa_HashFindFreeKeys(ctx->Shared->MemoryObjects, memoryObjects, n)) {
+   GLuint first = _mesa_HashFindFreeKeyBlock(ctx->Shared->MemoryObjects, n);
+   if (first) {
       for (GLsizei i = 0; i < n; i++) {
          struct gl_memory_object *memObj;
+
+         memoryObjects[i] = first + i;
 
          /* allocate memory object */
          memObj = ctx->Driver.NewMemoryObject(ctx, memoryObjects[i]);
@@ -179,7 +181,7 @@ _mesa_CreateMemoryObjectsEXT(GLsizei n, GLuint *memoryObjects)
          /* insert into hash table */
          _mesa_HashInsertLocked(ctx->Shared->MemoryObjects,
                                 memoryObjects[i],
-                                memObj, true);
+                                memObj);
       }
    }
 
@@ -599,10 +601,12 @@ _mesa_GenSemaphoresEXT(GLsizei n, GLuint *semaphores)
       return;
 
    _mesa_HashLockMutex(ctx->Shared->SemaphoreObjects);
-   if (_mesa_HashFindFreeKeys(ctx->Shared->SemaphoreObjects, semaphores, n)) {
+   GLuint first = _mesa_HashFindFreeKeyBlock(ctx->Shared->SemaphoreObjects, n);
+   if (first) {
       for (GLsizei i = 0; i < n; i++) {
+         semaphores[i] = first + i;
          _mesa_HashInsertLocked(ctx->Shared->SemaphoreObjects,
-                                semaphores[i], &DummySemaphoreObject, true);
+                                semaphores[i], &DummySemaphoreObject);
       }
    }
 
@@ -730,6 +734,7 @@ _mesa_WaitSemaphoreEXT(GLuint semaphore,
       return;
 
    FLUSH_VERTICES(ctx, 0);
+   FLUSH_CURRENT(ctx, 0);
 
    bufObjs = malloc(sizeof(struct gl_buffer_object *) * numBufferBarriers);
    if (!bufObjs) {
@@ -790,6 +795,7 @@ _mesa_SignalSemaphoreEXT(GLuint semaphore,
       return;
 
    FLUSH_VERTICES(ctx, 0);
+   FLUSH_CURRENT(ctx, 0);
 
    bufObjs = malloc(sizeof(struct gl_buffer_object *) * numBufferBarriers);
    if (!bufObjs) {
@@ -881,7 +887,7 @@ _mesa_ImportSemaphoreFdEXT(GLuint semaphore,
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "%s", func);
          return;
       }
-      _mesa_HashInsert(ctx->Shared->SemaphoreObjects, semaphore, semObj, true);
+      _mesa_HashInsert(ctx->Shared->SemaphoreObjects, semaphore, semObj);
    }
 
    ctx->Driver.ImportSemaphoreFd(ctx, semObj, fd);

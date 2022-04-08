@@ -77,6 +77,7 @@ const char *Graph::Edge::typeStr() const
    case FORWARD: return "forward";
    case BACK:    return "back";
    case CROSS:   return "cross";
+   case DUMMY:   return "dummy";
    case UNKNOWN:
    default:
       return "unk";
@@ -183,7 +184,7 @@ Graph::Node::reachableBy(const Node *node, const Node *term) const
          continue;
 
       for (EdgeIterator ei = pos->outgoing(); !ei.end(); ei.next()) {
-         if (ei.getType() == Edge::BACK)
+         if (ei.getType() == Edge::BACK || ei.getType() == Edge::DUMMY)
             continue;
          if (ei.getNode()->visit(seq))
             stack.push(ei.getNode());
@@ -300,6 +301,7 @@ private:
             switch (ei.getType()) {
             case Graph::Edge::TREE:
             case Graph::Edge::FORWARD:
+            case Graph::Edge::DUMMY:
                if (++(ei.getNode()->tag) == ei.getNode()->incidentCountFwd())
                   bb.push(ei.getNode());
                break;
@@ -369,6 +371,8 @@ void Graph::classifyDFS(Node *curr, int& seq)
 
    for (edge = curr->out; edge; edge = edge->next[0]) {
       node = edge->target;
+      if (edge->type == Edge::DUMMY)
+         continue;
 
       if (node->getSequence() == 0) {
          edge->type = Edge::TREE;
@@ -383,6 +387,8 @@ void Graph::classifyDFS(Node *curr, int& seq)
 
    for (edge = curr->in; edge; edge = edge->next[1]) {
       node = edge->origin;
+      if (edge->type == Edge::DUMMY)
+         continue;
 
       if (node->getSequence() == 0) {
          edge->type = Edge::TREE;

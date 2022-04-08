@@ -33,17 +33,19 @@
  */
 
 #include "os_time.h"
-#include "detect_os.h"
+
+/* TODO: fix this dependency */
+#include "gallium/include/pipe/p_config.h"
 
 #include "util/u_atomic.h"
 
-#if DETECT_OS_UNIX
+#if defined(PIPE_OS_UNIX)
 #  include <unistd.h> /* usleep */
 #  include <time.h> /* timeval */
 #  include <sys/time.h> /* timeval */
 #  include <sched.h> /* sched_yield */
 #  include <errno.h>
-#elif DETECT_OS_WINDOWS
+#elif defined(PIPE_SUBSYSTEM_WINDOWS_USER)
 #  include <windows.h>
 #else
 #  error Unsupported OS
@@ -53,19 +55,19 @@
 int64_t
 os_time_get_nano(void)
 {
-#if DETECT_OS_LINUX || DETECT_OS_BSD
+#if defined(PIPE_OS_LINUX) || defined(PIPE_OS_BSD)
 
    struct timespec tv;
    clock_gettime(CLOCK_MONOTONIC, &tv);
    return tv.tv_nsec + tv.tv_sec*INT64_C(1000000000);
 
-#elif DETECT_OS_UNIX
+#elif defined(PIPE_OS_UNIX)
 
    struct timeval tv;
    gettimeofday(&tv, NULL);
    return tv.tv_usec*INT64_C(1000) + tv.tv_sec*INT64_C(1000000000);
 
-#elif DETECT_OS_WINDOWS
+#elif defined(PIPE_SUBSYSTEM_WINDOWS_USER)
 
    static LARGE_INTEGER frequency;
    LARGE_INTEGER counter;
@@ -93,16 +95,16 @@ os_time_get_nano(void)
 void
 os_time_sleep(int64_t usecs)
 {
-#if DETECT_OS_LINUX
+#if defined(PIPE_OS_LINUX)
    struct timespec time;
    time.tv_sec = usecs / 1000000;
    time.tv_nsec = (usecs % 1000000) * 1000;
    while (clock_nanosleep(CLOCK_MONOTONIC, 0, &time, &time) == EINTR);
 
-#elif DETECT_OS_UNIX
+#elif defined(PIPE_OS_UNIX)
    usleep(usecs);
 
-#elif DETECT_OS_WINDOWS
+#elif defined(PIPE_SUBSYSTEM_WINDOWS_USER)
    DWORD dwMilliseconds = (DWORD) ((usecs + 999) / 1000);
    /* Avoid Sleep(O) as that would cause to sleep for an undetermined duration */
    if (dwMilliseconds) {
@@ -146,7 +148,7 @@ os_wait_until_zero(volatile int *var, uint64_t timeout)
 
    if (timeout == OS_TIMEOUT_INFINITE) {
       while (p_atomic_read(var)) {
-#if DETECT_OS_UNIX
+#if defined(PIPE_OS_UNIX)
          sched_yield();
 #endif
       }
@@ -160,7 +162,7 @@ os_wait_until_zero(volatile int *var, uint64_t timeout)
          if (os_time_timeout(start_time, end_time, os_time_get_nano()))
             return false;
 
-#if DETECT_OS_UNIX
+#if defined(PIPE_OS_UNIX)
          sched_yield();
 #endif
       }
@@ -182,7 +184,7 @@ os_wait_until_zero_abs_timeout(volatile int *var, int64_t timeout)
       if (os_time_get_nano() >= timeout)
          return false;
 
-#if DETECT_OS_UNIX
+#if defined(PIPE_OS_UNIX)
       sched_yield();
 #endif
    }

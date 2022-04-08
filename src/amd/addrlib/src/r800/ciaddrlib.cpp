@@ -1,5 +1,5 @@
 /*
- * Copyright © 2007-2019 Advanced Micro Devices, Inc.
+ * Copyright © 2007-2018 Advanced Micro Devices, Inc.
  * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining
@@ -179,6 +179,7 @@ CiLib::CiLib(const Client* pClient)
     m_noOfMacroEntries(0),
     m_allowNonDispThickModes(FALSE)
 {
+    m_class = CI_ADDRLIB;
 }
 
 /**
@@ -209,7 +210,7 @@ ADDR_E_RETURNCODE CiLib::HwlComputeDccInfo(
 {
     ADDR_E_RETURNCODE returnCode = ADDR_OK;
 
-    if (SupportDccAndTcCompatibility() && IsMacroTiled(pIn->tileMode))
+    if (m_settings.isVolcanicIslands && IsMacroTiled(pIn->tileMode))
     {
         UINT_64 dccFastClearSize = pIn->colorSurfSize >> 8;
 
@@ -293,7 +294,7 @@ ADDR_E_RETURNCODE CiLib::HwlComputeCmaskAddrFromCoord(
 {
     ADDR_E_RETURNCODE returnCode = ADDR_NOTSUPPORTED;
 
-    if ((SupportDccAndTcCompatibility() == TRUE) &&
+    if ((m_settings.isVolcanicIslands == TRUE) &&
         (pIn->flags.tcCompatible == TRUE))
     {
         UINT_32 numOfPipes   = HwlGetPipes(pIn->pTileInfo);
@@ -337,7 +338,7 @@ ADDR_E_RETURNCODE CiLib::HwlComputeHtileAddrFromCoord(
 {
     ADDR_E_RETURNCODE returnCode = ADDR_NOTSUPPORTED;
 
-    if ((SupportDccAndTcCompatibility() == TRUE) &&
+    if ((m_settings.isVolcanicIslands == TRUE) &&
         (pIn->flags.tcCompatible == TRUE))
     {
         UINT_32 numOfPipes   = HwlGetPipes(pIn->pTileInfo);
@@ -409,7 +410,7 @@ ChipFamily CiLib::HwlConvertChipFamily(
             family = ADDR_CHIP_FAMILY_VI;
             break;
         default:
-            ADDR_ASSERT(!"No Chip found");
+            ADDR_ASSERT(!"This should be a unexpected Fusion");
             break;
     }
 
@@ -708,7 +709,7 @@ ADDR_E_RETURNCODE CiLib::HwlComputeSurfaceInfo(
     if ((pIn->mipLevel > 0) &&
         (pOut->tcCompatible == TRUE) &&
         (pOut->tileMode != pIn->tileMode) &&
-        (SupportDccAndTcCompatibility() == TRUE))
+        (m_settings.isVolcanicIslands == TRUE))
     {
         pOut->tcCompatible = CheckTcCompatibility(pOut->pTileInfo, pIn->bpp, pOut->tileMode, pOut->tileType, pOut);
     }
@@ -1302,7 +1303,7 @@ VOID CiLib::HwlSetupTileInfo(
     }
 
     // tcCompatible flag is only meaningful for gfx8.
-    if (SupportDccAndTcCompatibility() == FALSE)
+    if (m_settings.isVolcanicIslands == FALSE)
     {
         flags.tcCompatible = FALSE;
     }
@@ -1587,14 +1588,7 @@ VOID CiLib::ReadGbTileMode(
     gbTileMode.val = regValue;
 
     pCfg->type = static_cast<AddrTileType>(gbTileMode.f.micro_tile_mode_new);
-    if (AltTilingEnabled() == TRUE)
-    {
-        pCfg->info.pipeConfig = static_cast<AddrPipeCfg>(gbTileMode.f.alt_pipe_config + 1);
-    }
-    else
-    {
-        pCfg->info.pipeConfig = static_cast<AddrPipeCfg>(gbTileMode.f.pipe_config + 1);
-    }
+    pCfg->info.pipeConfig = static_cast<AddrPipeCfg>(gbTileMode.f.pipe_config + 1);
 
     if (pCfg->type == ADDR_DEPTH_SAMPLE_ORDER)
     {
@@ -1736,19 +1730,10 @@ VOID CiLib::ReadGbMacroTileCfg(
     GB_MACROTILE_MODE gbTileMode;
     gbTileMode.val = regValue;
 
-    if (AltTilingEnabled() == TRUE)
-    {
-        pCfg->bankHeight       = 1 << gbTileMode.f.alt_bank_height;
-        pCfg->banks            = 1 << (gbTileMode.f.alt_num_banks + 1);
-        pCfg->macroAspectRatio = 1 << gbTileMode.f.alt_macro_tile_aspect;
-    }
-    else
-    {
-        pCfg->bankHeight       = 1 << gbTileMode.f.bank_height;
-        pCfg->banks            = 1 << (gbTileMode.f.num_banks + 1);
-        pCfg->macroAspectRatio = 1 << gbTileMode.f.macro_tile_aspect;
-    }
+    pCfg->bankHeight = 1 << gbTileMode.f.bank_height;
     pCfg->bankWidth = 1 << gbTileMode.f.bank_width;
+    pCfg->banks = 1 << (gbTileMode.f.num_banks + 1);
+    pCfg->macroAspectRatio = 1 << gbTileMode.f.macro_tile_aspect;
 }
 
 /**
@@ -2047,7 +2032,6 @@ UINT_64 CiLib::HwlComputeMetadataNibbleAddress(
     /// NOTE *2 because we are converting to Nibble address in this step
     UINT_64 metaAddressInPipe = blockInBankpipeWithBankBits * 2 * metadataBitSize / 8;
 
-
     ///--------------------------------------------------------------------------------------------
     /// Reinsert pipe bits back into the final address
     ///--------------------------------------------------------------------------------------------
@@ -2114,7 +2098,7 @@ VOID CiLib::HwlPadDimensions(
     UINT_32             heightAlign  ///< [in] height alignment
     ) const
 {
-    if ((SupportDccAndTcCompatibility() == TRUE) &&
+    if ((m_settings.isVolcanicIslands == TRUE) &&
         (flags.dccCompatible == TRUE) &&
         (numSamples > 1) &&
         (mipLevel == 0) &&
@@ -2224,7 +2208,7 @@ UINT_32 CiLib::HwlComputeMaxMetaBaseAlignments() const
 
     for (UINT_32 i = 0; i < m_noOfMacroEntries; i++)
     {
-        if (SupportDccAndTcCompatibility() && IsMacroTiled(m_tileTable[i].mode))
+        if ((m_settings.isVolcanicIslands) && IsMacroTiled(m_tileTable[i].mode))
         {
             maxBank = Max(maxBank, m_macroTileTable[i].banks);
         }

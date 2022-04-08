@@ -64,8 +64,6 @@ ror(uint32_t n, uint32_t d)
    return (n >> d) | (n << (32 - d));
 }
 
-// bswap32 already exists as a macro on some platforms (FreeBSD)
-#ifndef bswap32
 static inline uint32_t
 bswap32(uint32_t n)
 {
@@ -78,7 +76,6 @@ bswap32(uint32_t n)
           (n << 24);
 #endif
 }
-#endif
 
 /**
  * Copy RGBA to BGRA - swap R and B.

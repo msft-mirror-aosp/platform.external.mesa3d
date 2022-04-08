@@ -56,14 +56,7 @@ could_coissue(const struct gen_device_info *devinfo, const fs_inst *inst)
    case BRW_OPCODE_CMP:
    case BRW_OPCODE_ADD:
    case BRW_OPCODE_MUL:
-      /* Only float instructions can coissue.  We don't have a great
-       * understanding of whether or not something like float(int(a) + int(b))
-       * would be considered float (based on the destination type) or integer
-       * (based on the source types), so we take the conservative choice of
-       * only promoting when both destination and source are float.
-       */
-      return inst->dst.type == BRW_REGISTER_TYPE_F &&
-             inst->src[0].type == BRW_REGISTER_TYPE_F;
+      return true;
    default:
       return false;
    }
@@ -239,7 +232,7 @@ get_constant_value(const struct gen_device_info *devinfo,
       break;
    }
    case BRW_REGISTER_TYPE_Q: {
-      int64_t val = !can_do_source_mods ? src->d64 : llabs(src->d64);
+      int64_t val = !can_do_source_mods ? src->d64 : abs(src->d64);
       memcpy(out, &val, 8);
       break;
    }
@@ -296,7 +289,7 @@ get_alignment_for_imm(const struct imm *imm)
 }
 
 static bool
-needs_negate(const fs_reg *reg, const struct imm *imm)
+needs_negate(const struct fs_reg *reg, const struct imm *imm)
 {
    switch (reg->type) {
    case BRW_REGISTER_TYPE_DF:
@@ -320,36 +313,6 @@ needs_negate(const fs_reg *reg, const struct imm *imm)
    };
 }
 
-static bool
-representable_as_hf(float f, uint16_t *hf)
-{
-   union fi u;
-   uint16_t h = _mesa_float_to_half(f);
-   u.f = _mesa_half_to_float(h);
-
-   if (u.f == f) {
-      *hf = h;
-      return true;
-   }
-
-   return false;
-}
-
-static bool
-represent_src_as_imm(const struct gen_device_info *devinfo,
-                     fs_reg *src)
-{
-   /* TODO : consider specific platforms also */
-   if (devinfo->gen == 12) {
-      uint16_t hf;
-      if (representable_as_hf(src->f, &hf)) {
-         *src = retype(brw_imm_uw(hf), BRW_REGISTER_TYPE_HF);
-         return true;
-      }
-   }
-   return false;
-}
-
 bool
 fs_visitor::opt_combine_constants()
 {
@@ -360,7 +323,7 @@ fs_visitor::opt_combine_constants()
    table.len = 0;
    table.imm = ralloc_array(const_ctx, struct imm, table.size);
 
-   const brw::idom_tree &idom = idom_analysis.require();
+   cfg->calculate_idom();
    unsigned ip = -1;
 
    /* Make a pass through all instructions and count the number of times each
@@ -373,17 +336,9 @@ fs_visitor::opt_combine_constants()
       if (!could_coissue(devinfo, inst) && !must_promote_imm(devinfo, inst))
          continue;
 
-      bool represented_as_imm = false;
       for (int i = 0; i < inst->sources; i++) {
          if (inst->src[i].file != IMM)
             continue;
-
-         if (!represented_as_imm && i == 0 &&
-             inst->opcode == BRW_OPCODE_MAD &&
-             represent_src_as_imm(devinfo, &inst->src[i])) {
-            represented_as_imm = true;
-            continue;
-         }
 
          char data[8];
          brw_reg_type type;
@@ -395,7 +350,7 @@ fs_visitor::opt_combine_constants()
          struct imm *imm = find_imm(&table, data, size);
 
          if (imm) {
-            bblock_t *intersection = idom.intersect(block, imm->block);
+            bblock_t *intersection = cfg_t::intersect(block, imm->block);
             if (intersection != imm->block)
                imm->inst = NULL;
             imm->block = intersection;
@@ -487,7 +442,7 @@ fs_visitor::opt_combine_constants()
 
       reg.offset += imm->size * width;
    }
-   shader_stats.promoted_constants = table.len;
+   promoted_constants = table.len;
 
    /* Rewrite the immediate sources to refer to the new GRFs. */
    for (int i = 0; i < table.len; i++) {
@@ -559,7 +514,7 @@ fs_visitor::opt_combine_constants()
    }
 
    ralloc_free(const_ctx);
-   invalidate_analysis(DEPENDENCY_INSTRUCTIONS | DEPENDENCY_VARIABLES);
+   invalidate_live_intervals();
 
    return true;
 }

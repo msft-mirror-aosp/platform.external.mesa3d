@@ -21,20 +21,11 @@
  * IN THE SOFTWARE.
  ***************************************************************************/
 
-#include <llvm/Config/llvm-config.h>
-
-#if LLVM_VERSION_MAJOR < 7
 // llvm redefines DEBUG
 #pragma push_macro("DEBUG")
 #undef DEBUG
-#endif
-
-#include <rasterizer/core/state.h>
 #include "JitManager.h"
-
-#if LLVM_VERSION_MAJOR < 7
 #pragma pop_macro("DEBUG")
-#endif
 
 #include "common/os.h"
 #include "jit_api.h"
@@ -43,7 +34,7 @@
 #include "core/state_funcs.h"
 
 #include "gallivm/lp_bld_tgsi.h"
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 
 #include "util/u_memory.h"
 #include "util/u_inlines.h"
@@ -54,7 +45,6 @@
 
 #include "swr_state.h"
 #include "swr_context.h"
-#include "gen_surf_state_llvm.h"
 #include "gen_swr_context_llvm.h"
 #include "swr_screen.h"
 #include "swr_resource.h"
@@ -71,7 +61,6 @@ swr_create_blend_state(struct pipe_context *pipe,
                        const struct pipe_blend_state *blend)
 {
    struct swr_blend_state *state = CALLOC_STRUCT(swr_blend_state);
-   assert(state != nullptr);
 
    memcpy(&state->pipe, blend, sizeof(*blend));
 
@@ -436,9 +425,12 @@ swr_create_gs_state(struct pipe_context *pipe,
       return NULL;
 
    swr_gs->pipe.tokens = tgsi_dup_tokens(gs->tokens);
+
    lp_build_tgsi_info(gs->tokens, &swr_gs->info);
+
    return swr_gs;
 }
+
 
 static void
 swr_bind_gs_state(struct pipe_context *pipe, void *gs)
@@ -463,86 +455,6 @@ swr_delete_gs_state(struct pipe_context *pipe, void *gs)
    swr_fence_work_delete_gs(screen->flush_fence, swr_gs);
 }
 
-static void *
-swr_create_tcs_state(struct pipe_context *pipe,
-                     const struct pipe_shader_state *tcs)
-{
-   struct swr_tess_control_shader *swr_tcs = new swr_tess_control_shader;
-   if (!swr_tcs)
-      return NULL;
-
-   swr_tcs->pipe.tokens = tgsi_dup_tokens(tcs->tokens);
-   lp_build_tgsi_info(tcs->tokens, &swr_tcs->info);
-   return swr_tcs;
-}
-
-static void
-swr_bind_tcs_state(struct pipe_context *pipe, void *tcs)
-{
-   struct swr_context *ctx = swr_context(pipe);
-
-   if (ctx->tcs == tcs)
-      return;
-
-   ctx->tcs = (swr_tess_control_shader *)tcs;
-   ctx->dirty |= SWR_NEW_TCS;
-   ctx->dirty |= SWR_NEW_TS;
-}
-
-static void
-swr_delete_tcs_state(struct pipe_context *pipe, void *tcs)
-{
-   struct swr_tess_control_shader *swr_tcs = (swr_tess_control_shader *)tcs;
-   FREE((void *)swr_tcs->pipe.tokens);
-   struct swr_screen *screen = swr_screen(pipe->screen);
-
-   /* Defer deleton of tcs state */
-   swr_fence_work_delete_tcs(screen->flush_fence, swr_tcs);
-}
-
-static void *
-swr_create_tes_state(struct pipe_context *pipe,
-                     const struct pipe_shader_state *tes)
-{
-   struct swr_tess_evaluation_shader *swr_tes = new swr_tess_evaluation_shader;
-   if (!swr_tes)
-      return NULL;
-
-   swr_tes->pipe.tokens = tgsi_dup_tokens(tes->tokens);
-   lp_build_tgsi_info(tes->tokens, &swr_tes->info);
-   return swr_tes;
-}
-
-static void
-swr_bind_tes_state(struct pipe_context *pipe, void *tes)
-{
-   struct swr_context *ctx = swr_context(pipe);
-
-   if (ctx->tes == tes)
-      return;
-
-   // Save current tessellator state first
-   if (ctx->tes != nullptr) {
-      ctx->tes->ts_state = ctx->tsState;
-   }
-
-   ctx->tes = (swr_tess_evaluation_shader *)tes;
-
-   ctx->dirty |= SWR_NEW_TES;
-   ctx->dirty |= SWR_NEW_TS;
-}
-
-static void
-swr_delete_tes_state(struct pipe_context *pipe, void *tes)
-{
-   struct swr_tess_evaluation_shader *swr_tes = (swr_tess_evaluation_shader *)tes;
-   FREE((void *)swr_tes->pipe.tokens);
-   struct swr_screen *screen = swr_screen(pipe->screen);
-
-   /* Defer deleton of tes state */
-   swr_fence_work_delete_tes(screen->flush_fence, swr_tes);
-}
-
 static void
 swr_set_constant_buffer(struct pipe_context *pipe,
                         enum pipe_shader_type shader,
@@ -564,11 +476,8 @@ swr_set_constant_buffer(struct pipe_context *pipe,
       ctx->dirty |= SWR_NEW_FSCONSTANTS;
    } else if (shader == PIPE_SHADER_GEOMETRY) {
       ctx->dirty |= SWR_NEW_GSCONSTANTS;
-   } else if (shader == PIPE_SHADER_TESS_CTRL) {
-      ctx->dirty |= SWR_NEW_TCSCONSTANTS;
-   } else if (shader == PIPE_SHADER_TESS_EVAL) {
-      ctx->dirty |= SWR_NEW_TESCONSTANTS;
    }
+
    if (cb && cb->user_buffer) {
       pipe_resource_reference(&constants, NULL);
    }
@@ -584,7 +493,7 @@ swr_create_vertex_elements_state(struct pipe_context *pipe,
    assert(num_elements <= PIPE_MAX_ATTRIBS);
    velems = new swr_vertex_element_state;
    if (velems) {
-      memset((void*)&velems->fsState, 0, sizeof(velems->fsState));
+      memset(&velems->fsState, 0, sizeof(velems->fsState));
       velems->fsState.bVertexIDOffsetEnable = true;
       velems->fsState.numAttribs = num_elements;
       for (unsigned i = 0; i < num_elements; i++) {
@@ -706,21 +615,16 @@ swr_set_clip_state(struct pipe_context *pipe,
 static void
 swr_set_scissor_states(struct pipe_context *pipe,
                        unsigned start_slot,
-                       unsigned num_scissors,
-                       const struct pipe_scissor_state *scissors)
+                       unsigned num_viewports,
+                       const struct pipe_scissor_state *scissor)
 {
    struct swr_context *ctx = swr_context(pipe);
 
-   memcpy(ctx->scissors + start_slot, scissors,
-          sizeof(struct pipe_scissor_state) * num_scissors);
-
-   for (unsigned i = 0; i < num_scissors; i++) {
-      auto idx = start_slot + i;
-      ctx->swr_scissors[idx].xmin = scissors[idx].minx;
-      ctx->swr_scissors[idx].xmax = scissors[idx].maxx;
-      ctx->swr_scissors[idx].ymin = scissors[idx].miny;
-      ctx->swr_scissors[idx].ymax = scissors[idx].maxy;
-   }
+   ctx->scissor = *scissor;
+   ctx->swr_scissor.xmin = scissor->minx;
+   ctx->swr_scissor.xmax = scissor->maxx;
+   ctx->swr_scissor.ymin = scissor->miny;
+   ctx->swr_scissor.ymax = scissor->maxy;
    ctx->dirty |= SWR_NEW_SCISSOR;
 }
 
@@ -732,7 +636,7 @@ swr_set_viewport_states(struct pipe_context *pipe,
 {
    struct swr_context *ctx = swr_context(pipe);
 
-   memcpy(ctx->viewports + start_slot, vpt, sizeof(struct pipe_viewport_state) * num_viewports);
+   ctx->viewport = *vpt;
    ctx->dirty |= SWR_NEW_VIEWPORT;
 }
 
@@ -743,7 +647,7 @@ swr_set_framebuffer_state(struct pipe_context *pipe,
 {
    struct swr_context *ctx = swr_context(pipe);
 
-   bool changed = !util_framebuffer_state_equal(&ctx->framebuffer, fb);
+   boolean changed = !util_framebuffer_state_equal(&ctx->framebuffer, fb);
 
    assert(fb->width <= KNOB_GUARDBAND_WIDTH);
    assert(fb->height <= KNOB_GUARDBAND_HEIGHT);
@@ -887,8 +791,6 @@ swr_update_texture_state(struct swr_context *ctx,
          jit_tex->width = res->width0;
          jit_tex->height = res->height0;
          jit_tex->base_ptr = (uint8_t*)swr->xpBaseAddress;
-         jit_tex->num_samples = swr->numSamples;
-         jit_tex->sample_stride = 0;
          if (view->target != PIPE_BUFFER) {
             jit_tex->first_level = view->u.tex.first_level;
             jit_tex->last_level = view->u.tex.last_level;
@@ -961,18 +863,8 @@ swr_update_constants(struct swr_context *ctx, enum pipe_shader_type shaderType)
       num_constants = pDC->num_constantsGS;
       scratch = &ctx->scratch->gs_constants;
       break;
-   case PIPE_SHADER_TESS_CTRL:
-      constant = pDC->constantTCS;
-      num_constants = pDC->num_constantsTCS;
-      scratch = &ctx->scratch->tcs_constants;
-      break;
-   case PIPE_SHADER_TESS_EVAL:
-      constant = pDC->constantTES;
-      num_constants = pDC->num_constantsTES;
-      scratch = &ctx->scratch->tes_constants;
-      break;
    default:
-      assert(0 && "Unsupported shader type constants");
+      debug_printf("Unsupported shader type constants\n");
       return;
    }
 
@@ -1108,17 +1000,16 @@ swr_user_vbuf_range(const struct pipe_draw_info *info,
 {
    /* FIXME: The size is too large - we don't access the full extra stride. */
    unsigned elems;
-   unsigned elem_pitch = vb->stride + velems->stream_pitch[i];
    if (velems->instanced_bufs & (1U << i)) {
       elems = info->instance_count / velems->min_instance_div[i] + 1;
       *totelems = info->start_instance + elems;
       *base = info->start_instance * vb->stride;
-      *size = elems * elem_pitch;
+      *size = elems * vb->stride;
    } else if (vb->stride) {
       elems = info->max_index - info->min_index + 1;
       *totelems = (info->max_index + info->index_bias) + 1;
       *base = (info->min_index + info->index_bias) * vb->stride;
-      *size = elems * elem_pitch;
+      *size = elems * vb->stride;
    } else {
       *totelems = 1;
       *base = 0;
@@ -1136,25 +1027,6 @@ swr_update_poly_stipple(struct swr_context *ctx)
           ctx->poly_stipple.pipe.stipple,
           sizeof(ctx->poly_stipple.pipe.stipple));
 }
-
-
-static struct tgsi_shader_info *
-swr_get_last_fe(const struct swr_context *ctx)
-{
-   tgsi_shader_info *pLastFE = &ctx->vs->info.base;
-
-   if (ctx->gs) {
-      pLastFE = &ctx->gs->info.base;
-   }
-   else if (ctx->tes) {
-      pLastFE = &ctx->tes->info.base;
-   }
-   else if (ctx->tcs) {
-      pLastFE = &ctx->tcs->info.base;
-   }
-   return pLastFE;
-}
-
 
 void
 swr_update_derived(struct pipe_context *pipe,
@@ -1243,8 +1115,6 @@ swr_update_derived(struct pipe_context *pipe,
    /* Raster state */
    if (ctx->dirty & (SWR_NEW_RASTERIZER |
                      SWR_NEW_VS | // clipping
-                     SWR_NEW_TES |
-                     SWR_NEW_TCS |
                      SWR_NEW_FRAMEBUFFER)) {
       pipe_rasterizer_state *rasterizer = ctx->rasterizer;
       pipe_framebuffer_state *fb = &ctx->framebuffer;
@@ -1324,7 +1194,6 @@ swr_update_derived(struct pipe_context *pipe,
          rastState->depthFormat = swr_resource(zb->texture)->swr.format;
 
       rastState->depthClipEnable = rasterizer->depth_clip_near;
-      rastState->clipEnable = rasterizer->depth_clip_near | rasterizer->depth_clip_far;
       rastState->clipHalfZ = rasterizer->clip_halfz;
 
       ctx->api.pfnSwrSetRastState(ctx->swrContext, rastState);
@@ -1333,54 +1202,41 @@ swr_update_derived(struct pipe_context *pipe,
    /* Viewport */
    if (ctx->dirty & (SWR_NEW_VIEWPORT | SWR_NEW_FRAMEBUFFER
                      | SWR_NEW_RASTERIZER)) {
-      pipe_viewport_state *state = &ctx->viewports[0];
+      pipe_viewport_state *state = &ctx->viewport;
       pipe_framebuffer_state *fb = &ctx->framebuffer;
       pipe_rasterizer_state *rasterizer = ctx->rasterizer;
 
-      SWR_VIEWPORT *vp = &ctx->derived.vp[0];
+      SWR_VIEWPORT *vp = &ctx->derived.vp;
       SWR_VIEWPORT_MATRICES *vpm = &ctx->derived.vpm;
 
-      for (unsigned i = 0; i < KNOB_NUM_VIEWPORTS_SCISSORS; i++) {
-         vp->x = state->translate[0] - state->scale[0];
-         vp->width = 2 * state->scale[0];
-         vp->y = state->translate[1] - fabs(state->scale[1]);
-         vp->height = 2 * fabs(state->scale[1]);
-         util_viewport_zmin_zmax(state, rasterizer->clip_halfz,
-                                 &vp->minZ, &vp->maxZ);
+      vp->x = state->translate[0] - state->scale[0];
+      vp->width = 2 * state->scale[0];
+      vp->y = state->translate[1] - fabs(state->scale[1]);
+      vp->height = 2 * fabs(state->scale[1]);
+      util_viewport_zmin_zmax(state, rasterizer->clip_halfz,
+                              &vp->minZ, &vp->maxZ);
 
-         if (rasterizer->depth_clip_near) {
-            vp->minZ = 0.0f;
-         }
+      vpm->m00[0] = state->scale[0];
+      vpm->m11[0] = state->scale[1];
+      vpm->m22[0] = state->scale[2];
+      vpm->m30[0] = state->translate[0];
+      vpm->m31[0] = state->translate[1];
+      vpm->m32[0] = state->translate[2];
 
-         if (rasterizer->depth_clip_far) {
-            vp->maxZ = 1.0f;
-         }
-
-         vpm->m00[i] = state->scale[0];
-         vpm->m11[i] = state->scale[1];
-         vpm->m22[i] = state->scale[2];
-         vpm->m30[i] = state->translate[0];
-         vpm->m31[i] = state->translate[1];
-         vpm->m32[i] = state->translate[2];
-
-         /* Now that the matrix is calculated, clip the view coords to screen
-          * size.  OpenGL allows for -ve x,y in the viewport. */
-         if (vp->x < 0.0f) {
-            vp->width += vp->x;
-            vp->x = 0.0f;
-         }
-         if (vp->y < 0.0f) {
-            vp->height += vp->y;
-            vp->y = 0.0f;
-         }
-         vp->width = std::min(vp->width, (float) fb->width - vp->x);
-         vp->height = std::min(vp->height, (float) fb->height - vp->y);
-
-         vp++;
-         state++;
+      /* Now that the matrix is calculated, clip the view coords to screen
+       * size.  OpenGL allows for -ve x,y in the viewport. */
+      if (vp->x < 0.0f) {
+         vp->width += vp->x;
+         vp->x = 0.0f;
       }
-      ctx->api.pfnSwrSetViewports(ctx->swrContext, KNOB_NUM_VIEWPORTS_SCISSORS,
-                                  &ctx->derived.vp[0], &ctx->derived.vpm);
+      if (vp->y < 0.0f) {
+         vp->height += vp->y;
+         vp->y = 0.0f;
+      }
+      vp->width = std::min(vp->width, (float)fb->width - vp->x);
+      vp->height = std::min(vp->height, (float)fb->height - vp->y);
+
+      ctx->api.pfnSwrSetViewports(ctx->swrContext, 1, vp, vpm);
    }
 
    /* When called from swr_clear (p_draw_info = null), render targets,
@@ -1397,7 +1253,7 @@ swr_update_derived(struct pipe_context *pipe,
 
    /* Scissor */
    if (ctx->dirty & SWR_NEW_SCISSOR) {
-      ctx->api.pfnSwrSetScissorRects(ctx->swrContext, KNOB_NUM_VIEWPORTS_SCISSORS, ctx->swr_scissors);
+      ctx->api.pfnSwrSetScissorRects(ctx->swrContext, 1, &ctx->swr_scissor);
    }
 
    /* Set vertex & index buffers */
@@ -1407,8 +1263,8 @@ swr_update_derived(struct pipe_context *pipe,
       /* vertex buffers */
       SWR_VERTEX_BUFFER_STATE swrVertexBuffers[PIPE_MAX_ATTRIBS];
       for (UINT i = 0; i < ctx->num_vertex_buffers; i++) {
-         uint32_t size = 0, pitch = 0, elems = 0, partial_inbounds = 0;
-         uint32_t min_vertex_index = 0;
+         uint32_t size, pitch, elems, partial_inbounds;
+         uint32_t min_vertex_index;
          const uint8_t *p_data;
          struct pipe_vertex_buffer *vb = &ctx->vertex_buffer[i];
 
@@ -1429,7 +1285,7 @@ swr_update_derived(struct pipe_context *pipe,
              * draw will access user-buffer directly and then block.  This is
              * faster than queuing many large client draws. */
             if (size >= screen->client_copy_limit) {
-               post_update_dirty_flags |= SWR_BLOCK_CLIENT_DRAW;
+               post_update_dirty_flags |= SWR_LARGE_CLIENT_DRAW;
                p_data = (const uint8_t *) vb->buffer.user;
             } else {
                /* Copy only needed vertices to scratch space */
@@ -1497,13 +1353,12 @@ swr_update_derived(struct pipe_context *pipe,
             post_update_dirty_flags |= SWR_NEW_VERTEX;
 
             size = info.count * pitch;
-
             size = AlignUp(size, 4);
             /* If size of client memory copy is too large, don't copy. The
              * draw will access user-buffer directly and then block.  This is
              * faster than queuing many large client draws. */
             if (size >= screen->client_copy_limit) {
-               post_update_dirty_flags |= SWR_BLOCK_CLIENT_DRAW;
+               post_update_dirty_flags |= SWR_LARGE_CLIENT_DRAW;
                p_data = (const uint8_t *) info.index.user;
             } else {
                /* Copy indices to scratch space */
@@ -1532,8 +1387,6 @@ swr_update_derived(struct pipe_context *pipe,
    /* GeometryShader */
    if (ctx->dirty & (SWR_NEW_GS |
                      SWR_NEW_VS |
-                     SWR_NEW_TCS |
-                     SWR_NEW_TES |
                      SWR_NEW_SAMPLER |
                      SWR_NEW_SAMPLER_VIEW)) {
       if (ctx->gs) {
@@ -1572,114 +1425,12 @@ swr_update_derived(struct pipe_context *pipe,
       }
    }
 
-   // We may need to restore tessellation state
-   // This restored state may be however overwritten
-   // during shader compilation
-   if (ctx->dirty & SWR_NEW_TS) {
-      if (ctx->tes != nullptr) {
-         ctx->tsState = ctx->tes->ts_state;
-         ctx->api.pfnSwrSetTsState(ctx->swrContext, &ctx->tsState);
-      } else {
-         SWR_TS_STATE state = { 0 };
-         ctx->api.pfnSwrSetTsState(ctx->swrContext, &state);
-      }
-   }
-
-   // Tessellation Evaluation Shader
-   // Compile TES first, because TCS is optional
-   if (ctx->dirty & (SWR_NEW_GS |
-                     SWR_NEW_VS |
-                     SWR_NEW_TCS |
-                     SWR_NEW_TES |
-                     SWR_NEW_SAMPLER |
-                     SWR_NEW_SAMPLER_VIEW)) {
-      if (ctx->tes) {
-         swr_jit_tes_key key;
-         swr_generate_tes_key(key, ctx, ctx->tes);
-
-         auto search = ctx->tes->map.find(key);
-         PFN_TES_FUNC func;
-         if (search != ctx->tes->map.end()) {
-            func = search->second->shader;
-         } else {
-            func = swr_compile_tes(ctx, key);
-         }
-
-         ctx->api.pfnSwrSetDsFunc(ctx->swrContext, func);
-
-         /* JIT sampler state */
-         if (ctx->dirty & SWR_NEW_SAMPLER) {
-            swr_update_sampler_state(ctx,
-                                     PIPE_SHADER_TESS_EVAL,
-                                     key.nr_samplers,
-                                     ctx->swrDC.samplersTES);
-         }
-
-         /* JIT sampler view state */
-         if (ctx->dirty & (SWR_NEW_SAMPLER_VIEW | SWR_NEW_FRAMEBUFFER)) {
-            swr_update_texture_state(ctx,
-                                     PIPE_SHADER_TESS_EVAL,
-                                     key.nr_sampler_views,
-                                     ctx->swrDC.texturesTES);
-         }
-
-         // Update tessellation state in case it's been updated
-         ctx->api.pfnSwrSetTsState(ctx->swrContext, &ctx->tsState);
-      } else {
-         ctx->api.pfnSwrSetDsFunc(ctx->swrContext, NULL);
-      }
-   }
-
-   /* Tessellation Control Shader */
-   if (ctx->dirty & (SWR_NEW_GS |
-                     SWR_NEW_VS |
-                     SWR_NEW_TCS |
-                     SWR_NEW_TES |
-                     SWR_NEW_SAMPLER |
-                     SWR_NEW_SAMPLER_VIEW)) {
-      if (ctx->tcs) {
-         ctx->tcs->vertices_per_patch = p_draw_info->vertices_per_patch;
-
-         swr_jit_tcs_key key;
-         swr_generate_tcs_key(key, ctx, ctx->tcs);
-
-         auto search = ctx->tcs->map.find(key);
-         PFN_TCS_FUNC func;
-         if (search != ctx->tcs->map.end()) {
-            func = search->second->shader;
-         } else {
-            func = swr_compile_tcs(ctx, key);
-         }
-
-         ctx->api.pfnSwrSetHsFunc(ctx->swrContext, func);
-
-         /* JIT sampler state */
-         if (ctx->dirty & SWR_NEW_SAMPLER) {
-            swr_update_sampler_state(ctx,
-                                     PIPE_SHADER_TESS_CTRL,
-                                     key.nr_samplers,
-                                     ctx->swrDC.samplersTCS);
-         }
-
-         /* JIT sampler view state */
-         if (ctx->dirty & (SWR_NEW_SAMPLER_VIEW | SWR_NEW_FRAMEBUFFER)) {
-            swr_update_texture_state(ctx,
-                                     PIPE_SHADER_TESS_CTRL,
-                                     key.nr_sampler_views,
-                                     ctx->swrDC.texturesTCS);
-         }
-
-         // Update tessellation state in case it's been updated
-         ctx->api.pfnSwrSetTsState(ctx->swrContext, &ctx->tsState);
-      } else {
-         ctx->api.pfnSwrSetHsFunc(ctx->swrContext, NULL);
-      }
-   }
-
    /* VertexShader */
-   if (ctx->dirty
-       & (SWR_NEW_VS | SWR_NEW_RASTERIZER | // for clip planes
-          SWR_NEW_SAMPLER | SWR_NEW_SAMPLER_VIEW | SWR_NEW_FRAMEBUFFER)) {
+   if (ctx->dirty & (SWR_NEW_VS |
+                     SWR_NEW_RASTERIZER | // for clip planes
+                     SWR_NEW_SAMPLER |
+                     SWR_NEW_SAMPLER_VIEW |
+                     SWR_NEW_FRAMEBUFFER)) {
       swr_jit_vs_key key;
       swr_generate_vs_key(key, ctx, ctx->vs);
       auto search = ctx->vs->map.find(key);
@@ -1693,8 +1444,10 @@ swr_update_derived(struct pipe_context *pipe,
 
       /* JIT sampler state */
       if (ctx->dirty & SWR_NEW_SAMPLER) {
-         swr_update_sampler_state(
-            ctx, PIPE_SHADER_VERTEX, key.nr_samplers, ctx->swrDC.samplersVS);
+         swr_update_sampler_state(ctx,
+                                  PIPE_SHADER_VERTEX,
+                                  key.nr_samplers,
+                                  ctx->swrDC.samplersVS);
       }
 
       /* JIT sampler view state */
@@ -1723,8 +1476,6 @@ swr_update_derived(struct pipe_context *pipe,
    if (ctx->dirty & (SWR_NEW_FS |
                      SWR_NEW_VS |
                      SWR_NEW_GS |
-                     SWR_NEW_TES |
-                     SWR_NEW_TCS |
                      SWR_NEW_RASTERIZER |
                      SWR_NEW_SAMPLER |
                      SWR_NEW_SAMPLER_VIEW |
@@ -1813,16 +1564,6 @@ swr_update_derived(struct pipe_context *pipe,
    /* GeometryShader Constants */
    if (ctx->dirty & SWR_NEW_GSCONSTANTS) {
       swr_update_constants(ctx, PIPE_SHADER_GEOMETRY);
-   }
-
-   /* Tessellation Control Shader Constants */
-   if (ctx->dirty & SWR_NEW_TCSCONSTANTS) {
-      swr_update_constants(ctx, PIPE_SHADER_TESS_CTRL);
-   }
-
-   /* Tessellation Evaluation Shader Constants */
-   if (ctx->dirty & SWR_NEW_TESCONSTANTS) {
-      swr_update_constants(ctx, PIPE_SHADER_TESS_EVAL);
    }
 
    /* Depth/stencil state */
@@ -1965,7 +1706,7 @@ swr_update_derived(struct pipe_context *pipe,
             compileState.alphaTestFormat = ALPHA_TEST_FLOAT32; // xxx
 
             compileState.Canonicalize();
-
+            
             PFN_BLEND_JIT_FUNC func = NULL;
             auto search = ctx->blendJIT->find(compileState);
             if (search != ctx->blendJIT->end()) {
@@ -1988,34 +1729,33 @@ swr_update_derived(struct pipe_context *pipe,
       swr_update_poly_stipple(ctx);
    }
 
-   if (ctx->dirty & (SWR_NEW_VS | SWR_NEW_TCS | SWR_NEW_TES | SWR_NEW_SO | SWR_NEW_RASTERIZER)) {
+   if (ctx->dirty & (SWR_NEW_VS | SWR_NEW_SO | SWR_NEW_RASTERIZER)) {
       ctx->vs->soState.rasterizerDisable =
          ctx->rasterizer->rasterizer_discard;
       ctx->api.pfnSwrSetSoState(ctx->swrContext, &ctx->vs->soState);
 
       pipe_stream_output_info *stream_output = &ctx->vs->pipe.stream_output;
 
-      for (uint32_t i = 0; i < MAX_SO_STREAMS; i++) {
+      for (uint32_t i = 0; i < ctx->num_so_targets; i++) {
          SWR_STREAMOUT_BUFFER buffer = {0};
-         if (ctx->so_targets[i]) {
-             buffer.enable = true;
-             buffer.pBuffer =
-                (gfxptr_t)(swr_resource_data(ctx->so_targets[i]->buffer) +
-                             ctx->so_targets[i]->buffer_offset);
-             buffer.bufferSize = ctx->so_targets[i]->buffer_size >> 2;
-             buffer.pitch = stream_output->stride[i];
-             buffer.streamOffset = 0;
-	 }
+         if (!ctx->so_targets[i])
+            continue;
+         buffer.enable = true;
+         buffer.pBuffer =
+            (gfxptr_t)(swr_resource_data(ctx->so_targets[i]->buffer) +
+                         ctx->so_targets[i]->buffer_offset);
+         buffer.bufferSize = ctx->so_targets[i]->buffer_size >> 2;
+         buffer.pitch = stream_output->stride[i];
+         buffer.streamOffset = 0;
 
          ctx->api.pfnSwrSetSoBuffers(ctx->swrContext, &buffer, i);
       }
    }
 
-
    if (ctx->dirty & (SWR_NEW_CLIP | SWR_NEW_RASTERIZER | SWR_NEW_VS)) {
       // shader exporting clip distances overrides all user clip planes
       if (ctx->rasterizer->clip_plane_enable &&
-          !swr_get_last_fe(ctx)->num_written_clipdistance)
+          !ctx->vs->info.base.num_written_clipdistance)
       {
          swr_draw_context *pDC = &ctx->swrDC;
          memcpy(pDC->userClipPlanes,
@@ -2028,12 +1768,7 @@ swr_update_derived(struct pipe_context *pipe,
    SWR_BACKEND_STATE backendState = {0};
    if (ctx->gs) {
       backendState.numAttributes = ctx->gs->info.base.num_outputs - 1;
-   } else
-   if (ctx->tes) {
-      backendState.numAttributes = ctx->tes->info.base.num_outputs - 1;
-      // no case for TCS, because if TCS is active, TES must be active
-      // as well - pipeline stages after tessellation does not support patches
-   }  else {
+   } else {
       backendState.numAttributes = ctx->vs->info.base.num_outputs - 1;
       if (ctx->fs->info.base.uses_primid) {
          backendState.numAttributes++;
@@ -2057,19 +1792,21 @@ swr_update_derived(struct pipe_context *pipe,
       (ctx->rasterizer->flatshade ? ctx->fs->flatConstantMask : 0);
    backendState.pointSpriteTexCoordMask = ctx->fs->pointSpriteMask;
 
-   struct tgsi_shader_info *pLastFE = swr_get_last_fe(ctx);
-
+   struct tgsi_shader_info *pLastFE =
+      ctx->gs ?
+      &ctx->gs->info.base :
+      &ctx->vs->info.base;
    backendState.readRenderTargetArrayIndex = pLastFE->writes_layer;
    backendState.readViewportArrayIndex = pLastFE->writes_viewport_index;
    backendState.vertexAttribOffset = VERTEX_ATTRIB_START_SLOT; // TODO: optimize
 
    backendState.clipDistanceMask =
-      pLastFE->num_written_clipdistance ?
-      pLastFE->clipdist_writemask & ctx->rasterizer->clip_plane_enable :
+      ctx->vs->info.base.num_written_clipdistance ?
+      ctx->vs->info.base.clipdist_writemask & ctx->rasterizer->clip_plane_enable :
       ctx->rasterizer->clip_plane_enable;
 
    backendState.cullDistanceMask =
-      pLastFE->culldist_writemask << pLastFE->num_written_clipdistance;
+      ctx->vs->info.base.culldist_writemask << ctx->vs->info.base.num_written_clipdistance;
 
    // Assume old layout of SGV, POSITION, CLIPCULL, ATTRIB
    backendState.vertexClipCullOffset = backendState.vertexAttribOffset - 2;
@@ -2138,7 +1875,6 @@ swr_set_so_targets(struct pipe_context *pipe,
    }
 
    swr->num_so_targets = num_targets;
-   swr->swrDC.soPrims = &swr->so_primCounter;
 
    swr->dirty |= SWR_NEW_SO;
 }
@@ -2178,14 +1914,6 @@ swr_state_init(struct pipe_context *pipe)
    pipe->create_gs_state = swr_create_gs_state;
    pipe->bind_gs_state = swr_bind_gs_state;
    pipe->delete_gs_state = swr_delete_gs_state;
-
-   pipe->create_tcs_state = swr_create_tcs_state;
-   pipe->bind_tcs_state = swr_bind_tcs_state;
-   pipe->delete_tcs_state = swr_delete_tcs_state;
-
-   pipe->create_tes_state = swr_create_tes_state;
-   pipe->bind_tes_state = swr_bind_tes_state;
-   pipe->delete_tes_state = swr_delete_tes_state;
 
    pipe->set_constant_buffer = swr_set_constant_buffer;
 

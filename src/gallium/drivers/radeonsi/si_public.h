@@ -25,6 +25,9 @@
 #ifndef SI_PUBLIC_H
 #define SI_PUBLIC_H
 
-struct pipe_screen *radeonsi_screen_create(int fd, const struct pipe_screen_config *config);
+struct radeon_winsys;
+
+struct pipe_screen *radeonsi_screen_create(struct radeon_winsys *ws,
+					   const struct pipe_screen_config *config);
 
 #endif

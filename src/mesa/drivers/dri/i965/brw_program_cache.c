@@ -37,13 +37,14 @@
  *  data) in return.  Objects in the cache may not have relocations
  * (pointers to other BOs) in them.
  *
- * The inner workings are a simple hash table based on a FNV-1a of the
+ * The inner workings are a simple hash table based on a CRC of the
  * key data.
  *
  * Replacement is not implemented.  Instead, when the cache gets too
  * big we throw out all of the cache data and let it get regenerated.
  */
 
+#include "main/imports.h"
 #include "main/streaming-load-memcpy.h"
 #include "x86/common_x86_asm.h"
 #include "intel_batchbuffer.h"
@@ -53,9 +54,6 @@
 #include "brw_cs.h"
 #include "brw_program.h"
 #include "compiler/brw_eu.h"
-#include "util/u_memory.h"
-#define XXH_INLINE_ALL
-#include "util/xxhash.h"
 
 #define FILE_DEBUG_FLAG DEBUG_STATE
 
@@ -72,7 +70,7 @@ struct brw_cache_item {
    /** for variable-sized keys */
    GLuint key_size;
    GLuint prog_data_size;
-   const struct brw_base_prog_key *key;
+   const void *key;
 
    uint32_t offset;
    uint32_t size;
@@ -95,12 +93,41 @@ brw_stage_cache_id(gl_shader_stage stage)
    return stage_ids[stage];
 }
 
+static unsigned
+get_program_string_id(enum brw_cache_id cache_id, const void *key)
+{
+   switch (cache_id) {
+   case BRW_CACHE_VS_PROG:
+      return ((struct brw_vs_prog_key *) key)->program_string_id;
+   case BRW_CACHE_TCS_PROG:
+      return ((struct brw_tcs_prog_key *) key)->program_string_id;
+   case BRW_CACHE_TES_PROG:
+      return ((struct brw_tes_prog_key *) key)->program_string_id;
+   case BRW_CACHE_GS_PROG:
+      return ((struct brw_gs_prog_key *) key)->program_string_id;
+   case BRW_CACHE_CS_PROG:
+      return ((struct brw_cs_prog_key *) key)->program_string_id;
+   case BRW_CACHE_FS_PROG:
+      return ((struct brw_wm_prog_key *) key)->program_string_id;
+   default:
+      unreachable("no program string id for this kind of program");
+   }
+}
+
 static GLuint
 hash_key(struct brw_cache_item *item)
 {
-    uint32_t hash = 0;
-    hash = XXH32(&item->cache_id, sizeof(item->cache_id), hash);
-    hash = XXH32(item->key, item->key_size, hash);
+   GLuint *ikey = (GLuint *)item->key;
+   GLuint hash = item->cache_id, i;
+
+   assert(item->key_size % 4 == 0);
+
+   /* I'm sure this can be improved on:
+    */
+   for (i = 0; i < item->key_size/4; i++) {
+      hash ^= ikey[i];
+      hash = (hash << 5) | (hash >> 27);
+   }
 
    return hash;
 }
@@ -293,7 +320,7 @@ brw_find_previous_compile(struct brw_cache *cache,
    for (unsigned i = 0; i < cache->size; i++) {
       for (struct brw_cache_item *c = cache->items[i]; c; c = c->next) {
          if (c->cache_id == cache_id &&
-             c->key->program_string_id == program_string_id) {
+             get_program_string_id(cache_id, c->key) == program_string_id) {
             return c->key;
          }
       }
@@ -402,7 +429,7 @@ brw_clear_cache(struct brw_context *brw, struct brw_cache *cache)
              c->cache_id == BRW_CACHE_GS_PROG ||
              c->cache_id == BRW_CACHE_FS_PROG ||
              c->cache_id == BRW_CACHE_CS_PROG) {
-            const void *item_prog_data = ((char *)c->key) + c->key_size;
+            const void *item_prog_data = c->key + c->key_size;
             brw_stage_prog_data_free(item_prog_data);
          }
          free((void *)c->key);
@@ -516,8 +543,8 @@ brw_print_program_cache(struct brw_context *brw)
    for (unsigned i = 0; i < cache->size; i++) {
       for (item = cache->items[i]; item; item = item->next) {
          fprintf(stderr, "%s:\n", cache_name(i));
-         brw_disassemble_with_labels(&brw->screen->devinfo, cache->map,
-                                     item->offset, item->size, stderr);
+         brw_disassemble(&brw->screen->devinfo, cache->map,
+                         item->offset, item->size, stderr);
       }
    }
 }

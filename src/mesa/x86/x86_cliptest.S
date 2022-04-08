@@ -30,8 +30,7 @@
  */
 
 #include "assyntax.h"
-#define MATH_ASM_PTR_SIZE 4
-#include "math/m_vector_asm.h"
+#include "matypes.h"
 #include "clip_args.h"
 
 #define SRC0		REGOFF(0, ESI)
@@ -104,7 +103,7 @@ ALIGNTEXT16
 GLOBL GLNAME( _mesa_x86_cliptest_points4 )
 HIDDEN(_mesa_x86_cliptest_points4)
 GLNAME( _mesa_x86_cliptest_points4 ):
-	_CET_ENDBR
+
 #ifdef ELFPIC
 #define FRAME_OFFSET 20
 #else
@@ -279,7 +278,7 @@ ALIGNTEXT16
 GLOBL GLNAME( _mesa_x86_cliptest_points4_np )
 HIDDEN(_mesa_x86_cliptest_points4_np)
 GLNAME( _mesa_x86_cliptest_points4_np ):
-	_CET_ENDBR
+
 #ifdef ELFPIC
 #define FRAME_OFFSET 20
 #else

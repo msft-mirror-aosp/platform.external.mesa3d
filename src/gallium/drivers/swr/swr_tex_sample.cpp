@@ -58,7 +58,6 @@
 #include "util/u_memory.h"
 
 #include "swr_tex_sample.h"
-#include "gen_surf_state_llvm.h"
 #include "gen_swr_context_llvm.h"
 
 using namespace SwrJit;
@@ -127,12 +126,6 @@ swr_texture_member(const struct lp_sampler_dynamic_state *base,
    case PIPE_SHADER_GEOMETRY:
       indices[1] = lp_build_const_int32(gallivm, swr_draw_context_texturesGS);
       break;
-   case PIPE_SHADER_TESS_CTRL:
-      indices[1] = lp_build_const_int32(gallivm, swr_draw_context_texturesTCS);
-      break;
-   case PIPE_SHADER_TESS_EVAL:
-      indices[1] = lp_build_const_int32(gallivm, swr_draw_context_texturesTES);
-      break;
    default:
       assert(0 && "unsupported shader type");
       break;
@@ -169,8 +162,7 @@ swr_texture_member(const struct lp_sampler_dynamic_state *base,
       const struct lp_sampler_dynamic_state *base,                           \
       struct gallivm_state *gallivm,                                         \
       LLVMValueRef context_ptr,                                              \
-      unsigned texture_unit,                                                 \
-      LLVMValueRef texture_unit_offset)                                      \
+      unsigned texture_unit)                                                 \
    {                                                                         \
       return swr_texture_member(base,                                        \
                                 gallivm,                                     \
@@ -188,8 +180,6 @@ SWR_TEXTURE_MEMBER(depth, TRUE)
 SWR_TEXTURE_MEMBER(first_level, TRUE)
 SWR_TEXTURE_MEMBER(last_level, TRUE)
 SWR_TEXTURE_MEMBER(base_ptr, TRUE)
-SWR_TEXTURE_MEMBER(num_samples, TRUE)
-SWR_TEXTURE_MEMBER(sample_stride, TRUE)
 SWR_TEXTURE_MEMBER(row_stride, FALSE)
 SWR_TEXTURE_MEMBER(img_stride, FALSE)
 SWR_TEXTURE_MEMBER(mip_offsets, FALSE)
@@ -232,12 +222,6 @@ swr_sampler_member(const struct lp_sampler_dynamic_state *base,
       break;
    case PIPE_SHADER_GEOMETRY:
       indices[1] = lp_build_const_int32(gallivm, swr_draw_context_samplersGS);
-      break;
-   case PIPE_SHADER_TESS_CTRL:
-      indices[1] = lp_build_const_int32(gallivm, swr_draw_context_samplersTCS);
-      break;
-   case PIPE_SHADER_TESS_EVAL:
-      indices[1] = lp_build_const_int32(gallivm, swr_draw_context_samplersTES);
       break;
    default:
       assert(0 && "unsupported shader type");
@@ -361,8 +345,6 @@ swr_sampler_soa_create(const struct swr_sampler_static_state *static_state,
    sampler->dynamic_state.base.row_stride = swr_texture_row_stride;
    sampler->dynamic_state.base.img_stride = swr_texture_img_stride;
    sampler->dynamic_state.base.mip_offsets = swr_texture_mip_offsets;
-   sampler->dynamic_state.base.num_samples = swr_texture_num_samples;
-   sampler->dynamic_state.base.sample_stride = swr_texture_sample_stride;
    sampler->dynamic_state.base.min_lod = swr_sampler_min_lod;
    sampler->dynamic_state.base.max_lod = swr_sampler_max_lod;
    sampler->dynamic_state.base.lod_bias = swr_sampler_lod_bias;

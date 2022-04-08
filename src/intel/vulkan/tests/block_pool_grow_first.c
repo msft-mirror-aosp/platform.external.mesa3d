@@ -21,16 +21,15 @@
  * IN THE SOFTWARE.
  */
 
-#include "anv_private.h"
-#include "test_common.h"
+#undef NDEBUG
 
-int main(void)
+#include "anv_private.h"
+
+int main(int argc, char **argv)
 {
-   struct anv_physical_device physical_device = {
-      .use_softpin = true,
-   };
+   struct anv_instance instance;
    struct anv_device device = {
-      .physical = &physical_device,
+      .instance = &instance,
    };
    struct anv_block_pool pool;
 
@@ -40,26 +39,24 @@ int main(void)
    const uint32_t block_size = 16 * 1024;
    const uint32_t initial_size = block_size / 2;
 
-   pthread_mutex_init(&device.mutex, NULL);
-   anv_bo_cache_init(&device.bo_cache);
-   anv_block_pool_init(&pool, &device, 4096, initial_size);
-   ASSERT(pool.size == initial_size);
+   anv_block_pool_init(&pool, &device, 4096, initial_size, EXEC_OBJECT_PINNED);
+   assert(pool.size == initial_size);
 
    uint32_t padding;
    int32_t offset = anv_block_pool_alloc(&pool, block_size, &padding);
 
    /* Pool will have grown at least space to fit the new allocation. */
-   ASSERT(pool.size > initial_size);
-   ASSERT(pool.size >= initial_size + block_size);
+   assert(pool.size > initial_size);
+   assert(pool.size >= initial_size + block_size);
 
    /* The whole initial size is considered padding and the allocation should be
     * right next to it.
     */
-   ASSERT(padding == initial_size);
-   ASSERT(offset == initial_size);
+   assert(padding == initial_size);
+   assert(offset == initial_size);
 
    /* Use the memory to ensure it is valid. */
-   void *map = anv_block_pool_map(&pool, offset, block_size);
+   void *map = anv_block_pool_map(&pool, offset);
    memset(map, 22, block_size);
 
    anv_block_pool_finish(&pool);

@@ -48,14 +48,9 @@ namespace ArchRast
 
         virtual void FlushDraw(uint32_t drawId) {}
 
-<%  sorted_groups = sorted(protos['events']['groups']) %>
-%   for group in sorted_groups:
-%       for event_key in protos['events']['groups'][group]:
-<%
-            event = protos['events']['defs'][event_key]
-%>        virtual void Handle(const ${event['name']}& event) {}
-%       endfor
-%   endfor
+% for name in protos['event_names']:
+        virtual void Handle(const ${name}& event) {}
+% endfor
     };
 } // namespace ArchRast
 // clan-format off

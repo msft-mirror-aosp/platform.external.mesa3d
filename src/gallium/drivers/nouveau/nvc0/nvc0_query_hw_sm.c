@@ -2303,7 +2303,7 @@ nvc0_hw_sm_destroy_query(struct nvc0_context *nvc0, struct nvc0_hw_query *hq)
    FREE(hq);
 }
 
-static bool
+static boolean
 nve4_hw_sm_begin_query(struct nvc0_context *nvc0, struct nvc0_hw_query *hq)
 {
    struct nvc0_screen *screen = nvc0->screen;
@@ -2388,7 +2388,7 @@ nve4_hw_sm_begin_query(struct nvc0_context *nvc0, struct nvc0_hw_query *hq)
    return true;
 }
 
-static bool
+static boolean
 nvc0_hw_sm_begin_query(struct nvc0_context *nvc0, struct nvc0_hw_query *hq)
 {
    struct nvc0_screen *screen = nvc0->screen;
@@ -2673,9 +2673,9 @@ nve4_hw_sm_query_read_data(uint32_t count[32][8],
    return true;
 }
 
-static bool
+static boolean
 nvc0_hw_sm_get_query_result(struct nvc0_context *nvc0, struct nvc0_hw_query *hq,
-                            bool wait, union pipe_query_result *result)
+                            boolean wait, union pipe_query_result *result)
 {
    uint32_t count[32][8];
    uint64_t value = 0;

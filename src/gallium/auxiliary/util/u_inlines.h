@@ -77,7 +77,7 @@ pipe_reference_described(struct pipe_reference *dst,
    if (dst != src) {
       /* bump the src.count first */
       if (src) {
-         ASSERTED int count = p_atomic_inc_return(&src->count);
+         MAYBE_UNUSED int count = p_atomic_inc_return(&src->count);
          assert(count != 1); /* src had to be referenced */
          debug_reference(src, get_desc, 1);
       }
@@ -107,8 +107,7 @@ pipe_surface_reference(struct pipe_surface **dst, struct pipe_surface *src)
 {
    struct pipe_surface *old_dst = *dst;
 
-   if (pipe_reference_described(old_dst ? &old_dst->reference : NULL,
-                                src ? &src->reference : NULL,
+   if (pipe_reference_described(&old_dst->reference, &src->reference,
                                 (debug_reference_descriptor)
                                 debug_describe_surface))
       old_dst->context->surface_destroy(old_dst->context, old_dst);
@@ -139,8 +138,7 @@ pipe_resource_reference(struct pipe_resource **dst, struct pipe_resource *src)
 {
    struct pipe_resource *old_dst = *dst;
 
-   if (pipe_reference_described(old_dst ? &old_dst->reference : NULL,
-                                src ? &src->reference : NULL,
+   if (pipe_reference_described(&old_dst->reference, &src->reference,
                                 (debug_reference_descriptor)
                                 debug_describe_resource)) {
       /* Avoid recursion, which would prevent inlining this function */
@@ -149,8 +147,7 @@ pipe_resource_reference(struct pipe_resource **dst, struct pipe_resource *src)
 
          old_dst->screen->resource_destroy(old_dst->screen, old_dst);
          old_dst = next;
-      } while (pipe_reference_described(old_dst ? &old_dst->reference : NULL,
-                                        NULL,
+      } while (pipe_reference_described(&old_dst->reference, NULL,
                                         (debug_reference_descriptor)
                                         debug_describe_resource));
    }
@@ -188,8 +185,7 @@ pipe_sampler_view_reference(struct pipe_sampler_view **dst,
 {
    struct pipe_sampler_view *old_dst = *dst;
 
-   if (pipe_reference_described(old_dst ? &old_dst->reference : NULL,
-                                src ? &src->reference : NULL,
+   if (pipe_reference_described(&old_dst->reference, &src->reference,
                                 (debug_reference_descriptor)
                                 debug_describe_sampler_view))
       old_dst->context->sampler_view_destroy(old_dst->context, old_dst);
@@ -202,8 +198,7 @@ pipe_so_target_reference(struct pipe_stream_output_target **dst,
 {
    struct pipe_stream_output_target *old_dst = *dst;
 
-   if (pipe_reference_described(old_dst ? &old_dst->reference : NULL,
-                     src ? &src->reference : NULL,
+   if (pipe_reference_described(&old_dst->reference, &src->reference,
                      (debug_reference_descriptor)debug_describe_so_target))
       old_dst->context->stream_output_target_destroy(old_dst->context, old_dst);
    *dst = src;
@@ -321,7 +316,7 @@ pipe_buffer_create_const0(struct pipe_screen *screen,
  * Map a range of a resource.
  * \param offset  start of region, in bytes
  * \param length  size of region, in bytes
- * \param access  bitmask of PIPE_MAP_x flags
+ * \param access  bitmask of PIPE_TRANSFER_x flags
  * \param transfer  returns a transfer object
  */
 static inline void *
@@ -352,7 +347,7 @@ pipe_buffer_map_range(struct pipe_context *pipe,
 
 /**
  * Map whole resource.
- * \param access  bitmask of PIPE_MAP_x flags
+ * \param access  bitmask of PIPE_TRANSFER_x flags
  * \param transfer  returns a transfer object
  */
 static inline void *
@@ -405,7 +400,7 @@ pipe_buffer_write(struct pipe_context *pipe,
                   const void *data)
 {
    /* Don't set any other usage bits. Drivers should derive them. */
-   pipe->buffer_subdata(pipe, buf, PIPE_MAP_WRITE, offset, size, data);
+   pipe->buffer_subdata(pipe, buf, PIPE_TRANSFER_WRITE, offset, size, data);
 }
 
 /**
@@ -421,8 +416,8 @@ pipe_buffer_write_nooverlap(struct pipe_context *pipe,
                             const void *data)
 {
    pipe->buffer_subdata(pipe, buf,
-                        (PIPE_MAP_WRITE |
-                         PIPE_MAP_UNSYNCHRONIZED),
+                        (PIPE_TRANSFER_WRITE |
+                         PIPE_TRANSFER_UNSYNCHRONIZED),
                         offset, size, data);
 }
 
@@ -458,7 +453,7 @@ pipe_buffer_read(struct pipe_context *pipe,
    map = (ubyte *) pipe_buffer_map_range(pipe,
                                          buf,
                                          offset, size,
-                                         PIPE_MAP_READ,
+                                         PIPE_TRANSFER_READ,
                                          &src_transfer);
    if (!map)
       return;
@@ -470,7 +465,7 @@ pipe_buffer_read(struct pipe_context *pipe,
 
 /**
  * Map a resource for reading/writing.
- * \param access  bitmask of PIPE_MAP_x flags
+ * \param access  bitmask of PIPE_TRANSFER_x flags
  */
 static inline void *
 pipe_transfer_map(struct pipe_context *context,
@@ -493,7 +488,7 @@ pipe_transfer_map(struct pipe_context *context,
 
 /**
  * Map a 3D (texture) resource for reading/writing.
- * \param access  bitmask of PIPE_MAP_x flags
+ * \param access  bitmask of PIPE_TRANSFER_x flags
  */
 static inline void *
 pipe_transfer_map_3d(struct pipe_context *context,
@@ -666,22 +661,6 @@ util_copy_constant_buffer(struct pipe_constant_buffer *dst,
 }
 
 static inline void
-util_copy_shader_buffer(struct pipe_shader_buffer *dst,
-                        const struct pipe_shader_buffer *src)
-{
-   if (src) {
-      pipe_resource_reference(&dst->buffer, src->buffer);
-      dst->buffer_offset = src->buffer_offset;
-      dst->buffer_size = src->buffer_size;
-   }
-   else {
-      pipe_resource_reference(&dst->buffer, NULL);
-      dst->buffer_offset = 0;
-      dst->buffer_size = 0;
-   }
-}
-
-static inline void
 util_copy_image_view(struct pipe_image_view *dst,
                      const struct pipe_image_view *src)
 {
@@ -734,48 +713,6 @@ util_texrange_covers_whole_level(const struct pipe_resource *tex,
           width == u_minify(tex->width0, level) &&
           height == u_minify(tex->height0, level) &&
           depth == util_num_layers(tex, level);
-}
-
-static inline bool
-util_logicop_reads_dest(enum pipe_logicop op)
-{
-   switch (op) {
-   case PIPE_LOGICOP_NOR:
-   case PIPE_LOGICOP_AND_INVERTED:
-   case PIPE_LOGICOP_AND_REVERSE:
-   case PIPE_LOGICOP_INVERT:
-   case PIPE_LOGICOP_XOR:
-   case PIPE_LOGICOP_NAND:
-   case PIPE_LOGICOP_AND:
-   case PIPE_LOGICOP_EQUIV:
-   case PIPE_LOGICOP_NOOP:
-   case PIPE_LOGICOP_OR_INVERTED:
-   case PIPE_LOGICOP_OR_REVERSE:
-   case PIPE_LOGICOP_OR:
-      return true;
-   case PIPE_LOGICOP_CLEAR:
-   case PIPE_LOGICOP_COPY_INVERTED:
-   case PIPE_LOGICOP_COPY:
-   case PIPE_LOGICOP_SET:
-      return false;
-   }
-   unreachable("bad logicop");
-}
-
-static inline struct pipe_context *
-pipe_create_multimedia_context(struct pipe_screen *screen)
-{
-   unsigned flags = 0;
-
-   if (!screen->get_param(screen, PIPE_CAP_GRAPHICS))
-      flags |= PIPE_CONTEXT_COMPUTE_ONLY;
-
-   return screen->context_create(screen, NULL, flags);
-}
-
-static inline unsigned util_res_sample_count(struct pipe_resource *res)
-{
-   return res->nr_samples > 0 ? res->nr_samples : 1;
 }
 
 #ifdef __cplusplus

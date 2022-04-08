@@ -44,7 +44,7 @@ wayland_drm_server_protocol_h = custom_target(
 libwayland_drm = static_library(
   'wayland_drm',
   ['wayland-drm.c', wayland_drm_protocol_c, wayland_drm_server_protocol_h],
-  gnu_symbol_visibility : 'hidden',
+  c_args : c_vis_args,
   dependencies : [dep_wayland_server],
   build_by_default : false,
 )

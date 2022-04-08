@@ -35,7 +35,6 @@
 #include "enums.h"
 #include "macros.h"
 #include "mtypes.h"
-#include "state.h"
 
 
 
@@ -906,7 +905,6 @@ logic_op(struct gl_context *ctx, GLenum opcode, bool no_error)
    ctx->NewDriverState |= ctx->DriverFlags.NewLogicOp;
    ctx->Color.LogicOp = opcode;
    ctx->Color._LogicOp = color_logicop_mapping[opcode & 0x0f];
-   _mesa_update_allow_draw_out_of_order(ctx);
 
    if (ctx->Driver.LogicOpcode)
       ctx->Driver.LogicOpcode(ctx, ctx->Color._LogicOp);
@@ -993,7 +991,6 @@ _mesa_ColorMask( GLboolean red, GLboolean green,
    FLUSH_VERTICES(ctx, ctx->DriverFlags.NewColorMask ? 0 : _NEW_COLOR);
    ctx->NewDriverState |= ctx->DriverFlags.NewColorMask;
    ctx->Color.ColorMask = mask;
-   _mesa_update_allow_draw_out_of_order(ctx);
 
    if (ctx->Driver.ColorMask)
       ctx->Driver.ColorMask( ctx, red, green, blue, alpha );
@@ -1030,7 +1027,6 @@ _mesa_ColorMaski(GLuint buf, GLboolean red, GLboolean green,
    ctx->NewDriverState |= ctx->DriverFlags.NewColorMask;
    ctx->Color.ColorMask &= ~(0xf << (4 * buf));
    ctx->Color.ColorMask |= mask << (4 * buf);
-   _mesa_update_allow_draw_out_of_order(ctx);
 }
 
 
@@ -1063,10 +1059,9 @@ _mesa_ClampColor(GLenum target, GLenum clamp)
    case GL_CLAMP_FRAGMENT_COLOR_ARB:
       if (ctx->API == API_OPENGL_CORE)
          goto invalid_enum;
-      if (ctx->Color.ClampFragmentColor != clamp) {
-         ctx->Color.ClampFragmentColor = clamp;
-         _mesa_update_clamp_fragment_color(ctx, ctx->DrawBuffer);
-      }
+      FLUSH_VERTICES(ctx, _NEW_FRAG_CLAMP);
+      ctx->Color.ClampFragmentColor = clamp;
+      _mesa_update_clamp_fragment_color(ctx, ctx->DrawBuffer);
       break;
    case GL_CLAMP_READ_COLOR_ARB:
       ctx->Color.ClampReadColor = clamp;
@@ -1122,8 +1117,6 @@ void
 _mesa_update_clamp_fragment_color(struct gl_context *ctx,
                                   const struct gl_framebuffer *drawFb)
 {
-   GLboolean clamp;
-
    /* Don't clamp if:
     * - there is no colorbuffer
     * - all colorbuffers are unsigned normalized, so clamping has no effect
@@ -1131,16 +1124,10 @@ _mesa_update_clamp_fragment_color(struct gl_context *ctx,
     */
    if (!drawFb || !drawFb->_HasSNormOrFloatColorBuffer ||
        drawFb->_IntegerBuffers)
-      clamp = GL_FALSE;
+      ctx->Color._ClampFragmentColor = GL_FALSE;
    else
-      clamp = _mesa_get_clamp_fragment_color(ctx, drawFb);
-
-   if (ctx->Color._ClampFragmentColor == clamp)
-      return;
-
-   ctx->NewState |= _NEW_FRAG_CLAMP; /* for state constants */
-   ctx->NewDriverState |= ctx->DriverFlags.NewFragClamp;
-   ctx->Color._ClampFragmentColor = clamp;
+      ctx->Color._ClampFragmentColor =
+         _mesa_get_clamp_fragment_color(ctx, drawFb);
 }
 
 /**

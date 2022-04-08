@@ -132,7 +132,7 @@ struct softpipe_context {
    /** Which vertex shader output slot contains layer */
    int8_t layer_slot;
 
-   /** The reduced version of the primitive supplied by the gallium frontend */
+   /** The reduced version of the primitive supplied by the state tracker */
    unsigned reduced_api_prim;
 
    /** Derived information about which winding orders to cull */
@@ -151,7 +151,7 @@ struct softpipe_context {
    /** Conditional query object and mode */
    struct pipe_query *render_cond_query;
    enum pipe_render_cond_flag render_cond_mode;
-   bool render_cond_cond;
+   boolean render_cond_cond;
 
    /** Polygon stipple items */
    struct {
@@ -205,7 +205,10 @@ struct softpipe_context {
     */
    struct softpipe_tex_tile_cache *tex_cache[PIPE_SHADER_TYPES][PIPE_MAX_SHADER_SAMPLER_VIEWS];
 
-   struct pipe_debug_callback debug;
+   unsigned dump_fs : 1;
+   unsigned dump_gs : 1;
+   unsigned dump_cs : 1;
+   unsigned no_rast : 1;
 };
 
 

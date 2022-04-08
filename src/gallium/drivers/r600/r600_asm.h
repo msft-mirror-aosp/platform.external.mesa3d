@@ -27,10 +27,6 @@
 #include "r600_isa.h"
 #include "tgsi/tgsi_exec.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct r600_bytecode_alu_src {
 	unsigned			sel;
 	unsigned			chan;
@@ -214,8 +210,6 @@ struct r600_bytecode_cf {
 	struct r600_bytecode_alu		*prev_bs_head;
 	struct r600_bytecode_alu		*prev2_bs_head;
 	unsigned isa[2];
-	unsigned nlds_read;
-	unsigned nqueue_read;
 };
 
 #define FC_NONE				0
@@ -278,7 +272,6 @@ struct r600_bytecode {
 	unsigned        r6xx_nop_after_rel_dst;
 	bool            index_loaded[2];
 	unsigned        index_reg[2]; /* indexing register CF_INDEX_[01] */
-	unsigned        index_reg_chan[2]; /* indexing register chanel CF_INDEX_[01] */
 	unsigned        debug_id;
 	struct r600_isa* isa;
 	struct r600_bytecode_output pending_outputs[5];
@@ -365,9 +358,4 @@ static inline int fp64_switch(int i)
 	}
 	return 0;
 }
-
-#ifdef __cplusplus
-}
-#endif
-
 #endif

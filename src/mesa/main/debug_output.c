@@ -28,16 +28,16 @@
 #include "context.h"
 #include "debug_output.h"
 #include "enums.h"
-
+#include "imports.h"
 #include "hash.h"
 #include "mtypes.h"
 #include "version.h"
 #include "util/hash_table.h"
-#include "util/list.h"
-#include "util/u_memory.h"
+#include "util/simple_list.h"
 
 
-static GLuint PrevDynamicID = 0;
+static simple_mtx_t DynamicIDMutex = _SIMPLE_MTX_INITIALIZER_NP;
+static GLuint NextDynamicID = 1;
 
 
 /**
@@ -45,7 +45,7 @@ static GLuint PrevDynamicID = 0;
  */
 struct gl_debug_element
 {
-   struct list_head link;
+   struct simple_node link;
 
    GLuint ID;
    /* at which severity levels (mesa_debug_severity) is the message enabled */
@@ -55,7 +55,7 @@ struct gl_debug_element
 
 struct gl_debug_namespace
 {
-   struct list_head Elements;
+   struct simple_node Elements;
    GLbitfield DefaultState;
 };
 
@@ -193,7 +193,10 @@ void
 _mesa_debug_get_id(GLuint *id)
 {
    if (!(*id)) {
-      *id = p_atomic_inc_return(&PrevDynamicID);
+      simple_mtx_lock(&DynamicIDMutex);
+      if (!(*id))
+         *id = NextDynamicID++;
+      simple_mtx_unlock(&DynamicIDMutex);
    }
 }
 
@@ -247,7 +250,7 @@ debug_message_store(struct gl_debug_message *msg,
 static void
 debug_namespace_init(struct gl_debug_namespace *ns)
 {
-   list_inithead(&ns->Elements);
+   make_empty_list(&ns->Elements);
 
    /* Enable all the messages with severity HIGH or MEDIUM by default */
    ns->DefaultState = (1 << MESA_DEBUG_SEVERITY_MEDIUM ) |
@@ -258,18 +261,24 @@ debug_namespace_init(struct gl_debug_namespace *ns)
 static void
 debug_namespace_clear(struct gl_debug_namespace *ns)
 {
-   list_for_each_entry_safe(struct gl_debug_element, elem, &ns->Elements, link)
-      free(elem);
+   struct simple_node *node, *tmp;
+
+   foreach_s(node, tmp, &ns->Elements)
+      free(node);
 }
 
 static bool
 debug_namespace_copy(struct gl_debug_namespace *dst,
                      const struct gl_debug_namespace *src)
 {
+   struct simple_node *node;
+
    dst->DefaultState = src->DefaultState;
 
-   list_inithead(&dst->Elements);
-   list_for_each_entry(struct gl_debug_element, elem, &src->Elements, link) {
+   make_empty_list(&dst->Elements);
+   foreach(node, &src->Elements) {
+      const struct gl_debug_element *elem =
+         (const struct gl_debug_element *) node;
       struct gl_debug_element *copy;
 
       copy = malloc(sizeof(*copy));
@@ -280,7 +289,7 @@ debug_namespace_copy(struct gl_debug_namespace *dst,
 
       copy->ID = elem->ID;
       copy->State = elem->State;
-      list_addtail(&copy->link, &dst->Elements);
+      insert_at_tail(&dst->Elements, &copy->link);
    }
 
    return true;
@@ -296,9 +305,11 @@ debug_namespace_set(struct gl_debug_namespace *ns,
    const uint32_t state = (enabled) ?
       ((1 << MESA_DEBUG_SEVERITY_COUNT) - 1) : 0;
    struct gl_debug_element *elem = NULL;
+   struct simple_node *node;
 
    /* find the element */
-   list_for_each_entry(struct gl_debug_element, tmp, &ns->Elements, link) {
+   foreach(node, &ns->Elements) {
+      struct gl_debug_element *tmp = (struct gl_debug_element *) node;
       if (tmp->ID == id) {
          elem = tmp;
          break;
@@ -308,7 +319,7 @@ debug_namespace_set(struct gl_debug_namespace *ns,
    /* we do not need the element if it has the default state */
    if (ns->DefaultState == state) {
       if (elem) {
-         list_del(&elem->link);
+         remove_from_list(&elem->link);
          free(elem);
       }
       return true;
@@ -320,7 +331,7 @@ debug_namespace_set(struct gl_debug_namespace *ns,
          return false;
 
       elem->ID = id;
-      list_addtail(&elem->link, &ns->Elements);
+      insert_at_tail(&ns->Elements, &elem->link);
    }
 
    elem->State = state;
@@ -338,13 +349,14 @@ debug_namespace_set_all(struct gl_debug_namespace *ns,
                         enum mesa_debug_severity severity,
                         bool enabled)
 {
+   struct simple_node *node, *tmp;
    uint32_t mask, val;
 
    /* set all elements to the same state */
    if (severity == MESA_DEBUG_SEVERITY_COUNT) {
       ns->DefaultState = (enabled) ? ((1 << severity) - 1) : 0;
       debug_namespace_clear(ns);
-      list_inithead(&ns->Elements);
+      make_empty_list(&ns->Elements);
       return;
    }
 
@@ -353,12 +365,13 @@ debug_namespace_set_all(struct gl_debug_namespace *ns,
 
    ns->DefaultState = (ns->DefaultState & ~mask) | val;
 
-   list_for_each_entry_safe(struct gl_debug_element, elem, &ns->Elements,
-                            link) {
+   foreach_s(node, tmp, &ns->Elements) {
+      struct gl_debug_element *elem = (struct gl_debug_element *) node;
+
       elem->State = (elem->State & ~mask) | val;
       if (elem->State == ns->DefaultState) {
-         list_del(&elem->link);
-         free(elem);
+         remove_from_list(node);
+         free(node);
       }
    }
 }
@@ -370,10 +383,13 @@ static bool
 debug_namespace_get(const struct gl_debug_namespace *ns, GLuint id,
                     enum mesa_debug_severity severity)
 {
+   struct simple_node *node;
    uint32_t state;
 
    state = ns->DefaultState;
-   list_for_each_entry(struct gl_debug_element, elem, &ns->Elements, link) {
+   foreach(node, &ns->Elements) {
+      struct gl_debug_element *elem = (struct gl_debug_element *) node;
+
       if (elem->ID == id) {
          state = elem->State;
          break;
@@ -1277,7 +1293,7 @@ _mesa_init_debug_output(struct gl_context *ctx)
 
 
 void
-_mesa_destroy_debug_output(struct gl_context *ctx)
+_mesa_free_errors_data(struct gl_context *ctx)
 {
    if (ctx->Debug) {
       debug_destroy(ctx->Debug);

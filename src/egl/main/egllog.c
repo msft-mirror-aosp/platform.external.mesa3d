@@ -42,7 +42,6 @@
 #include <strings.h>
 #include "c11/threads.h"
 #include "util/macros.h"
-#include "util/u_string.h"
 
 #include "egllog.h"
 

@@ -75,7 +75,7 @@ brw_setup_vue_interpolation(struct brw_vue_map *vue_map, nir_shader *nir,
       prog_data->contains_noperspective_varying = true;
    }
 
-   nir_foreach_shader_in_variable(var, nir) {
+   foreach_list_typed(nir_variable, var, node, &nir->inputs) {
       unsigned location = var->data.location;
       unsigned slot_count = glsl_count_attribute_slots(var->type, false);
 
@@ -89,7 +89,7 @@ brw_setup_vue_interpolation(struct brw_vue_map *vue_map, nir_shader *nir,
       }
    }
 
-   const bool debug = false;
+   bool debug = false;
    if (debug) {
       fprintf(stderr, "VUE map:\n");
       for (int i = 0; i < vue_map->num_slots; i++) {

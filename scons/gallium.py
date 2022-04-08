@@ -132,7 +132,7 @@ def check_cc(env, cc, expr, cpp_opt = '-E'):
     sys.stdout.write('Checking for %s ... ' % cc)
 
     source = tempfile.NamedTemporaryFile(suffix='.c', delete=False)
-    source.write(('#if !(%s)\n#error\n#endif\n' % expr).encode())
+    source.write('#if !(%s)\n#error\n#endif\n' % expr)
     source.close()
 
     # sys.stderr.write('%r %s %s\n' % (env['CC'], cpp_opt, source.name));
@@ -237,9 +237,6 @@ def generate(env):
     hosthost_platform = host_platform.system().lower()
     if hosthost_platform.startswith('cygwin'):
         hosthost_platform = 'cygwin'
-    # Avoid spurious crosscompilation in MSYS2 environment.
-    if hosthost_platform.startswith('mingw'):
-        hosthost_platform = 'windows'
     host_machine = os.environ.get('PROCESSOR_ARCHITEW6432', os.environ.get('PROCESSOR_ARCHITECTURE', host_platform.machine()))
     host_machine = {
         'x86': 'x86',
@@ -333,7 +330,7 @@ def generate(env):
         '__STDC_CONSTANT_MACROS',
         '__STDC_FORMAT_MACROS',
         '__STDC_LIMIT_MACROS',
-        'HAVE_SCONS',
+        'HAVE_NO_AUTOCONF',
     ]
     if env['build'] in ('debug', 'checked'):
         cppdefines += ['DEBUG']
@@ -355,7 +352,6 @@ def generate(env):
                 '_DARWIN_C_SOURCE',
                 'GLX_USE_APPLEGL',
                 'GLX_DIRECT_RENDERING',
-                'BUILDING_MESA',
             ]
         else:
             cppdefines += [
@@ -372,25 +368,8 @@ def generate(env):
         if check_functions(env, ['strtod_l', 'strtof_l']):
             cppdefines += ['HAVE_STRTOD_L']
 
-        if check_functions(env, ['random_r']):
-            cppdefines += ['HAVE_RANDOM_R']
-
         if check_functions(env, ['timespec_get']):
             cppdefines += ['HAVE_TIMESPEC_GET']
-
-        if check_header(env, 'sys/shm.h'):
-            cppdefines += ['HAVE_SYS_SHM_H']
-
-        if check_functions(env, ['strtok_r']):
-            cppdefines += ['HAVE_STRTOK_R']
-
-        #FIXME: we should really be checking for the major()/minor()
-        # functions/macros in these headers, but check_functions()'s
-        # SConf.CheckFunc() doesn't seem to support macros.
-        if check_header(env, 'sys/mkdev.h'):
-            cppdefines += ['MAJOR_IN_MKDEV']
-        if check_header(env, 'sys/sysmacros.h'):
-            cppdefines += ['MAJOR_IN_SYSMACROS']
 
     if platform == 'windows':
         cppdefines += [
@@ -399,12 +378,11 @@ def generate(env):
             #'_UNICODE',
             #'UNICODE',
             # http://msdn.microsoft.com/en-us/library/aa383745.aspx
-            ('_WIN32_WINNT', '0x0A00'),
-            ('WINVER', '0x0A00'),
+            ('_WIN32_WINNT', '0x0601'),
+            ('WINVER', '0x0601'),
         ]
         if gcc_compat:
             cppdefines += [('__MSVCRT_VERSION__', '0x0700')]
-            cppdefines += ['_USE_MATH_DEFINES']
         if msvc:
             cppdefines += [
                 'VC_EXTRALEAN',
@@ -418,8 +396,10 @@ def generate(env):
             ]
         if env['build'] in ('debug', 'checked'):
             cppdefines += ['_DEBUG']
+    if platform == 'windows':
+        cppdefines += ['PIPE_SUBSYSTEM_WINDOWS_USER']
     if env['embedded']:
-        cppdefines += ['EMBEDDED_DEVICE']
+        cppdefines += ['PIPE_SUBSYSTEM_EMBEDDED']
     env.Append(CPPDEFINES = cppdefines)
 
     # C compiler options
@@ -488,16 +468,9 @@ def generate(env):
             '-fmessage-length=0', # be nice to Eclipse
         ]
         cflags += [
-            '-Werror=implicit-function-declaration',
-            '-Werror=missing-prototypes',
-            '-Werror=return-type',
-            '-Werror=incompatible-pointer-types',
+            '-Wmissing-prototypes',
+            '-std=gnu99',
         ]
-        if platform == 'darwin' and host_platform.mac_ver()[0] >= '10.15':
-            cflags += ['-std=gnu11']
-        else:
-            cflags += ['-std=gnu99']
-        cxxflags += ['-std=c++14']
     if icc:
         cflags += [
             '-std=gnu99',

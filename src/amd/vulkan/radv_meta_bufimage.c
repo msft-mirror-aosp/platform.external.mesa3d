@@ -41,9 +41,10 @@ build_nir_itob_compute_shader(struct radv_device *dev, bool is_3d)
 								 false,
 								 false,
 								 GLSL_TYPE_FLOAT);
-	const struct glsl_type *img_type = glsl_image_type(GLSL_SAMPLER_DIM_BUF,
-							   false,
-							   GLSL_TYPE_FLOAT);
+	const struct glsl_type *img_type = glsl_sampler_type(GLSL_SAMPLER_DIM_BUF,
+							     false,
+							     false,
+							     GLSL_TYPE_FLOAT);
 	nir_builder_init_simple_shader(&b, NULL, MESA_SHADER_COMPUTE, NULL);
 	b.shader->info.name = ralloc_strdup(b.shader, is_3d ? "meta_itob_cs_3d" : "meta_itob_cs");
 	b.shader->info.cs.local_size[0] = 16;
@@ -60,7 +61,7 @@ build_nir_itob_compute_shader(struct radv_device *dev, bool is_3d)
 	output_img->data.binding = 1;
 
 	nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-	nir_ssa_def *wg_id = nir_load_work_group_id(&b, 32);
+	nir_ssa_def *wg_id = nir_load_work_group_id(&b);
 	nir_ssa_def *block_size = nir_imm_ivec4(&b,
 						b.shader->info.cs.local_size[0],
 						b.shader->info.cs.local_size[1],
@@ -120,7 +121,6 @@ build_nir_itob_compute_shader(struct radv_device *dev, bool is_3d)
 	store->src[1] = nir_src_for_ssa(coord);
 	store->src[2] = nir_src_for_ssa(nir_ssa_undef(&b, 1, 32));
 	store->src[3] = nir_src_for_ssa(outval);
-	store->src[4] = nir_src_for_ssa(nir_imm_int(&b, 0));
 
 	nir_builder_instr_insert(&b, &store->instr);
 	return b.shader;
@@ -270,9 +270,10 @@ build_nir_btoi_compute_shader(struct radv_device *dev, bool is_3d)
 							     false,
 							     false,
 							     GLSL_TYPE_FLOAT);
-	const struct glsl_type *img_type = glsl_image_type(dim,
-							   false,
-							   GLSL_TYPE_FLOAT);
+	const struct glsl_type *img_type = glsl_sampler_type(dim,
+							     false,
+							     false,
+							     GLSL_TYPE_FLOAT);
 	nir_builder_init_simple_shader(&b, NULL, MESA_SHADER_COMPUTE, NULL);
 	b.shader->info.name = ralloc_strdup(b.shader, is_3d ? "meta_btoi_cs_3d" : "meta_btoi_cs");
 	b.shader->info.cs.local_size[0] = 16;
@@ -289,7 +290,7 @@ build_nir_btoi_compute_shader(struct radv_device *dev, bool is_3d)
 	output_img->data.binding = 1;
 
 	nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-	nir_ssa_def *wg_id = nir_load_work_group_id(&b, 32);
+	nir_ssa_def *wg_id = nir_load_work_group_id(&b);
 	nir_ssa_def *block_size = nir_imm_ivec4(&b,
 						b.shader->info.cs.local_size[0],
 						b.shader->info.cs.local_size[1],
@@ -347,7 +348,6 @@ build_nir_btoi_compute_shader(struct radv_device *dev, bool is_3d)
 	store->src[1] = nir_src_for_ssa(img_coord);
 	store->src[2] = nir_src_for_ssa(nir_ssa_undef(&b, 1, 32));
 	store->src[3] = nir_src_for_ssa(outval);
-	store->src[4] = nir_src_for_ssa(nir_imm_int(&b, 0));
 
 	nir_builder_instr_insert(&b, &store->instr);
 	return b.shader;
@@ -492,9 +492,10 @@ build_nir_btoi_r32g32b32_compute_shader(struct radv_device *dev)
 							     false,
 							     false,
 							     GLSL_TYPE_FLOAT);
-	const struct glsl_type *img_type = glsl_image_type(GLSL_SAMPLER_DIM_BUF,
-							   false,
-							   GLSL_TYPE_FLOAT);
+	const struct glsl_type *img_type = glsl_sampler_type(GLSL_SAMPLER_DIM_BUF,
+							     false,
+							     false,
+							     GLSL_TYPE_FLOAT);
 	nir_builder_init_simple_shader(&b, NULL, MESA_SHADER_COMPUTE, NULL);
 	b.shader->info.name = ralloc_strdup(b.shader, "meta_btoi_r32g32b32_cs");
 	b.shader->info.cs.local_size[0] = 16;
@@ -511,7 +512,7 @@ build_nir_btoi_r32g32b32_compute_shader(struct radv_device *dev)
 	output_img->data.binding = 1;
 
 	nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-	nir_ssa_def *wg_id = nir_load_work_group_id(&b, 32);
+	nir_ssa_def *wg_id = nir_load_work_group_id(&b);
 	nir_ssa_def *block_size = nir_imm_ivec4(&b,
 						b.shader->info.cs.local_size[0],
 						b.shader->info.cs.local_size[1],
@@ -590,7 +591,6 @@ build_nir_btoi_r32g32b32_compute_shader(struct radv_device *dev)
 		store->src[1] = nir_src_for_ssa(coord);
 		store->src[2] = nir_src_for_ssa(nir_ssa_undef(&b, 1, 32));
 		store->src[3] = nir_src_for_ssa(nir_channel(&b, outval, chan));
-		store->src[4] = nir_src_for_ssa(nir_imm_int(&b, 0));
 		nir_builder_instr_insert(&b, &store->instr);
 	}
 
@@ -700,9 +700,10 @@ build_nir_itoi_compute_shader(struct radv_device *dev, bool is_3d)
 							     false,
 							     false,
 							     GLSL_TYPE_FLOAT);
-	const struct glsl_type *img_type = glsl_image_type(dim,
-							   false,
-							   GLSL_TYPE_FLOAT);
+	const struct glsl_type *img_type = glsl_sampler_type(dim,
+							     false,
+							     false,
+							     GLSL_TYPE_FLOAT);
 	nir_builder_init_simple_shader(&b, NULL, MESA_SHADER_COMPUTE, NULL);
 	b.shader->info.name = ralloc_strdup(b.shader, is_3d ? "meta_itoi_cs_3d" : "meta_itoi_cs");
 	b.shader->info.cs.local_size[0] = 16;
@@ -719,7 +720,7 @@ build_nir_itoi_compute_shader(struct radv_device *dev, bool is_3d)
 	output_img->data.binding = 1;
 
 	nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-	nir_ssa_def *wg_id = nir_load_work_group_id(&b, 32);
+	nir_ssa_def *wg_id = nir_load_work_group_id(&b);
 	nir_ssa_def *block_size = nir_imm_ivec4(&b,
 						b.shader->info.cs.local_size[0],
 						b.shader->info.cs.local_size[1],
@@ -771,7 +772,6 @@ build_nir_itoi_compute_shader(struct radv_device *dev, bool is_3d)
 	store->src[1] = nir_src_for_ssa(dst_coord);
 	store->src[2] = nir_src_for_ssa(nir_ssa_undef(&b, 1, 32));
 	store->src[3] = nir_src_for_ssa(outval);
-	store->src[4] = nir_src_for_ssa(nir_imm_int(&b, 0));
 
 	nir_builder_instr_insert(&b, &store->instr);
 	return b.shader;
@@ -917,9 +917,6 @@ build_nir_itoi_r32g32b32_compute_shader(struct radv_device *dev)
 							 false,
 							 false,
 							 GLSL_TYPE_FLOAT);
-	const struct glsl_type *img_type = glsl_image_type(GLSL_SAMPLER_DIM_BUF,
-							   false,
-							   GLSL_TYPE_FLOAT);
 	nir_builder_init_simple_shader(&b, NULL, MESA_SHADER_COMPUTE, NULL);
 	b.shader->info.name = ralloc_strdup(b.shader, "meta_itoi_r32g32b32_cs");
 	b.shader->info.cs.local_size[0] = 16;
@@ -931,12 +928,12 @@ build_nir_itoi_r32g32b32_compute_shader(struct radv_device *dev)
 	input_img->data.binding = 0;
 
 	nir_variable *output_img = nir_variable_create(b.shader, nir_var_uniform,
-						      img_type, "output_img");
+						      type, "output_img");
 	output_img->data.descriptor_set = 0;
 	output_img->data.binding = 1;
 
 	nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-	nir_ssa_def *wg_id = nir_load_work_group_id(&b, 32);
+	nir_ssa_def *wg_id = nir_load_work_group_id(&b);
 	nir_ssa_def *block_size = nir_imm_ivec4(&b,
 						b.shader->info.cs.local_size[0],
 						b.shader->info.cs.local_size[1],
@@ -1021,7 +1018,6 @@ build_nir_itoi_r32g32b32_compute_shader(struct radv_device *dev)
 		store->src[1] = nir_src_for_ssa(dst_coord);
 		store->src[2] = nir_src_for_ssa(nir_ssa_undef(&b, 1, 32));
 		store->src[3] = nir_src_for_ssa(nir_channel(&b, outval, 0));
-		store->src[4] = nir_src_for_ssa(nir_imm_int(&b, 0));
 		nir_builder_instr_insert(&b, &store->instr);
 	}
 
@@ -1128,9 +1124,10 @@ build_nir_cleari_compute_shader(struct radv_device *dev, bool is_3d)
 {
 	nir_builder b;
 	enum glsl_sampler_dim dim = is_3d ? GLSL_SAMPLER_DIM_3D : GLSL_SAMPLER_DIM_2D;
-	const struct glsl_type *img_type = glsl_image_type(dim,
-							   false,
-							   GLSL_TYPE_FLOAT);
+	const struct glsl_type *img_type = glsl_sampler_type(dim,
+							     false,
+							     false,
+							     GLSL_TYPE_FLOAT);
 	nir_builder_init_simple_shader(&b, NULL, MESA_SHADER_COMPUTE, NULL);
 	b.shader->info.name = ralloc_strdup(b.shader, is_3d ? "meta_cleari_cs_3d" : "meta_cleari_cs");
 	b.shader->info.cs.local_size[0] = 16;
@@ -1143,7 +1140,7 @@ build_nir_cleari_compute_shader(struct radv_device *dev, bool is_3d)
 	output_img->data.binding = 0;
 
 	nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-	nir_ssa_def *wg_id = nir_load_work_group_id(&b, 32);
+	nir_ssa_def *wg_id = nir_load_work_group_id(&b);
 	nir_ssa_def *block_size = nir_imm_ivec4(&b,
 						b.shader->info.cs.local_size[0],
 						b.shader->info.cs.local_size[1],
@@ -1182,7 +1179,6 @@ build_nir_cleari_compute_shader(struct radv_device *dev, bool is_3d)
 	store->src[1] = nir_src_for_ssa(global_id);
 	store->src[2] = nir_src_for_ssa(nir_ssa_undef(&b, 1, 32));
 	store->src[3] = nir_src_for_ssa(&clear_val->dest.ssa);
-	store->src[4] = nir_src_for_ssa(nir_imm_int(&b, 0));
 
 	nir_builder_instr_insert(&b, &store->instr);
 	return b.shader;
@@ -1320,9 +1316,10 @@ static nir_shader *
 build_nir_cleari_r32g32b32_compute_shader(struct radv_device *dev)
 {
 	nir_builder b;
-	const struct glsl_type *img_type = glsl_image_type(GLSL_SAMPLER_DIM_BUF,
-							   false,
-							   GLSL_TYPE_FLOAT);
+	const struct glsl_type *img_type = glsl_sampler_type(GLSL_SAMPLER_DIM_BUF,
+							     false,
+							     false,
+							     GLSL_TYPE_FLOAT);
 	nir_builder_init_simple_shader(&b, NULL, MESA_SHADER_COMPUTE, NULL);
 	b.shader->info.name = ralloc_strdup(b.shader, "meta_cleari_r32g32b32_cs");
 	b.shader->info.cs.local_size[0] = 16;
@@ -1335,7 +1332,7 @@ build_nir_cleari_r32g32b32_compute_shader(struct radv_device *dev)
 	output_img->data.binding = 0;
 
 	nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-	nir_ssa_def *wg_id = nir_load_work_group_id(&b, 32);
+	nir_ssa_def *wg_id = nir_load_work_group_id(&b);
 	nir_ssa_def *block_size = nir_imm_ivec4(&b,
 						b.shader->info.cs.local_size[0],
 						b.shader->info.cs.local_size[1],
@@ -1380,7 +1377,6 @@ build_nir_cleari_r32g32b32_compute_shader(struct radv_device *dev)
 		store->src[1] = nir_src_for_ssa(coord);
 		store->src[2] = nir_src_for_ssa(nir_ssa_undef(&b, 1, 32));
 		store->src[3] = nir_src_for_ssa(nir_channel(&b, &clear_val->dest.ssa, chan));
-		store->src[4] = nir_src_for_ssa(nir_imm_int(&b, 0));
 		nir_builder_instr_insert(&b, &store->instr);
 	}
 
@@ -1556,7 +1552,7 @@ create_iview(struct radv_cmd_buffer *cmd_buffer,
 					     .baseArrayLayer = surf->layer,
 					     .layerCount = 1
 				     },
-			     }, NULL);
+			     });
 }
 
 static void

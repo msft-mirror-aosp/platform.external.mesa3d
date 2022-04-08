@@ -84,8 +84,9 @@ get_ir3_intrinsic_for_ssbo_intrinsic(unsigned intrinsic,
 }
 
 static nir_ssa_def *
-check_and_propagate_bit_shift32(nir_builder *b, nir_alu_instr *alu_instr,
-								int32_t direction, int32_t shift)
+check_and_propagate_bit_shift32(nir_builder *b, nir_ssa_def *offset,
+								nir_alu_instr *alu_instr, int32_t direction,
+								int32_t shift)
 {
 	debug_assert(alu_instr->src[1].src.is_ssa);
 	nir_ssa_def *shift_ssa = alu_instr->src[1].src.ssa;
@@ -112,6 +113,8 @@ check_and_propagate_bit_shift32(nir_builder *b, nir_alu_instr *alu_instr,
 	if (new_shift < -31 || new_shift > 31)
 		return NULL;
 
+	b->cursor = nir_before_instr(&alu_instr->instr);
+
 	/* Add or substract shift depending on the final direction (SHR vs. SHL). */
 	if (shift * direction < 0)
 		shift_ssa = nir_isub(b, shift_ssa, nir_imm_int(b, abs(shift)));
@@ -132,27 +135,21 @@ ir3_nir_try_propagate_bit_shift(nir_builder *b, nir_ssa_def *offset, int32_t shi
 	nir_ssa_def *shift_ssa;
 	nir_ssa_def *new_offset = NULL;
 
-	/* the first src could be something like ssa_18.x, but we only want
-	 * the single component.  Otherwise the ishl/ishr/ushr could turn
-	 * into a vec4 operation:
-	 */
-	nir_ssa_def *src0 = nir_mov_alu(b, alu->src[0], 1);
-
 	switch (alu->op) {
 	case nir_op_ishl:
-		shift_ssa = check_and_propagate_bit_shift32(b, alu, 1, shift);
+		shift_ssa = check_and_propagate_bit_shift32(b, offset, alu, 1, shift);
 		if (shift_ssa)
-			new_offset = nir_ishl(b, src0, shift_ssa);
+			new_offset = nir_ishl(b, alu->src[0].src.ssa, shift_ssa);
 		break;
 	case nir_op_ishr:
-		shift_ssa = check_and_propagate_bit_shift32(b, alu, -1, shift);
+		shift_ssa = check_and_propagate_bit_shift32(b, offset, alu, -1, shift);
 		if (shift_ssa)
-			new_offset = nir_ishr(b, src0, shift_ssa);
+			new_offset = nir_ishr(b, alu->src[0].src.ssa, shift_ssa);
 		break;
 	case nir_op_ushr:
-		shift_ssa = check_and_propagate_bit_shift32(b, alu, -1, shift);
+		shift_ssa = check_and_propagate_bit_shift32(b, offset, alu, -1, shift);
 		if (shift_ssa)
-			new_offset = nir_ushr(b, src0, shift_ssa);
+			new_offset = nir_ushr(b, alu->src[0].src.ssa, shift_ssa);
 		break;
 	default:
 		return NULL;
@@ -166,22 +163,14 @@ lower_offset_for_ssbo(nir_intrinsic_instr *intrinsic, nir_builder *b,
 					  unsigned ir3_ssbo_opcode, uint8_t offset_src_idx)
 {
 	unsigned num_srcs = nir_intrinsic_infos[intrinsic->intrinsic].num_srcs;
-	int shift = 2;
 
 	bool has_dest = nir_intrinsic_infos[intrinsic->intrinsic].has_dest;
 	nir_ssa_def *new_dest = NULL;
-
-	/* for 16-bit ssbo access, offset is in 16-bit words instead of dwords */
-	if ((has_dest && intrinsic->dest.ssa.bit_size == 16) ||
-		(!has_dest && intrinsic->src[0].ssa->bit_size == 16))
-		shift = 1;
 
 	/* Here we create a new intrinsic and copy over all contents from the old one. */
 
 	nir_intrinsic_instr *new_intrinsic;
 	nir_src *target_src;
-
-	b->cursor = nir_before_instr(&intrinsic->instr);
 
 	/* 'offset_src_idx' holds the index of the source that represent the offset. */
 	new_intrinsic =
@@ -198,7 +187,7 @@ lower_offset_for_ssbo(nir_intrinsic_instr *intrinsic, nir_builder *b,
 	 * Here we use the convention that shifting right is negative while shifting
 	 * left is positive. So 'x / 4' ~ 'x >> 2' or 'x << -2'.
 	 */
-	nir_ssa_def *new_offset = ir3_nir_try_propagate_bit_shift(b, offset, -shift);
+	nir_ssa_def *new_offset = ir3_nir_try_propagate_bit_shift(b, offset, -2);
 
 	/* The new source that will hold the dword-offset is always the last
 	 * one for every intrinsic.
@@ -217,9 +206,12 @@ lower_offset_for_ssbo(nir_intrinsic_instr *intrinsic, nir_builder *b,
 	for (unsigned i = 0; i < num_srcs; i++)
 		new_intrinsic->src[i] = nir_src_for_ssa(intrinsic->src[i].ssa);
 
-	nir_intrinsic_copy_const_indices(new_intrinsic, intrinsic);
+	for (unsigned i = 0; i < NIR_INTRINSIC_MAX_CONST_INDEX; i++)
+		new_intrinsic->const_index[i] = intrinsic->const_index[i];
 
 	new_intrinsic->num_components = intrinsic->num_components;
+
+	b->cursor = nir_before_instr(&intrinsic->instr);
 
 	/* If we managed to propagate the division by 4, just use the new offset
 	 * register and don't emit the SHR.
@@ -227,7 +219,7 @@ lower_offset_for_ssbo(nir_intrinsic_instr *intrinsic, nir_builder *b,
 	if (new_offset)
 		offset = new_offset;
 	else
-		offset = nir_ushr(b, offset, nir_imm_int(b, shift));
+		offset = nir_ushr(b, offset, nir_imm_int(b, 2));
 
 	/* Insert the new intrinsic right before the old one. */
 	nir_builder_instr_insert(b, &new_intrinsic->instr);
@@ -254,11 +246,11 @@ lower_offset_for_ssbo(nir_intrinsic_instr *intrinsic, nir_builder *b,
 }
 
 static bool
-lower_io_offsets_block(nir_block *block, nir_builder *b, void *mem_ctx, int gpu_id)
+lower_io_offsets_block(nir_block *block, nir_builder *b, void *mem_ctx)
 {
 	bool progress = false;
 
-	nir_foreach_instr_safe (instr, block) {
+	nir_foreach_instr_safe(instr, block) {
 		if (instr->type != nir_instr_type_intrinsic)
 			continue;
 
@@ -279,15 +271,15 @@ lower_io_offsets_block(nir_block *block, nir_builder *b, void *mem_ctx, int gpu_
 }
 
 static bool
-lower_io_offsets_func(nir_function_impl *impl, int gpu_id)
+lower_io_offsets_func(nir_function_impl *impl)
 {
 	void *mem_ctx = ralloc_parent(impl);
 	nir_builder b;
 	nir_builder_init(&b, impl);
 
 	bool progress = false;
-	nir_foreach_block_safe (block, impl) {
-		progress |= lower_io_offsets_block(block, &b, mem_ctx, gpu_id);
+	nir_foreach_block_safe(block, impl) {
+		progress |= lower_io_offsets_block(block, &b, mem_ctx);
 	}
 
 	if (progress) {
@@ -299,13 +291,13 @@ lower_io_offsets_func(nir_function_impl *impl, int gpu_id)
 }
 
 bool
-ir3_nir_lower_io_offsets(nir_shader *shader, int gpu_id)
+ir3_nir_lower_io_offsets(nir_shader *shader)
 {
 	bool progress = false;
 
-	nir_foreach_function (function, shader) {
+	nir_foreach_function(function, shader) {
 		if (function->impl)
-			progress |= lower_io_offsets_func(function->impl, gpu_id);
+			progress |= lower_io_offsets_func(function->impl);
 	}
 
 	return progress;

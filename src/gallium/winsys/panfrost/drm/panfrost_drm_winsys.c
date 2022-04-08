@@ -25,8 +25,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include "util/os_file.h"
-
 #include "renderonly/renderonly.h"
 #include "panfrost_drm_public.h"
 #include "panfrost/pan_public.h"
@@ -34,11 +32,11 @@
 struct pipe_screen *
 panfrost_drm_screen_create(int fd)
 {
-   return panfrost_create_screen(os_dupfd_cloexec(fd), NULL);
+   return panfrost_create_screen(fcntl(fd, F_DUPFD_CLOEXEC, 3), NULL);
 }
 
 struct pipe_screen *
 panfrost_drm_screen_create_renderonly(struct renderonly *ro)
 {
-   return panfrost_create_screen(os_dupfd_cloexec(ro->gpu_fd), ro);
+   return panfrost_create_screen(fcntl(ro->gpu_fd, F_DUPFD_CLOEXEC, 3), ro);
 }

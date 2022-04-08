@@ -67,6 +67,10 @@ struct pb_slab_buffer
    
    /** Offset relative to the start of the slab buffer. */
    pb_size start;
+   
+   /** Use when validating, to signal that all mappings are finished */
+   /* TODO: Actually validation does not reach this stage yet */
+   cnd_t event;
 };
 
 
@@ -200,18 +204,17 @@ pb_slab_buffer_destroy(struct pb_buffer *_buf)
    
    buf->mapCount = 0;
 
-   list_del(list);
-   list_addtail(list, &slab->freeBuffers);
+   LIST_DEL(list);
+   LIST_ADDTAIL(list, &slab->freeBuffers);
    slab->numFree++;
 
    if (slab->head.next == &slab->head)
-      list_addtail(&slab->head, &mgr->slabs);
+      LIST_ADDTAIL(&slab->head, &mgr->slabs);
 
    /* If the slab becomes totally empty, free it */
    if (slab->numFree == slab->numBuffers) {
       list = &slab->head;
-      list_delinit(list);
-      pb_unmap(slab->bo);
+      LIST_DELINIT(list);
       pb_reference(&slab->bo, NULL);
       FREE(slab->buffers);
       FREE(slab);
@@ -241,6 +244,8 @@ pb_slab_buffer_unmap(struct pb_buffer *_buf)
    struct pb_slab_buffer *buf = pb_slab_buffer(_buf);
 
    --buf->mapCount;
+   if (buf->mapCount == 0) 
+       cnd_broadcast(&buf->event);
 }
 
 
@@ -310,16 +315,15 @@ pb_slab_create(struct pb_slab_manager *mgr)
    }
 
    /* Note down the slab virtual address. All mappings are accessed directly 
-    * through this address so it is required that the buffer is mapped
-    * persistent */
+    * through this address so it is required that the buffer is pinned. */
    slab->virtual = pb_map(slab->bo, 
                           PB_USAGE_CPU_READ |
-                          PB_USAGE_CPU_WRITE |
-                          PB_USAGE_PERSISTENT, NULL);
+                          PB_USAGE_CPU_WRITE, NULL);
    if(!slab->virtual) {
       ret = PIPE_ERROR_OUT_OF_MEMORY;
       goto out_err1;
    }
+   pb_unmap(slab->bo);
 
    numBuffers = slab->bo->size / mgr->bufSize;
 
@@ -329,8 +333,8 @@ pb_slab_create(struct pb_slab_manager *mgr)
       goto out_err1;
    }
 
-   list_inithead(&slab->head);
-   list_inithead(&slab->freeBuffers);
+   LIST_INITHEAD(&slab->head);
+   LIST_INITHEAD(&slab->freeBuffers);
    slab->numBuffers = numBuffers;
    slab->numFree = 0;
    slab->mgr = mgr;
@@ -345,13 +349,14 @@ pb_slab_create(struct pb_slab_manager *mgr)
       buf->slab = slab;
       buf->start = i* mgr->bufSize;
       buf->mapCount = 0;
-      list_addtail(&buf->head, &slab->freeBuffers);
+      cnd_init(&buf->event);
+      LIST_ADDTAIL(&buf->head, &slab->freeBuffers);
       slab->numFree++;
       buf++;
    }
 
    /* Add this slab to the list of partial slabs */
-   list_addtail(&slab->head, &mgr->slabs);
+   LIST_ADDTAIL(&slab->head, &mgr->slabs);
 
    return PIPE_OK;
 
@@ -407,10 +412,10 @@ pb_slab_manager_create_buffer(struct pb_manager *_mgr,
    
    /* If totally full remove from the partial slab list */
    if (--slab->numFree == 0)
-      list_delinit(list);
+      LIST_DELINIT(list);
 
    list = slab->freeBuffers.next;
-   list_delinit(list);
+   LIST_DELINIT(list);
 
    mtx_unlock(&mgr->mutex);
    buf = LIST_ENTRY(struct pb_slab_buffer, list, head);
@@ -465,7 +470,7 @@ pb_slab_manager_create(struct pb_manager *provider,
    mgr->slabSize = slabSize;
    mgr->desc = *desc;
 
-   list_inithead(&mgr->slabs);
+   LIST_INITHEAD(&mgr->slabs);
    
    (void) mtx_init(&mgr->mutex, mtx_plain);
 

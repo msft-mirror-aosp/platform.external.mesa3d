@@ -131,7 +131,7 @@ SVGA3dSurfaceFormat
 svga_linear_to_srgb(SVGA3dSurfaceFormat format);
 
 
-bool
+boolean
 svga_is_format_supported(struct pipe_screen *screen,
                          enum pipe_format format,
                          enum pipe_texture_target target,
@@ -140,7 +140,7 @@ svga_is_format_supported(struct pipe_screen *screen,
                          unsigned bindings);
 
 
-bool
+boolean
 svga_is_dx_format_supported(struct pipe_screen *screen,
                             enum pipe_format format,
                             enum pipe_texture_target target,

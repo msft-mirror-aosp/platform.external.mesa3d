@@ -870,9 +870,7 @@ struct BlendJit : public Builder
         passes.add(createCFGSimplificationPass());
         passes.add(createEarlyCSEPass());
         passes.add(createInstructionCombiningPass());
-#if LLVM_VERSION_MAJOR <= 11
         passes.add(createConstantPropagationPass());
-#endif
         passes.add(createSCCPPass());
         passes.add(createAggressiveDCEPass());
 

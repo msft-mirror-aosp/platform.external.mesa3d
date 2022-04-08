@@ -21,9 +21,9 @@
 libswhgl = static_library(
   'swhgl',
   files('hgl_sw_winsys.c'),
-  gnu_symbol_visibility : 'hidden',
+  c_args : c_vis_args,
   include_directories : [inc_gallium, inc_include, inc_src, inc_gallium_aux,
-    include_directories('../../../frontends/hgl')
+    include_directories('../../../state_trackers/hgl')
   ],
   build_by_default : false,
 )

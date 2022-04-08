@@ -48,7 +48,6 @@
 #include "program/program.h"
 #include "program/prog_parameter.h"
 #include "util/ralloc.h"
-#include "util/bitscan.h"
 
 /**
  * Delete a pipeline object.
@@ -106,7 +105,7 @@ _mesa_init_pipeline(struct gl_context *ctx)
  * Callback for deleting a pipeline object.  Called by _mesa_HashDeleteAll().
  */
 static void
-delete_pipelineobj_cb(void *data, void *userData)
+delete_pipelineobj_cb(UNUSED GLuint id, void *data, void *userData)
 {
    struct gl_pipeline_object *obj = (struct gl_pipeline_object *) data;
    struct gl_context *ctx = (struct gl_context *) userData;
@@ -153,7 +152,7 @@ static void
 save_pipeline_object(struct gl_context *ctx, struct gl_pipeline_object *obj)
 {
    if (obj->Name > 0) {
-      _mesa_HashInsertLocked(ctx->Pipeline.Objects, obj->Name, obj, true);
+      _mesa_HashInsertLocked(ctx->Pipeline.Objects, obj->Name, obj);
    }
 }
 
@@ -535,7 +534,6 @@ _mesa_bind_pipeline(struct gl_context *ctx,
       }
 
       _mesa_update_vertex_processing_mode(ctx);
-      _mesa_update_allow_draw_out_of_order(ctx);
    }
 }
 
@@ -596,17 +594,19 @@ create_program_pipelines(struct gl_context *ctx, GLsizei n, GLuint *pipelines,
                          bool dsa)
 {
    const char *func = dsa ? "glCreateProgramPipelines" : "glGenProgramPipelines";
+   GLuint first;
    GLint i;
 
    if (!pipelines)
       return;
 
-   _mesa_HashFindFreeKeys(ctx->Pipeline.Objects, pipelines, n);
+   first = _mesa_HashFindFreeKeyBlock(ctx->Pipeline.Objects, n);
 
    for (i = 0; i < n; i++) {
       struct gl_pipeline_object *obj;
+      GLuint name = first + i;
 
-      obj = _mesa_new_pipeline_object(ctx, pipelines[i]);
+      obj = _mesa_new_pipeline_object(ctx, name);
       if (!obj) {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "%s", func);
          return;
@@ -618,6 +618,7 @@ create_program_pipelines(struct gl_context *ctx, GLsizei n, GLuint *pipelines,
       }
 
       save_pipeline_object(ctx, obj);
+      pipelines[i] = first + i;
    }
 }
 

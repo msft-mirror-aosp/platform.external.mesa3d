@@ -57,17 +57,13 @@ static const struct debug_control debug_control[] = {
 	{NULL, 0}
 };
 
-#if defined(RADEON_R200)
-radeon_debug_type_t r200_enabled_debug_types;
-#elif defined(RADEON_R100)
-radeon_debug_type_t r100_enabled_debug_types;
-#endif
+radeon_debug_type_t radeon_enabled_debug_types;
 
 void radeon_init_debug(void)
 {
-	RADEON_DEBUG = parse_debug_string(getenv("RADEON_DEBUG"), debug_control);
+	radeon_enabled_debug_types = parse_debug_string(getenv("RADEON_DEBUG"), debug_control);
 
-	RADEON_DEBUG |= RADEON_GENERAL;
+	radeon_enabled_debug_types |= RADEON_GENERAL;
 }
 
 void _radeon_debug_add_indent(void)

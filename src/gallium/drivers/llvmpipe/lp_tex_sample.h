@@ -33,7 +33,6 @@
 
 
 struct lp_sampler_static_state;
-struct lp_image_static_state;
 
 /**
  * Whether texture cache is used for s3tc textures.
@@ -45,11 +44,6 @@ struct lp_image_static_state;
  *
  */
 struct lp_build_sampler_soa *
-lp_llvm_sampler_soa_create(const struct lp_sampler_static_state *key,
-                           unsigned nr_samplers);
-
-struct lp_build_image_soa *
-lp_llvm_image_soa_create(const struct lp_image_static_state *key,
-                         unsigned nr_images);
+lp_llvm_sampler_soa_create(const struct lp_sampler_static_state *key);
 
 #endif /* LP_TEX_SAMPLE_H */

@@ -37,7 +37,6 @@
 #include "pipe/p_shader_tokens.h"
 #include "pipe/p_state.h"
 #include "tgsi/tgsi_ureg.h"
-#include "tgsi/tgsi_from_mesa.h"
 #include "st_mesa_to_tgsi.h"
 #include "st_context.h"
 #include "program/prog_instruction.h"
@@ -97,12 +96,9 @@ dst_register(struct st_translate *t, gl_register_file file, GLuint index)
       else
          assert(index < VARYING_SLOT_MAX);
 
-      if (t->outputMapping[index] < ARRAY_SIZE(t->outputs))
-         return t->outputs[t->outputMapping[index]];
-      else {
-         assert(t->procType == PIPE_SHADER_VERTEX);
-         return ureg_dst(ureg_DECL_constant(t->ureg, 0));
-      }
+      assert(t->outputMapping[index] < ARRAY_SIZE(t->outputs));
+
+      return t->outputs[t->outputMapping[index]];
 
    case PROGRAM_ADDRESS:
       return t->address[index];
@@ -144,20 +140,12 @@ src_register(struct st_translate *t,
          return t->constants[index];
 
    case PROGRAM_INPUT:
-      if (t->inputMapping[index] < ARRAY_SIZE(t->inputs))
-         return t->inputs[t->inputMapping[index]];
-      else {
-         assert(t->procType == PIPE_SHADER_VERTEX);
-         return ureg_DECL_constant(t->ureg, 0);
-      }
+      assert(t->inputMapping[index] < ARRAY_SIZE(t->inputs));
+      return t->inputs[t->inputMapping[index]];
 
    case PROGRAM_OUTPUT:
-      if (t->outputMapping[index] < ARRAY_SIZE(t->outputs))
-         return ureg_src(t->outputs[t->outputMapping[index]]);
-      else {
-         assert(t->procType == PIPE_SHADER_VERTEX);
-         return ureg_DECL_constant(t->ureg, 0);
-      }
+      assert(t->outputMapping[index] < ARRAY_SIZE(t->outputs));
+      return ureg_src(t->outputs[t->outputMapping[index]]); /* not needed? */
 
    case PROGRAM_ADDRESS:
       return ureg_src(t->address[index]);
@@ -963,37 +951,42 @@ st_translate_mesa_program(struct gl_context *ctx,
 
    /* Declare misc input registers
     */
-   BITSET_FOREACH_SET (i, program->info.system_values_read, SYSTEM_VALUE_MAX) {
-      unsigned semName = tgsi_get_sysval_semantic(i);
+   GLbitfield64 sysInputs = program->info.system_values_read;
+   for (i = 0; sysInputs; i++) {
+      if (sysInputs & (1ull << i)) {
+         unsigned semName = _mesa_sysval_to_semantic(i);
 
-      t->systemValues[i] = ureg_DECL_system_value(ureg, semName, 0);
+         t->systemValues[i] = ureg_DECL_system_value(ureg, semName, 0);
 
-      if (semName == TGSI_SEMANTIC_INSTANCEID ||
-          semName == TGSI_SEMANTIC_VERTEXID) {
-         /* From Gallium perspective, these system values are always
-          * integer, and require native integer support.  However, if
-          * native integer is supported on the vertex stage but not the
-          * pixel stage (e.g, i915g + draw), Mesa will generate IR that
-          * assumes these system values are floats. To resolve the
-          * inconsistency, we insert a U2F.
-          */
-         struct st_context *st = st_context(ctx);
-         struct pipe_screen *pscreen = st->pipe->screen;
-         assert(procType == PIPE_SHADER_VERTEX);
-         assert(pscreen->get_shader_param(pscreen, PIPE_SHADER_VERTEX,
-                                          PIPE_SHADER_CAP_INTEGERS));
-         (void) pscreen;  /* silence non-debug build warnings */
-         if (!ctx->Const.NativeIntegers) {
-            struct ureg_dst temp = ureg_DECL_local_temporary(t->ureg);
-            ureg_U2F(t->ureg, ureg_writemask(temp, TGSI_WRITEMASK_X),
-                     t->systemValues[i]);
-            t->systemValues[i] = ureg_scalar(ureg_src(temp), 0);
+         if (semName == TGSI_SEMANTIC_INSTANCEID ||
+             semName == TGSI_SEMANTIC_VERTEXID) {
+            /* From Gallium perspective, these system values are always
+             * integer, and require native integer support.  However, if
+             * native integer is supported on the vertex stage but not the
+             * pixel stage (e.g, i915g + draw), Mesa will generate IR that
+             * assumes these system values are floats. To resolve the
+             * inconsistency, we insert a U2F.
+             */
+            struct st_context *st = st_context(ctx);
+            struct pipe_screen *pscreen = st->pipe->screen;
+            assert(procType == PIPE_SHADER_VERTEX);
+            assert(pscreen->get_shader_param(pscreen, PIPE_SHADER_VERTEX,
+                   PIPE_SHADER_CAP_INTEGERS));
+            (void) pscreen;  /* silence non-debug build warnings */
+            if (!ctx->Const.NativeIntegers) {
+               struct ureg_dst temp = ureg_DECL_local_temporary(t->ureg);
+               ureg_U2F(t->ureg, ureg_writemask(temp, TGSI_WRITEMASK_X),
+                        t->systemValues[i]);
+               t->systemValues[i] = ureg_scalar(ureg_src(temp), 0);
+            }
          }
-      }
 
-      if (procType == PIPE_SHADER_FRAGMENT &&
-          semName == TGSI_SEMANTIC_POSITION)
-         emit_wpos(st_context(ctx), t, program, ureg);
+         if (procType == PIPE_SHADER_FRAGMENT &&
+             semName == TGSI_SEMANTIC_POSITION)
+            emit_wpos(st_context(ctx), t, program, ureg);
+
+          sysInputs &= ~(1ull << i);
+      }
    }
 
    if (program->arb.IndirectRegisterFiles & (1 << PROGRAM_TEMPORARY)) {

@@ -36,7 +36,7 @@ extern "C" {
 
 typedef void (*debug_reference_descriptor)(char*, const struct pipe_reference*);
 
-#if defined(DEBUG)
+#if defined(DEBUG) && (!defined(PIPE_OS_WINDOWS) || defined(PIPE_SUBSYSTEM_WINDOWS_USER))
 
 extern int debug_refcnt_state;
 

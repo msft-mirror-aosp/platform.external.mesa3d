@@ -36,7 +36,6 @@ files_svga = files(
   'svga_pipe_flush.c',
   'svga_pipe_fs.c',
   'svga_pipe_gs.c',
-  'svga_pipe_ts.c',
   'svga_pipe_misc.c',
   'svga_pipe_query.c',
   'svga_pipe_rasterizer.c',
@@ -57,7 +56,6 @@ files_svga = files(
   'svga_state_framebuffer.c',
   'svga_state_fs.c',
   'svga_state_gs.c',
-  'svga_state_ts.c',
   'svga_state_need_swtnl.c',
   'svga_state_rss.c',
   'svga_state_sampler.c',
@@ -81,8 +79,7 @@ files_svga = files(
 libsvga = static_library(
   'svga',
   [files_svga, sha1_h],
-  c_args : [c_msvc_compat_args],
-  gnu_symbol_visibility : 'hidden',
+  c_args : [c_vis_args, c_msvc_compat_args],
   include_directories : [
     inc_src, inc_include, inc_gallium, inc_gallium_aux,
     include_directories('include')

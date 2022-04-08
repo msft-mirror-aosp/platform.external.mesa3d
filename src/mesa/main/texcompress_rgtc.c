@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2011 Red Hat Inc.
- *
+ * 
  * block compression parts are:
  * Copyright (C) 2004  Roland Scheidegger   All Rights Reserved.
  *
@@ -32,11 +32,10 @@
  * GL_EXT_texture_compression_rgtc support.
  */
 
-#include <stdlib.h>
 
 #include "config.h"
 #include "glheader.h"
-
+#include "imports.h"
 #include "image.h"
 #include "macros.h"
 #include "mipmap.h"
@@ -198,9 +197,11 @@ _mesa_texstore_rg_rgtc2(TEXSTORE_PARAMS)
           dstFormat == MESA_FORMAT_LA_LATC2_UNORM);
 
    if (baseInternalFormat == GL_RG)
-      tempFormat = MESA_FORMAT_RG_UNORM8;
+      tempFormat = _mesa_little_endian() ? MESA_FORMAT_R8G8_UNORM
+                                         : MESA_FORMAT_G8R8_UNORM;
    else
-      tempFormat = MESA_FORMAT_LA_UNORM8;
+      tempFormat = _mesa_little_endian() ? MESA_FORMAT_L8A8_UNORM
+                                         : MESA_FORMAT_A8L8_UNORM;
 
    rgRowStride = 2 * srcWidth * sizeof(GLubyte);
    tempImage = malloc(srcWidth * srcHeight * 2 * sizeof(GLubyte));

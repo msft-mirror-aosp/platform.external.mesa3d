@@ -28,12 +28,23 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "util/os_file.h"
-
 #include "freedreno_drmif.h"
 #include "freedreno_priv.h"
 
 static pthread_mutex_t table_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static uint32_t
+u32_hash(const void *key)
+{
+	return _mesa_hash_data(key, sizeof(uint32_t));
+}
+
+static bool
+u32_equals(const void *key1, const void *key2)
+{
+	return *(const uint32_t *)key1 == *(const uint32_t *)key2;
+}
+
 
 struct fd_device * kgsl_device_new(int fd);
 struct fd_device * msm_device_new(int fd);
@@ -79,10 +90,10 @@ out:
 
 	p_atomic_set(&dev->refcnt, 1);
 	dev->fd = fd;
-	dev->handle_table = _mesa_hash_table_create(NULL, _mesa_hash_u32, _mesa_key_u32_equal);
-	dev->name_table = _mesa_hash_table_create(NULL, _mesa_hash_u32, _mesa_key_u32_equal);
-	fd_bo_cache_init(&dev->bo_cache, false);
-	fd_bo_cache_init(&dev->ring_cache, true);
+	dev->handle_table = _mesa_hash_table_create(NULL, u32_hash, u32_equals);
+	dev->name_table = _mesa_hash_table_create(NULL, u32_hash, u32_equals);
+	fd_bo_cache_init(&dev->bo_cache, FALSE);
+	fd_bo_cache_init(&dev->ring_cache, TRUE);
 
 	return dev;
 }
@@ -92,7 +103,7 @@ out:
  */
 struct fd_device * fd_device_new_dup(int fd)
 {
-	int dup_fd = os_dupfd_cloexec(fd);
+	int dup_fd = dup(fd);
 	struct fd_device *dev = fd_device_new(dup_fd);
 	if (dev)
 		dev->closefd = 1;
@@ -111,7 +122,6 @@ static void fd_device_del_impl(struct fd_device *dev)
 {
 	int close_fd = dev->closefd ? dev->fd : -1;
 	fd_bo_cache_cleanup(&dev->bo_cache, 0);
-	fd_bo_cache_cleanup(&dev->ring_cache, 0);
 	_mesa_hash_table_destroy(dev->handle_table, NULL);
 	_mesa_hash_table_destroy(dev->name_table, NULL);
 	dev->funcs->destroy(dev);
@@ -143,22 +153,4 @@ int fd_device_fd(struct fd_device *dev)
 enum fd_version fd_device_version(struct fd_device *dev)
 {
 	return dev->version;
-}
-
-bool fd_dbg(void)
-{
-	static int dbg;
-
-	if (!dbg)
-		dbg = getenv("LIBGL_DEBUG") ? 1 : -1;
-
-	return dbg == 1;
-}
-
-bool fd_has_syncobj(struct fd_device *dev)
-{
-	uint64_t value;
-	if (drmGetCap(dev->fd, DRM_CAP_SYNCOBJ, &value))
-		return false;
-	return value && dev->version >= FD_VERSION_FENCE_FD;
 }

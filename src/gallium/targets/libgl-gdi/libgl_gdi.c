@@ -41,28 +41,22 @@
 #include "stw_device.h"
 #include "gdi/gdi_sw_winsys.h"
 
-#ifdef GALLIUM_SOFTPIPE
 #include "softpipe/sp_texture.h"
 #include "softpipe/sp_screen.h"
 #include "softpipe/sp_public.h"
-#endif
 
-#ifdef GALLIUM_LLVMPIPE
+#ifdef HAVE_LLVMPIPE
 #include "llvmpipe/lp_texture.h"
 #include "llvmpipe/lp_screen.h"
 #include "llvmpipe/lp_public.h"
 #endif
 
-#ifdef GALLIUM_SWR
+#ifdef HAVE_SWR
 #include "swr/swr_public.h"
 #endif
 
-#ifdef GALLIUM_LLVMPIPE
 static boolean use_llvmpipe = FALSE;
-#endif
-#ifdef GALLIUM_SWR
 static boolean use_swr = FALSE;
-#endif
 
 static struct pipe_screen *
 gdi_screen_create(void)
@@ -76,26 +70,24 @@ gdi_screen_create(void)
    if(!winsys)
       goto no_winsys;
 
-#ifdef GALLIUM_LLVMPIPE
+#ifdef HAVE_LLVMPIPE
    default_driver = "llvmpipe";
-#elif GALLIUM_SWR
+#elif HAVE_SWR
    default_driver = "swr";
-#elif defined(GALLIUM_SOFTPIPE)
-   default_driver = "softpipe";
 #else
-#error "no suitable default-driver"
+   default_driver = "softpipe";
 #endif
 
    driver = debug_get_option("GALLIUM_DRIVER", default_driver);
 
-#ifdef GALLIUM_LLVMPIPE
+#ifdef HAVE_LLVMPIPE
    if (strcmp(driver, "llvmpipe") == 0) {
       screen = llvmpipe_create_screen( winsys );
       if (screen)
          use_llvmpipe = TRUE;
    }
 #endif
-#ifdef GALLIUM_SWR
+#ifdef HAVE_SWR
    if (strcmp(driver, "swr") == 0) {
       screen = swr_create_screen( winsys );
       if (screen)
@@ -104,11 +96,11 @@ gdi_screen_create(void)
 #endif
    (void) driver;
 
-#ifdef GALLIUM_SOFTPIPE
-   if (screen == NULL)
+   if (screen == NULL) {
       screen = softpipe_create_screen( winsys );
-#endif
-   if (!screen)
+   }
+
+   if(!screen)
       goto no_screen;
 
    return screen;
@@ -126,7 +118,7 @@ gdi_present(struct pipe_screen *screen,
             HDC hDC)
 {
    /* This will fail if any interposing layer (trace, debug, etc) has
-    * been introduced between the gallium frontends and the pipe driver.
+    * been introduced between the state-trackers and the pipe driver.
     *
     * Ideally this would get replaced with a call to
     * pipe_screen::flush_frontbuffer().
@@ -138,7 +130,7 @@ gdi_present(struct pipe_screen *screen,
    struct sw_winsys *winsys = NULL;
    struct sw_displaytarget *dt = NULL;
 
-#ifdef GALLIUM_LLVMPIPE
+#ifdef HAVE_LLVMPIPE
    if (use_llvmpipe) {
       winsys = llvmpipe_screen(screen)->winsys;
       dt = llvmpipe_resource(res)->dt;
@@ -147,18 +139,16 @@ gdi_present(struct pipe_screen *screen,
    }
 #endif
 
-#ifdef GALLIUM_SWR
+#ifdef HAVE_SWR
    if (use_swr) {
       swr_gdi_swap(screen, res, hDC);
       return;
    }
 #endif
 
-#ifdef GALLIUM_SOFTPIPE
    winsys = softpipe_screen(screen)->winsys,
    dt = softpipe_resource(res)->dt,
    gdi_sw_display(winsys, dt, hDC);
-#endif
 }
 
 

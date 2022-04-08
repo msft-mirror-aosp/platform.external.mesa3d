@@ -78,6 +78,15 @@ is_channel_updated(vec4_instruction *inst, src_reg *values[4], int ch)
            inst->dst.writemask & (1 << BRW_GET_SWZ(src->swizzle, ch)));
 }
 
+static bool
+is_logic_op(enum opcode opcode)
+{
+   return (opcode == BRW_OPCODE_AND ||
+           opcode == BRW_OPCODE_OR  ||
+           opcode == BRW_OPCODE_XOR ||
+           opcode == BRW_OPCODE_NOT);
+}
+
 /**
  * Get the origin of a copy as a single register if all components present in
  * the given readmask originate from the same register and have compatible
@@ -123,7 +132,8 @@ get_copy_value(const copy_entry &entry, unsigned readmask)
 }
 
 static bool
-try_constant_propagate(vec4_instruction *inst,
+try_constant_propagate(const struct gen_device_info *devinfo,
+                       vec4_instruction *inst,
                        int arg, const copy_entry *entry)
 {
    /* For constant propagation, we only handle the same constant
@@ -159,13 +169,17 @@ try_constant_propagate(vec4_instruction *inst,
    }
 
    if (inst->src[arg].abs) {
-      if (!brw_abs_immediate(value.type, &value.as_brw_reg()))
+      if ((devinfo->gen >= 8 && is_logic_op(inst->opcode)) ||
+          !brw_abs_immediate(value.type, &value.as_brw_reg())) {
          return false;
+      }
    }
 
    if (inst->src[arg].negate) {
-      if (!brw_negate_immediate(value.type, &value.as_brw_reg()))
+      if ((devinfo->gen >= 8 && is_logic_op(inst->opcode)) ||
+          !brw_negate_immediate(value.type, &value.as_brw_reg())) {
          return false;
+      }
    }
 
    value = swizzle(value, inst->src[arg].swizzle);
@@ -186,7 +200,9 @@ try_constant_propagate(vec4_instruction *inst,
    case SHADER_OPCODE_POW:
    case SHADER_OPCODE_INT_QUOTIENT:
    case SHADER_OPCODE_INT_REMAINDER:
+      if (devinfo->gen < 8)
          break;
+      /* fallthrough */
    case BRW_OPCODE_DP2:
    case BRW_OPCODE_DP3:
    case BRW_OPCODE_DP4:
@@ -317,10 +333,11 @@ try_copy_propagate(const struct gen_device_info *devinfo,
        value.file != ATTR)
       return false;
 
-   /* Instructions that write 2 registers also need to read 2 registers. Make
-    * sure we don't break that restriction by copy propagating from a uniform.
+   /* In gen < 8 instructions that write 2 registers also need to read 2
+    * registers. Make sure we don't break that restriction by copy
+    * propagating from a uniform.
     */
-   if (inst->size_written > REG_SIZE && is_uniform(value))
+   if (devinfo->gen < 8 && inst->size_written > REG_SIZE && is_uniform(value))
       return false;
 
    /* There is a regioning restriction such that if execsize == width
@@ -341,6 +358,11 @@ try_copy_propagate(const struct gen_device_info *devinfo,
    if (type_sz(value.type) != type_sz(inst->src[arg].type))
       return false;
 
+   if (devinfo->gen >= 8 && (value.negate || value.abs) &&
+       is_logic_op(inst->opcode)) {
+      return false;
+   }
+
    if (inst->src[arg].offset % REG_SIZE || value.offset % REG_SIZE)
       return false;
 
@@ -359,8 +381,7 @@ try_copy_propagate(const struct gen_device_info *devinfo,
       return false;
 
    if (has_source_modifiers &&
-       (inst->opcode == SHADER_OPCODE_GEN4_SCRATCH_WRITE ||
-        inst->opcode == VEC4_OPCODE_PICK_HIGH_32BIT))
+       inst->opcode == SHADER_OPCODE_GEN4_SCRATCH_WRITE)
       return false;
 
    unsigned composed_swizzle = brw_compose_swizzle(inst->src[arg].swizzle,
@@ -494,7 +515,7 @@ vec4_visitor::opt_copy_propagation(bool do_constant_prop)
                                inst->src[i].offset / REG_SIZE);
          const copy_entry &entry = entries[reg];
 
-         if (do_constant_prop && try_constant_propagate(inst, i, &entry))
+         if (do_constant_prop && try_constant_propagate(devinfo, inst, i, &entry))
             progress = true;
          else if (try_copy_propagate(devinfo, inst, i, &entry, attributes_per_reg))
 	    progress = true;
@@ -538,8 +559,7 @@ vec4_visitor::opt_copy_propagation(bool do_constant_prop)
    }
 
    if (progress)
-      invalidate_analysis(DEPENDENCY_INSTRUCTION_DATA_FLOW |
-                          DEPENDENCY_INSTRUCTION_DETAIL);
+      invalidate_live_intervals();
 
    return progress;
 }

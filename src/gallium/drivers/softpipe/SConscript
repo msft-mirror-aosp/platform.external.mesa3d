@@ -2,10 +2,6 @@ Import('*')
 
 env = env.Clone()
 
-env.Prepend(CPPPATH = [
-    '../../../compiler/nir',
-    ])
-
 env.MSVC2013Compat()
 
 softpipe = env.ConvenienceLibrary(

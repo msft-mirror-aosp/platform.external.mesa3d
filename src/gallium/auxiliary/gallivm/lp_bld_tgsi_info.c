@@ -307,12 +307,6 @@ analyse_instruction(struct analysis_context *ctx,
          max_regs = ARRAY_SIZE(info->output);
       } else if (dst->File == TGSI_FILE_ADDRESS) {
          continue;
-      } else if (dst->File == TGSI_FILE_BUFFER) {
-         continue;
-      } else if (dst->File == TGSI_FILE_IMAGE) {
-         continue;
-      } else if (dst->File == TGSI_FILE_MEMORY) {
-         continue;
       } else {
          assert(0);
          continue;
@@ -614,7 +608,7 @@ finished:
     */
 
    for (index = 0; index < PIPE_MAX_COLOR_BUFS; ++index) {
-      static const struct lp_tgsi_channel_info null_output[4];
+      const struct lp_tgsi_channel_info null_output[4];
       info->cbuf[index] = null_output;
    }
 

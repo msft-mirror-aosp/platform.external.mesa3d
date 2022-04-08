@@ -51,7 +51,6 @@ BGLView::BGLView(BRect rect, const char* name, ulong resizingMode, ulong mode,
 	fDitherMap(NULL)
 {
 	fRoster = new GLRendererRoster(this, options);
-	fRenderer = fRoster->GetRenderer();
 }
 
 
@@ -69,7 +68,7 @@ BGLView::LockGL()
 	// TODO: acquire the OpenGL API lock it on this glview
 
 	fDisplayLock.Lock();
-	if (fRenderer != NULL && fDisplayLock.CountLocks() == 1)
+	if (fRenderer)
 		fRenderer->LockGL();
 }
 
@@ -77,7 +76,7 @@ BGLView::LockGL()
 void
 BGLView::UnlockGL()
 {
-	if (fRenderer != NULL && fDisplayLock.CountLocks() == 1)
+	if (fRenderer)
 		fRenderer->UnlockGL();
 	fDisplayLock.Unlock();
 
@@ -190,6 +189,7 @@ BGLView::AttachedToWindow()
 	for (BView* view = this; view != NULL; view = view->Parent())
 		view->ConvertToParent(&fBounds);
 
+	fRenderer = fRoster->GetRenderer();
 	if (fRenderer != NULL) {
 		// Jackburton: The following code was commented because it doesn't look
 		// good in "direct" mode:

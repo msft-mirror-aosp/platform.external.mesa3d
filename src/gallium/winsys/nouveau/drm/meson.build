@@ -24,6 +24,6 @@ libnouveauwinsys = static_library(
   include_directories : [
     inc_src, inc_include, inc_gallium, inc_gallium_aux, inc_gallium_drivers,
   ],
-  gnu_symbol_visibility : 'hidden',
+  c_args : [c_vis_args],
   dependencies : [dep_libdrm_nouveau],
 )

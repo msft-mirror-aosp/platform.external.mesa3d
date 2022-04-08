@@ -428,7 +428,7 @@ _mesa_RenderMode( GLenum mode )
 	 }
 	 if (ctx->Select.BufferCount > ctx->Select.BufferSize) {
 	    /* overflow */
-#ifndef NDEBUG
+#ifdef DEBUG
             _mesa_warning(ctx, "Feedback buffer overflow");
 #endif
 	    result = -1;

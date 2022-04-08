@@ -47,11 +47,10 @@ libgbm = shared_library(
   'gbm',
   files_gbm,
   include_directories : incs_gbm,
-  c_args : [args_gbm],
+  c_args : [c_vis_args, args_gbm],
   link_args : [ld_args_gc_sections],
-  link_with : libloader,
-  dependencies : [deps_gbm, dep_dl, dep_thread, idep_mesautil, idep_xmlconfig],
-  gnu_symbol_visibility : 'hidden',
+  link_with : [libloader, libmesa_util, libxmlconfig],
+  dependencies : [deps_gbm, dep_dl, dep_thread],
   version : '1.0.0',
   install : true,
 )
@@ -64,18 +63,15 @@ pkg.generate(
   description : 'Mesa gbm library',
   version : meson.project_version(),
   libraries : libgbm,
-  libraries_private : gbm_priv_libs,
+  libraries_private : '-ldl',  # FIXME: autotools lists this a incomplete
 )
 
-if with_symbols_check
+if with_tests and prog_nm.found()
   test(
     'gbm-symbols-check',
-    symbols_check,
-    args : [
-      '--lib', libgbm,
-      '--symbols-file', files('gbm-symbols.txt'),
-      symbols_check_args,
-    ],
+    find_program('gbm-symbols-check'),
+    env : env_test,
+    args : libgbm,
     suite : ['gbm'],
   )
 endif

@@ -92,17 +92,10 @@ gen_get_l3_config_urb_size(const struct gen_device_info *devinfo,
 
 void gen_dump_l3_config(const struct gen_l3_config *cfg, FILE *fp);
 
-enum gen_urb_deref_block_size {
-   GEN_URB_DEREF_BLOCK_SIZE_32         = 0,
-   GEN_URB_DEREF_BLOCK_SIZE_PER_POLY   = 1,
-   GEN_URB_DEREF_BLOCK_SIZE_8          = 2,
-};
-
 void gen_get_urb_config(const struct gen_device_info *devinfo,
-                        const struct gen_l3_config *l3_cfg,
+                        unsigned push_constant_bytes, unsigned urb_size_bytes,
                         bool tess_present, bool gs_present,
                         const unsigned entry_size[4],
-                        unsigned entries[4], unsigned start[4],
-                        enum gen_urb_deref_block_size *deref_block_size);
+                        unsigned entries[4], unsigned start[4]);
 
 #endif /* GEN_L3_CONFIG_H */

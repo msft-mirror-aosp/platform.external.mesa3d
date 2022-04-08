@@ -26,15 +26,11 @@
  **************************************************************************/
 
 #include "sp_context.h"
-#include "sp_screen.h"
 #include "sp_state.h"
 #include "sp_fs.h"
 #include "sp_texture.h"
 
-#include "nir.h"
-#include "nir/nir_to_tgsi.h"
 #include "pipe/p_defines.h"
-#include "util/ralloc.h"
 #include "util/u_memory.h"
 #include "util/u_inlines.h"
 #include "util/u_pstipple.h"
@@ -42,10 +38,8 @@
 #include "draw/draw_vs.h"
 #include "draw/draw_gs.h"
 #include "tgsi/tgsi_dump.h"
-#include "tgsi/tgsi_from_mesa.h"
 #include "tgsi/tgsi_scan.h"
 #include "tgsi/tgsi_parse.h"
-#include "compiler/shader_enums.h"
 
 
 /**
@@ -120,53 +114,6 @@ softpipe_find_fs_variant(struct softpipe_context *sp,
    return create_fs_variant(sp, fs, key);
 }
 
-static void
-softpipe_shader_db(struct pipe_context *pipe, const struct tgsi_token *tokens)
-{
-   struct softpipe_context *softpipe = softpipe_context(pipe);
-
-   struct tgsi_shader_info info;
-   tgsi_scan_shader(tokens, &info);
-   pipe_debug_message(&softpipe->debug, SHADER_INFO, "%s shader: %d inst, %d loops, %d temps, %d const, %d imm",
-                      _mesa_shader_stage_to_abbrev(tgsi_processor_to_shader_stage(info.processor)),
-                      info.num_instructions,
-                      info.opcode_count[TGSI_OPCODE_BGNLOOP],
-                      info.file_max[TGSI_FILE_TEMPORARY] + 1,
-                      info.file_max[TGSI_FILE_CONSTANT] + 1,
-                      info.immediate_count);
-}
-
-static void
-softpipe_create_shader_state(struct pipe_context *pipe,
-                             struct pipe_shader_state *shader,
-                             const struct pipe_shader_state *templ,
-                             bool debug)
-{
-   if (templ->type == PIPE_SHADER_IR_NIR) {
-      shader->tokens = nir_to_tgsi(templ->ir.nir, pipe->screen);
-
-      /* Note: Printing the final NIR after nir-to-tgsi transformed and
-       * optimized it
-       */
-      if (debug)
-         nir_print_shader(templ->ir.nir, stderr);
-
-      ralloc_free(templ->ir.nir);
-   } else {
-      assert(templ->type == PIPE_SHADER_IR_TGSI);
-      /* we need to keep a local copy of the tokens */
-      shader->tokens = tgsi_dup_tokens(templ->tokens);
-   }
-
-   shader->type = PIPE_SHADER_IR_TGSI;
-
-   shader->stream_output = templ->stream_output;
-
-   if (debug)
-      tgsi_dump(shader->tokens, 0);
-
-   softpipe_shader_db(pipe, shader->tokens);
-}
 
 static void *
 softpipe_create_fs_state(struct pipe_context *pipe,
@@ -175,8 +122,12 @@ softpipe_create_fs_state(struct pipe_context *pipe,
    struct softpipe_context *softpipe = softpipe_context(pipe);
    struct sp_fragment_shader *state = CALLOC_STRUCT(sp_fragment_shader);
 
-   softpipe_create_shader_state(pipe, &state->shader, templ,
-                                sp_debug & SP_DBG_FS);
+   /* debug */
+   if (softpipe->dump_fs) 
+      tgsi_dump(templ->tokens, 0);
+
+   /* we need to keep a local copy of the tokens */
+   state->shader.tokens = tgsi_dup_tokens(templ->tokens);
 
    /* draw's fs state */
    state->draw_shader = draw_create_fragment_shader(softpipe->draw,
@@ -260,12 +211,13 @@ softpipe_create_vs_state(struct pipe_context *pipe,
    if (!state)
       goto fail;
 
-   softpipe_create_shader_state(pipe, &state->shader, templ,
-                                sp_debug & SP_DBG_VS);
-   if (!state->shader.tokens)
+   /* copy shader tokens, the ones passed in will go away.
+    */
+   state->shader.tokens = tgsi_dup_tokens(templ->tokens);
+   if (state->shader.tokens == NULL)
       goto fail;
 
-   state->draw_data = draw_create_vertex_shader(softpipe->draw, &state->shader);
+   state->draw_data = draw_create_vertex_shader(softpipe->draw, templ);
    if (state->draw_data == NULL) 
       goto fail;
 
@@ -321,12 +273,20 @@ softpipe_create_gs_state(struct pipe_context *pipe,
    if (!state)
       goto fail;
 
-   softpipe_create_shader_state(pipe, &state->shader, templ,
-                                sp_debug & SP_DBG_GS);
+   state->shader = *templ;
 
-   if (state->shader.tokens) {
-      state->draw_data = draw_create_geometry_shader(softpipe->draw,
-                                                     &state->shader);
+   if (templ->tokens) {
+      /* debug */
+      if (softpipe->dump_gs)
+         tgsi_dump(templ->tokens, 0);
+
+      /* copy shader tokens, the ones passed in will go away.
+       */
+      state->shader.tokens = tgsi_dup_tokens(templ->tokens);
+      if (state->shader.tokens == NULL)
+         goto fail;
+
+      state->draw_data = draw_create_geometry_shader(softpipe->draw, templ);
       if (state->draw_data == NULL)
          goto fail;
 
@@ -422,29 +382,21 @@ static void *
 softpipe_create_compute_state(struct pipe_context *pipe,
                               const struct pipe_compute_state *templ)
 {
-   struct sp_compute_shader *state = CALLOC_STRUCT(sp_compute_shader);
+   struct softpipe_context *softpipe = softpipe_context(pipe);
+   const struct tgsi_token *tokens;
+   struct sp_compute_shader *state;
+   if (templ->ir_type != PIPE_SHADER_IR_TGSI)
+      return NULL;
+
+   tokens = templ->prog;
+   /* debug */
+   if (softpipe->dump_cs)
+      tgsi_dump(tokens, 0);
+
+   state = CALLOC_STRUCT(sp_compute_shader);
 
    state->shader = *templ;
-
-   if (templ->ir_type == PIPE_SHADER_IR_NIR) {
-      nir_shader *s = (void *)templ->prog;
-
-      if (sp_debug & SP_DBG_CS)
-         nir_print_shader(s, stderr);
-
-      state->tokens = (void *)nir_to_tgsi(s, pipe->screen);
-      ralloc_free(s);
-   } else {
-      assert(templ->ir_type == PIPE_SHADER_IR_TGSI);
-      /* we need to keep a local copy of the tokens */
-      state->tokens = tgsi_dup_tokens(templ->prog);
-   }
-
-   if (sp_debug & SP_DBG_CS)
-      tgsi_dump(state->tokens, 0);
-
-   softpipe_shader_db(pipe, state->tokens);
-
+   state->tokens = tgsi_dup_tokens(tokens);
    tgsi_scan_shader(state->tokens, &state->info);
 
    state->max_sampler = state->info.file_max[TGSI_FILE_SAMPLER];
@@ -468,7 +420,7 @@ static void
 softpipe_delete_compute_state(struct pipe_context *pipe,
                               void *cs)
 {
-   ASSERTED struct softpipe_context *softpipe = softpipe_context(pipe);
+   MAYBE_UNUSED struct softpipe_context *softpipe = softpipe_context(pipe);
    struct sp_compute_shader *state = (struct sp_compute_shader *)cs;
 
    assert(softpipe->cs != state);

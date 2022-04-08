@@ -21,7 +21,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-
+#include "main/imports.h"
 #include "main/mtypes.h"
 #include "main/context.h"
 
@@ -34,7 +34,7 @@
 #include "st_cb_bufferobjects.h"
 #include "st_cb_semaphoreobjects.h"
 
-#include "frontend/drm_driver.h"
+#include "state_tracker/drm_driver.h"
 #include "pipe/p_context.h"
 #include "pipe/p_screen.h"
 
@@ -109,8 +109,7 @@ st_server_wait_semaphore(struct gl_context *ctx,
          continue;
 
       bufObj = st_buffer_object(bufObjs[i]);
-      if (bufObj->buffer)
-         pipe->flush_resource(pipe, bufObj->buffer);
+      pipe->flush_resource(pipe, bufObj->buffer);
    }
 
    for (unsigned i = 0; i < numTextureBarriers; i++) {
@@ -118,8 +117,7 @@ st_server_wait_semaphore(struct gl_context *ctx,
          continue;
 
       texObj = st_texture_object(texObjs[i]);
-      if (texObj->pt)
-         pipe->flush_resource(pipe, texObj->pt);
+      pipe->flush_resource(pipe, texObj->pt);
    }
 }
 
@@ -143,8 +141,7 @@ st_server_signal_semaphore(struct gl_context *ctx,
          continue;
 
       bufObj = st_buffer_object(bufObjs[i]);
-      if (bufObj->buffer)
-         pipe->flush_resource(pipe, bufObj->buffer);
+      pipe->flush_resource(pipe, bufObj->buffer);
    }
 
    for (unsigned i = 0; i < numTextureBarriers; i++) {
@@ -152,8 +149,7 @@ st_server_signal_semaphore(struct gl_context *ctx,
          continue;
 
       texObj = st_texture_object(texObjs[i]);
-      if (texObj->pt)
-         pipe->flush_resource(pipe, texObj->pt);
+      pipe->flush_resource(pipe, texObj->pt);
    }
 
    /* The driver is allowed to flush during fence_server_signal, be prepared */

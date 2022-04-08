@@ -169,34 +169,32 @@ struct _egl_surface
 
    EGLBoolean PostSubBufferSupportedNV;
 
-   EGLBoolean ProtectedContent;
-
    struct _egl_hdr_metadata HdrMetadata;
-
-   void *NativeSurface;
 };
 
 
 extern EGLBoolean
 _eglInitSurface(_EGLSurface *surf, _EGLDisplay *disp, EGLint type,
-                _EGLConfig *config, const EGLint *attrib_list,
-                void *native_surface);
+                _EGLConfig *config, const EGLint *attrib_list);
 
 
 extern EGLBoolean
-_eglQuerySurface(_EGLDisplay *disp, _EGLSurface *surf, EGLint attribute, EGLint *value);
+_eglQuerySurface(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf, EGLint attribute, EGLint *value);
 
 
 extern EGLBoolean
-_eglSurfaceAttrib(_EGLDisplay *disp, _EGLSurface *surf, EGLint attribute, EGLint value);
+_eglSurfaceAttrib(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf, EGLint attribute, EGLint value);
 
 
 extern EGLBoolean
-_eglBindTexImage(_EGLDisplay *disp, _EGLSurface *surf, EGLint buffer);
+_eglBindTexImage(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf, EGLint buffer);
 
 extern EGLBoolean
-_eglReleaseTexImage(_EGLDisplay *disp, _EGLSurface *surf, EGLint buffer);
+_eglReleaseTexImage(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf, EGLint buffer);
 
+
+extern EGLBoolean
+_eglSwapInterval(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf, EGLint interval);
 
 extern EGLBoolean
 _eglSurfaceHasMutableRenderBuffer(_EGLSurface *surf);

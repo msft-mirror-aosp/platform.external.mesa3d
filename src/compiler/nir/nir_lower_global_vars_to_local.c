@@ -83,12 +83,11 @@ nir_lower_global_vars_to_local(nir_shader *shader)
       }
    }
 
-   nir_foreach_variable_with_modes_safe(var, shader, nir_var_shader_temp) {
-      struct hash_entry *entry = _mesa_hash_table_search(var_func_table, var);
-      if (!entry)
-         continue;
-
+   hash_table_foreach(var_func_table, entry) {
+      nir_variable *var = (void *)entry->key;
       nir_function_impl *impl = entry->data;
+
+      assert(var->data.mode == nir_var_shader_temp);
 
       if (impl != NULL) {
          exec_node_remove(&var->node);
@@ -106,10 +105,13 @@ nir_lower_global_vars_to_local(nir_shader *shader)
    if (progress)
       nir_fixup_deref_modes(shader);
 
+#ifndef NDEBUG
    nir_foreach_function(function, shader) {
-      if (function->impl)
-         nir_metadata_preserve(function->impl, nir_metadata_all);
+      if (function->impl) {
+         function->impl->valid_metadata &= ~nir_metadata_not_properly_reset;
+      }
    }
+#endif
 
    return progress;
 }

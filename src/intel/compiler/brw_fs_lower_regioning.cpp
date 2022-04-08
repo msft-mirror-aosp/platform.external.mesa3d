@@ -256,12 +256,6 @@ namespace brw {
    lower_src_modifiers(fs_visitor *v, bblock_t *block, fs_inst *inst, unsigned i)
    {
       assert(inst->components_read(i) == 1);
-      assert(v->devinfo->has_integer_dword_mul ||
-             inst->opcode != BRW_OPCODE_MUL ||
-             brw_reg_type_is_floating_point(get_exec_type(inst)) ||
-             MIN2(type_sz(inst->src[0].type), type_sz(inst->src[1].type)) >= 4 ||
-             type_sz(inst->src[i].type) == get_exec_type_size(inst));
-
       const fs_builder ibld(v, block, inst);
       const fs_reg tmp = ibld.vgrf(get_exec_type(inst));
 
@@ -294,9 +288,7 @@ namespace {
       const unsigned stride =
          type_sz(inst->dst.type) * inst->dst.stride <= type_sz(type) ? 1 :
          type_sz(inst->dst.type) * inst->dst.stride / type_sz(type);
-      fs_reg tmp = ibld.vgrf(type, stride);
-      ibld.UNDEF(tmp);
-      tmp = horiz_stride(tmp, stride);
+      const fs_reg tmp = horiz_stride(ibld.vgrf(type, stride), stride);
 
       /* Emit a MOV taking care of all the destination modifiers. */
       fs_inst *mov = ibld.at(block, inst->next).MOV(inst->dst, tmp);
@@ -337,9 +329,8 @@ namespace {
       const unsigned stride = type_sz(inst->dst.type) * inst->dst.stride /
                               type_sz(inst->src[i].type);
       assert(stride > 0);
-      fs_reg tmp = ibld.vgrf(inst->src[i].type, stride);
-      ibld.UNDEF(tmp);
-      tmp = horiz_stride(tmp, stride);
+      const fs_reg tmp = horiz_stride(ibld.vgrf(inst->src[i].type, stride),
+                                      stride);
 
       /* Emit a series of 32-bit integer copies with any source modifiers
        * cleaned up (because their semantics are dependent on the type).
@@ -386,9 +377,8 @@ namespace {
       const unsigned stride = required_dst_byte_stride(inst) /
                               type_sz(inst->dst.type);
       assert(stride > 0);
-      fs_reg tmp = ibld.vgrf(inst->dst.type, stride);
-      ibld.UNDEF(tmp);
-      tmp = horiz_stride(tmp, stride);
+      const fs_reg tmp = horiz_stride(ibld.vgrf(inst->dst.type, stride),
+                                      stride);
 
       /* Emit a series of 32-bit integer copies from the temporary into the
        * original destination.
@@ -460,7 +450,7 @@ fs_visitor::lower_regioning()
       progress |= lower_instruction(this, block, inst);
 
    if (progress)
-      invalidate_analysis(DEPENDENCY_INSTRUCTIONS | DEPENDENCY_VARIABLES);
+      invalidate_live_intervals();
 
    return progress;
 }

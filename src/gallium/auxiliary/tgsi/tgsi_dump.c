@@ -778,7 +778,7 @@ str_dump_ctx_printf(struct dump_ctx *ctx, const char *format, ...)
       int written;
       va_list ap;
       va_start(ap, format);
-      written = vsnprintf(sctx->ptr, sctx->left, format, ap);
+      written = util_vsnprintf(sctx->ptr, sctx->left, format, ap);
       va_end(ap);
 
       /* Some complicated logic needed to handle the return value of

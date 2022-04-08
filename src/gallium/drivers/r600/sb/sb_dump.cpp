@@ -367,12 +367,7 @@ void dump::dump_op(node &n, const char *name) {
 		sblog << ",       ";
 	}
 
-   if (n.subtype == NST_FETCH_INST) {
-      fetch_node *f = static_cast<fetch_node*>(&n);
-      if (f->bc.indexed)
-         dump_vec(n.src);
-   } else
-      dump_vec(n.src);
+	dump_vec(n.src);
 }
 
 void dump::dump_set(shader &sh, val_set& v) {

@@ -235,7 +235,7 @@ lp_build_float_to_smallfloat(struct gallivm_state *gallivm,
  */
 LLVMValueRef
 lp_build_float_to_r11g11b10(struct gallivm_state *gallivm,
-                            const LLVMValueRef *src)
+                            LLVMValueRef *src)
 {
    LLVMValueRef dst, rcomp, bcomp, gcomp;
    struct lp_build_context i32_bld;

@@ -431,7 +431,6 @@ class gl_parameter(object):
             self.count = 0
             self.counter = c
 
-        self.marshal_count = element.get("marshal_count")
         self.count_scale = int(element.get( "count_scale", "1" ))
 
         elements = (count * self.count_scale)
@@ -494,7 +493,7 @@ class gl_parameter(object):
 
 
     def is_variable_length(self):
-        return len(self.count_parameter_list) or self.counter or self.marshal_count
+        return len(self.count_parameter_list) or self.counter
 
 
     def is_64_bit(self):
@@ -565,27 +564,18 @@ class gl_parameter(object):
         return c
 
 
-    def size_string(self, use_parens = 1, marshal = 0):
-        base_size_str = ""
-
-        count = self.get_element_count()
-        if count:
-            base_size_str = "%d * " % count
-
-        base_size_str += "sizeof(%s)" % ( self.get_base_type_string() )
-
-        if self.counter or self.count_parameter_list or (self.marshal_count and marshal):
+    def size_string(self, use_parens = 1):
+        s = self.size()
+        if self.counter or self.count_parameter_list:
             list = [ "compsize" ]
 
-            if self.marshal_count and marshal:
-                list = [ self.marshal_count ]
-            elif self.counter and self.count_parameter_list:
+            if self.counter and self.count_parameter_list:
                 list.append( self.counter )
             elif self.counter:
                 list = [ self.counter ]
 
-            if self.size() > 1:
-                list.append( base_size_str )
+            if s > 1:
+                list.append( str(s) )
 
             if len(list) > 1 and use_parens :
                 return "safe_mul(%s)" % ", ".join(list)
@@ -595,7 +585,7 @@ class gl_parameter(object):
         elif self.is_image():
             return "compsize"
         else:
-            return base_size_str
+            return str(s)
 
 
     def format_string(self):
@@ -716,7 +706,7 @@ class gl_function( gl_item ):
 
         parameters = []
         return_type = "void"
-        for child in element:
+        for child in element.getchildren():
             if child.tag == "return":
                 return_type = child.get( "type", "void" )
             elif child.tag == "param":
@@ -746,7 +736,7 @@ class gl_function( gl_item ):
                 if param.is_image():
                     self.images.append( param )
 
-        if list(element):
+        if element.getchildren():
             self.initialized = 1
             self.entry_point_parameters[name] = parameters
         else:
@@ -876,7 +866,7 @@ class gl_api(object):
 
 
     def process_OpenGLAPI(self, file_name, element):
-        for child in element:
+        for child in element.getchildren():
             if child.tag == "category":
                 self.process_category( child )
             elif child.tag == "OpenGLAPI":
@@ -896,7 +886,7 @@ class gl_api(object):
         [cat_type, key] = classify_category(cat_name, cat_number)
         self.categories[cat_type][key] = [cat_name, cat_number]
 
-        for child in cat:
+        for child in cat.getchildren():
             if child.tag == "function":
                 func_name = real_function_name( child )
 

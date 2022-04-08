@@ -65,7 +65,7 @@ files_i915 = files(
 libi915 = static_library(
   'i915',
   files_i915,
-  gnu_symbol_visibility : 'hidden',
+  c_args : [c_vis_args],
   include_directories : [inc_include, inc_src, inc_gallium, inc_gallium_aux],
 )
 

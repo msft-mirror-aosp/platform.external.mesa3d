@@ -31,7 +31,7 @@
 
 #include <stdio.h>
 #include "glheader.h"
-
+#include "imports.h"
 #include "blend.h"
 #include "buffers.h"
 #include "context.h"
@@ -45,7 +45,6 @@
 #include "texobj.h"
 #include "glformats.h"
 #include "state.h"
-#include "util/u_memory.h"
 
 
 
@@ -436,6 +435,7 @@ _mesa_update_framebuffer_visual(struct gl_context *ctx,
 				struct gl_framebuffer *fb)
 {
    memset(&fb->Visual, 0, sizeof(fb->Visual));
+   fb->Visual.rgbMode = GL_TRUE; /* assume this */
 
    /* find first RGB renderbuffer */
    for (unsigned i = 0; i < BUFFER_COUNT; i++) {
@@ -458,7 +458,7 @@ _mesa_update_framebuffer_visual(struct gl_context *ctx,
             fb->Visual.alphaBits = _mesa_get_format_bits(fmt, GL_ALPHA_BITS);
             fb->Visual.rgbBits = fb->Visual.redBits
                + fb->Visual.greenBits + fb->Visual.blueBits;
-            if (_mesa_is_format_srgb(fmt))
+            if (_mesa_get_format_color_encoding(fmt) == GL_SRGB)
                 fb->Visual.sRGBCapable = ctx->Extensions.EXT_sRGB;
             break;
          }
@@ -482,6 +482,7 @@ _mesa_update_framebuffer_visual(struct gl_context *ctx,
       const struct gl_renderbuffer *rb =
          fb->Attachment[BUFFER_DEPTH].Renderbuffer;
       const mesa_format fmt = rb->Format;
+      fb->Visual.haveDepthBuffer = GL_TRUE;
       fb->Visual.depthBits = _mesa_get_format_bits(fmt, GL_DEPTH_BITS);
    }
 
@@ -489,6 +490,7 @@ _mesa_update_framebuffer_visual(struct gl_context *ctx,
       const struct gl_renderbuffer *rb =
          fb->Attachment[BUFFER_STENCIL].Renderbuffer;
       const mesa_format fmt = rb->Format;
+      fb->Visual.haveStencilBuffer = GL_TRUE;
       fb->Visual.stencilBits = _mesa_get_format_bits(fmt, GL_STENCIL_BITS);
    }
 
@@ -496,6 +498,7 @@ _mesa_update_framebuffer_visual(struct gl_context *ctx,
       const struct gl_renderbuffer *rb =
          fb->Attachment[BUFFER_ACCUM].Renderbuffer;
       const mesa_format fmt = rb->Format;
+      fb->Visual.haveAccumBuffer = GL_TRUE;
       fb->Visual.accumRedBits = _mesa_get_format_bits(fmt, GL_RED_BITS);
       fb->Visual.accumGreenBits = _mesa_get_format_bits(fmt, GL_GREEN_BITS);
       fb->Visual.accumBlueBits = _mesa_get_format_bits(fmt, GL_BLUE_BITS);
@@ -503,7 +506,6 @@ _mesa_update_framebuffer_visual(struct gl_context *ctx,
    }
 
    compute_depth_max(fb);
-   _mesa_update_allow_draw_out_of_order(ctx);
 }
 
 
@@ -758,13 +760,6 @@ renderbuffer_exists(struct gl_context *ctx,
          return GL_FALSE;
       }
       break;
-   case GL_DEPTH_STENCIL_TO_RGBA_NV:
-   case GL_DEPTH_STENCIL_TO_BGRA_NV:
-      if (att[BUFFER_DEPTH].Type == GL_NONE ||
-          att[BUFFER_STENCIL].Type == GL_NONE) {
-         return GL_FALSE;
-      }
-      break;
    default:
       _mesa_problem(ctx,
                     "Unexpected format 0x%x in renderbuffer_exists",
@@ -861,7 +856,8 @@ _mesa_get_color_read_format(struct gl_context *ctx,
          return GL_RGB;
       case MESA_FORMAT_RG_FLOAT32:
       case MESA_FORMAT_RG_FLOAT16:
-      case MESA_FORMAT_RG_UNORM8:
+      case MESA_FORMAT_R8G8_UNORM:
+      case MESA_FORMAT_R8G8_SNORM:
          return GL_RG;
       case MESA_FORMAT_RG_SINT32:
       case MESA_FORMAT_RG_UINT32:

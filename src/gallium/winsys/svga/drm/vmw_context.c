@@ -65,7 +65,6 @@
 #define VMW_MAX_SURF_MEM_FACTOR 2
 
 
-
 struct vmw_buffer_relocation
 {
    struct pb_buffer *buffer;
@@ -96,7 +95,7 @@ struct vmw_svga_winsys_context
    struct svga_winsys_context base;
 
    struct vmw_winsys_screen *vws;
-   struct hash_table *hash;
+   struct util_hash_table *hash;
 
 #ifdef DEBUG
    boolean must_flush;
@@ -261,7 +260,7 @@ vmw_swc_flush(struct svga_winsys_context *swc,
       vmw_svga_winsys_surface_reference(&isurf->vsurf, NULL);
    }
 
-   _mesa_hash_table_clear(vswc->hash, NULL);
+   util_hash_table_clear(vswc->hash);
    vswc->surface.used = 0;
    vswc->surface.reserved = 0;
 
@@ -371,15 +370,24 @@ vmw_swc_add_validate_buffer(struct vmw_svga_winsys_context *vswc,
 			    struct pb_buffer *pb_buf,
 			    unsigned flags)
 {
-   ASSERTED enum pipe_error ret;
+   enum pipe_error ret;
    unsigned translated_flags;
-   boolean already_present;
 
-   translated_flags = vmw_translate_to_pb_flags(flags);
-   ret = pb_validate_add_buffer(vswc->validate, pb_buf, translated_flags,
-                                vswc->hash, &already_present);
-   assert(ret == PIPE_OK);
-   return !already_present;
+   /*
+    * TODO: Update pb_validate to provide a similar functionality
+    * (Check buffer already present before adding)
+    */
+   if (util_hash_table_get(vswc->hash, pb_buf) != pb_buf) {
+      translated_flags = vmw_translate_to_pb_flags(flags);
+      ret = pb_validate_add_buffer(vswc->validate, pb_buf, translated_flags);
+      /* TODO: Update pipebuffer to reserve buffers and not fail here */
+      assert(ret == PIPE_OK);
+      (void)ret;
+      (void)util_hash_table_set(vswc->hash, pb_buf, pb_buf);
+      return TRUE;
+   }
+
+   return FALSE;
 }
 
 static void
@@ -505,8 +513,12 @@ vmw_swc_surface_only_relocation(struct svga_winsys_context *swc,
       isrf = &vswc->surface.items[vswc->surface.used + vswc->surface.staged];
       vmw_svga_winsys_surface_reference(&isrf->vsurf, vsurf);
       isrf->referenced = FALSE;
-
-      _mesa_hash_table_insert(vswc->hash, vsurf, isrf);
+      /*
+       * Note that a failure here may just fall back to unhashed behavior
+       * and potentially cause unnecessary flushing, so ignore the
+       * return code.
+       */
+      (void) util_hash_table_set(vswc->hash, vsurf, isrf);
       ++vswc->surface.staged;
 
       vswc->seen_surfaces += vsurf->size;
@@ -554,15 +566,7 @@ vmw_swc_surface_relocation(struct svga_winsys_context *swc,
 
       mtx_lock(&vsurf->mutex);
       assert(vsurf->buf != NULL);
-
-      /*
-       * An internal reloc means that the surface transfer direction
-       * is opposite to the MOB transfer direction...
-       */
-      if ((flags & SVGA_RELOC_INTERNAL) &&
-          (flags & (SVGA_RELOC_READ | SVGA_RELOC_WRITE)) !=
-          (SVGA_RELOC_READ | SVGA_RELOC_WRITE))
-         flags ^= (SVGA_RELOC_READ | SVGA_RELOC_WRITE);
+      
       vmw_swc_mob_relocation(swc, mobid, NULL, (struct svga_winsys_buffer *)
                              vsurf->buf, 0, flags);
       mtx_unlock(&vsurf->mutex);
@@ -597,8 +601,12 @@ vmw_swc_shader_relocation(struct svga_winsys_context *swc,
          ishader = &vswc->shader.items[vswc->shader.used + vswc->shader.staged];
          vmw_svga_winsys_shader_reference(&ishader->vshader, vshader);
          ishader->referenced = FALSE;
-
-         _mesa_hash_table_insert(vswc->hash, vshader, ishader);
+         /*
+          * Note that a failure here may just fall back to unhashed behavior
+          * and potentially cause unnecessary flushing, so ignore the
+          * return code.
+          */
+         (void) util_hash_table_set(vswc->hash, vshader, ishader);
          ++vswc->shader.staged;
       }
 
@@ -675,7 +683,7 @@ vmw_swc_destroy(struct svga_winsys_context *swc)
       vmw_svga_winsys_shader_reference(&ishader->vshader, NULL);
    }
 
-   _mesa_hash_table_destroy(vswc->hash, NULL);
+   util_hash_table_destroy(vswc->hash);
    pb_validate_destroy(vswc->validate);
    vmw_ioctl_context_destroy(vswc->vws, swc->cid);
 #ifdef DEBUG
@@ -683,6 +691,17 @@ vmw_swc_destroy(struct svga_winsys_context *swc)
 #endif
    FREE(vswc);
 }
+
+static unsigned vmw_hash_ptr(void *p)
+{
+   return (unsigned)(unsigned long)p;
+}
+
+static int vmw_ptr_compare(void *key1, void *key2)
+{
+   return (key1 == key2) ? 0 : 1;
+}
+
 
 /**
  * vmw_svga_winsys_vgpu10_shader_screate - The winsys shader_crate callback
@@ -702,19 +721,20 @@ vmw_svga_winsys_vgpu10_shader_create(struct svga_winsys_context *swc,
                                      uint32 shaderId,
                                      SVGA3dShaderType shaderType,
                                      const uint32 *bytecode,
-                                     uint32 bytecodeLen,
-                                     const SVGA3dDXShaderSignatureHeader *sgnInfo,
-                                     uint32 sgnLen)
+                                     uint32 bytecodeLen)
 {
    struct vmw_svga_winsys_context *vswc = vmw_svga_winsys_context(swc);
    struct vmw_svga_winsys_shader *shader;
-   shader = vmw_svga_shader_create(&vswc->vws->base, shaderType, bytecode,
-                                   bytecodeLen, sgnInfo, sgnLen);
-   if (!shader)
+   struct svga_winsys_gb_shader *gb_shader =
+      vmw_svga_winsys_shader_create(&vswc->vws->base, shaderType, bytecode,
+                                    bytecodeLen);
+   if (!gb_shader)
       return NULL;
 
+   shader = vmw_svga_winsys_shader(gb_shader);
    shader->shid = shaderId;
-   return svga_winsys_shader(shader);
+
+   return gb_shader;
 }
 
 /**
@@ -796,6 +816,7 @@ vmw_svga_winsys_context_create(struct svga_winsys_screen *sws)
    vswc->base.flush = vmw_swc_flush;
    vswc->base.surface_map = vmw_svga_winsys_surface_map;
    vswc->base.surface_unmap = vmw_svga_winsys_surface_unmap;
+   vswc->base.surface_invalidate = vmw_svga_winsys_surface_invalidate;
 
    vswc->base.shader_create = vmw_svga_winsys_vgpu10_shader_create;
    vswc->base.shader_destroy = vmw_svga_winsys_vgpu10_shader_destroy;
@@ -825,7 +846,7 @@ vmw_svga_winsys_context_create(struct svga_winsys_screen *sws)
    if(!vswc->validate)
       goto out_no_validate;
 
-   vswc->hash = util_hash_table_create_ptr_keys();
+   vswc->hash = util_hash_table_create(vmw_hash_ptr, vmw_ptr_compare);
    if (!vswc->hash)
       goto out_no_hash;
 
@@ -833,7 +854,6 @@ vmw_svga_winsys_context_create(struct svga_winsys_screen *sws)
    vswc->fctx = debug_flush_ctx_create(TRUE, VMW_DEBUG_FLUSH_STACK);
 #endif
 
-   vswc->base.force_coherent = vws->force_coherent;
    return &vswc->base;
 
 out_no_hash:

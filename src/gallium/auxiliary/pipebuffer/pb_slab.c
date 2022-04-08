@@ -55,18 +55,18 @@ pb_slab_reclaim(struct pb_slabs *slabs, struct pb_slab_entry *entry)
 {
    struct pb_slab *slab = entry->slab;
 
-   list_del(&entry->head); /* remove from reclaim list */
-   list_add(&entry->head, &slab->free);
+   LIST_DEL(&entry->head); /* remove from reclaim list */
+   LIST_ADD(&entry->head, &slab->free);
    slab->num_free++;
 
    /* Add slab to the group's list if it isn't already linked. */
    if (!slab->head.next) {
       struct pb_slab_group *group = &slabs->groups[entry->group_index];
-      list_addtail(&slab->head, &group->slabs);
+      LIST_ADDTAIL(&slab->head, &group->slabs);
    }
 
    if (slab->num_free >= slab->num_entries) {
-      list_del(&slab->head);
+      LIST_DEL(&slab->head);
       slabs->slab_free(slabs->priv, slab);
    }
 }
@@ -74,7 +74,7 @@ pb_slab_reclaim(struct pb_slabs *slabs, struct pb_slab_entry *entry)
 static void
 pb_slabs_reclaim_locked(struct pb_slabs *slabs)
 {
-   while (!list_is_empty(&slabs->reclaim)) {
+   while (!LIST_IS_EMPTY(&slabs->reclaim)) {
       struct pb_slab_entry *entry =
          LIST_ENTRY(struct pb_slab_entry, slabs->reclaim.next, head);
 
@@ -114,20 +114,20 @@ pb_slab_alloc(struct pb_slabs *slabs, unsigned size, unsigned heap)
    /* If there is no candidate slab at all, or the first slab has no free
     * entries, try reclaiming entries.
     */
-   if (list_is_empty(&group->slabs) ||
-       list_is_empty(&LIST_ENTRY(struct pb_slab, group->slabs.next, head)->free))
+   if (LIST_IS_EMPTY(&group->slabs) ||
+       LIST_IS_EMPTY(&LIST_ENTRY(struct pb_slab, group->slabs.next, head)->free))
       pb_slabs_reclaim_locked(slabs);
 
    /* Remove slabs without free entries. */
-   while (!list_is_empty(&group->slabs)) {
+   while (!LIST_IS_EMPTY(&group->slabs)) {
       slab = LIST_ENTRY(struct pb_slab, group->slabs.next, head);
-      if (!list_is_empty(&slab->free))
+      if (!LIST_IS_EMPTY(&slab->free))
          break;
 
-      list_del(&slab->head);
+      LIST_DEL(&slab->head);
    }
 
-   if (list_is_empty(&group->slabs)) {
+   if (LIST_IS_EMPTY(&group->slabs)) {
       /* Drop the mutex temporarily to prevent a deadlock where the allocation
        * calls back into slab functions (most likely to happen for
        * pb_slab_reclaim if memory is low).
@@ -141,11 +141,11 @@ pb_slab_alloc(struct pb_slabs *slabs, unsigned size, unsigned heap)
          return NULL;
       mtx_lock(&slabs->mutex);
 
-      list_add(&slab->head, &group->slabs);
+      LIST_ADD(&slab->head, &group->slabs);
    }
 
    entry = LIST_ENTRY(struct pb_slab_entry, slab->free.next, head);
-   list_del(&entry->head);
+   LIST_DEL(&entry->head);
    slab->num_free--;
 
    mtx_unlock(&slabs->mutex);
@@ -163,7 +163,7 @@ void
 pb_slab_free(struct pb_slabs* slabs, struct pb_slab_entry *entry)
 {
    mtx_lock(&slabs->mutex);
-   list_addtail(&entry->head, &slabs->reclaim);
+   LIST_ADDTAIL(&entry->head, &slabs->reclaim);
    mtx_unlock(&slabs->mutex);
 }
 
@@ -212,7 +212,7 @@ pb_slabs_init(struct pb_slabs *slabs,
    slabs->slab_alloc = slab_alloc;
    slabs->slab_free = slab_free;
 
-   list_inithead(&slabs->reclaim);
+   LIST_INITHEAD(&slabs->reclaim);
 
    num_groups = slabs->num_orders * slabs->num_heaps;
    slabs->groups = CALLOC(num_groups, sizeof(*slabs->groups));
@@ -221,7 +221,7 @@ pb_slabs_init(struct pb_slabs *slabs,
 
    for (i = 0; i < num_groups; ++i) {
       struct pb_slab_group *group = &slabs->groups[i];
-      list_inithead(&group->slabs);
+      LIST_INITHEAD(&group->slabs);
    }
 
    (void) mtx_init(&slabs->mutex, mtx_plain);
@@ -241,7 +241,7 @@ pb_slabs_deinit(struct pb_slabs *slabs)
    /* Reclaim all slab entries (even those that are still in flight). This
     * implicitly calls slab_free for everything.
     */
-   while (!list_is_empty(&slabs->reclaim)) {
+   while (!LIST_IS_EMPTY(&slabs->reclaim)) {
       struct pb_slab_entry *entry =
          LIST_ENTRY(struct pb_slab_entry, slabs->reclaim.next, head);
       pb_slab_reclaim(slabs, entry);

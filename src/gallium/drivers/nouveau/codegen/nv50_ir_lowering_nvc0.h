@@ -64,14 +64,12 @@ private:
    void handleDIV(Instruction *); // integer division, modulus
    void handleRCPRSQLib(Instruction *, Value *[]);
    void handleRCPRSQ(Instruction *); // double precision float recip/rsqrt
+   void handleFTZ(Instruction *);
    void handleSET(CmpInstruction *);
    void handleTEXLOD(TexInstruction *);
    void handleShift(Instruction *);
-   void handleBREV(Instruction *);
 
 protected:
-   void handleFTZ(Instruction *);
-
    BuildUtil bld;
 };
 
@@ -173,10 +171,10 @@ private:
    Value *loadMsInfo32(Value *ptr, uint32_t off);
 
    void adjustCoordinatesMS(TexInstruction *);
-   TexInstruction *processSurfaceCoordsGM107(TexInstruction *, Instruction *[4]);
+   void processSurfaceCoordsGM107(TexInstruction *);
    void processSurfaceCoordsNVE4(TexInstruction *);
    void processSurfaceCoordsNVC0(TexInstruction *);
-   void convertSurfaceFormat(TexInstruction *, Instruction **);
+   void convertSurfaceFormat(TexInstruction *);
    void insertOOBSurfaceOpResult(TexInstruction *);
    Value *calculateSampleOffset(Value *sampleID);
 

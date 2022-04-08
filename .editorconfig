@@ -32,13 +32,9 @@ indent_size = 2
 indent_style = space
 indent_size = 2
 
-[*.html]
-indent_style = space
-indent_size = 2
-
 [*.patch]
 trim_trailing_whitespace = false
 
-[{meson.build,meson_options.txt}]
+[meson.build,meson_options.txt]
 indent_style = space
 indent_size = 2

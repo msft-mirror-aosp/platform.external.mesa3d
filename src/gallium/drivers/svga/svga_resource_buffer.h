@@ -94,11 +94,6 @@ struct svga_buffer
    boolean user;
 
    /**
-    * Whether swbuf is used for this buffer.
-    */
-   boolean use_swbuf;
-
-   /**
     * Creation key for the host surface handle.
     *
     * This structure describes all the host surface characteristics so that it
@@ -278,7 +273,7 @@ svga_buffer_has_hw_storage(struct svga_buffer *sbuf)
 
 /**
  * Map the hardware storage of a buffer.
- * \param flags  bitmask of PIPE_MAP_* flags
+ * \param flags  bitmask of PIPE_TRANSFER_* flags
  */
 static inline void *
 svga_buffer_hw_storage_map(struct svga_context *svga,
@@ -290,26 +285,7 @@ svga_buffer_hw_storage_map(struct svga_context *svga,
    svga->hud.num_buffers_mapped++;
 
    if (sws->have_gb_objects) {
-      struct svga_winsys_context *swc = svga->swc;
-      boolean rebind;
-      void *map;
-
-      if (swc->force_coherent) {
-         flags |= PIPE_MAP_PERSISTENT | PIPE_MAP_COHERENT;
-      }
-      map = swc->surface_map(swc, sbuf->handle, flags, retry, &rebind);
-      if (map && rebind) {
-         enum pipe_error ret;
-
-         ret = SVGA3D_BindGBSurface(swc, sbuf->handle);
-         if (ret != PIPE_OK) {
-            svga_context_flush(svga, NULL);
-            ret = SVGA3D_BindGBSurface(swc, sbuf->handle);
-            assert(ret == PIPE_OK);
-         }
-         svga_context_flush(svga, NULL);
-      }
-      return map;
+      return svga->swc->surface_map(svga->swc, sbuf->handle, flags, retry);
    } else {
       *retry = FALSE;
       return sws->buffer_map(sws, sbuf->hwbuf, flags);
@@ -328,10 +304,16 @@ svga_buffer_hw_storage_unmap(struct svga_context *svga,
    if (sws->have_gb_objects) {
       struct svga_winsys_context *swc = svga->swc;
       boolean rebind;
-
       swc->surface_unmap(swc, sbuf->handle, &rebind);
       if (rebind) {
-         SVGA_RETRY(svga, SVGA3D_BindGBSurface(swc, sbuf->handle));
+         enum pipe_error ret;
+         ret = SVGA3D_BindGBSurface(swc, sbuf->handle);
+         if (ret != PIPE_OK) {
+            /* flush and retry */
+            svga_context_flush(svga, NULL);
+            ret = SVGA3D_BindGBSurface(swc, sbuf->handle);
+            assert(ret == PIPE_OK);
+         }
       }
    } else
       sws->buffer_unmap(sws, sbuf->hwbuf);

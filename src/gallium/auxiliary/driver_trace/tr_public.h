@@ -40,7 +40,7 @@ struct pipe_context;
 struct pipe_screen *
 trace_screen_create(struct pipe_screen *screen);
 
-bool
+boolean
 trace_enabled(void);
 
 #ifdef __cplusplus

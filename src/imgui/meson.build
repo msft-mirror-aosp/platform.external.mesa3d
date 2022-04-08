@@ -1,6 +1,6 @@
 libimgui_core = static_library(
-  'imgui_core',
-  files('imgui.cpp', 'imgui_draw.cpp', 'imgui_widgets.cpp'),
+  'intel_imgui_core',
+  files('imgui.cpp', 'imgui_demo.cpp', 'imgui_draw.cpp', 'imgui_widgets.cpp'),
   cpp_args : ['-w'],
   install : false
 )

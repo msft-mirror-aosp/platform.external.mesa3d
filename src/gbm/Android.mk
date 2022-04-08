@@ -36,10 +36,7 @@ LOCAL_STATIC_LIBRARIES := \
 	libmesa_util \
 	libmesa_loader
 
-LOCAL_MODULE := libgbm_mesa
-LOCAL_LICENSE_KINDS := SPDX-license-identifier-MIT
-LOCAL_LICENSE_CONDITIONS := notice
-LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../../LICENSE
+LOCAL_MODULE := libgbm
 
 LOCAL_SRC_FILES := \
 	$(gbm_core_FILES) \

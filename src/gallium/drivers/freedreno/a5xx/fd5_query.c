@@ -66,7 +66,7 @@ occlusion_resume(struct fd_acc_query *aq, struct fd_batch *batch)
 	OUT_RING(ring, A5XX_RB_SAMPLE_COUNT_CONTROL_COPY);
 
 	OUT_PKT4(ring, REG_A5XX_RB_SAMPLE_COUNT_ADDR_LO, 2);
-	OUT_RELOC(ring, query_sample(aq, start));
+	OUT_RELOCW(ring, query_sample(aq, start));
 
 	OUT_PKT7(ring, CP_EVENT_WRITE, 1);
 	OUT_RING(ring, ZPASS_DONE);
@@ -81,7 +81,7 @@ occlusion_pause(struct fd_acc_query *aq, struct fd_batch *batch)
 	struct fd_ringbuffer *ring = batch->draw;
 
 	OUT_PKT7(ring, CP_MEM_WRITE, 4);
-	OUT_RELOC(ring, query_sample(aq, stop));
+	OUT_RELOCW(ring, query_sample(aq, stop));
 	OUT_RING(ring, 0xffffffff);
 	OUT_RING(ring, 0xffffffff);
 
@@ -91,7 +91,7 @@ occlusion_pause(struct fd_acc_query *aq, struct fd_batch *batch)
 	OUT_RING(ring, A5XX_RB_SAMPLE_COUNT_CONTROL_COPY);
 
 	OUT_PKT4(ring, REG_A5XX_RB_SAMPLE_COUNT_ADDR_LO, 2);
-	OUT_RELOC(ring, query_sample(aq, stop));
+	OUT_RELOCW(ring, query_sample(aq, stop));
 
 	OUT_PKT7(ring, CP_EVENT_WRITE, 1);
 	OUT_RING(ring, ZPASS_DONE);
@@ -108,7 +108,7 @@ occlusion_pause(struct fd_acc_query *aq, struct fd_batch *batch)
 	OUT_PKT7(ring, CP_MEM_TO_MEM, 9);
 	OUT_RING(ring, CP_MEM_TO_MEM_0_DOUBLE |
 			CP_MEM_TO_MEM_0_NEG_C);
-	OUT_RELOC(ring, query_sample(aq, result));     /* dst */
+	OUT_RELOCW(ring, query_sample(aq, result));     /* dst */
 	OUT_RELOC(ring, query_sample(aq, result));      /* srcA */
 	OUT_RELOC(ring, query_sample(aq, stop));        /* srcB */
 	OUT_RELOC(ring, query_sample(aq, start));       /* srcC */
@@ -134,6 +134,7 @@ occlusion_predicate_result(struct fd_acc_query *aq, void *buf,
 
 static const struct fd_acc_sample_provider occlusion_counter = {
 		.query_type = PIPE_QUERY_OCCLUSION_COUNTER,
+		.active = FD_STAGE_DRAW,
 		.size = sizeof(struct fd5_query_sample),
 		.resume = occlusion_resume,
 		.pause = occlusion_pause,
@@ -142,6 +143,7 @@ static const struct fd_acc_sample_provider occlusion_counter = {
 
 static const struct fd_acc_sample_provider occlusion_predicate = {
 		.query_type = PIPE_QUERY_OCCLUSION_PREDICATE,
+		.active = FD_STAGE_DRAW,
 		.size = sizeof(struct fd5_query_sample),
 		.resume = occlusion_resume,
 		.pause = occlusion_pause,
@@ -150,6 +152,7 @@ static const struct fd_acc_sample_provider occlusion_predicate = {
 
 static const struct fd_acc_sample_provider occlusion_predicate_conservative = {
 		.query_type = PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE,
+		.active = FD_STAGE_DRAW,
 		.size = sizeof(struct fd5_query_sample),
 		.resume = occlusion_resume,
 		.pause = occlusion_pause,
@@ -166,9 +169,9 @@ timestamp_resume(struct fd_acc_query *aq, struct fd_batch *batch)
 	struct fd_ringbuffer *ring = batch->draw;
 
 	OUT_PKT7(ring, CP_EVENT_WRITE, 4);
-	OUT_RING(ring, CP_EVENT_WRITE_0_EVENT(RB_DONE_TS) |
+	OUT_RING(ring, CP_EVENT_WRITE_0_EVENT(CACHE_FLUSH_AND_INV_EVENT) |
 			CP_EVENT_WRITE_0_TIMESTAMP);
-	OUT_RELOC(ring, query_sample(aq, start));
+	OUT_RELOCW(ring, query_sample(aq, start));
 	OUT_RING(ring, 0x00000000);
 
 	fd_reset_wfi(batch);
@@ -180,9 +183,9 @@ timestamp_pause(struct fd_acc_query *aq, struct fd_batch *batch)
 	struct fd_ringbuffer *ring = batch->draw;
 
 	OUT_PKT7(ring, CP_EVENT_WRITE, 4);
-	OUT_RING(ring, CP_EVENT_WRITE_0_EVENT(RB_DONE_TS) |
+	OUT_RING(ring, CP_EVENT_WRITE_0_EVENT(CACHE_FLUSH_AND_INV_EVENT) |
 			CP_EVENT_WRITE_0_TIMESTAMP);
-	OUT_RELOC(ring, query_sample(aq, stop));
+	OUT_RELOCW(ring, query_sample(aq, stop));
 	OUT_RING(ring, 0x00000000);
 
 	fd_reset_wfi(batch);
@@ -192,7 +195,7 @@ timestamp_pause(struct fd_acc_query *aq, struct fd_batch *batch)
 	OUT_PKT7(ring, CP_MEM_TO_MEM, 9);
 	OUT_RING(ring, CP_MEM_TO_MEM_0_DOUBLE |
 			CP_MEM_TO_MEM_0_NEG_C);
-	OUT_RELOC(ring, query_sample(aq, result));     /* dst */
+	OUT_RELOCW(ring, query_sample(aq, result));     /* dst */
 	OUT_RELOC(ring, query_sample(aq, result));      /* srcA */
 	OUT_RELOC(ring, query_sample(aq, stop));        /* srcB */
 	OUT_RELOC(ring, query_sample(aq, start));       /* srcC */
@@ -226,7 +229,7 @@ timestamp_accumulate_result(struct fd_acc_query *aq, void *buf,
 
 static const struct fd_acc_sample_provider time_elapsed = {
 		.query_type = PIPE_QUERY_TIME_ELAPSED,
-		.always = true,
+		.active = FD_STAGE_DRAW | FD_STAGE_CLEAR,
 		.size = sizeof(struct fd5_query_sample),
 		.resume = timestamp_resume,
 		.pause = timestamp_pause,
@@ -242,7 +245,7 @@ static const struct fd_acc_sample_provider time_elapsed = {
 
 static const struct fd_acc_sample_provider timestamp = {
 		.query_type = PIPE_QUERY_TIMESTAMP,
-		.always = true,
+		.active = FD_STAGE_ALL,
 		.size = sizeof(struct fd5_query_sample),
 		.resume = timestamp_resume,
 		.pause = timestamp_pause,
@@ -305,7 +308,7 @@ perfcntr_resume(struct fd_acc_query *aq, struct fd_batch *batch)
 		OUT_PKT7(ring, CP_REG_TO_MEM, 3);
 		OUT_RING(ring, CP_REG_TO_MEM_0_64B |
 			CP_REG_TO_MEM_0_REG(counter->counter_reg_lo));
-		OUT_RELOC(ring, query_sample_idx(aq, i, start));
+		OUT_RELOCW(ring, query_sample_idx(aq, i, start));
 	}
 }
 
@@ -333,7 +336,7 @@ perfcntr_pause(struct fd_acc_query *aq, struct fd_batch *batch)
 		OUT_PKT7(ring, CP_REG_TO_MEM, 3);
 		OUT_RING(ring, CP_REG_TO_MEM_0_64B |
 			CP_REG_TO_MEM_0_REG(counter->counter_reg_lo));
-		OUT_RELOC(ring, query_sample_idx(aq, i, stop));
+		OUT_RELOCW(ring, query_sample_idx(aq, i, stop));
 	}
 
 	/* and compute the result: */
@@ -342,7 +345,7 @@ perfcntr_pause(struct fd_acc_query *aq, struct fd_batch *batch)
 		OUT_PKT7(ring, CP_MEM_TO_MEM, 9);
 		OUT_RING(ring, CP_MEM_TO_MEM_0_DOUBLE |
 				CP_MEM_TO_MEM_0_NEG_C);
-		OUT_RELOC(ring, query_sample_idx(aq, i, result));     /* dst */
+		OUT_RELOCW(ring, query_sample_idx(aq, i, result));     /* dst */
 		OUT_RELOC(ring, query_sample_idx(aq, i, result));      /* srcA */
 		OUT_RELOC(ring, query_sample_idx(aq, i, stop));        /* srcB */
 		OUT_RELOC(ring, query_sample_idx(aq, i, start));       /* srcC */
@@ -363,7 +366,7 @@ perfcntr_accumulate_result(struct fd_acc_query *aq, void *buf,
 
 static const struct fd_acc_sample_provider perfcntr = {
 		.query_type = FD_QUERY_FIRST_PERFCNTR,
-		.always = true,
+		.active = FD_STAGE_DRAW | FD_STAGE_CLEAR,
 		.resume = perfcntr_resume,
 		.pause = perfcntr_pause,
 		.result = perfcntr_accumulate_result,
@@ -430,7 +433,7 @@ fd5_create_batch_query(struct pipe_context *pctx,
 		counters_per_group[entry->gid]++;
 	}
 
-	q = fd_acc_create_query2(ctx, 0, 0, &perfcntr);
+	q = fd_acc_create_query2(ctx, 0, &perfcntr);
 	aq = fd_acc_query(q);
 
 	/* sample buffer size is based on # of queries: */

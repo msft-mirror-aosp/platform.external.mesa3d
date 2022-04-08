@@ -36,8 +36,6 @@
 #ifndef _DRI_COMMON_H
 #define _DRI_COMMON_H
 
-#ifdef GLX_DIRECT_RENDERING
-
 #include <GL/internal/dri_interface.h>
 #include <stdbool.h>
 #include "loader.h"
@@ -63,6 +61,8 @@ driFetchDrawable(struct glx_context *gc, GLXDrawable glxDrawable);
 extern void
 driReleaseDrawables(struct glx_context *gc);
 
+extern const __DRIsystemTimeExtension systemTimeExtension;
+
 extern void dri_message(int level, const char *f, ...) PRINTFLIKE(2, 3);
 
 #define InfoMessageF(...) dri_message(_LOADER_INFO, __VA_ARGS__)
@@ -82,7 +82,5 @@ extern bool
 dri2_check_no_error(uint32_t flags, struct glx_context *share_context,
                     int major, unsigned *error);
 
-
-#endif /* GLX_DIRECT_RENDERING */
 
 #endif /* _DRI_COMMON_H */

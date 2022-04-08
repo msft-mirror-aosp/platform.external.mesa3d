@@ -68,9 +68,6 @@ void cp_src(struct ir2_context *ctx)
 				if (!is_mov(p))
 					break;
 
-				if (p->alu.saturate)
-					break;
-
 				/* cant apply abs to const src, const src only for alu */
 				if (p->src[0].type == IR2_SRC_CONST &&
 					(src->abs || instr->type != IR2_ALU))
@@ -203,9 +200,8 @@ void cp_export(struct ir2_context *ctx)
 			p->is_ssa = true;
 			p->ssa.ncomp = 0;
 			memset(p->ssa.comp, 0, sizeof(p->ssa.comp));
-			p->alu.saturate |= instr->alu.saturate;
 
-			switch (p->alu.vector_opc) {
+			switch (instr->alu.vector_opc) {
 			case PRED_SETE_PUSHv ... PRED_SETGTE_PUSHv:
 			case DOT2ADDv:
 			case DOT3v:

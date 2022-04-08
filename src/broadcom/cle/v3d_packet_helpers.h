@@ -21,9 +21,6 @@
  * IN THE SOFTWARE.
  */
 
-#ifndef MESA_V3D_PACKET_HELPERS_H
-#define MESA_V3D_PACKET_HELPERS_H
-
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -39,7 +36,7 @@
 #define __gen_validate_value(x) VALGRIND_CHECK_MEM_IS_DEFINED(&(x), sizeof(x))
 #endif
 #else
-#define VG(x) ((void)0)
+#define VG(x)
 #endif
 
 #ifndef __gen_validate_value
@@ -217,4 +214,3 @@ __gen_unpack_f187(const uint8_t *restrict cl, uint32_t start, uint32_t end)
    return uif(bits << 16);
 }
 
-#endif

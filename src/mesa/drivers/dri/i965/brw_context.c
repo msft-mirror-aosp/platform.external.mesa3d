@@ -37,6 +37,7 @@
 #include "main/fbobject.h"
 #include "main/extensions.h"
 #include "main/glthread.h"
+#include "main/imports.h"
 #include "main/macros.h"
 #include "main/points.h"
 #include "main/version.h"
@@ -45,7 +46,6 @@
 #include "main/framebuffer.h"
 #include "main/stencil.h"
 #include "main/state.h"
-#include "main/spirv_extensions.h"
 
 #include "vbo/vbo.h"
 
@@ -75,7 +75,6 @@
 #include "util/ralloc.h"
 #include "util/debug.h"
 #include "util/disk_cache.h"
-#include "util/u_memory.h"
 #include "isl/isl.h"
 
 #include "common/gen_defines.h"
@@ -103,22 +102,32 @@ get_bsw_model(const struct intel_screen *screen)
 const char *
 brw_get_renderer_string(const struct intel_screen *screen)
 {
-   static char buf[128];
-   const char *name = gen_get_device_name(screen->deviceID);
+   const char *chipset;
+   static char buffer[128];
+   char *bsw = NULL;
 
-   if (!name)
-      name = "Intel Unknown";
-
-   snprintf(buf, sizeof(buf), "Mesa DRI %s", name);
+   switch (screen->deviceID) {
+#undef CHIPSET
+#define CHIPSET(id, symbol, str) case id: chipset = str; break;
+#include "pci_ids/i965_pci_ids.h"
+   default:
+      chipset = "Unknown Intel Chipset";
+      break;
+   }
 
    /* Braswell branding is funny, so we have to fix it up here */
    if (screen->deviceID == 0x22B1) {
-      char *needle = strstr(buf, "XXX");
-      if (needle)
+      bsw = strdup(chipset);
+      char *needle = strstr(bsw, "XXX");
+      if (needle) {
          memcpy(needle, get_bsw_model(screen), 3);
+         chipset = bsw;
+      }
    }
 
-   return buf;
+   (void) driGetRendererString(buffer, chipset, 0);
+   free(bsw);
+   return buffer;
 }
 
 static const GLubyte *
@@ -141,7 +150,7 @@ intel_get_string(struct gl_context * ctx, GLenum name)
 
 static void
 brw_set_background_context(struct gl_context *ctx,
-                           UNUSED struct util_queue_monitoring *queue_info)
+                           struct util_queue_monitoring *queue_info)
 {
    struct brw_context *brw = brw_context(ctx);
    __DRIcontext *driContext = brw->driContext;
@@ -290,31 +299,6 @@ intel_glFlush(struct gl_context *ctx)
 }
 
 static void
-intel_glEnable(struct gl_context *ctx, GLenum cap, GLboolean state)
-{
-   struct brw_context *brw = brw_context(ctx);
-
-   switch (cap) {
-   case GL_BLACKHOLE_RENDER_INTEL:
-      brw->frontend_noop = state;
-      intel_batchbuffer_flush(brw);
-      intel_batchbuffer_maybe_noop(brw);
-      /* Because we started previous batches with a potential
-       * MI_BATCH_BUFFER_END if NOOP was enabled, that means that anything
-       * that was ever emitted after that never made it to the HW. So when the
-       * blackhole state changes from NOOP->!NOOP reupload the entire state.
-       */
-      if (!brw->frontend_noop) {
-         brw->NewGLState = ~0u;
-         brw->ctx.NewDriverState = ~0ull;
-      }
-      break;
-   default:
-      break;
-   }
-}
-
-static void
 intel_finish(struct gl_context * ctx)
 {
    struct brw_context *brw = brw_context(ctx);
@@ -343,7 +327,6 @@ brw_init_driver_functions(struct brw_context *brw,
    if (!brw->driContext->driScreenPriv->dri2.useInvalidate)
       functions->Viewport = intel_viewport;
 
-   functions->Enable = intel_glEnable;
    functions->Flush = intel_glFlush;
    functions->Finish = intel_finish;
    functions->GetString = intel_get_string;
@@ -437,7 +420,6 @@ brw_initialize_spirv_supported_capabilities(struct brw_context *brw)
    ctx->Const.SpirVCapabilities.tessellation = true;
    ctx->Const.SpirVCapabilities.transform_feedback = devinfo->gen >= 7;
    ctx->Const.SpirVCapabilities.variable_pointers = true;
-   ctx->Const.SpirVCapabilities.integer_functions2 = devinfo->gen >= 8;
 }
 
 static void
@@ -495,11 +477,11 @@ brw_initialize_context_constants(struct brw_context *brw)
    ctx->Const.MaxImageUnits = MAX_IMAGE_UNITS;
    if (devinfo->gen >= 7) {
       ctx->Const.MaxRenderbufferSize = 16384;
-      ctx->Const.MaxTextureSize = 16384;
+      ctx->Const.MaxTextureLevels = MIN2(15 /* 16384 */, MAX_TEXTURE_LEVELS);
       ctx->Const.MaxCubeTextureLevels = 15; /* 16384 */
    } else {
       ctx->Const.MaxRenderbufferSize = 8192;
-      ctx->Const.MaxTextureSize = 8192;
+      ctx->Const.MaxTextureLevels = MIN2(14 /* 8192 */, MAX_TEXTURE_LEVELS);
       ctx->Const.MaxCubeTextureLevels = 14; /* 8192 */
    }
    ctx->Const.Max3DTextureLevels = 12; /* 2048 */
@@ -602,6 +584,14 @@ brw_initialize_context_constants(struct brw_context *brw)
    ctx->Const.MaxIntegerSamples = max_samples;
    ctx->Const.MaxImageSamples = 0;
 
+   /* gen6_set_sample_maps() sets SampleMap{2,4,8}x variables which are used
+    * to map indices of rectangular grid to sample numbers within a pixel.
+    * These variables are used by GL_EXT_framebuffer_multisample_blit_scaled
+    * extension implementation. For more details see the comment above
+    * gen6_set_sample_maps() definition.
+    */
+   gen6_set_sample_maps(ctx);
+
    ctx->Const.MinLineWidth = 1.0;
    ctx->Const.MinLineWidthAA = 1.0;
    if (devinfo->gen >= 6) {
@@ -630,8 +620,6 @@ brw_initialize_context_constants(struct brw_context *brw)
    if (devinfo->gen >= 5 || devinfo->is_g4x)
       ctx->Const.MaxClipPlanes = 8;
 
-   ctx->Const.GLSLFragCoordIsSysVal = true;
-   ctx->Const.GLSLFrontFacingIsSysVal = true;
    ctx->Const.GLSLTessLevelsAsInputs = true;
    ctx->Const.PrimitiveRestartForPatches = true;
 
@@ -835,15 +823,6 @@ brw_initialize_cs_context_constants(struct brw_context *brw)
    ctx->Const.MaxComputeWorkGroupSize[2] = max_invocations;
    ctx->Const.MaxComputeWorkGroupInvocations = max_invocations;
    ctx->Const.MaxComputeSharedMemorySize = 64 * 1024;
-
-   /* Constants used for ARB_compute_variable_group_size. */
-   if (devinfo->gen >= 7) {
-      assert(max_invocations >= 512);
-      ctx->Const.MaxComputeVariableGroupSize[0] = max_invocations;
-      ctx->Const.MaxComputeVariableGroupSize[1] = max_invocations;
-      ctx->Const.MaxComputeVariableGroupSize[2] = max_invocations;
-      ctx->Const.MaxComputeVariableGroupInvocations = max_invocations;
-   }
 }
 
 /**
@@ -862,7 +841,16 @@ brw_process_driconf_options(struct brw_context *brw)
    driOptionCache *options = &brw->optionCache;
    driParseConfigFiles(options, &brw->screen->optionCache,
                        brw->driContext->driScreenPriv->myNum,
-                       "i965", NULL, NULL, 0, NULL, 0);
+                       "i965", NULL);
+
+   int bo_reuse_mode = driQueryOptioni(options, "bo_reuse");
+   switch (bo_reuse_mode) {
+   case DRI_CONF_BO_REUSE_DISABLED:
+      break;
+   case DRI_CONF_BO_REUSE_ALL:
+      brw_bufmgr_enable_reuse(brw->bufmgr);
+      break;
+   }
 
    if (INTEL_DEBUG & DEBUG_NO_HIZ) {
        brw->has_hiz = false;
@@ -915,18 +903,13 @@ brw_process_driconf_options(struct brw_context *brw)
    ctx->Const.ForceGLSLAbsSqrt =
       driQueryOptionb(options, "force_glsl_abs_sqrt");
 
-   ctx->Const.GLSLZeroInit = driQueryOptionb(options, "glsl_zero_init") ? 1 : 0;
+   ctx->Const.GLSLZeroInit = driQueryOptionb(options, "glsl_zero_init");
 
    brw->dual_color_blend_by_location =
       driQueryOptionb(options, "dual_color_blend_by_location");
 
    ctx->Const.AllowGLSLCrossStageInterpolationMismatch =
       driQueryOptionb(options, "allow_glsl_cross_stage_interpolation_mismatch");
-
-   char *vendor_str = driQueryOptionstr(options, "force_gl_vendor");
-   /* not an empty string */
-   if (*vendor_str)
-      ctx->Const.VendorOverride = vendor_str;
 
    ctx->Const.dri_config_options_sha1 = ralloc_array(brw, unsigned char, 20);
    driComputeOptionsSha1(&brw->screen->optionCache,
@@ -978,7 +961,6 @@ brwCreateContext(gl_api api,
       *dri_ctx_error = __DRI_CTX_ERROR_NO_MEMORY;
       return false;
    }
-   brw->perf_ctx = gen_perf_new_context(brw);
 
    driContextPriv->driverPrivate = brw;
    brw->driContext = driContextPriv;
@@ -1004,13 +986,6 @@ brwCreateContext(gl_api api,
    if (notify_reset)
       functions.GetGraphicsResetStatus = brw_get_graphics_reset_status;
 
-   brw_process_driconf_options(brw);
-
-   if (api == API_OPENGL_CORE &&
-       driQueryOptionb(&screen->optionCache, "force_compat_profile")) {
-      api = API_OPENGL_COMPAT;
-   }
-
    struct gl_context *ctx = &brw->ctx;
 
    if (!_mesa_initialize_context(ctx, api, mesaVis, shareCtx, &functions)) {
@@ -1032,7 +1007,7 @@ brwCreateContext(gl_api api,
       _swrast_CreateContext(ctx);
    }
 
-   _vbo_CreateContext(ctx, true);
+   _vbo_CreateContext(ctx);
    if (ctx->swrast_context) {
       _tnl_CreateContext(ctx);
       TNL_CONTEXT(ctx)->Driver.RunPipeline = _tnl_run_pipeline;
@@ -1044,6 +1019,8 @@ brwCreateContext(gl_api api,
    }
 
    _mesa_meta_init(ctx);
+
+   brw_process_driconf_options(brw);
 
    if (INTEL_DEBUG & DEBUG_PERF)
       brw->perf_debug = true;
@@ -1149,22 +1126,17 @@ brwCreateContext(gl_api api,
    _mesa_compute_version(ctx);
 
    /* GL_ARB_gl_spirv */
-   if (ctx->Extensions.ARB_gl_spirv) {
+   if (ctx->Extensions.ARB_gl_spirv)
       brw_initialize_spirv_supported_capabilities(brw);
-
-      if (ctx->Extensions.ARB_spirv_extensions) {
-         /* GL_ARB_spirv_extensions */
-         ctx->Const.SpirVExtensions = MALLOC_STRUCT(spirv_supported_extensions);
-         _mesa_fill_supported_spirv_extensions(ctx->Const.SpirVExtensions,
-                                               &ctx->Const.SpirVCapabilities);
-      }
-   }
 
    _mesa_initialize_dispatch_tables(ctx);
    _mesa_initialize_vbo_vtxfmt(ctx);
 
    if (ctx->Extensions.INTEL_performance_query)
       brw_init_performance_queries(brw);
+
+   vbo_use_buffer_objects(ctx);
+   vbo_always_unmap_buffers(ctx);
 
    brw->ctx.Cache = brw->screen->disk_cache;
 
@@ -1256,7 +1228,7 @@ intelDestroyContext(__DRIcontext * driContextPriv)
 GLboolean
 intelUnbindContext(__DRIcontext * driContextPriv)
 {
-   struct gl_context *ctx = driContextPriv->driverPrivate;
+   GET_CURRENT_CONTEXT(ctx);
    _mesa_glthread_finish(ctx);
 
    /* Unset current context and dispath table */
@@ -1459,7 +1431,7 @@ intel_update_dri2_buffers(struct brw_context *brw, __DRIdrawable *drawable)
     * thus ignore the invalidate. */
    drawable->lastStamp = drawable->dri2.stamp;
 
-   if (INTEL_DEBUG & DEBUG_DRI)
+   if (unlikely(INTEL_DEBUG & DEBUG_DRI))
       fprintf(stderr, "enter %s, drawable %p\n", __func__, drawable);
 
    intel_query_dri2_buffers(brw, drawable, &buffers, &count);
@@ -1512,7 +1484,7 @@ intel_update_renderbuffers(__DRIcontext *context, __DRIdrawable *drawable)
     * thus ignore the invalidate. */
    drawable->lastStamp = drawable->dri2.stamp;
 
-   if (INTEL_DEBUG & DEBUG_DRI)
+   if (unlikely(INTEL_DEBUG & DEBUG_DRI))
       fprintf(stderr, "enter %s, drawable %p\n", __func__, drawable);
 
    if (dri_screen->image.loader)
@@ -1552,10 +1524,8 @@ intel_prepare_render(struct brw_context *brw)
     * that will happen next will probably dirty the front buffer.  So
     * mark it as dirty here.
     */
-   if (_mesa_is_front_buffer_drawing(ctx->DrawBuffer) &&
-       ctx->DrawBuffer != _mesa_get_incomplete_framebuffer()) {
+   if (_mesa_is_front_buffer_drawing(ctx->DrawBuffer))
       brw->front_buffer_dirty = true;
-   }
 
    if (brw->is_shared_buffer_bound) {
       /* Subsequent rendering will probably dirty the shared buffer. */
@@ -1691,7 +1661,7 @@ intel_process_dri2_buffer(struct brw_context *brw,
    if (old_name == buffer->name)
       return;
 
-   if (INTEL_DEBUG & DEBUG_DRI) {
+   if (unlikely(INTEL_DEBUG & DEBUG_DRI)) {
       fprintf(stderr,
               "attaching buffer %d, at %d, cpp %d, pitch %d\n",
               buffer->name, buffer->attachment,

@@ -29,9 +29,6 @@ LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
 LOCAL_MODULE := libmesa_git_sha1
-LOCAL_LICENSE_KINDS := SPDX-license-identifier-MIT
-LOCAL_LICENSE_CONDITIONS := notice
-LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../../LICENSE
 
 LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 intermediates := $(call local-generated-sources-dir)
@@ -46,12 +43,10 @@ $(intermediates)/dummy.c:
 
 LOCAL_GENERATED_SOURCES += $(addprefix $(intermediates)/, git_sha1.h)
 
-.KATI_RESTAT: $(intermediates)/git_sha1.h
-$(intermediates)/git_sha1.h: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(MESA_TOP)/bin/git_sha1_gen.py
-$(intermediates)/git_sha1.h: $(wildcard $(MESA_TOP)/.git/logs/HEAD) $(MESA_TOP)/bin/git_sha1_gen.py
+$(intermediates)/git_sha1.h: $(wildcard $(MESA_TOP)/.git/logs/HEAD)
 	@mkdir -p $(dir $@)
 	@echo "GIT-SHA1: $(PRIVATE_MODULE) <= git"
-	$(hide) $(PRIVATE_SCRIPT) --output $@
+	$(hide) $(MESA_PYTHON2) $(MESA_TOP)/bin/git_sha1_gen.py --output $@
 
 LOCAL_EXPORT_C_INCLUDE_DIRS := $(intermediates)
 

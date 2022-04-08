@@ -208,35 +208,18 @@ def preamble(intype, outtype, inpv, outpv, pr, prim):
 def postamble():
     print('}')
 
-def prim_restart(in_verts, out_verts, out_prims, close_func = None):
-    print('restart:')
-    print('      if (i + ' + str(in_verts) + ' > in_nr) {')
-    for i in range(out_prims):
-        for j in range(out_verts):
-            print('         (out+j+' + str(out_verts * i) + ')[' + str(j) + '] = restart_index;')
-    print('         continue;')
-    print('      }')
-    for i in range(in_verts):
-        print('      if (in[i + ' + str(i) + '] == restart_index) {')
-        print('         i += ' + str(i + 1) + ';')
-
-        if close_func is not None:
-            close_func(i)
-
-        print('         goto restart;')
-        print('      }')
 
 def points(intype, outtype, inpv, outpv, pr):
     preamble(intype, outtype, inpv, outpv, pr, prim='points')
-    print('  for (i = start, j = 0; j < out_nr; j++, i++) { ')
-    do_point( intype, outtype, 'out+j',  'i' );
+    print('  for (i = start; i < (out_nr+start); i++) { ')
+    do_point( intype, outtype, 'out+i',  'i' );
     print('   }')
     postamble()
 
 def lines(intype, outtype, inpv, outpv, pr):
     preamble(intype, outtype, inpv, outpv, pr, prim='lines')
-    print('  for (i = start, j = 0; j < out_nr; j+=2, i+=2) { ')
-    do_line( intype, outtype, 'out+j',  'i', 'i+1', inpv, outpv );
+    print('  for (i = start; i < (out_nr+start); i+=2) { ')
+    do_line( intype, outtype, 'out+i',  'i', 'i+1', inpv, outpv );
     print('   }')
     postamble()
 
@@ -249,27 +232,16 @@ def linestrip(intype, outtype, inpv, outpv, pr):
 
 def lineloop(intype, outtype, inpv, outpv, pr):
     preamble(intype, outtype, inpv, outpv, pr, prim='lineloop')
-    print('  unsigned end = start;')
     print('  for (i = start, j = 0; j < out_nr - 2; j+=2, i++) { ')
-    if pr == PRENABLE:
-        def close_func(index):
-            do_line( intype, outtype, 'out+j',  'end', 'start', inpv, outpv )
-            print('         start = i;')
-            print('         end = start;')
-            print('         j += 2;')
-
-        prim_restart(2, 2, 1, close_func)
-
     do_line( intype, outtype, 'out+j',  'i', 'i+1', inpv, outpv );
-    print('      end = i+1;')
     print('   }')
-    do_line( intype, outtype, 'out+j',  'end', 'start', inpv, outpv );
+    do_line( intype, outtype, 'out+j',  'i', 'start', inpv, outpv );
     postamble()
 
 def tris(intype, outtype, inpv, outpv, pr):
     preamble(intype, outtype, inpv, outpv, pr, prim='tris')
-    print('  for (i = start, j = 0; j < out_nr; j+=3, i+=3) { ')
-    do_tri( intype, outtype, 'out+j',  'i', 'i+1', 'i+2', inpv, outpv );
+    print('  for (i = start; i < (out_nr+start); i+=3) { ')
+    do_tri( intype, outtype, 'out+i',  'i', 'i+1', 'i+2', inpv, outpv );
     print('   }')
     postamble()
 
@@ -288,17 +260,7 @@ def tristrip(intype, outtype, inpv, outpv, pr):
 def trifan(intype, outtype, inpv, outpv, pr):
     preamble(intype, outtype, inpv, outpv, pr, prim='trifan')
     print('  for (i = start, j = 0; j < out_nr; j+=3, i++) { ')
-
-    if pr == PRENABLE:
-        def close_func(index):
-            print('         start = i;')
-        prim_restart(3, 3, 1, close_func)
-
-    if inpv == FIRST:
-        do_tri( intype, outtype, 'out+j',  'i+1', 'i+2', 'start', inpv, outpv );
-    else:
-        do_tri( intype, outtype, 'out+j',  'start', 'i+1', 'i+2', inpv, outpv );
-
+    do_tri( intype, outtype, 'out+j',  'start', 'i+1', 'i+2', inpv, outpv );
     print('   }')
     postamble()
 
@@ -308,9 +270,28 @@ def polygon(intype, outtype, inpv, outpv, pr):
     preamble(intype, outtype, inpv, outpv, pr, prim='polygon')
     print('  for (i = start, j = 0; j < out_nr; j+=3, i++) { ')
     if pr == PRENABLE:
-        def close_func(index):
-            print('         start = i;')
-        prim_restart(3, 3, 1, close_func)
+        print('restart:')
+        print('      if (i + 3 > in_nr) {')
+        print('         (out+j+0)[0] = restart_index;')
+        print('         (out+j+0)[1] = restart_index;')
+        print('         (out+j+0)[2] = restart_index;')
+        print('         continue;')
+        print('      }')
+        print('      if (in[i + 0] == restart_index) {')
+        print('         i += 1;')
+        print('         start = i;')
+        print('         goto restart;')
+        print('      }')
+        print('      if (in[i + 1] == restart_index) {')
+        print('         i += 2;')
+        print('         start = i;')
+        print('         goto restart;')
+        print('      }')
+        print('      if (in[i + 2] == restart_index) {')
+        print('         i += 3;')
+        print('         start = i;')
+        print('         goto restart;')
+        print('      }')
 
     if inpv == FIRST:
         do_tri( intype, outtype, 'out+j',  'start', 'i+1', 'i+2', inpv, outpv );
@@ -324,7 +305,32 @@ def quads(intype, outtype, inpv, outpv, pr):
     preamble(intype, outtype, inpv, outpv, pr, prim='quads')
     print('  for (i = start, j = 0; j < out_nr; j+=6, i+=4) { ')
     if pr == PRENABLE:
-        prim_restart(4, 3, 2)
+        print('restart:')
+        print('      if (i + 4 > in_nr) {')
+        print('         (out+j+0)[0] = restart_index;')
+        print('         (out+j+0)[1] = restart_index;')
+        print('         (out+j+0)[2] = restart_index;')
+        print('         (out+j+3)[0] = restart_index;')
+        print('         (out+j+3)[1] = restart_index;')
+        print('         (out+j+3)[2] = restart_index;')
+        print('         continue;')
+        print('      }')
+        print('      if (in[i + 0] == restart_index) {')
+        print('         i += 1;')
+        print('         goto restart;')
+        print('      }')
+        print('      if (in[i + 1] == restart_index) {')
+        print('         i += 2;')
+        print('         goto restart;')
+        print('      }')
+        print('      if (in[i + 2] == restart_index) {')
+        print('         i += 3;')
+        print('         goto restart;')
+        print('      }')
+        print('      if (in[i + 3] == restart_index) {')
+        print('         i += 4;')
+        print('         goto restart;')
+        print('      }')
 
     do_quad( intype, outtype, 'out+j', 'i+0', 'i+1', 'i+2', 'i+3', inpv, outpv );
     print('   }')
@@ -335,8 +341,32 @@ def quadstrip(intype, outtype, inpv, outpv, pr):
     preamble(intype, outtype, inpv, outpv, pr, prim='quadstrip')
     print('  for (i = start, j = 0; j < out_nr; j+=6, i+=2) { ')
     if pr == PRENABLE:
-        prim_restart(4, 3, 2)
-
+        print('restart:')
+        print('      if (i + 4 > in_nr) {')
+        print('         (out+j+0)[0] = restart_index;')
+        print('         (out+j+0)[1] = restart_index;')
+        print('         (out+j+0)[2] = restart_index;')
+        print('         (out+j+3)[0] = restart_index;')
+        print('         (out+j+3)[1] = restart_index;')
+        print('         (out+j+3)[2] = restart_index;')
+        print('         continue;')
+        print('      }')
+        print('      if (in[i + 0] == restart_index) {')
+        print('         i += 1;')
+        print('         goto restart;')
+        print('      }')
+        print('      if (in[i + 1] == restart_index) {')
+        print('         i += 2;')
+        print('         goto restart;')
+        print('      }')
+        print('      if (in[i + 2] == restart_index) {')
+        print('         i += 3;')
+        print('         goto restart;')
+        print('      }')
+        print('      if (in[i + 3] == restart_index) {')
+        print('         i += 4;')
+        print('         goto restart;')
+        print('      }')
     if inpv == LAST:
         do_quad( intype, outtype, 'out+j', 'i+2', 'i+0', 'i+1', 'i+3', inpv, outpv );
     else:
@@ -347,8 +377,8 @@ def quadstrip(intype, outtype, inpv, outpv, pr):
 
 def linesadj(intype, outtype, inpv, outpv, pr):
     preamble(intype, outtype, inpv, outpv, pr, prim='linesadj')
-    print('  for (i = start, j = 0; j < out_nr; j+=4, i+=4) { ')
-    do_lineadj( intype, outtype, 'out+j',  'i+0', 'i+1', 'i+2', 'i+3', inpv, outpv )
+    print('  for (i = start; i < (out_nr+start); i+=4) { ')
+    do_lineadj( intype, outtype, 'out+i',  'i+0', 'i+1', 'i+2', 'i+3', inpv, outpv )
     print('  }')
     postamble()
 
@@ -363,8 +393,8 @@ def linestripadj(intype, outtype, inpv, outpv, pr):
 
 def trisadj(intype, outtype, inpv, outpv, pr):
     preamble(intype, outtype, inpv, outpv, pr, prim='trisadj')
-    print('  for (i = start, j = 0; j < out_nr; j+=6, i+=6) { ')
-    do_triadj( intype, outtype, 'out+j',  'i+0', 'i+1', 'i+2', 'i+3',
+    print('  for (i = start; i < (out_nr+start); i+=6) { ')
+    do_triadj( intype, outtype, 'out+i',  'i+0', 'i+1', 'i+2', 'i+3',
                'i+4', 'i+5', inpv, outpv )
     print('  }')
     postamble()

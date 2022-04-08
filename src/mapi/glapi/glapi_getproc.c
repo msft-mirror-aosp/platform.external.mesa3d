@@ -511,6 +511,11 @@ _glapi_get_proc_address(const char *funcName)
 
    init_glapi_relocs_once();
 
+#ifdef USE_MGL_NAMESPACE
+   if (funcName && funcName[0] == 'm')
+      funcName++;
+#endif
+
   if (!funcName || funcName[0] != 'g' || funcName[1] != 'l')
       return NULL;
 

@@ -333,12 +333,11 @@ static bool
 reads_uniform(const struct v3d_device_info *devinfo, uint64_t instruction)
 {
         struct v3d_qpu_instr qpu;
-        ASSERTED bool ok = v3d_qpu_instr_unpack(devinfo, instruction, &qpu);
+        MAYBE_UNUSED bool ok = v3d_qpu_instr_unpack(devinfo, instruction, &qpu);
         assert(ok);
 
         if (qpu.sig.ldunif ||
             qpu.sig.ldunifrf ||
-            qpu.sig.ldtlbu ||
             qpu.sig.wrtmuc) {
                 return true;
         }
@@ -417,7 +416,7 @@ v3d_vir_to_qpu(struct v3d_compile *c, struct qpu_reg *temp_registers)
                         fprintf(stderr, "Failed to pack instruction:\n");
                         vir_dump_inst(c, inst);
                         fprintf(stderr, "\n");
-                        c->compilation_result = V3D_COMPILATION_FAILED;
+                        c->failed = true;
                         return;
                 }
         }

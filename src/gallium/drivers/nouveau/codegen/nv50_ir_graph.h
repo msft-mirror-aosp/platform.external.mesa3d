@@ -47,6 +47,7 @@ public:
          FORWARD,
          BACK,
          CROSS, // e.g. loop break
+         DUMMY
       };
 
       Edge(Node *dst, Node *src, Type kind);

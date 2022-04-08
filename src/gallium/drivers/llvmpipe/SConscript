@@ -18,9 +18,6 @@ llvmpipe = env.ConvenienceLibrary(
 
 env.Alias('llvmpipe', llvmpipe)
 
-env.Append(CPPPATH = [
-    '../../../compiler/nir',
-])
 
 if not env['embedded']:
     env = env.Clone()

@@ -18,16 +18,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-if not with_platform_windows
-  # pipe-loader doesn't build on windows.
-  subdir('trivial')
-endif
-if with_gallium_softpipe
-  subdir('unit')
-endif
-
-if host_machine.system() != 'windows' or cpp.get_id() != 'gcc'
-  # FIXME: This has linking errors I can't figure out with MinGW. works fine
-  # with MSVC, works fine with GCC on Linux.
-  subdir('graw')
-endif
+subdir('trivial')
+subdir('unit')
+subdir('graw')

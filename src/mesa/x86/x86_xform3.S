@@ -30,8 +30,7 @@
  */
 
 #include "assyntax.h"
-#define MATH_ASM_PTR_SIZE 4
-#include "math/m_vector_asm.h"
+#include "matypes.h"
 #include "xform_args.h"
 
 	SEG_TEXT

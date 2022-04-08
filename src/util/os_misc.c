@@ -1,6 +1,6 @@
 /**************************************************************************
  *
- * Copyright 2008-2010 VMware, Inc.
+ * Copyright 2008-2010 Vmware, Inc.
  * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -27,45 +27,33 @@
 
 
 #include "os_misc.h"
-#include "os_file.h"
-#include "macros.h"
 
 #include <stdarg.h>
 
 
-#if DETECT_OS_WINDOWS
+#if defined(PIPE_SUBSYSTEM_WINDOWS_USER)
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN      // Exclude rarely-used stuff from Windows headers
 #endif
 #include <windows.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 #else
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <inttypes.h>
 
 #endif
 
 
-#if DETECT_OS_ANDROID
-#  define LOG_TAG "MESA"
+#if defined(PIPE_OS_LINUX) || defined(PIPE_OS_CYGWIN) || defined(PIPE_OS_SOLARIS) || defined(PIPE_OS_HURD)
 #  include <unistd.h>
-#  include <log/log.h>
-#elif DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || DETECT_OS_HURD
-#  include <unistd.h>
-#elif DETECT_OS_OPENBSD || DETECT_OS_FREEBSD
-#  include <sys/resource.h>
+#elif defined(PIPE_OS_APPLE) || defined(PIPE_OS_BSD)
 #  include <sys/sysctl.h>
-#elif DETECT_OS_APPLE || DETECT_OS_BSD
-#  include <sys/sysctl.h>
-#elif DETECT_OS_HAIKU
+#elif defined(PIPE_OS_HAIKU)
 #  include <kernel/OS.h>
-#elif DETECT_OS_WINDOWS
+#elif defined(PIPE_OS_WINDOWS)
 #  include <windows.h>
 #else
 #error unexpected platform in os_sysinfo.c
@@ -100,7 +88,7 @@ os_log_message(const char *message)
          fout = stderr;
    }
 
-#if DETECT_OS_WINDOWS
+#if defined(PIPE_SUBSYSTEM_WINDOWS_USER)
    OutputDebugStringA(message);
    if(GetConsoleWindow() && !IsDebuggerPresent()) {
       fflush(stdout);
@@ -111,24 +99,21 @@ os_log_message(const char *message)
       fputs(message, fout);
       fflush(fout);
    }
-#else /* !DETECT_OS_WINDOWS */
+#else /* !PIPE_SUBSYSTEM_WINDOWS */
    fflush(stdout);
    fputs(message, fout);
    fflush(fout);
-#  if DETECT_OS_ANDROID
-   LOG_PRI(ANDROID_LOG_ERROR, LOG_TAG, "%s", message);
-#  endif
 #endif
 }
 
 
-#if !defined(EMBEDDED_DEVICE)
+#if !defined(PIPE_SUBSYSTEM_EMBEDDED)
 const char *
 os_get_option(const char *name)
 {
    return getenv(name);
 }
-#endif /* !EMBEDDED_DEVICE */
+#endif /* !PIPE_SUBSYSTEM_EMBEDDED */
 
 
 /**
@@ -139,7 +124,7 @@ os_get_option(const char *name)
 bool
 os_get_total_physical_memory(uint64_t *size)
 {
-#if DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || DETECT_OS_HURD
+#if defined(PIPE_OS_LINUX) || defined(PIPE_OS_CYGWIN) || defined(PIPE_OS_SOLARIS) || defined(PIPE_OS_HURD)
    const long phys_pages = sysconf(_SC_PHYS_PAGES);
    const long page_size = sysconf(_SC_PAGE_SIZE);
 
@@ -148,25 +133,25 @@ os_get_total_physical_memory(uint64_t *size)
 
    *size = (uint64_t)phys_pages * (uint64_t)page_size;
    return true;
-#elif DETECT_OS_APPLE || DETECT_OS_BSD
+#elif defined(PIPE_OS_APPLE) || defined(PIPE_OS_BSD)
    size_t len = sizeof(*size);
    int mib[2];
 
    mib[0] = CTL_HW;
-#if DETECT_OS_APPLE
+#if defined(PIPE_OS_APPLE)
    mib[1] = HW_MEMSIZE;
-#elif DETECT_OS_NETBSD || DETECT_OS_OPENBSD
+#elif defined(PIPE_OS_NETBSD) || defined(PIPE_OS_OPENBSD)
    mib[1] = HW_PHYSMEM64;
-#elif DETECT_OS_FREEBSD
+#elif defined(PIPE_OS_FREEBSD)
    mib[1] = HW_REALMEM;
-#elif DETECT_OS_DRAGONFLY
+#elif defined(PIPE_OS_DRAGONFLY)
    mib[1] = HW_PHYSMEM;
 #else
 #error Unsupported *BSD
 #endif
 
    return (sysctl(mib, 2, size, &len, NULL, 0) == 0);
-#elif DETECT_OS_HAIKU
+#elif defined(PIPE_OS_HAIKU)
    system_info info;
    status_t ret;
 
@@ -176,7 +161,7 @@ os_get_total_physical_memory(uint64_t *size)
 
    *size = (uint64_t)info.max_pages * (uint64_t)B_PAGE_SIZE;
    return true;
-#elif DETECT_OS_WINDOWS
+#elif defined(PIPE_OS_WINDOWS)
    MEMORYSTATUSEX status;
    BOOL ret;
 
@@ -186,54 +171,6 @@ os_get_total_physical_memory(uint64_t *size)
    return (ret == TRUE);
 #else
 #error unexpected platform in os_sysinfo.c
-   return false;
-#endif
-}
-
-bool
-os_get_available_system_memory(uint64_t *size)
-{
-#if DETECT_OS_LINUX
-   char *meminfo = os_read_file("/proc/meminfo", NULL);
-   if (!meminfo)
-      return false;
-
-   char *str = strstr(meminfo, "MemAvailable:");
-   if (!str) {
-      free(meminfo);
-      return false;
-   }
-
-   uint64_t kb_mem_available;
-   if (sscanf(str, "MemAvailable: %" PRIx64, &kb_mem_available) == 1) {
-      free(meminfo);
-      *size = kb_mem_available << 10;
-      return true;
-   }
-
-   free(meminfo);
-   return false;
-#elif DETECT_OS_OPENBSD || DETECT_OS_FREEBSD
-   struct rlimit rl;
-#if DETECT_OS_OPENBSD
-   int mib[] = { CTL_HW, HW_USERMEM64 };
-#elif DETECT_OS_FREEBSD
-   int mib[] = { CTL_HW, HW_USERMEM };
-#endif
-   int64_t mem_available;
-   size_t len = sizeof(mem_available);
-
-   /* physmem - wired */
-   if (sysctl(mib, 2, &mem_available, &len, NULL, 0) == -1)
-      return false;
-
-   /* static login.conf limit */
-   if (getrlimit(RLIMIT_DATA, &rl) == -1)
-      return false;
-
-   *size = MIN2(mem_available, rl.rlim_cur);
-   return true;
-#else
    return false;
 #endif
 }

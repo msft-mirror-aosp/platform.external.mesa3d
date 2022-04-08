@@ -147,7 +147,6 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
          post_sync_flags |= PIPE_CONTROL_WRITE_IMMEDIATE;
          non_lri_post_sync_flags |= PIPE_CONTROL_WRITE_IMMEDIATE;
          bo = brw->workaround_bo;
-         offset = brw->workaround_bo_offset;
       }
    }
 

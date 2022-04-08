@@ -30,7 +30,6 @@
 
 
 
-#include "glformats.h"
 #include "glheader.h"
 #include "clear.h"
 #include "context.h"
@@ -145,6 +144,7 @@ static ALWAYS_INLINE void
 clear(struct gl_context *ctx, GLbitfield mask, bool no_error)
 {
    FLUSH_VERTICES(ctx, 0);
+   FLUSH_CURRENT(ctx, 0);
 
    if (!no_error) {
       if (mask & ~(GL_COLOR_BUFFER_BIT |
@@ -203,17 +203,17 @@ clear(struct gl_context *ctx, GLbitfield mask, bool no_error)
       }
 
       if ((mask & GL_DEPTH_BUFFER_BIT)
-          && ctx->DrawBuffer->Visual.depthBits > 0) {
+          && ctx->DrawBuffer->Visual.haveDepthBuffer) {
          bufferMask |= BUFFER_BIT_DEPTH;
       }
 
       if ((mask & GL_STENCIL_BUFFER_BIT)
-          && ctx->DrawBuffer->Visual.stencilBits > 0) {
+          && ctx->DrawBuffer->Visual.haveStencilBuffer) {
          bufferMask |= BUFFER_BIT_STENCIL;
       }
 
       if ((mask & GL_ACCUM_BUFFER_BIT)
-          && ctx->DrawBuffer->Visual.accumRedBits > 0) {
+          && ctx->DrawBuffer->Visual.haveAccumBuffer) {
          bufferMask |= BUFFER_BIT_ACCUM;
       }
 
@@ -344,15 +344,10 @@ clear_bufferiv(struct gl_context *ctx, GLenum buffer, GLint drawbuffer,
                const GLint *value, bool no_error)
 {
    FLUSH_VERTICES(ctx, 0);
+   FLUSH_CURRENT(ctx, 0);
 
    if (ctx->NewState) {
       _mesa_update_state( ctx );
-   }
-
-   if (!no_error && ctx->DrawBuffer->_Status != GL_FRAMEBUFFER_COMPLETE_EXT) {
-      _mesa_error(ctx, GL_INVALID_FRAMEBUFFER_OPERATION_EXT,
-                  "glClearBufferiv(incomplete framebuffer)");
-      return;
    }
 
    switch (buffer) {
@@ -463,15 +458,10 @@ clear_bufferuiv(struct gl_context *ctx, GLenum buffer, GLint drawbuffer,
                 const GLuint *value, bool no_error)
 {
    FLUSH_VERTICES(ctx, 0);
+   FLUSH_CURRENT(ctx, 0);
 
    if (ctx->NewState) {
       _mesa_update_state( ctx );
-   }
-
-   if (!no_error && ctx->DrawBuffer->_Status != GL_FRAMEBUFFER_COMPLETE) {
-      _mesa_error(ctx, GL_INVALID_FRAMEBUFFER_OPERATION,
-                  "glClearBufferuiv(incomplete framebuffer)");
-      return;
    }
 
    switch (buffer) {
@@ -557,15 +547,10 @@ clear_bufferfv(struct gl_context *ctx, GLenum buffer, GLint drawbuffer,
                const GLfloat *value, bool no_error)
 {
    FLUSH_VERTICES(ctx, 0);
+   FLUSH_CURRENT(ctx, 0);
 
    if (ctx->NewState) {
       _mesa_update_state( ctx );
-   }
-
-   if (!no_error && ctx->DrawBuffer->_Status != GL_FRAMEBUFFER_COMPLETE) {
-      _mesa_error(ctx, GL_INVALID_FRAMEBUFFER_OPERATION,
-                  "glClearBufferfv(incomplete framebuffer)");
-      return;
    }
 
    switch (buffer) {
@@ -590,20 +575,7 @@ clear_bufferfv(struct gl_context *ctx, GLenum buffer, GLint drawbuffer,
           * hook instead.
           */
          const GLclampd clearSave = ctx->Depth.Clear;
-
-         /* Page 263 (page 279 of the PDF) of the OpenGL 3.0 spec says:
-          *
-          *     "If buffer is DEPTH, drawbuffer must be zero, and value points
-          *     to the single depth value to clear the depth buffer to.
-          *     Clamping and type conversion for fixed-point depth buffers are
-          *     performed in the same fashion as for ClearDepth."
-          */
-         const struct gl_renderbuffer *rb =
-            ctx->DrawBuffer->Attachment[BUFFER_DEPTH].Renderbuffer;
-         const bool is_float_depth =
-            _mesa_has_depth_float_channel(rb->InternalFormat);
-         ctx->Depth.Clear = is_float_depth ? *value : SATURATE(*value);
-
+         ctx->Depth.Clear = *value;
          ctx->Driver.Clear(ctx, BUFFER_BIT_DEPTH);
          ctx->Depth.Clear = clearSave;
       }
@@ -693,6 +665,7 @@ clear_bufferfi(struct gl_context *ctx, GLenum buffer, GLint drawbuffer,
    GLbitfield mask = 0;
 
    FLUSH_VERTICES(ctx, 0);
+   FLUSH_CURRENT(ctx, 0);
 
    if (!no_error) {
       if (buffer != GL_DEPTH_STENCIL) {
@@ -722,12 +695,6 @@ clear_bufferfi(struct gl_context *ctx, GLenum buffer, GLint drawbuffer,
       _mesa_update_state( ctx );
    }
 
-   if (!no_error && ctx->DrawBuffer->_Status != GL_FRAMEBUFFER_COMPLETE_EXT) {
-      _mesa_error(ctx, GL_INVALID_FRAMEBUFFER_OPERATION_EXT,
-                  "glClearBufferfi(incomplete framebuffer)");
-      return;
-   }
-
    if (ctx->DrawBuffer->Attachment[BUFFER_DEPTH].Renderbuffer)
       mask |= BUFFER_BIT_DEPTH;
    if (ctx->DrawBuffer->Attachment[BUFFER_STENCIL].Renderbuffer)
@@ -738,20 +705,8 @@ clear_bufferfi(struct gl_context *ctx, GLenum buffer, GLint drawbuffer,
       const GLclampd clearDepthSave = ctx->Depth.Clear;
       const GLuint clearStencilSave = ctx->Stencil.Clear;
 
-      /* set new clear values
-       *
-       * Page 263 (page 279 of the PDF) of the OpenGL 3.0 spec says:
-       *
-       *     "depth and stencil are the values to clear the depth and stencil
-       *     buffers to, respectively. Clamping and type conversion for
-       *     fixed-point depth buffers are performed in the same fashion as
-       *     for ClearDepth."
-       */
-      const struct gl_renderbuffer *rb =
-         ctx->DrawBuffer->Attachment[BUFFER_DEPTH].Renderbuffer;
-      const bool has_float_depth = rb &&
-         _mesa_has_depth_float_channel(rb->InternalFormat);
-      ctx->Depth.Clear = has_float_depth ? depth : SATURATE(depth);
+      /* set new clear values */
+      ctx->Depth.Clear = depth;
       ctx->Stencil.Clear = stencil;
 
       /* clear buffers */

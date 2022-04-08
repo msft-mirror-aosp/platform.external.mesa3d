@@ -30,7 +30,7 @@
 #include "util/u_cpu_detect.h"
 #include "util/u_debug.h"
 #include "util/u_memory.h"
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 #include "util/u_hash_table.h"
 #include "util/u_screen.h"
 #include "util/u_transfer_helper.h"
@@ -102,7 +102,7 @@ vc4_screen_destroy(struct pipe_screen *pscreen)
 {
         struct vc4_screen *screen = vc4_screen(pscreen);
 
-        _mesa_hash_table_destroy(screen->bo_handles, NULL);
+        util_hash_table_destroy(screen->bo_handles);
         vc4_bufmgr_destroy(pscreen);
         slab_destroy_parent(&screen->transfer_pool);
         free(screen->ro);
@@ -148,7 +148,6 @@ vc4_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
         case PIPE_CAP_TEXTURE_MULTISAMPLE:
         case PIPE_CAP_TEXTURE_SWIZZLE:
         case PIPE_CAP_TEXTURE_BARRIER:
-        case PIPE_CAP_TGSI_TEXCOORD:
                 return 1;
 
         case PIPE_CAP_NATIVE_FENCE_FD:
@@ -165,7 +164,6 @@ vc4_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
 
         case PIPE_CAP_TGSI_FS_COORD_ORIGIN_UPPER_LEFT:
         case PIPE_CAP_TGSI_FS_COORD_PIXEL_CENTER_HALF_INTEGER:
-        case PIPE_CAP_TGSI_FS_FACE_IS_INTEGER_SYSVAL:
                 return 1;
 
         case PIPE_CAP_MIXED_FRAMEBUFFER_SIZES:
@@ -173,8 +171,7 @@ vc4_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
                 return 1;
 
                 /* Texturing. */
-        case PIPE_CAP_MAX_TEXTURE_2D_SIZE:
-                return 2048;
+        case PIPE_CAP_MAX_TEXTURE_2D_LEVELS:
         case PIPE_CAP_MAX_TEXTURE_CUBE_LEVELS:
                 return VC4_MAX_MIP_LEVELS;
         case PIPE_CAP_MAX_TEXTURE_3D_LEVELS:
@@ -198,9 +195,6 @@ vc4_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
         }
         case PIPE_CAP_UMA:
                 return 1;
-
-        case PIPE_CAP_ALPHA_TEST:
-                return 0;
 
         default:
                 return u_pipe_screen_get_param_defaults(pscreen, param);
@@ -281,9 +275,6 @@ vc4_screen_get_shader_param(struct pipe_screen *pscreen,
                 return 1;
         case PIPE_SHADER_CAP_INT64_ATOMICS:
         case PIPE_SHADER_CAP_FP16:
-        case PIPE_SHADER_CAP_FP16_DERIVATIVES:
-        case PIPE_SHADER_CAP_INT16:
-        case PIPE_SHADER_CAP_GLSL_16BIT_CONSTS:
         case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
         case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
         case PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED:
@@ -306,6 +297,8 @@ vc4_screen_get_shader_param(struct pipe_screen *pscreen,
         case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
         case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
                 return 0;
+        case PIPE_SHADER_CAP_SCALAR_ISA:
+                return 1;
         default:
                 fprintf(stderr, "unknown shader param %d\n", param);
                 return 0;
@@ -313,7 +306,7 @@ vc4_screen_get_shader_param(struct pipe_screen *pscreen,
         return 0;
 }
 
-static bool
+static boolean
 vc4_screen_is_format_supported(struct pipe_screen *pscreen,
                                enum pipe_format format,
                                enum pipe_texture_target target,
@@ -327,10 +320,10 @@ vc4_screen_is_format_supported(struct pipe_screen *pscreen,
                 return false;
 
         if (sample_count > 1 && sample_count != VC4_MAX_SAMPLES)
-                return false;
+                return FALSE;
 
         if (target >= PIPE_MAX_TEXTURE_TYPES) {
-                return false;
+                return FALSE;
         }
 
         if (usage & PIPE_BIND_VERTEX_BUFFER) {
@@ -381,34 +374,34 @@ vc4_screen_is_format_supported(struct pipe_screen *pscreen,
                 case PIPE_FORMAT_R8_SSCALED:
                         break;
                 default:
-                        return false;
+                        return FALSE;
                 }
         }
 
         if ((usage & PIPE_BIND_RENDER_TARGET) &&
             !vc4_rt_format_supported(format)) {
-                return false;
+                return FALSE;
         }
 
         if ((usage & PIPE_BIND_SAMPLER_VIEW) &&
             (!vc4_tex_format_supported(format) ||
              (format == PIPE_FORMAT_ETC1_RGB8 && !screen->has_etc1))) {
-                return false;
+                return FALSE;
         }
 
         if ((usage & PIPE_BIND_DEPTH_STENCIL) &&
             format != PIPE_FORMAT_S8_UINT_Z24_UNORM &&
             format != PIPE_FORMAT_X8Z24_UNORM) {
-                return false;
+                return FALSE;
         }
 
         if ((usage & PIPE_BIND_INDEX_BUFFER) &&
             format != PIPE_FORMAT_I8_UINT &&
             format != PIPE_FORMAT_I16_UINT) {
-                return false;
+                return FALSE;
         }
 
-        return true;
+        return TRUE;
 }
 
 static void
@@ -419,7 +412,6 @@ vc4_screen_query_dmabuf_modifiers(struct pipe_screen *pscreen,
                                   int *count)
 {
         int m, i;
-        bool tex_will_lower;
         uint64_t available_modifiers[] = {
                 DRM_FORMAT_MOD_BROADCOM_VC4_T_TILED,
                 DRM_FORMAT_MOD_LINEAR,
@@ -434,7 +426,6 @@ vc4_screen_query_dmabuf_modifiers(struct pipe_screen *pscreen,
 
         *count = MIN2(max, num_modifiers);
         m = screen->has_tiling_ioctl ? 0 : 1;
-        tex_will_lower = !vc4_tex_format_supported(format);
         /* We support both modifiers (tiled and linear) for all sampler
          * formats, but if we don't have the DRM_VC4_GET_TILING ioctl
          * we shouldn't advertise the tiled formats.
@@ -442,8 +433,20 @@ vc4_screen_query_dmabuf_modifiers(struct pipe_screen *pscreen,
         for (i = 0; i < *count; i++) {
                 modifiers[i] = available_modifiers[m++];
                 if (external_only)
-                        external_only[i] = tex_will_lower;
+                        external_only[i] = false;
        }
+}
+
+#define PTR_TO_UINT(x) ((unsigned)((intptr_t)(x)))
+
+static unsigned handle_hash(void *key)
+{
+    return PTR_TO_UINT(key);
+}
+
+static int handle_compare(void *key1, void *key2)
+{
+    return PTR_TO_UINT(key1) != PTR_TO_UINT(key2);
 }
 
 static bool
@@ -522,7 +525,7 @@ vc4_screen_create(int fd, struct renderonly *ro)
 
         list_inithead(&screen->bo_cache.time_list);
         (void) mtx_init(&screen->bo_handles_mutex, mtx_plain);
-        screen->bo_handles = util_hash_table_create_ptr_keys();
+        screen->bo_handles = util_hash_table_create(handle_hash, handle_compare);
 
         screen->has_control_flow =
                 vc4_has_feature(screen, DRM_VC4_PARAM_SUPPORTS_BRANCHES);

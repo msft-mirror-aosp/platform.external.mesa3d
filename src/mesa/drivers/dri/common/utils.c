@@ -181,47 +181,28 @@ driCreateConfigs(mesa_format format,
 		 GLboolean enable_accum, GLboolean color_depth_match,
 		 GLboolean mutable_render_buffer)
 {
-   static const struct {
-      uint32_t masks[4];
-      int shifts[4];
-   } format_table[] = {
+   static const uint32_t masks_table[][4] = {
       /* MESA_FORMAT_B5G6R5_UNORM */
-      {{ 0x0000F800, 0x000007E0, 0x0000001F, 0x00000000 },
-       { 11, 5, 0, -1 }},
+      { 0x0000F800, 0x000007E0, 0x0000001F, 0x00000000 },
       /* MESA_FORMAT_B8G8R8X8_UNORM */
-      {{ 0x00FF0000, 0x0000FF00, 0x000000FF, 0x00000000 },
-       { 16, 8, 0, -1 }},
+      { 0x00FF0000, 0x0000FF00, 0x000000FF, 0x00000000 },
       /* MESA_FORMAT_B8G8R8A8_UNORM */
-      {{ 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000 },
-       { 16, 8, 0, 24 }},
+      { 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000 },
       /* MESA_FORMAT_B10G10R10X2_UNORM */
-      {{ 0x3FF00000, 0x000FFC00, 0x000003FF, 0x00000000 },
-       { 20, 10, 0, -1 }},
+      { 0x3FF00000, 0x000FFC00, 0x000003FF, 0x00000000 },
       /* MESA_FORMAT_B10G10R10A2_UNORM */
-      {{ 0x3FF00000, 0x000FFC00, 0x000003FF, 0xC0000000 },
-       { 20, 10, 0, 30 }},
+      { 0x3FF00000, 0x000FFC00, 0x000003FF, 0xC0000000 },
       /* MESA_FORMAT_R8G8B8A8_UNORM */
-      {{ 0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000 },
-       { 0, 8, 16, 24 }},
+      { 0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000 },
       /* MESA_FORMAT_R8G8B8X8_UNORM */
-      {{ 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00000000 },
-       { 0, 8, 16, -1 }},
+      { 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00000000 },
       /* MESA_FORMAT_R10G10B10X2_UNORM */
-      {{ 0x000003FF, 0x000FFC00, 0x3FF00000, 0x00000000 },
-       { 0, 10, 20, -1 }},
+      { 0x000003FF, 0x000FFC00, 0x3FF00000, 0x00000000 },
       /* MESA_FORMAT_R10G10B10A2_UNORM */
-      {{ 0x000003FF, 0x000FFC00, 0x3FF00000, 0xC0000000 },
-       { 0, 10, 20, 30 }},
-      /* MESA_FORMAT_RGBX_FLOAT16 */
-      {{ 0, 0, 0, 0},
-       { 0, 16, 32, -1 }},
-      /* MESA_FORMAT_RGBA_FLOAT16 */
-      {{ 0, 0, 0, 0},
-       { 0, 16, 32, 48 }},
+      { 0x000003FF, 0x000FFC00, 0x3FF00000, 0xC0000000 },
    };
 
    const uint32_t * masks;
-   const int * shifts;
    __DRIconfig **configs, **c;
    struct gl_config *modes;
    unsigned i, j, k, h;
@@ -232,55 +213,37 @@ driCreateConfigs(mesa_format format,
    int blue_bits;
    int alpha_bits;
    bool is_srgb;
-   bool is_float;
 
    switch (format) {
    case MESA_FORMAT_B5G6R5_UNORM:
-      masks = format_table[0].masks;
-      shifts = format_table[0].shifts;
+      masks = masks_table[0];
       break;
    case MESA_FORMAT_B8G8R8X8_UNORM:
    case MESA_FORMAT_B8G8R8X8_SRGB:
-      masks = format_table[1].masks;
-      shifts = format_table[1].shifts;
+      masks = masks_table[1];
       break;
    case MESA_FORMAT_B8G8R8A8_UNORM:
    case MESA_FORMAT_B8G8R8A8_SRGB:
-      masks = format_table[2].masks;
-      shifts = format_table[2].shifts;
+      masks = masks_table[2];
       break;
    case MESA_FORMAT_R8G8B8A8_UNORM:
    case MESA_FORMAT_R8G8B8A8_SRGB:
-      masks = format_table[5].masks;
-      shifts = format_table[5].shifts;
+      masks = masks_table[5];
       break;
    case MESA_FORMAT_R8G8B8X8_UNORM:
-      masks = format_table[6].masks;
-      shifts = format_table[6].shifts;
+      masks = masks_table[6];
       break;
    case MESA_FORMAT_B10G10R10X2_UNORM:
-      masks = format_table[3].masks;
-      shifts = format_table[3].shifts;
+      masks = masks_table[3];
       break;
    case MESA_FORMAT_B10G10R10A2_UNORM:
-      masks = format_table[4].masks;
-      shifts = format_table[4].shifts;
-      break;
-   case MESA_FORMAT_RGBX_FLOAT16:
-      masks = format_table[9].masks;
-      shifts = format_table[9].shifts;
-      break;
-   case MESA_FORMAT_RGBA_FLOAT16:
-      masks = format_table[10].masks;
-      shifts = format_table[10].shifts;
+      masks = masks_table[4];
       break;
    case MESA_FORMAT_R10G10B10X2_UNORM:
-      masks = format_table[7].masks;
-      shifts = format_table[7].shifts;
+      masks = masks_table[7];
       break;
    case MESA_FORMAT_R10G10B10A2_UNORM:
-      masks = format_table[8].masks;
-      shifts = format_table[8].shifts;
+      masks = masks_table[8];
       break;
    default:
       fprintf(stderr, "[%s:%u] Unknown framebuffer type %s (%d).\n",
@@ -293,8 +256,7 @@ driCreateConfigs(mesa_format format,
    green_bits = _mesa_get_format_bits(format, GL_GREEN_BITS);
    blue_bits = _mesa_get_format_bits(format, GL_BLUE_BITS);
    alpha_bits = _mesa_get_format_bits(format, GL_ALPHA_BITS);
-   is_srgb = _mesa_is_format_srgb(format);
-   is_float = _mesa_get_format_datatype(format) == GL_FLOAT;
+   is_srgb = _mesa_get_format_color_encoding(format) == GL_SRGB;
 
    num_modes = num_depth_stencil_bits * num_db_modes * num_accum_bits * num_msaa_modes;
    configs = calloc(num_modes + 1, sizeof *configs);
@@ -324,7 +286,6 @@ driCreateConfigs(mesa_format format,
 		    c++;
 
 		    memset(modes, 0, sizeof *modes);
-		    modes->floatMode = is_float;
 		    modes->redBits   = red_bits;
 		    modes->greenBits = green_bits;
 		    modes->blueBits  = blue_bits;
@@ -333,10 +294,6 @@ driCreateConfigs(mesa_format format,
 		    modes->greenMask = masks[1];
 		    modes->blueMask  = masks[2];
 		    modes->alphaMask = masks[3];
-		    modes->redShift   = shifts[0];
-		    modes->greenShift = shifts[1];
-		    modes->blueShift  = shifts[2];
-		    modes->alphaShift = shifts[3];
 		    modes->rgbBits   = modes->redBits + modes->greenBits
 		    	+ modes->blueBits + modes->alphaBits;
 
@@ -355,6 +312,7 @@ driCreateConfigs(mesa_format format,
 		    modes->transparentBlue = GLX_DONT_CARE;
 		    modes->transparentAlpha = GLX_DONT_CARE;
 		    modes->transparentIndex = GLX_DONT_CARE;
+		    modes->rgbMode = GL_TRUE;
 
 		    if (db_modes[i] == __DRI_ATTRIB_SWAP_NONE) {
 		    	modes->doubleBufferMode = GL_FALSE;
@@ -367,6 +325,14 @@ driCreateConfigs(mesa_format format,
 
 		    modes->samples = msaa_samples[h];
 		    modes->sampleBuffers = modes->samples ? 1 : 0;
+
+
+		    modes->haveAccumBuffer = ((modes->accumRedBits +
+					   modes->accumGreenBits +
+					   modes->accumBlueBits +
+					   modes->accumAlphaBits) > 0);
+		    modes->haveDepthBuffer = (modes->depthBits > 0);
+		    modes->haveStencilBuffer = (modes->stencilBits > 0);
 
 		    modes->bindToTextureRgb = GL_TRUE;
 		    modes->bindToTextureRgba = GL_TRUE;
@@ -448,13 +414,9 @@ static const struct { unsigned int attrib, offset; } attribMap[] = {
     __ATTRIB(__DRI_ATTRIB_TRANSPARENT_BLUE_VALUE,	transparentBlue),
     __ATTRIB(__DRI_ATTRIB_TRANSPARENT_ALPHA_VALUE,	transparentAlpha),
     __ATTRIB(__DRI_ATTRIB_RED_MASK,			redMask),
-    __ATTRIB(__DRI_ATTRIB_RED_SHIFT,			redShift),
     __ATTRIB(__DRI_ATTRIB_GREEN_MASK,			greenMask),
-    __ATTRIB(__DRI_ATTRIB_GREEN_SHIFT,			greenShift),
     __ATTRIB(__DRI_ATTRIB_BLUE_MASK,			blueMask),
-    __ATTRIB(__DRI_ATTRIB_BLUE_SHIFT,			blueShift),
     __ATTRIB(__DRI_ATTRIB_ALPHA_MASK,			alphaMask),
-    __ATTRIB(__DRI_ATTRIB_ALPHA_SHIFT,			alphaShift),
     __ATTRIB(__DRI_ATTRIB_MAX_PBUFFER_WIDTH,		maxPbufferWidth),
     __ATTRIB(__DRI_ATTRIB_MAX_PBUFFER_HEIGHT,		maxPbufferHeight),
     __ATTRIB(__DRI_ATTRIB_MAX_PBUFFER_PIXELS,		maxPbufferPixels),
@@ -489,8 +451,6 @@ driGetConfigAttribIndex(const __DRIconfig *config,
     case __DRI_ATTRIB_RENDER_TYPE:
         /* no support for color index mode */
 	*value = __DRI_ATTRIB_RGBA_BIT;
-        if (config->modes.floatMode)
-            *value |= __DRI_ATTRIB_FLOAT_BIT;
 	break;
     case __DRI_ATTRIB_CONFIG_CAVEAT:
 	if (config->modes.visualRating == GLX_NON_CONFORMANT_CONFIG)

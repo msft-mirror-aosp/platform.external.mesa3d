@@ -23,7 +23,6 @@
 
 #include <fcntl.h>
 
-#include "util/os_file.h"
 #include "util/u_debug.h"
 
 #include "tegra/tegra_screen.h"
@@ -38,7 +37,7 @@ struct pipe_screen *tegra_drm_screen_create(int fd)
     * NOTE: There are reportedly issues with reusing the file descriptor
     * as-is related to Xinerama. Duplicate it to side-step any issues.
     */
-   fd = os_dupfd_cloexec(fd);
+   fd = fcntl(fd, F_DUPFD_CLOEXEC, 0);
    if (fd < 0)
       return NULL;
 

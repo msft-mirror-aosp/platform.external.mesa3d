@@ -63,7 +63,6 @@ struct intel_texture_object
    mesa_format _Format;
 
    const struct intel_image_format *planar_format;
-   unsigned int yuv_color_space;
 };
 
 

@@ -142,13 +142,13 @@ mm_slab_new(struct nouveau_mman *cache, int chunk_order)
       return PIPE_ERROR_OUT_OF_MEMORY;
    }
 
-   list_inithead(&slab->head);
+   LIST_INITHEAD(&slab->head);
 
    slab->cache = cache;
    slab->order = chunk_order;
    slab->count = slab->free = size >> chunk_order;
 
-   list_add(&slab->head, &mm_bucket_by_order(cache, chunk_order)->free);
+   LIST_ADD(&slab->head, &mm_bucket_by_order(cache, chunk_order)->free);
 
    cache->allocated += size;
 
@@ -181,16 +181,16 @@ nouveau_mm_allocate(struct nouveau_mman *cache,
       return NULL;
    }
 
-   if (!list_is_empty(&bucket->used)) {
+   if (!LIST_IS_EMPTY(&bucket->used)) {
       slab = LIST_ENTRY(struct mm_slab, bucket->used.next, head);
    } else {
-      if (list_is_empty(&bucket->free)) {
+      if (LIST_IS_EMPTY(&bucket->free)) {
          mm_slab_new(cache, MAX2(mm_get_order(size), MM_MIN_ORDER));
       }
       slab = LIST_ENTRY(struct mm_slab, bucket->free.next, head);
 
-      list_del(&slab->head);
-      list_add(&slab->head, &bucket->used);
+      LIST_DEL(&slab->head);
+      LIST_ADD(&slab->head, &bucket->used);
    }
 
    *offset = mm_slab_alloc(slab) << slab->order;
@@ -202,8 +202,8 @@ nouveau_mm_allocate(struct nouveau_mman *cache,
    nouveau_bo_ref(slab->bo, bo);
 
    if (slab->free == 0) {
-      list_del(&slab->head);
-      list_add(&slab->head, &bucket->full);
+      LIST_DEL(&slab->head);
+      LIST_ADD(&slab->head, &bucket->full);
    }
 
    alloc->next = NULL;
@@ -222,12 +222,12 @@ nouveau_mm_free(struct nouveau_mm_allocation *alloc)
    mm_slab_free(slab, alloc->offset >> slab->order);
 
    if (slab->free == slab->count) {
-      list_del(&slab->head);
-      list_addtail(&slab->head, &bucket->free);
+      LIST_DEL(&slab->head);
+      LIST_ADDTAIL(&slab->head, &bucket->free);
    } else
    if (slab->free == 1) {
-      list_del(&slab->head);
-      list_addtail(&slab->head, &bucket->used);
+      LIST_DEL(&slab->head);
+      LIST_ADDTAIL(&slab->head, &bucket->used);
    }
 
    FREE(alloc);
@@ -255,9 +255,9 @@ nouveau_mm_create(struct nouveau_device *dev, uint32_t domain,
    cache->allocated = 0;
 
    for (i = 0; i < MM_NUM_BUCKETS; ++i) {
-      list_inithead(&cache->bucket[i].free);
-      list_inithead(&cache->bucket[i].used);
-      list_inithead(&cache->bucket[i].full);
+      LIST_INITHEAD(&cache->bucket[i].free);
+      LIST_INITHEAD(&cache->bucket[i].used);
+      LIST_INITHEAD(&cache->bucket[i].full);
    }
 
    return cache;
@@ -269,7 +269,7 @@ nouveau_mm_free_slabs(struct list_head *head)
    struct mm_slab *slab, *next;
 
    LIST_FOR_EACH_ENTRY_SAFE(slab, next, head, head) {
-      list_del(&slab->head);
+      LIST_DEL(&slab->head);
       nouveau_bo_ref(NULL, &slab->bo);
       FREE(slab);
    }
@@ -284,8 +284,8 @@ nouveau_mm_destroy(struct nouveau_mman *cache)
       return;
 
    for (i = 0; i < MM_NUM_BUCKETS; ++i) {
-      if (!list_is_empty(&cache->bucket[i].used) ||
-          !list_is_empty(&cache->bucket[i].full))
+      if (!LIST_IS_EMPTY(&cache->bucket[i].used) ||
+          !LIST_IS_EMPTY(&cache->bucket[i].full))
          debug_printf("WARNING: destroying GPU memory cache "
                       "with some buffers still in use\n");
 

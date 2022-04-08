@@ -24,99 +24,84 @@
 # ArchRast is to not pollute the Rasty code with lots of calculations, etc. that
 # are needed to compute per draw statistics, etc.
 
-event PipelineStats::EarlyDepthStencilInfoSingleSample
+event EarlyDepthStencilInfoSingleSample
 {
     uint64_t depthPassMask;
     uint64_t stencilPassMask;
     uint64_t coverageMask;
 };
 
-event PipelineStats::EarlyDepthStencilInfoSampleRate
+event EarlyDepthStencilInfoSampleRate
 {
     uint64_t depthPassMask;
     uint64_t stencilPassMask;
     uint64_t coverageMask;
 };
 
-event PipelineStats::EarlyDepthStencilInfoNullPS
+event EarlyDepthStencilInfoNullPS
 {
     uint64_t depthPassMask;
     uint64_t stencilPassMask;
     uint64_t coverageMask;
 };
 
-event PipelineStats::LateDepthStencilInfoSingleSample
+event LateDepthStencilInfoSingleSample
 {
     uint64_t depthPassMask;
     uint64_t stencilPassMask;
     uint64_t coverageMask;
 };
 
-event PipelineStats::LateDepthStencilInfoSampleRate
+event LateDepthStencilInfoSampleRate
 {
     uint64_t depthPassMask;
     uint64_t stencilPassMask;
     uint64_t coverageMask;
 };
 
-event PipelineStats::LateDepthStencilInfoNullPS
+event LateDepthStencilInfoNullPS
 {
     uint64_t depthPassMask;
     uint64_t stencilPassMask;
     uint64_t coverageMask;
 };
 
-event PipelineStats::EarlyDepthInfoPixelRate
+event EarlyDepthInfoPixelRate
 {
     uint64_t depthPassCount;
     uint64_t activeLanes;
 };
 
 
-event PipelineStats::LateDepthInfoPixelRate
+event LateDepthInfoPixelRate
 {
     uint64_t depthPassCount;
     uint64_t activeLanes;
 };
 
 
-event PipelineStats::BackendDrawEndEvent
+event BackendDrawEndEvent
 {
     uint32_t drawId;
 };
 
-event PipelineStats::FrontendDrawEndEvent
+event FrontendDrawEndEvent
 {
     uint32_t drawId;
 };
 
-event Memory::MemoryAccessEvent
-{
-    uint32_t drawId;
-    uint64_t tsc;
-    uint64_t ptr;
-    uint32_t size;
-    uint8_t isRead;
-    uint8_t client;
-};
-
-event Memory::MemoryStatsEndEvent
-{
-    uint32_t drawId;
-};
-
-event PipelineStats::TessPrimCount
+event TessPrimCount
 {
     uint64_t primCount;
 };
 
-event PipelineStats::RasterTileCount
+event RasterTileCount
 {
     uint32_t drawId;
     uint64_t rasterTiles;
 };
 
-event PipelineStats::GSPrimInfo
+event GSPrimInfo
 {
     uint64_t inputPrimCount;
     uint64_t primGeneratedCount;
@@ -128,14 +113,14 @@ event PipelineStats::GSPrimInfo
 // Trivial reject is numInvocations - pop_cnt32(validMask)
 // Trivial accept is validMask & ~clipMask
 // Must clip count is pop_cnt32(clipMask)
-event PipelineStats::ClipInfoEvent
+event ClipInfoEvent
 {
     uint32_t numInvocations;
     uint32_t validMask;
     uint32_t clipMask;
 };
 
-event PipelineStats::CullInfoEvent
+event CullInfoEvent
 {
     uint32_t drawId;
     uint64_t degeneratePrimMask;
@@ -143,14 +128,14 @@ event PipelineStats::CullInfoEvent
     uint32_t validMask;
 };
 
-event PipelineStats::AlphaInfoEvent
+event AlphaInfoEvent
 {
     uint32_t drawId;
     uint32_t alphaTestEnable;
     uint32_t alphaBlendEnable;
 };
 
-event PipelineStats::DrawInstancedEvent
+event DrawInstancedEvent
 {
     uint32_t drawId;
     uint32_t topology;
@@ -165,7 +150,7 @@ event PipelineStats::DrawInstancedEvent
     uint32_t splitId; // Split draw count or id.
 };
 
-event PipelineStats::DrawIndexedInstancedEvent
+event DrawIndexedInstancedEvent
 {
     uint32_t drawId;
     uint32_t topology;
@@ -181,32 +166,32 @@ event PipelineStats::DrawIndexedInstancedEvent
     uint32_t splitId; // Split draw count or id.
 };
 
-event ShaderStats::VSStats
+event VSStats
 {
     HANDLE hStats;      // SWR_SHADER_STATS
 };
 
-event ShaderStats::HSStats
+event HSStats
 {
     HANDLE hStats;      // SWR_SHADER_STATS
 };
 
-event ShaderStats::DSStats
+event DSStats
 {
     HANDLE hStats;      // SWR_SHADER_STATS
 };
 
-event ShaderStats::GSStats
+event GSStats
 {
     HANDLE hStats;      // SWR_SHADER_STATS
 };
 
-event ShaderStats::PSStats
+event PSStats
 {
     HANDLE hStats;      // SWR_SHADER_STATS
 };
 
-event ShaderStats::CSStats
+event CSStats
 {
     HANDLE hStats;      // SWR_SHADER_STATS
 };

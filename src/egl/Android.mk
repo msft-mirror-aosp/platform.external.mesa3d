@@ -36,9 +36,7 @@ include $(CLEAR_VARS)
 LOCAL_SRC_FILES := \
 	$(LIBEGL_C_FILES) \
 	$(dri2_backend_core_FILES) \
-	drivers/dri2/platform_device.c \
-	drivers/dri2/platform_android.c \
-	drivers/dri2/platform_surfaceless.c \
+	drivers/dri2/platform_android.c
 
 LOCAL_CFLAGS := \
 	-D_EGL_NATIVE_PLATFORM=_EGL_PLATFORM_ANDROID \
@@ -74,6 +72,8 @@ ifeq ($(BOARD_USES_DRM_GRALLOC),true)
 endif
 
 ifeq ($(filter $(MESA_ANDROID_MAJOR_VERSION), 4 5 6 7),)
+LOCAL_HEADER_LIBRARIES += libnativebase_headers
+LOCAL_STATIC_LIBRARIES += libarect
 LOCAL_SHARED_LIBRARIES += libnativewindow
 endif
 
@@ -89,9 +89,6 @@ LOCAL_REQUIRED_MODULES += gallium_dri
 endif
 
 LOCAL_MODULE := libGLES_mesa
-LOCAL_LICENSE_KINDS := SPDX-license-identifier-ISC SPDX-license-identifier-MIT
-LOCAL_LICENSE_CONDITIONS := notice
-LOCAL_NOTICE_FILE := $(LOCAL_PATH)/../../LICENSE
 LOCAL_MODULE_RELATIVE_PATH := egl
 
 include $(MESA_COMMON_MK)

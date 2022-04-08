@@ -61,8 +61,10 @@ _mesa_get_current_tex_unit(struct gl_context *ctx)
  * \return NULL if the current unit is not a fixed-func texture unit
  */
 static inline struct gl_fixedfunc_texture_unit *
-_mesa_get_fixedfunc_tex_unit(struct gl_context *ctx, GLuint unit)
+_mesa_get_current_fixedfunc_tex_unit(struct gl_context *ctx)
 {
+   unsigned unit = ctx->Texture.CurrentUnit;
+
    if (unit >= ARRAY_SIZE(ctx->Texture.FixedFuncUnit))
       return NULL;
 

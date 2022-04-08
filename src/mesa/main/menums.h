@@ -141,7 +141,6 @@ typedef enum
 {
    MAP_USER,
    MAP_INTERNAL,
-   MAP_GLTHREAD,
    MAP_COUNT
 } gl_map_buffer_index;
 

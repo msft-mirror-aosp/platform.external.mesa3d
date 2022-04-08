@@ -27,7 +27,8 @@
 
 #include "radeon/radeon_winsys.h"
 
-#define SI_PM4_MAX_DW 176
+#define SI_PM4_MAX_DW		176
+#define SI_PM4_MAX_BO		3
 
 // forward defines
 struct si_context;
@@ -36,31 +37,52 @@ struct si_context;
  * command buffer (AKA indirect buffer, AKA IB, AKA command stream, AKA CS).
  */
 struct si_atom {
-   void (*emit)(struct si_context *ctx);
+	void (*emit)(struct si_context *ctx);
 };
 
-struct si_pm4_state {
-   /* PKT3_SET_*_REG handling */
-   unsigned last_opcode;
-   unsigned last_reg;
-   unsigned last_pm4;
+struct si_pm4_state
+{
+	/* optional indirect buffer */
+	struct si_resource	*indirect_buffer;
 
-   /* commands for the DE */
-   unsigned ndw;
-   uint32_t pm4[SI_PM4_MAX_DW];
+	/* PKT3_SET_*_REG handling */
+	unsigned	last_opcode;
+	unsigned	last_reg;
+	unsigned	last_pm4;
 
-   /* For shader states only */
-   struct si_shader *shader;
-   struct si_atom atom;
+	/* commands for the DE */
+	unsigned	ndw;
+	uint32_t	pm4[SI_PM4_MAX_DW];
+
+	/* BO's referenced by this state */
+	unsigned		nbo;
+	struct si_resource	*bo[SI_PM4_MAX_BO];
+	enum radeon_bo_usage	bo_usage[SI_PM4_MAX_BO];
+	enum radeon_bo_priority	bo_priority[SI_PM4_MAX_BO];
+
+	/* For shader states only */
+	struct si_shader *shader;
+	struct si_atom atom;
 };
 
+void si_pm4_cmd_begin(struct si_pm4_state *state, unsigned opcode);
 void si_pm4_cmd_add(struct si_pm4_state *state, uint32_t dw);
+void si_pm4_cmd_end(struct si_pm4_state *state, bool predicate);
+
 void si_pm4_set_reg(struct si_pm4_state *state, unsigned reg, uint32_t val);
+void si_pm4_add_bo(struct si_pm4_state *state,
+		   struct si_resource *bo,
+		   enum radeon_bo_usage usage,
+		   enum radeon_bo_priority priority);
+void si_pm4_upload_indirect_buffer(struct si_context *sctx,
+				   struct si_pm4_state *state);
 
 void si_pm4_clear_state(struct si_pm4_state *state);
-void si_pm4_free_state(struct si_context *sctx, struct si_pm4_state *state, unsigned idx);
+void si_pm4_free_state(struct si_context *sctx,
+		       struct si_pm4_state *state,
+		       unsigned idx);
 
 void si_pm4_emit(struct si_context *sctx, struct si_pm4_state *state);
-void si_pm4_reset_emitted(struct si_context *sctx, bool first_cs);
+void si_pm4_reset_emitted(struct si_context *sctx);
 
 #endif

@@ -40,7 +40,7 @@
 
 #include <libsync.h> /* Requires Android or libdrm-2.4.72 */
 
-#include "util/os_file.h"
+#include "main/imports.h"
 
 #include "brw_context.h"
 #include "intel_batchbuffer.h"
@@ -354,7 +354,6 @@ brw_gl_delete_sync(struct gl_context *ctx, struct gl_sync_object *_sync)
    struct brw_gl_sync *sync = (struct brw_gl_sync *) _sync;
 
    brw_fence_finish(&sync->fence);
-   free(sync->gl.Label);
    free(sync);
 }
 
@@ -503,7 +502,7 @@ brw_dri_create_fence_fd(__DRIcontext *dri_ctx, int fd)
          goto fail;
    } else {
       /* Import the sync fd as an in-fence. */
-      fence->sync_fd = os_dupfd_cloexec(fd);
+      fence->sync_fd = dup(fd);
    }
 
    assert(fence->sync_fd != -1);
@@ -520,7 +519,7 @@ static int
 brw_dri_get_fence_fd_locked(struct brw_fence *fence)
 {
    assert(fence->type == BRW_FENCE_TYPE_SYNC_FD);
-   return os_dupfd_cloexec(fence->sync_fd);
+   return dup(fence->sync_fd);
 }
 
 static int

@@ -45,12 +45,13 @@
 #include "apple/apple_glx.h"
 #include "util/debug.h"
 #else
+#include <sys/time.h>
 #ifndef GLX_USE_WINDOWSGL
 #include <X11/extensions/xf86vmode.h>
 #endif /* GLX_USE_WINDOWSGL */
 #endif
 #endif
-#include <limits.h>
+
 #include <X11/Xlib-xcb.h>
 #include <xcb/xcb.h>
 #include <xcb/glx.h>
@@ -461,6 +462,19 @@ glXCreateContext(Display * dpy, XVisualInfo * vis,
        renderType = GLX_RGBA_TYPE;
    } else if (config->renderType & GLX_COLOR_INDEX_BIT) {
        renderType = GLX_COLOR_INDEX_TYPE;
+   } else if (config->rgbMode) {
+       /* If we're here, then renderType is not set correctly.  Let's use a
+        * safeguard - any TrueColor or DirectColor mode is RGB mode.  Such
+        * default value is needed by old DRI drivers, which didn't set
+        * renderType correctly as the value was just ignored.
+        */
+       renderType = GLX_RGBA_TYPE;
+   } else {
+       /* Safeguard - only one option left, all non-RGB modes are indexed
+        * modes.  Again, this allows drivers with invalid renderType to work
+        * properly.
+        */
+       renderType = GLX_COLOR_INDEX_TYPE;
    }
 #endif
 
@@ -840,7 +854,7 @@ glXSwapBuffers(Display * dpy, GLXDrawable drawable)
       if (pdraw != NULL) {
          Bool flush = gc != &dummyContext && drawable == gc->currentDrawable;
 
-         pdraw->psc->driScreen->swapBuffers(pdraw, 0, 0, 0, flush);
+         (*pdraw->psc->driScreen->swapBuffers)(pdraw, 0, 0, 0, flush);
          return;
       }
    }
@@ -922,6 +936,7 @@ init_fbconfig_for_chooser(struct glx_config * config,
     * glXChooseVisual.
     */
    if (fbconfig_style_tags) {
+      config->rgbMode = GL_TRUE;
       config->doubleBufferMode = GLX_DONT_CARE;
       config->renderType = GLX_RGBA_BIT;
    }
@@ -1725,14 +1740,12 @@ glXGetVisualFromFBConfig(Display * dpy, GLXFBConfig fbconfig)
 /*
 ** GLX_SGI_swap_control
 */
-_X_HIDDEN int
-glXSwapIntervalSGI(int interval)
+static int
+__glXSwapIntervalSGI(int interval)
 {
    xGLXVendorPrivateReq *req;
    struct glx_context *gc = __glXGetCurrentContext();
-#ifdef GLX_DIRECT_RENDERING
    struct glx_screen *psc;
-#endif
    Display *dpy;
    CARD32 *interval_ptr;
    CARD8 opcode;
@@ -1745,9 +1758,9 @@ glXSwapIntervalSGI(int interval)
       return GLX_BAD_VALUE;
    }
 
-#ifdef GLX_DIRECT_RENDERING
    psc = GetGLXScreenConfigs( gc->currentDpy, gc->screen);
 
+#ifdef GLX_DIRECT_RENDERING
    if (gc->isDirect && psc && psc->driScreen &&
           psc->driScreen->setSwapInterval) {
       __GLXDRIdrawable *pdraw =
@@ -1789,14 +1802,11 @@ glXSwapIntervalSGI(int interval)
 /*
 ** GLX_MESA_swap_control
 */
-_X_HIDDEN int
-glXSwapIntervalMESA(unsigned int interval)
+static int
+__glXSwapIntervalMESA(unsigned int interval)
 {
 #ifdef GLX_DIRECT_RENDERING
    struct glx_context *gc = __glXGetCurrentContext();
-
-   if (interval > INT_MAX)
-      return GLX_BAD_VALUE;
 
    if (gc != &dummyContext && gc->isDirect) {
       struct glx_screen *psc;
@@ -1821,8 +1831,8 @@ glXSwapIntervalMESA(unsigned int interval)
 }
 
 
-_X_HIDDEN int
-glXGetSwapIntervalMESA(void)
+static int
+__glXGetSwapIntervalMESA(void)
 {
 #ifdef GLX_DIRECT_RENDERING
    struct glx_context *gc = __glXGetCurrentContext();
@@ -1845,60 +1855,37 @@ glXGetSwapIntervalMESA(void)
 
 
 /*
-** GLX_EXT_swap_control
-*/
-_X_HIDDEN void
-glXSwapIntervalEXT(Display *dpy, GLXDrawable drawable, int interval)
-{
-#ifdef GLX_DIRECT_RENDERING
-   __GLXDRIdrawable *pdraw = GetGLXDRIDrawable(dpy, drawable);
-
-   /*
-    * Strictly, this should throw an error if drawable is not a Window or
-    * GLXWindow. We don't actually track that, so, oh well.
-    */
-   if (!pdraw) {
-       __glXSendError(dpy, BadWindow, drawable, 0, True);
-      return;
-   }
-
-   if (interval < 0 &&
-       !__glXExtensionBitIsEnabled(pdraw->psc, EXT_swap_control_tear_bit)) {
-      __glXSendError(dpy, BadValue, interval, 0, True);
-      return;
-   }
-
-   pdraw->psc->driScreen->setSwapInterval(pdraw, interval);
-#endif
-}
-
-
-/*
 ** GLX_SGI_video_sync
 */
-_X_HIDDEN int
-glXGetVideoSyncSGI(unsigned int *count)
+static int
+__glXGetVideoSyncSGI(unsigned int *count)
 {
-#ifdef GLX_DIRECT_RENDERING
    int64_t ust, msc, sbc;
    int ret;
    struct glx_context *gc = __glXGetCurrentContext();
    struct glx_screen *psc;
+#ifdef GLX_DIRECT_RENDERING
    __GLXDRIdrawable *pdraw;
+#endif
 
    if (gc == &dummyContext)
       return GLX_BAD_CONTEXT;
 
+#ifdef GLX_DIRECT_RENDERING
    if (!gc->isDirect)
       return GLX_BAD_CONTEXT;
+#endif
 
    psc = GetGLXScreenConfigs(gc->currentDpy, gc->screen);
+#ifdef GLX_DIRECT_RENDERING
    pdraw = GetGLXDRIDrawable(gc->currentDpy, gc->currentDrawable);
+#endif
 
    /* FIXME: Looking at the GLX_SGI_video_sync spec in the extension registry,
     * FIXME: there should be a GLX encoding for this call.  I can find no
     * FIXME: documentation for the GLX encoding.
     */
+#ifdef GLX_DIRECT_RENDERING
    if (psc && psc->driScreen && psc->driScreen->getDrawableMSC) {
       ret = psc->driScreen->getDrawableMSC(psc, pdraw, &ust, &msc, &sbc);
       *count = (unsigned) msc;
@@ -1909,16 +1896,16 @@ glXGetVideoSyncSGI(unsigned int *count)
    return GLX_BAD_CONTEXT;
 }
 
-_X_HIDDEN int
-glXWaitVideoSyncSGI(int divisor, int remainder, unsigned int *count)
+static int
+__glXWaitVideoSyncSGI(int divisor, int remainder, unsigned int *count)
 {
    struct glx_context *gc = __glXGetCurrentContext();
-#ifdef GLX_DIRECT_RENDERING
    struct glx_screen *psc;
+#ifdef GLX_DIRECT_RENDERING
    __GLXDRIdrawable *pdraw;
+#endif
    int64_t ust, msc, sbc;
    int ret;
-#endif
 
    if (divisor <= 0 || remainder < 0)
       return GLX_BAD_VALUE;
@@ -1929,10 +1916,14 @@ glXWaitVideoSyncSGI(int divisor, int remainder, unsigned int *count)
 #ifdef GLX_DIRECT_RENDERING
    if (!gc->isDirect)
       return GLX_BAD_CONTEXT;
+#endif
 
    psc = GetGLXScreenConfigs( gc->currentDpy, gc->screen);
+#ifdef GLX_DIRECT_RENDERING
    pdraw = GetGLXDRIDrawable(gc->currentDpy, gc->currentDrawable);
+#endif
 
+#ifdef GLX_DIRECT_RENDERING
    if (psc && psc->driScreen && psc->driScreen->waitForMSC) {
       ret = psc->driScreen->waitForMSC(pdraw, 0, divisor, remainder, &ust, &msc,
 				       &sbc);
@@ -2066,16 +2057,16 @@ glXGetFBConfigFromVisualSGIX(Display * dpy, XVisualInfo * vis)
 /*
 ** GLX_OML_sync_control
 */
-_X_HIDDEN Bool
-glXGetSyncValuesOML(Display *dpy, GLXDrawable drawable,
-                    int64_t *ust, int64_t *msc, int64_t *sbc)
+static Bool
+__glXGetSyncValuesOML(Display * dpy, GLXDrawable drawable,
+                      int64_t * ust, int64_t * msc, int64_t * sbc)
 {
    struct glx_display * const priv = __glXInitialize(dpy);
-#ifdef GLX_DIRECT_RENDERING
    int ret;
+#ifdef GLX_DIRECT_RENDERING
    __GLXDRIdrawable *pdraw;
-   struct glx_screen *psc;
 #endif
+   struct glx_screen *psc;
 
    if (!priv)
       return False;
@@ -2166,9 +2157,9 @@ __glxGetMscRate(struct glx_screen *psc,
  *       when GLX_OML_sync_control appears in the client extension string.
  */
 
-_X_HIDDEN Bool
-glXGetMscRateOML(Display * dpy, GLXDrawable drawable,
-                 int32_t * numerator, int32_t * denominator)
+_X_HIDDEN GLboolean
+__glXGetMscRateOML(Display * dpy, GLXDrawable drawable,
+                   int32_t * numerator, int32_t * denominator)
 {
 #if defined(GLX_DIRECT_RENDERING) && !defined(GLX_USE_APPLEGL) && !defined(GLX_USE_WINDOWSGL)
    __GLXDRIdrawable *draw = GetGLXDRIDrawable(dpy, drawable);
@@ -2187,9 +2178,9 @@ glXGetMscRateOML(Display * dpy, GLXDrawable drawable,
 }
 
 
-_X_HIDDEN int64_t
-glXSwapBuffersMscOML(Display *dpy, GLXDrawable drawable,
-                     int64_t target_msc, int64_t divisor, int64_t remainder)
+static int64_t
+__glXSwapBuffersMscOML(Display * dpy, GLXDrawable drawable,
+                       int64_t target_msc, int64_t divisor, int64_t remainder)
 {
    struct glx_context *gc = __glXGetCurrentContext();
 #ifdef GLX_DIRECT_RENDERING
@@ -2228,10 +2219,11 @@ glXSwapBuffersMscOML(Display *dpy, GLXDrawable drawable,
 }
 
 
-_X_HIDDEN Bool
-glXWaitForMscOML(Display *dpy, GLXDrawable drawable, int64_t target_msc,
-                 int64_t divisor, int64_t remainder, int64_t *ust,
-                 int64_t *msc, int64_t *sbc)
+static Bool
+__glXWaitForMscOML(Display * dpy, GLXDrawable drawable,
+                   int64_t target_msc, int64_t divisor,
+                   int64_t remainder, int64_t * ust,
+                   int64_t * msc, int64_t * sbc)
 {
 #ifdef GLX_DIRECT_RENDERING
    __GLXDRIdrawable *pdraw = GetGLXDRIDrawable(dpy, drawable);
@@ -2260,9 +2252,10 @@ glXWaitForMscOML(Display *dpy, GLXDrawable drawable, int64_t target_msc,
 }
 
 
-_X_HIDDEN Bool
-glXWaitForSbcOML(Display *dpy, GLXDrawable drawable, int64_t target_sbc,
-                 int64_t *ust, int64_t *msc, int64_t *sbc)
+static Bool
+__glXWaitForSbcOML(Display * dpy, GLXDrawable drawable,
+                   int64_t target_sbc, int64_t * ust,
+                   int64_t * msc, int64_t * sbc)
 {
 #ifdef GLX_DIRECT_RENDERING
    __GLXDRIdrawable *pdraw = GetGLXDRIDrawable(dpy, drawable);
@@ -2316,8 +2309,8 @@ glXWaitForSbcOML(Display *dpy, GLXDrawable drawable, int64_t target_sbc,
  *     glXDestroyPbuffer glXDestroyPixmap glXDestroyWindow
  *     glXDestroyGLXPbufferSGIX glXDestroyGLXVideoSourceSGIX
  */
-_X_HIDDEN Bool
-glXReleaseBuffersMESA(Display * dpy, GLXDrawable d)
+static Bool
+__glXReleaseBuffersMESA(Display * dpy, GLXDrawable d)
 {
    (void) dpy;
    (void) d;
@@ -2343,9 +2336,9 @@ glXCreateGLXPixmapMESA(Display * dpy, XVisualInfo * visual,
  * GLX_MESA_copy_sub_buffer
  */
 #define X_GLXvop_CopySubBufferMESA 5154 /* temporary */
-_X_HIDDEN void
-glXCopySubBufferMESA(Display * dpy, GLXDrawable drawable,
-                     int x, int y, int width, int height)
+static void
+__glXCopySubBufferMESA(Display * dpy, GLXDrawable drawable,
+                       int x, int y, int width, int height)
 {
    xGLXVendorPrivateReq *req;
    struct glx_context *gc;
@@ -2408,9 +2401,9 @@ glXCopySubBufferMESA(Display * dpy, GLXDrawable drawable,
 }
 
 /*@{*/
-_X_HIDDEN void
-glXBindTexImageEXT(Display *dpy, GLXDrawable drawable, int buffer,
-                   const int *attrib_list)
+static void
+__glXBindTexImageEXT(Display * dpy,
+                     GLXDrawable drawable, int buffer, const int *attrib_list)
 {
    struct glx_context *gc = __glXGetCurrentContext();
 
@@ -2420,8 +2413,8 @@ glXBindTexImageEXT(Display *dpy, GLXDrawable drawable, int buffer,
    gc->vtable->bind_tex_image(dpy, drawable, buffer, attrib_list);
 }
 
-_X_HIDDEN void
-glXReleaseTexImageEXT(Display * dpy, GLXDrawable drawable, int buffer)
+static void
+__glXReleaseTexImageEXT(Display * dpy, GLXDrawable drawable, int buffer)
 {
    struct glx_context *gc = __glXGetCurrentContext();
 
@@ -2495,27 +2488,13 @@ static const struct name_address_pair GLX_functions[] = {
    GLX_FUNCTION(glXQueryDrawable),
    GLX_FUNCTION(glXSelectEvent),
 
-   /*** GLX_SGIX_fbconfig ***/
-   GLX_FUNCTION2(glXGetFBConfigAttribSGIX, glXGetFBConfigAttrib),
-   GLX_FUNCTION2(glXChooseFBConfigSGIX, glXChooseFBConfig),
-   GLX_FUNCTION(glXCreateGLXPixmapWithConfigSGIX),
-   GLX_FUNCTION(glXCreateContextWithConfigSGIX),
-   GLX_FUNCTION2(glXGetVisualFromFBConfigSGIX, glXGetVisualFromFBConfig),
-   GLX_FUNCTION(glXGetFBConfigFromVisualSGIX),
-
-   /*** GLX_ARB_get_proc_address ***/
-   GLX_FUNCTION(glXGetProcAddressARB),
-
-   /*** GLX 1.4 ***/
-   GLX_FUNCTION2(glXGetProcAddress, glXGetProcAddressARB),
-
 #ifndef GLX_USE_APPLEGL
    /*** GLX_SGI_swap_control ***/
-   GLX_FUNCTION(glXSwapIntervalSGI),
+   GLX_FUNCTION2(glXSwapIntervalSGI, __glXSwapIntervalSGI),
 
    /*** GLX_SGI_video_sync ***/
-   GLX_FUNCTION(glXGetVideoSyncSGI),
-   GLX_FUNCTION(glXWaitVideoSyncSGI),
+   GLX_FUNCTION2(glXGetVideoSyncSGI, __glXGetVideoSyncSGI),
+   GLX_FUNCTION2(glXWaitVideoSyncSGI, __glXWaitVideoSyncSGI),
 
    /*** GLX_SGI_make_current_read ***/
    GLX_FUNCTION2(glXMakeCurrentReadSGI, glXMakeContextCurrent),
@@ -2527,7 +2506,17 @@ static const struct name_address_pair GLX_functions[] = {
    GLX_FUNCTION2(glXGetCurrentDisplayEXT, glXGetCurrentDisplay),
    GLX_FUNCTION(glXImportContextEXT),
    GLX_FUNCTION2(glXQueryContextInfoEXT, glXQueryContext),
+#endif
 
+   /*** GLX_SGIX_fbconfig ***/
+   GLX_FUNCTION2(glXGetFBConfigAttribSGIX, glXGetFBConfigAttrib),
+   GLX_FUNCTION2(glXChooseFBConfigSGIX, glXChooseFBConfig),
+   GLX_FUNCTION(glXCreateGLXPixmapWithConfigSGIX),
+   GLX_FUNCTION(glXCreateContextWithConfigSGIX),
+   GLX_FUNCTION2(glXGetVisualFromFBConfigSGIX, glXGetVisualFromFBConfig),
+   GLX_FUNCTION(glXGetFBConfigFromVisualSGIX),
+
+#ifndef GLX_USE_APPLEGL
    /*** GLX_SGIX_pbuffer ***/
    GLX_FUNCTION(glXCreateGLXPbufferSGIX),
    GLX_FUNCTION(glXDestroyGLXPbufferSGIX),
@@ -2536,31 +2525,36 @@ static const struct name_address_pair GLX_functions[] = {
    GLX_FUNCTION(glXGetSelectedEventSGIX),
 
    /*** GLX_MESA_copy_sub_buffer ***/
-   GLX_FUNCTION(glXCopySubBufferMESA),
+   GLX_FUNCTION2(glXCopySubBufferMESA, __glXCopySubBufferMESA),
 
    /*** GLX_MESA_pixmap_colormap ***/
    GLX_FUNCTION(glXCreateGLXPixmapMESA),
 
    /*** GLX_MESA_release_buffers ***/
-   GLX_FUNCTION(glXReleaseBuffersMESA),
+   GLX_FUNCTION2(glXReleaseBuffersMESA, __glXReleaseBuffersMESA),
 
    /*** GLX_MESA_swap_control ***/
-   GLX_FUNCTION(glXSwapIntervalMESA),
-   GLX_FUNCTION(glXGetSwapIntervalMESA),
+   GLX_FUNCTION2(glXSwapIntervalMESA, __glXSwapIntervalMESA),
+   GLX_FUNCTION2(glXGetSwapIntervalMESA, __glXGetSwapIntervalMESA),
+#endif
 
+   /*** GLX_ARB_get_proc_address ***/
+   GLX_FUNCTION(glXGetProcAddressARB),
+
+   /*** GLX 1.4 ***/
+   GLX_FUNCTION2(glXGetProcAddress, glXGetProcAddressARB),
+
+#ifndef GLX_USE_APPLEGL
    /*** GLX_OML_sync_control ***/
-   GLX_FUNCTION(glXWaitForSbcOML),
-   GLX_FUNCTION(glXWaitForMscOML),
-   GLX_FUNCTION(glXSwapBuffersMscOML),
-   GLX_FUNCTION(glXGetMscRateOML),
-   GLX_FUNCTION(glXGetSyncValuesOML),
+   GLX_FUNCTION2(glXWaitForSbcOML, __glXWaitForSbcOML),
+   GLX_FUNCTION2(glXWaitForMscOML, __glXWaitForMscOML),
+   GLX_FUNCTION2(glXSwapBuffersMscOML, __glXSwapBuffersMscOML),
+   GLX_FUNCTION2(glXGetMscRateOML, __glXGetMscRateOML),
+   GLX_FUNCTION2(glXGetSyncValuesOML, __glXGetSyncValuesOML),
 
    /*** GLX_EXT_texture_from_pixmap ***/
-   GLX_FUNCTION(glXBindTexImageEXT),
-   GLX_FUNCTION(glXReleaseTexImageEXT),
-
-   /*** GLX_EXT_swap_control ***/
-   GLX_FUNCTION(glXSwapIntervalEXT),
+   GLX_FUNCTION2(glXBindTexImageEXT, __glXBindTexImageEXT),
+   GLX_FUNCTION2(glXReleaseTexImageEXT, __glXReleaseTexImageEXT),
 #endif
 
 #if defined(GLX_DIRECT_RENDERING) && defined(GLX_USE_DRM)
@@ -2647,6 +2641,40 @@ _GLX_PUBLIC
 GLX_ALIAS(__GLXextFuncPtr, glXGetProcAddress,
           (const GLubyte * procName),
           (procName), glXGetProcAddressARB)
+
+#if defined(GLX_DIRECT_RENDERING) && !defined(GLX_USE_APPLEGL)
+/**
+ * Get the unadjusted system time (UST).  Currently, the UST is measured in
+ * microseconds since Epoc.  The actual resolution of the UST may vary from
+ * system to system, and the units may vary from release to release.
+ * Drivers should not call this function directly.  They should instead use
+ * \c glXGetProcAddress to obtain a pointer to the function.
+ *
+ * \param ust Location to store the 64-bit UST
+ * \returns Zero on success or a negative errno value on failure.
+ *
+ * \sa glXGetProcAddress, PFNGLXGETUSTPROC
+ *
+ * \since Internal API version 20030317.
+ */
+_X_HIDDEN int
+__glXGetUST(int64_t * ust)
+{
+   struct timeval tv;
+
+   if (ust == NULL) {
+      return -EFAULT;
+   }
+
+   if (gettimeofday(&tv, NULL) == 0) {
+      ust[0] = (tv.tv_sec * 1000000) + tv.tv_usec;
+      return 0;
+   }
+   else {
+      return -errno;
+   }
+}
+#endif /* GLX_DIRECT_RENDERING */
 
 #if defined(GLX_DIRECT_RENDERING) && !defined(GLX_USE_APPLEGL)
 

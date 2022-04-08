@@ -549,10 +549,6 @@ lp_build_tgsi_llvm(
       }
    }
 
-   if (bld_base->emit_prologue_post_decl) {
-      bld_base->emit_prologue_post_decl(bld_base);
-   }
-
    while (bld_base->pc != -1) {
       const struct tgsi_full_instruction *instr =
          bld_base->instructions + bld_base->pc;

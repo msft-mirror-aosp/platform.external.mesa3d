@@ -17,15 +17,6 @@
         <param name="size" type="GLsizeiptr"/>
     </function>
 
-    <function name="TextureBufferRangeEXT">
-        <param name="texture" type="GLuint"/>
-        <param name="target" type="GLenum"/>
-        <param name="internalformat" type="GLenum"/>
-        <param name="buffer" type="GLuint"/>
-        <param name="offset" type="GLintptr"/>
-        <param name="size" type="GLsizeiptr"/>
-    </function>
-
 </category>
 
 </OpenGLAPI>

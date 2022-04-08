@@ -30,7 +30,7 @@
  */
 
 
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 #include "util/u_pack_color.h"
 #include "i915_context.h"
 #include "i915_screen.h"
@@ -217,7 +217,6 @@ i915_clear_emit(struct pipe_context *pipe, unsigned buffers,
  */
 void
 i915_clear_blitter(struct pipe_context *pipe, unsigned buffers,
-                   const struct pipe_scissor_state *scissor_state,
                    const union pipe_color_union *color,
                    double depth, unsigned stencil)
 {
@@ -246,7 +245,6 @@ i915_clear_blitter(struct pipe_context *pipe, unsigned buffers,
 
 void
 i915_clear_render(struct pipe_context *pipe, unsigned buffers,
-                  const struct pipe_scissor_state *scissor_state,
                   const union pipe_color_union *color,
                   double depth, unsigned stencil)
 {

@@ -22,7 +22,7 @@
  */
 #include <gtest/gtest.h>
 #include "standalone_scaffolding.h"
-#include "util/compiler.h"
+#include "main/compiler.h"
 #include "main/mtypes.h"
 #include "main/macros.h"
 #include "ir.h"
@@ -57,8 +57,6 @@ public:
 void
 common_builtin::SetUp()
 {
-   glsl_type_singleton_init_or_ref();
-
    this->mem_ctx = ralloc_context(NULL);
    this->ir.make_empty();
 
@@ -81,8 +79,6 @@ common_builtin::TearDown()
 {
    ralloc_free(this->mem_ctx);
    this->mem_ctx = NULL;
-
-   glsl_type_singleton_decref();
 }
 
 void

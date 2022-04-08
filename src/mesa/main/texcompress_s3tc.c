@@ -30,7 +30,7 @@
  */
 
 #include "glheader.h"
-
+#include "imports.h"
 #include "image.h"
 #include "macros.h"
 #include "mtypes.h"
@@ -121,11 +121,8 @@ _mesa_texstore_rgba_dxt1(TEXSTORE_PARAMS)
       tempImageSlices[0] = (GLubyte *) tempImage;
       _mesa_texstore(ctx, dims,
                      baseInternalFormat,
-#if UTIL_ARCH_LITTLE_ENDIAN
-                     MESA_FORMAT_R8G8B8A8_UNORM,
-#else
-                     MESA_FORMAT_A8B8G8R8_UNORM,
-#endif
+                     _mesa_little_endian() ? MESA_FORMAT_R8G8B8A8_UNORM
+                                           : MESA_FORMAT_A8B8G8R8_UNORM,
                      rgbaRowStride, tempImageSlices,
                      srcWidth, srcHeight, srcDepth,
                      srcFormat, srcType, srcAddr,
@@ -177,11 +174,8 @@ _mesa_texstore_rgba_dxt3(TEXSTORE_PARAMS)
       tempImageSlices[0] = (GLubyte *) tempImage;
       _mesa_texstore(ctx, dims,
                      baseInternalFormat,
-#if UTIL_ARCH_LITTLE_ENDIAN
-                     MESA_FORMAT_R8G8B8A8_UNORM,
-#else
-                     MESA_FORMAT_A8B8G8R8_UNORM,
-#endif
+                     _mesa_little_endian() ? MESA_FORMAT_R8G8B8A8_UNORM
+                                           : MESA_FORMAT_A8B8G8R8_UNORM,
                      rgbaRowStride, tempImageSlices,
                      srcWidth, srcHeight, srcDepth,
                      srcFormat, srcType, srcAddr,
@@ -232,11 +226,8 @@ _mesa_texstore_rgba_dxt5(TEXSTORE_PARAMS)
       tempImageSlices[0] = (GLubyte *) tempImage;
       _mesa_texstore(ctx, dims,
                      baseInternalFormat,
-#if UTIL_ARCH_LITTLE_ENDIAN
-                     MESA_FORMAT_R8G8B8A8_UNORM,
-#else
-                     MESA_FORMAT_A8B8G8R8_UNORM,
-#endif
+                     _mesa_little_endian() ? MESA_FORMAT_R8G8B8A8_UNORM
+                                           : MESA_FORMAT_A8B8G8R8_UNORM,
                      rgbaRowStride, tempImageSlices,
                      srcWidth, srcHeight, srcDepth,
                      srcFormat, srcType, srcAddr,

@@ -128,9 +128,9 @@ def generate(env):
         if not path: 
             path = []
         if SCons.Util.is_String(path):
-            path = str.split(path, os.pathsep)
+            path = string.split(path, os.pathsep)
 
-        env['ENV']['PATH'] = str.join(os.pathsep, [dir] + path)
+        env['ENV']['PATH'] = string.join([dir] + path, os.pathsep)
 
     # Most of mingw is the same as gcc and friends...
     gnu_tools = ['gcc', 'g++', 'gnulink', 'ar', 'gas']

@@ -24,13 +24,12 @@
 
 
 #include "glheader.h"
-
+#include "imports.h"
 #include "context.h"
 #include "depth.h"
 #include "enums.h"
 #include "macros.h"
 #include "mtypes.h"
-#include "state.h"
 
 
 /**********************************************************************/
@@ -84,7 +83,6 @@ depth_func(struct gl_context *ctx, GLenum func, bool no_error)
    FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepth ? 0 : _NEW_DEPTH);
    ctx->NewDriverState |= ctx->DriverFlags.NewDepth;
    ctx->Depth.Func = func;
-   _mesa_update_allow_draw_out_of_order(ctx);
 
    if (ctx->Driver.DepthFunc)
       ctx->Driver.DepthFunc(ctx, func);
@@ -130,7 +128,6 @@ _mesa_DepthMask( GLboolean flag )
    FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepth ? 0 : _NEW_DEPTH);
    ctx->NewDriverState |= ctx->DriverFlags.NewDepth;
    ctx->Depth.Mask = flag;
-   _mesa_update_allow_draw_out_of_order(ctx);
 
    if (ctx->Driver.DepthMask)
       ctx->Driver.DepthMask( ctx, flag );
@@ -154,8 +151,8 @@ _mesa_DepthBoundsEXT( GLclampd zmin, GLclampd zmax )
       return;
    }
 
-   zmin = SATURATE(zmin);
-   zmax = SATURATE(zmax);
+   zmin = CLAMP(zmin, 0.0, 1.0);
+   zmax = CLAMP(zmax, 0.0, 1.0);
 
    if (ctx->Depth.BoundsMin == zmin && ctx->Depth.BoundsMax == zmax)
       return;

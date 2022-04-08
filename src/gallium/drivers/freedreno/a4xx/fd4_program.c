@@ -28,7 +28,7 @@
 #include "util/u_string.h"
 #include "util/u_memory.h"
 #include "util/u_inlines.h"
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 
 #include "freedreno_program.h"
 
@@ -36,6 +36,43 @@
 #include "fd4_emit.h"
 #include "fd4_texture.h"
 #include "fd4_format.h"
+
+static struct ir3_shader *
+create_shader_stateobj(struct pipe_context *pctx, const struct pipe_shader_state *cso,
+		gl_shader_stage type)
+{
+	struct fd_context *ctx = fd_context(pctx);
+	struct ir3_compiler *compiler = ctx->screen->compiler;
+	return ir3_shader_create(compiler, cso, type, &ctx->debug, pctx->screen);
+}
+
+static void *
+fd4_fp_state_create(struct pipe_context *pctx,
+		const struct pipe_shader_state *cso)
+{
+	return create_shader_stateobj(pctx, cso, MESA_SHADER_FRAGMENT);
+}
+
+static void
+fd4_fp_state_delete(struct pipe_context *pctx, void *hwcso)
+{
+	struct ir3_shader *so = hwcso;
+	ir3_shader_destroy(so);
+}
+
+static void *
+fd4_vp_state_create(struct pipe_context *pctx,
+		const struct pipe_shader_state *cso)
+{
+	return create_shader_stateobj(pctx, cso, MESA_SHADER_VERTEX);
+}
+
+static void
+fd4_vp_state_delete(struct pipe_context *pctx, void *hwcso)
+{
+	struct ir3_shader *so = hwcso;
+	ir3_shader_destroy(so);
+}
 
 static void
 emit_shader(struct fd_ringbuffer *ring, const struct ir3_shader_variant *so)
@@ -64,7 +101,7 @@ emit_shader(struct fd_ringbuffer *ring, const struct ir3_shader_variant *so)
 		OUT_RING(ring, CP_LOAD_STATE4_1_EXT_SRC_ADDR(0) |
 				CP_LOAD_STATE4_1_STATE_TYPE(ST4_SHADER));
 	} else {
-		OUT_RELOC(ring, so->bo, 0,
+		OUT_RELOCD(ring, so->bo, 0,
 				CP_LOAD_STATE4_1_STATE_TYPE(ST4_SHADER), 0);
 	}
 
@@ -112,8 +149,7 @@ setup_stages(struct fd4_emit *emit, struct stage *s)
 		if (s[i].v) {
 			s[i].i = &s[i].v->info;
 			/* constlen is in units of 4 * vec4: */
-			assert(s[i].v->constlen % 4 == 0);
-			s[i].constlen = s[i].v->constlen / 4;
+			s[i].constlen = align(s[i].v->constlen, 4) / 4;
 			/* instrlen is already in units of 16 instr.. although
 			 * probably we should ditch that and not make the compiler
 			 * care about instruction group size of a3xx vs a4xx
@@ -164,7 +200,7 @@ fd4_program_emit(struct fd_ringbuffer *ring, struct fd4_emit *emit,
 {
 	struct stage s[MAX_STAGES];
 	uint32_t pos_regid, posz_regid, psize_regid, color_regid[8];
-	uint32_t face_regid, coord_regid, zwcoord_regid, ij_regid[IJ_COUNT];
+	uint32_t face_regid, coord_regid, zwcoord_regid, vcoord_regid;
 	enum a3xx_threadsize fssz;
 	int constmode;
 	int i, j;
@@ -209,8 +245,7 @@ fd4_program_emit(struct fd_ringbuffer *ring, struct fd4_emit *emit,
 	face_regid      = ir3_find_sysval_regid(s[FS].v, SYSTEM_VALUE_FRONT_FACE);
 	coord_regid     = ir3_find_sysval_regid(s[FS].v, SYSTEM_VALUE_FRAG_COORD);
 	zwcoord_regid   = (coord_regid == regid(63,0)) ? regid(63,0) : (coord_regid + 2);
-	for (unsigned i = 0; i < ARRAY_SIZE(ij_regid); i++)
-		ij_regid[i] = ir3_find_sysval_regid(s[FS].v, SYSTEM_VALUE_BARYCENTRIC_PERSP_PIXEL + i);
+	vcoord_regid    = ir3_find_sysval_regid(s[FS].v, SYSTEM_VALUE_BARYCENTRIC_PIXEL);
 
 	/* we could probably divide this up into things that need to be
 	 * emitted if frag-prog is dirty vs if vert-prog is dirty..
@@ -236,11 +271,8 @@ fd4_program_emit(struct fd_ringbuffer *ring, struct fd4_emit *emit,
 	OUT_RING(ring, A4XX_HLSQ_CONTROL_2_REG_PRIMALLOCTHRESHOLD(63) |
 			0x3f3f000 |           /* XXX */
 			A4XX_HLSQ_CONTROL_2_REG_FACEREGID(face_regid));
-	/* XXX left out centroid/sample for now */
-	OUT_RING(ring, A4XX_HLSQ_CONTROL_3_REG_IJ_PERSP_PIXEL(ij_regid[IJ_PERSP_PIXEL]) |
-			A4XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_PIXEL(ij_regid[IJ_LINEAR_PIXEL]) |
-			A4XX_HLSQ_CONTROL_3_REG_IJ_PERSP_CENTROID(ij_regid[IJ_PERSP_CENTROID]) |
-			A4XX_HLSQ_CONTROL_3_REG_IJ_LINEAR_CENTROID(ij_regid[IJ_LINEAR_CENTROID]));
+	OUT_RING(ring, A4XX_HLSQ_CONTROL_3_REG_REGID(vcoord_regid) |
+			0xfcfcfc00);
 	OUT_RING(ring, 0x00fcfcfc);   /* XXX HLSQ_CONTROL_4 */
 
 	OUT_PKT0(ring, REG_A4XX_HLSQ_VS_CONTROL_REG, 5);
@@ -286,7 +318,7 @@ fd4_program_emit(struct fd_ringbuffer *ring, struct fd4_emit *emit,
 			A4XX_SP_VS_CTRL_REG0_INOUTREGOVERLAP(0) |
 			A4XX_SP_VS_CTRL_REG0_THREADSIZE(TWO_QUADS) |
 			A4XX_SP_VS_CTRL_REG0_SUPERTHREADMODE |
-			COND(s[VS].v->need_pixlod, A4XX_SP_VS_CTRL_REG0_PIXLODENABLE));
+			COND(s[VS].v->num_samp > 0, A4XX_SP_VS_CTRL_REG0_PIXLODENABLE));
 	OUT_RING(ring, A4XX_SP_VS_CTRL_REG1_CONSTLENGTH(s[VS].constlen) |
 			A4XX_SP_VS_CTRL_REG1_INITIALOUTSTANDING(s[VS].v->total_in));
 	OUT_RING(ring, A4XX_SP_VS_PARAM_REG_POSREGID(pos_regid) |
@@ -294,7 +326,7 @@ fd4_program_emit(struct fd_ringbuffer *ring, struct fd4_emit *emit,
 			A4XX_SP_VS_PARAM_REG_TOTALVSOUTVAR(s[FS].v->varying_in));
 
 	struct ir3_shader_linkage l = {0};
-	ir3_link_shaders(&l, s[VS].v, s[FS].v, false);
+	ir3_link_shaders(&l, s[VS].v, s[FS].v);
 
 	for (i = 0, j = 0; (i < 16) && (j < l.cnt); i++) {
 		uint32_t reg = 0;
@@ -361,12 +393,12 @@ fd4_program_emit(struct fd_ringbuffer *ring, struct fd4_emit *emit,
 				A4XX_SP_FS_CTRL_REG0_INOUTREGOVERLAP(1) |
 				A4XX_SP_FS_CTRL_REG0_THREADSIZE(fssz) |
 				A4XX_SP_FS_CTRL_REG0_SUPERTHREADMODE |
-				COND(s[FS].v->need_pixlod, A4XX_SP_FS_CTRL_REG0_PIXLODENABLE));
+				COND(s[FS].v->num_samp > 0, A4XX_SP_FS_CTRL_REG0_PIXLODENABLE));
 		OUT_RING(ring, A4XX_SP_FS_CTRL_REG1_CONSTLENGTH(s[FS].constlen) |
 				0x80000000 |      /* XXX */
 				COND(s[FS].v->frag_face, A4XX_SP_FS_CTRL_REG1_FACENESS) |
 				COND(s[FS].v->total_in > 0, A4XX_SP_FS_CTRL_REG1_VARYING) |
-				COND(s[FS].v->fragcoord_compmask != 0, A4XX_SP_FS_CTRL_REG1_FRAGCOORD));
+				COND(s[FS].v->frag_coord, A4XX_SP_FS_CTRL_REG1_FRAGCOORD));
 
 		OUT_PKT0(ring, REG_A4XX_SP_FS_OBJ_OFFSET_REG, 2);
 		OUT_RING(ring, A4XX_SP_FS_OBJ_OFFSET_REG_CONSTOBJECTOFFSET(s[FS].constoff) |
@@ -386,22 +418,14 @@ fd4_program_emit(struct fd_ringbuffer *ring, struct fd4_emit *emit,
 	OUT_RING(ring, A4XX_SP_GS_OBJ_OFFSET_REG_CONSTOBJECTOFFSET(s[GS].constoff) |
 			A4XX_SP_GS_OBJ_OFFSET_REG_SHADEROBJOFFSET(s[GS].instroff));
 
-	OUT_PKT0(ring, REG_A4XX_GRAS_CNTL, 1);
-	OUT_RING(ring,
-			CONDREG(face_regid, A4XX_GRAS_CNTL_IJ_PERSP) |
-			CONDREG(zwcoord_regid, A4XX_GRAS_CNTL_IJ_PERSP) |
-			CONDREG(ij_regid[IJ_PERSP_PIXEL], A4XX_GRAS_CNTL_IJ_PERSP) |
-			CONDREG(ij_regid[IJ_LINEAR_PIXEL], A4XX_GRAS_CNTL_IJ_LINEAR) |
-			CONDREG(ij_regid[IJ_PERSP_CENTROID], A4XX_GRAS_CNTL_IJ_PERSP));
-
 	OUT_PKT0(ring, REG_A4XX_RB_RENDER_CONTROL2, 1);
 	OUT_RING(ring, A4XX_RB_RENDER_CONTROL2_MSAA_SAMPLES(0) |
-			CONDREG(ij_regid[IJ_PERSP_PIXEL], A4XX_RB_RENDER_CONTROL2_IJ_PERSP_PIXEL) |
-			CONDREG(ij_regid[IJ_PERSP_CENTROID], A4XX_RB_RENDER_CONTROL2_IJ_PERSP_CENTROID) |
-			CONDREG(ij_regid[IJ_LINEAR_PIXEL], A4XX_RB_RENDER_CONTROL2_SIZE) |
+			COND(s[FS].v->total_in > 0, A4XX_RB_RENDER_CONTROL2_VARYING) |
 			COND(s[FS].v->frag_face, A4XX_RB_RENDER_CONTROL2_FACENESS) |
-			COND(s[FS].v->fragcoord_compmask != 0,
-					A4XX_RB_RENDER_CONTROL2_COORD_MASK(s[FS].v->fragcoord_compmask)));
+			COND(s[FS].v->frag_coord, A4XX_RB_RENDER_CONTROL2_XCOORD |
+					A4XX_RB_RENDER_CONTROL2_YCOORD |
+					A4XX_RB_RENDER_CONTROL2_ZCOORD |
+					A4XX_RB_RENDER_CONTROL2_WCOORD));
 
 	OUT_PKT0(ring, REG_A4XX_RB_FS_OUTPUT_REG, 1);
 	OUT_RING(ring, A4XX_RB_FS_OUTPUT_REG_MRT(nr) |
@@ -424,7 +448,7 @@ fd4_program_emit(struct fd_ringbuffer *ring, struct fd4_emit *emit,
 		OUT_RING(ring, A4XX_SP_FS_MRT_REG_REGID(color_regid[i]) |
 				A4XX_SP_FS_MRT_REG_MRTFORMAT(format) |
 				COND(srgb, A4XX_SP_FS_MRT_REG_COLOR_SRGB) |
-				COND(color_regid[i] & HALF_REG_ID,
+				COND(emit->key.half_precision,
 					A4XX_SP_FS_MRT_REG_HALF_PRECISION));
 	}
 
@@ -465,7 +489,7 @@ fd4_program_emit(struct fd_ringbuffer *ring, struct fd4_emit *emit,
 
 			uint32_t inloc = s[FS].v->inputs[j].inloc;
 
-			if (s[FS].v->inputs[j].flat ||
+			if ((s[FS].v->inputs[j].interpolate == INTERP_MODE_FLAT) ||
 					(s[FS].v->inputs[j].rasterflat && emit->rasterflat)) {
 				uint32_t loc = inloc;
 
@@ -478,32 +502,40 @@ fd4_program_emit(struct fd_ringbuffer *ring, struct fd4_emit *emit,
 				}
 			}
 
-			bool coord_mode = emit->sprite_coord_mode;
-			if (ir3_point_sprite(s[FS].v, j, emit->sprite_coord_enable, &coord_mode)) {
-				/* mask is two 2-bit fields, where:
-				 *   '01' -> S
-				 *   '10' -> T
-				 *   '11' -> 1 - T  (flip mode)
+			gl_varying_slot slot = s[FS].v->inputs[j].slot;
+
+			/* since we don't enable PIPE_CAP_TGSI_TEXCOORD: */
+			if (slot >= VARYING_SLOT_VAR0) {
+				unsigned texmask = 1 << (slot - VARYING_SLOT_VAR0);
+				/* Replace the .xy coordinates with S/T from the point sprite. Set
+				 * interpolation bits for .zw such that they become .01
 				 */
-				unsigned mask = coord_mode ? 0b1101 : 0b1001;
-				uint32_t loc = inloc;
-				if (compmask & 0x1) {
-					vpsrepl[loc / 16] |= ((mask >> 0) & 0x3) << ((loc % 16) * 2);
-					loc++;
-				}
-				if (compmask & 0x2) {
-					vpsrepl[loc / 16] |= ((mask >> 2) & 0x3) << ((loc % 16) * 2);
-					loc++;
-				}
-				if (compmask & 0x4) {
-					/* .z <- 0.0f */
-					vinterp[loc / 16] |= 0b10 << ((loc % 16) * 2);
-					loc++;
-				}
-				if (compmask & 0x8) {
-					/* .w <- 1.0f */
-					vinterp[loc / 16] |= 0b11 << ((loc % 16) * 2);
-					loc++;
+				if (emit->sprite_coord_enable & texmask) {
+					/* mask is two 2-bit fields, where:
+					 *   '01' -> S
+					 *   '10' -> T
+					 *   '11' -> 1 - T  (flip mode)
+					 */
+					unsigned mask = emit->sprite_coord_mode ? 0b1101 : 0b1001;
+					uint32_t loc = inloc;
+					if (compmask & 0x1) {
+						vpsrepl[loc / 16] |= ((mask >> 0) & 0x3) << ((loc % 16) * 2);
+						loc++;
+					}
+					if (compmask & 0x2) {
+						vpsrepl[loc / 16] |= ((mask >> 2) & 0x3) << ((loc % 16) * 2);
+						loc++;
+					}
+					if (compmask & 0x4) {
+						/* .z <- 0.0f */
+						vinterp[loc / 16] |= 0b10 << ((loc % 16) * 2);
+						loc++;
+					}
+					if (compmask & 0x8) {
+						/* .w <- 1.0f */
+						vinterp[loc / 16] |= 0b11 << ((loc % 16) * 2);
+						loc++;
+					}
 				}
 			}
 		}
@@ -537,6 +569,11 @@ fd4_program_emit(struct fd_ringbuffer *ring, struct fd4_emit *emit,
 void
 fd4_prog_init(struct pipe_context *pctx)
 {
-	ir3_prog_init(pctx);
+	pctx->create_fs_state = fd4_fp_state_create;
+	pctx->delete_fs_state = fd4_fp_state_delete;
+
+	pctx->create_vs_state = fd4_vp_state_create;
+	pctx->delete_vs_state = fd4_vp_state_delete;
+
 	fd_prog_init(pctx);
 }

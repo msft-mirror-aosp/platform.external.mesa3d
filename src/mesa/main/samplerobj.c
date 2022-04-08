@@ -38,7 +38,6 @@
 #include "main/mtypes.h"
 #include "main/samplerobj.h"
 #include "main/texturebindless.h"
-#include "util/u_memory.h"
 
 
 struct gl_sampler_object *
@@ -157,6 +156,7 @@ static void
 create_samplers(struct gl_context *ctx, GLsizei count, GLuint *samplers,
                 const char *caller)
 {
+   GLuint first;
    GLint i;
 
    if (!samplers)
@@ -164,21 +164,22 @@ create_samplers(struct gl_context *ctx, GLsizei count, GLuint *samplers,
 
    _mesa_HashLockMutex(ctx->Shared->SamplerObjects);
 
-   _mesa_HashFindFreeKeys(ctx->Shared->SamplerObjects, samplers, count);
+   first = _mesa_HashFindFreeKeyBlock(ctx->Shared->SamplerObjects, count);
 
    /* Insert the ID and pointer to new sampler object into hash table */
    for (i = 0; i < count; i++) {
       struct gl_sampler_object *sampObj;
+      GLuint name = first + i;
 
-      sampObj = ctx->Driver.NewSamplerObject(ctx, samplers[i]);
+      sampObj = ctx->Driver.NewSamplerObject(ctx, name);
       if (!sampObj) {
          _mesa_HashUnlockMutex(ctx->Shared->SamplerObjects);
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "%s", caller);
          return;
       }
 
-      _mesa_HashInsertLocked(ctx->Shared->SamplerObjects, samplers[i],
-                             sampObj, true);
+      _mesa_HashInsertLocked(ctx->Shared->SamplerObjects, name, sampObj);
+      samplers[i] = name;
    }
 
    _mesa_HashUnlockMutex(ctx->Shared->SamplerObjects);
@@ -241,7 +242,7 @@ delete_samplers(struct gl_context *ctx, GLsizei count, const GLuint *samplers)
          GLuint j;
          struct gl_sampler_object *sampObj =
             lookup_samplerobj_locked(ctx, samplers[i]);
-
+   
          if (sampObj) {
             /* If the sampler is currently bound, unbind it. */
             for (j = 0; j < ctx->Const.MaxCombinedTextureImageUnits; j++) {
@@ -325,7 +326,7 @@ bind_sampler(struct gl_context *ctx, GLuint unit, GLuint sampler, bool no_error)
          return;
       }
    }
-
+   
    /* bind new sampler */
    _mesa_bind_sampler(ctx, unit, sampObj);
 }
@@ -471,21 +472,13 @@ _mesa_BindSamplers(GLuint first, GLsizei count, const GLuint *samplers)
  * Check if a coordinate wrap mode is legal.
  * \return GL_TRUE if legal, GL_FALSE otherwise
  */
-static GLboolean
+static GLboolean 
 validate_texture_wrap_mode(struct gl_context *ctx, GLenum wrap)
 {
    const struct gl_extensions * const e = &ctx->Extensions;
 
    switch (wrap) {
    case GL_CLAMP:
-      /* From GL 3.0 specification section E.1 "Profiles and Deprecated
-       * Features of OpenGL 3.0":
-       *
-       * - Texture wrap mode CLAMP - CLAMP is no longer accepted as a value of
-       *   texture parameters TEXTURE_WRAP_S, TEXTURE_WRAP_T, or
-       *   TEXTURE_WRAP_R.
-       */
-      return ctx->API == API_OPENGL_COMPAT;
    case GL_CLAMP_TO_EDGE:
    case GL_REPEAT:
    case GL_MIRRORED_REPEAT:
@@ -1428,41 +1421,33 @@ _mesa_GetSamplerParameteriv(GLuint sampler, GLenum pname, GLint *params)
       /* GL spec 'Data Conversions' section specifies that floating-point
        * value in integer Get function is rounded to nearest integer
        */
-      *params = lroundf(sampObj->MinLod);
+      *params = IROUND(sampObj->MinLod);
       break;
    case GL_TEXTURE_MAX_LOD:
       /* GL spec 'Data Conversions' section specifies that floating-point
        * value in integer Get function is rounded to nearest integer
        */
-      *params = lroundf(sampObj->MaxLod);
+      *params = IROUND(sampObj->MaxLod);
       break;
    case GL_TEXTURE_LOD_BIAS:
       /* GL spec 'Data Conversions' section specifies that floating-point
        * value in integer Get function is rounded to nearest integer
        */
-      *params = lroundf(sampObj->LodBias);
+      *params = IROUND(sampObj->LodBias);
       break;
    case GL_TEXTURE_COMPARE_MODE:
-      if (!ctx->Extensions.ARB_shadow)
-         goto invalid_pname;
       *params = sampObj->CompareMode;
       break;
    case GL_TEXTURE_COMPARE_FUNC:
-      if (!ctx->Extensions.ARB_shadow)
-         goto invalid_pname;
       *params = sampObj->CompareFunc;
       break;
    case GL_TEXTURE_MAX_ANISOTROPY_EXT:
-      if (!ctx->Extensions.EXT_texture_filter_anisotropic)
-         goto invalid_pname;
       /* GL spec 'Data Conversions' section specifies that floating-point
        * value in integer Get function is rounded to nearest integer
        */
-      *params = lroundf(sampObj->MaxAnisotropy);
+      *params = IROUND(sampObj->MaxAnisotropy);
       break;
    case GL_TEXTURE_BORDER_COLOR:
-      if (!ctx->Extensions.ARB_texture_border_clamp)
-         goto invalid_pname;
       params[0] = FLOAT_TO_INT(sampObj->BorderColor.f[0]);
       params[1] = FLOAT_TO_INT(sampObj->BorderColor.f[1]);
       params[2] = FLOAT_TO_INT(sampObj->BorderColor.f[2]);

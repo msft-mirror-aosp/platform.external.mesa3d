@@ -343,14 +343,12 @@ struct r600_pipe_shader_selector {
 	struct r600_pipe_shader *current;
 
 	struct tgsi_token       *tokens;
-        struct nir_shader       *nir;
 	struct pipe_stream_output_info  so;
 	struct tgsi_shader_info		info;
 
 	unsigned	num_shaders;
 
 	enum pipe_shader_type	type;
-        enum pipe_shader_ir ir_type;
 
 	/* geometry shader properties */
 	enum pipe_prim_type	gs_output_prim;
@@ -702,12 +700,12 @@ void *evergreen_create_db_flush_dsa(struct r600_context *rctx);
 void *evergreen_create_resolve_blend(struct r600_context *rctx);
 void *evergreen_create_decompress_blend(struct r600_context *rctx);
 void *evergreen_create_fastclear_blend(struct r600_context *rctx);
-bool evergreen_is_format_supported(struct pipe_screen *screen,
-				   enum pipe_format format,
-				   enum pipe_texture_target target,
-				   unsigned sample_count,
-				   unsigned storage_sample_count,
-				   unsigned usage);
+boolean evergreen_is_format_supported(struct pipe_screen *screen,
+				      enum pipe_format format,
+				      enum pipe_texture_target target,
+				      unsigned sample_count,
+				      unsigned storage_sample_count,
+				      unsigned usage);
 void evergreen_init_color_surface(struct r600_context *rctx,
 				  struct r600_surface *surf);
 void evergreen_init_color_surface_rat(struct r600_context *rctx,
@@ -759,12 +757,12 @@ void *r600_create_resolve_blend(struct r600_context *rctx);
 void *r700_create_resolve_blend(struct r600_context *rctx);
 void *r600_create_decompress_blend(struct r600_context *rctx);
 bool r600_adjust_gprs(struct r600_context *rctx);
-bool r600_is_format_supported(struct pipe_screen *screen,
-			      enum pipe_format format,
-			      enum pipe_texture_target target,
-			      unsigned sample_count,
-			      unsigned storage_sample_count,
-			      unsigned usage);
+boolean r600_is_format_supported(struct pipe_screen *screen,
+				 enum pipe_format format,
+				 enum pipe_texture_target target,
+				 unsigned sample_count,
+				 unsigned storage_sample_count,
+				 unsigned usage);
 void r600_update_db_shader_control(struct r600_context * rctx);
 void r600_setup_scratch_buffers(struct r600_context *rctx);
 
@@ -1057,8 +1055,7 @@ void eg_dump_debug_state(struct pipe_context *ctx, FILE *f,
 			 unsigned flags);
 
 struct r600_pipe_shader_selector *r600_create_shader_state_tokens(struct pipe_context *ctx,
-								  const void *tokens,
-								  enum pipe_shader_ir,
+								  const struct tgsi_token *tokens,
 								  unsigned pipe_shader_type);
 int r600_shader_select(struct pipe_context *ctx,
 		       struct r600_pipe_shader_selector* sel,

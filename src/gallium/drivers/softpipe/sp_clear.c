@@ -37,7 +37,6 @@
 #include "util/u_surface.h"
 #include "sp_clear.h"
 #include "sp_context.h"
-#include "sp_screen.h"
 #include "sp_query.h"
 #include "sp_tile_cache.h"
 
@@ -48,7 +47,6 @@
  */
 void
 softpipe_clear(struct pipe_context *pipe, unsigned buffers,
-               const struct pipe_scissor_state *scissor_state,
                const union pipe_color_union *color,
                double depth, unsigned stencil)
 {
@@ -58,7 +56,7 @@ softpipe_clear(struct pipe_context *pipe, unsigned buffers,
    uint64_t cv;
    uint i;
 
-   if (unlikely(sp_debug & SP_DBG_NO_RAST))
+   if (softpipe->no_rast)
       return;
 
    if (!softpipe_check_render_cond(softpipe))

@@ -27,8 +27,7 @@
 #ifndef ETNAVIV_FORMAT_H_
 #define ETNAVIV_FORMAT_H_
 
-#include "util/format/u_format.h"
-#include "pipe/p_state.h"
+#include "util/u_format.h"
 #include <stdint.h>
 
 #define ETNA_NO_MATCH (~0)
@@ -39,11 +38,6 @@ uint32_t
 translate_texture_format(enum pipe_format fmt);
 
 bool
-texture_use_int_filter(const struct pipe_sampler_view *sv,
-                       const struct pipe_sampler_state *ss,
-                       bool tex_desc);
-
-bool
 texture_format_needs_swiz(enum pipe_format fmt);
 
 uint32_t
@@ -51,12 +45,15 @@ get_texture_swiz(enum pipe_format fmt, unsigned swizzle_r,
                  unsigned swizzle_g, unsigned swizzle_b, unsigned swizzle_a);
 
 uint32_t
-translate_pe_format(enum pipe_format fmt);
+translate_rs_format(enum pipe_format fmt);
 
 int
-translate_pe_format_rb_swap(enum pipe_format fmt);
+translate_rs_format_rb_swap(enum pipe_format fmt);
 
 uint32_t
 translate_vertex_format_type(enum pipe_format fmt);
+
+uint32_t
+translate_ts_sampler_format(enum pipe_format fmt);
 
 #endif /* ETNAVIV_FORMAT_H_ */

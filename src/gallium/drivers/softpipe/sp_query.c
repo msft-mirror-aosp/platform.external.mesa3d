@@ -86,7 +86,7 @@ softpipe_destroy_query(struct pipe_context *pipe, struct pipe_query *q)
 }
 
 
-static bool
+static boolean
 softpipe_begin_query(struct pipe_context *pipe, struct pipe_query *q)
 {
    struct softpipe_context *softpipe = softpipe_context( pipe );
@@ -201,8 +201,6 @@ softpipe_end_query(struct pipe_context *pipe, struct pipe_query *q)
          softpipe->pipeline_statistics.c_primitives - sq->stats.c_primitives;
       sq->stats.ps_invocations =
          softpipe->pipeline_statistics.ps_invocations - sq->stats.ps_invocations;
-      sq->stats.cs_invocations =
-         softpipe->pipeline_statistics.cs_invocations - sq->stats.cs_invocations;
 
       softpipe->active_statistics_queries--;
       break;
@@ -215,10 +213,10 @@ softpipe_end_query(struct pipe_context *pipe, struct pipe_query *q)
 }
 
 
-static bool
+static boolean
 softpipe_get_query_result(struct pipe_context *pipe, 
                           struct pipe_query *q,
-                          bool wait,
+                          boolean wait,
                           union pipe_query_result *vresult)
 {
    struct softpipe_query *sq = softpipe_query(q);
@@ -237,7 +235,7 @@ softpipe_get_query_result(struct pipe_context *pipe,
              sizeof(struct pipe_query_data_pipeline_statistics));
       break;
    case PIPE_QUERY_GPU_FINISHED:
-      vresult->b = true;
+      vresult->b = TRUE;
       break;
    case PIPE_QUERY_SO_OVERFLOW_PREDICATE:
    case PIPE_QUERY_SO_OVERFLOW_ANY_PREDICATE:
@@ -248,7 +246,7 @@ softpipe_get_query_result(struct pipe_context *pipe,
           (struct pipe_query_data_timestamp_disjoint *)vresult;
       /* os_get_time_nano return nanoseconds */
       td->frequency = UINT64_C(1000000000);
-      td->disjoint = false;
+      td->disjoint = FALSE;
    }
       break;
    case PIPE_QUERY_PRIMITIVES_EMITTED:
@@ -265,7 +263,7 @@ softpipe_get_query_result(struct pipe_context *pipe,
       *result = sq->end - sq->start;
       break;
    }
-   return true;
+   return TRUE;
 }
 
 
@@ -297,7 +295,7 @@ softpipe_check_render_cond(struct softpipe_context *sp)
 
 
 static void
-softpipe_set_active_query_state(struct pipe_context *pipe, bool enable)
+softpipe_set_active_query_state(struct pipe_context *pipe, boolean enable)
 {
 }
 

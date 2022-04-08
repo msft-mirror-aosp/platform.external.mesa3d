@@ -34,8 +34,7 @@ struct pipe_loader_ops {
    struct pipe_screen *(*create_screen)(struct pipe_loader_device *dev,
                                         const struct pipe_screen_config *config);
 
-   const struct driOptionDescription *(*get_driconf)(struct pipe_loader_device *dev,
-                                                     unsigned *count);
+   const char *(*get_driconf_xml)(struct pipe_loader_device *dev);
 
    void (*release)(struct pipe_loader_device **dev);
 };

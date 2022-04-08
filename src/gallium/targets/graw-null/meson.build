@@ -21,20 +21,14 @@
 libgraw_util = static_library(
   'graw_util',
   ['graw_util.c'],
-  c_args : [c_msvc_compat_args],
-  gnu_symbol_visibility : 'hidden',
-  include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux],
+  include_directories : inc_common,
 )
 
 libgraw_null = shared_library(
   'graw_null',
   ['graw_null.c'],
-  c_args : [c_msvc_compat_args],
-  gnu_symbol_visibility : 'hidden',
-  include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux],
-  link_with : libgallium,
-  dependencies : idep_mesautil,
-  name_prefix : host_machine.system() == 'windows' ? '' : 'lib',  # otherwise mingw will create libgraw_null.dll
+  include_directories : inc_common,
+  link_with : [libmesa_util, libgallium],
 )
 
 libgraw = libgraw_null

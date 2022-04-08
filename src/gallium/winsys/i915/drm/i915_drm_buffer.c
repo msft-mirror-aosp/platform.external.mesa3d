@@ -1,4 +1,4 @@
-#include "frontend/drm_driver.h"
+#include "state_tracker/drm_driver.h"
 #include "i915_drm_winsys.h"
 #include "util/u_memory.h"
 

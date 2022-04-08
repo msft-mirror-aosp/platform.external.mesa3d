@@ -32,7 +32,7 @@
 #include "svga_surface.h"
 
 //#include "util/u_blit_sw.h"
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 #include "util/u_surface.h"
 
 #define FILE_DEBUG_FLAG DEBUG_BLIT
@@ -80,6 +80,7 @@ intra_surface_copy(struct svga_context *svga, struct pipe_resource *tex,
                     unsigned dst_x, unsigned dst_y, unsigned dst_z,
                     unsigned width, unsigned height, unsigned depth)
 {
+   enum pipe_error ret;
    SVGA3dCopyBox box;
    struct svga_texture *stex;
 
@@ -101,8 +102,15 @@ intra_surface_copy(struct svga_context *svga, struct pipe_resource *tex,
    box.srcy = src_y;
    box.srcz = src_z;
 
-   SVGA_RETRY(svga, SVGA3D_vgpu10_IntraSurfaceCopy(svga->swc, stex->handle,
-                                                   level, layer_face,  &box));
+   ret = SVGA3D_vgpu10_IntraSurfaceCopy(svga->swc,
+                                 stex->handle, level, layer_face,  &box);
+   if (ret != PIPE_OK) {
+      svga_context_flush(svga, NULL);
+   ret = SVGA3D_vgpu10_IntraSurfaceCopy(svga->swc,
+                                 stex->handle, level, layer_face, &box);
+      assert(ret == PIPE_OK);
+   }
+
    /* Mark the texture subresource as rendered-to. */
    svga_set_texture_rendered_to(stex, layer_face, level);
 }
@@ -374,7 +382,7 @@ can_blit_via_intra_surface_copy(struct svga_context *svga,
 
 
 /**
- * the gallium frontend implements some resource copies with blits (for
+ * The state tracker implements some resource copies with blits (for
  * GL_ARB_copy_image).  This function checks if we should really do the blit
  * with a VGPU10 CopyRegion command or software fallback (for incompatible
  * src/dst formats).
@@ -622,13 +630,11 @@ try_blit(struct svga_context *svga, const struct pipe_blit_info *blit_info)
    util_blitter_save_vertex_elements(svga->blitter, (void*)svga->curr.velems);
    util_blitter_save_vertex_shader(svga->blitter, svga->curr.vs);
    util_blitter_save_geometry_shader(svga->blitter, svga->curr.user_gs);
-   util_blitter_save_tessctrl_shader(svga->blitter, svga->curr.tcs);
-   util_blitter_save_tesseval_shader(svga->blitter, svga->curr.tes);
    util_blitter_save_so_targets(svga->blitter, svga->num_so_targets,
                      (struct pipe_stream_output_target**)svga->so_targets);
    util_blitter_save_rasterizer(svga->blitter, (void*)svga->curr.rast);
-   util_blitter_save_viewport(svga->blitter, &svga->curr.viewport[0]);
-   util_blitter_save_scissor(svga->blitter, &svga->curr.scissor[0]);
+   util_blitter_save_viewport(svga->blitter, &svga->curr.viewport);
+   util_blitter_save_scissor(svga->blitter, &svga->curr.scissor);
    util_blitter_save_fragment_shader(svga->blitter, svga->curr.fs);
    util_blitter_save_blend(svga->blitter, (void*)svga->curr.blend);
    util_blitter_save_depth_stencil_alpha(svga->blitter,
@@ -829,6 +835,7 @@ svga_resource_copy_region(struct pipe_context *pipe,
    if (dst_tex->target == PIPE_BUFFER && src_tex->target == PIPE_BUFFER) {
       /* can't copy within the same buffer, unfortunately */
       if (svga_have_vgpu10(svga) && src_tex != dst_tex) {
+         enum pipe_error ret;
          struct svga_winsys_surface *src_surf;
          struct svga_winsys_surface *dst_surf;
          struct svga_buffer *dbuffer = svga_buffer(dst_tex);
@@ -837,9 +844,15 @@ svga_resource_copy_region(struct pipe_context *pipe,
          src_surf = svga_buffer_handle(svga, src_tex, sbuffer->bind_flags);
          dst_surf = svga_buffer_handle(svga, dst_tex, dbuffer->bind_flags);
 
-         SVGA_RETRY(svga, SVGA3D_vgpu10_BufferCopy(svga->swc, src_surf,
-                                                   dst_surf, src_box->x, dstx,
-                                                   src_box->width));
+         ret = SVGA3D_vgpu10_BufferCopy(svga->swc, src_surf, dst_surf,
+                                        src_box->x, dstx, src_box->width);
+         if (ret != PIPE_OK) {
+            svga_context_flush(svga, NULL);
+            ret = SVGA3D_vgpu10_BufferCopy(svga->swc, src_surf, dst_surf,
+                                           src_box->x, dstx, src_box->width);
+            assert(ret == PIPE_OK);
+         }
+
          dbuffer->dirty = TRUE;
       }
       else {

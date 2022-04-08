@@ -29,9 +29,6 @@
 #include "mtypes.h"
 
 extern void
-_mesa_update_allow_draw_out_of_order(struct gl_context *ctx);
-
-extern void
 _mesa_update_state(struct gl_context *ctx);
 
 /* As above but can only be called between _mesa_lock_context_textures() and 
@@ -42,11 +39,15 @@ _mesa_update_state_locked(struct gl_context *ctx);
 
 
 extern void
+_mesa_set_varying_vp_inputs(struct gl_context *ctx, GLbitfield varying_inputs);
+
+
+extern void
 _mesa_set_vp_override(struct gl_context *ctx, GLboolean flag);
 
 
 /**
- * Update ctx->VertexProgram._VPMode.
+ * Update ctx->VertexProgram._VertexProgramMode.
  */
 extern void
 _mesa_update_vertex_processing_mode(struct gl_context *ctx);

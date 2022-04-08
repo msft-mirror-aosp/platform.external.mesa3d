@@ -73,10 +73,10 @@ struct haiku_egl_surface
 
 
 /**
- * Called via eglCreateWindowSurface(), drv->CreateWindowSurface().
+ * Called via eglCreateWindowSurface(), drv->API.CreateWindowSurface().
  */
 static _EGLSurface *
-haiku_create_window_surface(_EGLDisplay *disp,
+haiku_create_window_surface(_EGLDriver *drv, _EGLDisplay *disp,
 	_EGLConfig *conf, void *native_window, const EGLint *attrib_list)
 {
 	CALLED();
@@ -89,7 +89,7 @@ haiku_create_window_surface(_EGLDisplay *disp,
 	}
 
 	if (!_eglInitSurface(&surface->surf, disp, EGL_WINDOW_BIT,
-		conf, attrib_list, native_window)) {
+		conf, attrib_list)) {
 		free(surface);
 		return NULL;
 	}
@@ -113,7 +113,7 @@ haiku_create_window_surface(_EGLDisplay *disp,
 
 
 static _EGLSurface *
-haiku_create_pixmap_surface(_EGLDisplay *disp,
+haiku_create_pixmap_surface(_EGLDriver *drv, _EGLDisplay *disp,
 	_EGLConfig *conf, void *native_pixmap, const EGLint *attrib_list)
 {
 	return NULL;
@@ -121,7 +121,7 @@ haiku_create_pixmap_surface(_EGLDisplay *disp,
 
 
 static _EGLSurface *
-haiku_create_pbuffer_surface(_EGLDisplay *disp,
+haiku_create_pbuffer_surface(_EGLDriver *drv, _EGLDisplay *disp,
 	_EGLConfig *conf, const EGLint *attrib_list)
 {
 	return NULL;
@@ -129,7 +129,7 @@ haiku_create_pbuffer_surface(_EGLDisplay *disp,
 
 
 static EGLBoolean
-haiku_destroy_surface(_EGLDisplay *disp, _EGLSurface *surf)
+haiku_destroy_surface(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf)
 {
 	if (_eglPutSurface(surf)) {
 		// XXX: detach haiku_egl_surface::gl from the native window and destroy it
@@ -152,34 +152,35 @@ haiku_add_configs_for_visuals(_EGLDisplay *disp)
 	_eglInitConfig(&conf->base, disp, 1);
 	TRACE("Config inited\n");
 
-	conf->base.RedSize = 8;
-	conf->base.BlueSize = 8;
-	conf->base.GreenSize = 8;
-	conf->base.LuminanceSize = 0;
-	conf->base.AlphaSize = 8;
-	conf->base.ColorBufferType = EGL_RGB_BUFFER;
-	conf->base.BufferSize = conf->base.RedSize
-	                      + conf->base.GreenSize
-	                      + conf->base.BlueSize
-	                      + conf->base.AlphaSize;
-	conf->base.ConfigCaveat = EGL_NONE;
-	conf->base.ConfigId = 1;
-	conf->base.BindToTextureRGB = EGL_FALSE;
-	conf->base.BindToTextureRGBA = EGL_FALSE;
-	conf->base.StencilSize = 0;
-	conf->base.TransparentType = EGL_NONE;
-	conf->base.NativeRenderable = EGL_TRUE; // Let's say yes
-	conf->base.NativeVisualID = 0; // No visual
-	conf->base.NativeVisualType = EGL_NONE; // No visual
-	conf->base.RenderableType = 0x8;
-	conf->base.SampleBuffers = 0; // TODO: How to get the right value ?
-	conf->base.Samples = conf->base.SampleBuffers == 0 ? 0 : 0;
-	conf->base.DepthSize = 24; // TODO: How to get the right value ?
-	conf->base.Level = 0;
-	conf->base.MaxPbufferWidth = 0; // TODO: How to get the right value ?
-	conf->base.MaxPbufferHeight = 0; // TODO: How to get the right value ?
-	conf->base.MaxPbufferPixels = 0; // TODO: How to get the right value ?
-	conf->base.SurfaceType = EGL_WINDOW_BIT /*| EGL_PIXMAP_BIT | EGL_PBUFFER_BIT*/;
+	_eglSetConfigKey(&conf->base, EGL_RED_SIZE, 8);
+	_eglSetConfigKey(&conf->base, EGL_BLUE_SIZE, 8);
+	_eglSetConfigKey(&conf->base, EGL_GREEN_SIZE, 8);
+	_eglSetConfigKey(&conf->base, EGL_LUMINANCE_SIZE, 0);
+	_eglSetConfigKey(&conf->base, EGL_ALPHA_SIZE, 8);
+	_eglSetConfigKey(&conf->base, EGL_COLOR_BUFFER_TYPE, EGL_RGB_BUFFER);
+	EGLint r = (_eglGetConfigKey(&conf->base, EGL_RED_SIZE)
+		+ _eglGetConfigKey(&conf->base, EGL_GREEN_SIZE)
+		+ _eglGetConfigKey(&conf->base, EGL_BLUE_SIZE)
+		+ _eglGetConfigKey(&conf->base, EGL_ALPHA_SIZE));
+	_eglSetConfigKey(&conf->base, EGL_BUFFER_SIZE, r);
+	_eglSetConfigKey(&conf->base, EGL_CONFIG_CAVEAT, EGL_NONE);
+	_eglSetConfigKey(&conf->base, EGL_CONFIG_ID, 1);
+	_eglSetConfigKey(&conf->base, EGL_BIND_TO_TEXTURE_RGB, EGL_FALSE);
+	_eglSetConfigKey(&conf->base, EGL_BIND_TO_TEXTURE_RGBA, EGL_FALSE);
+	_eglSetConfigKey(&conf->base, EGL_STENCIL_SIZE, 0);
+	_eglSetConfigKey(&conf->base, EGL_TRANSPARENT_TYPE, EGL_NONE);
+	_eglSetConfigKey(&conf->base, EGL_NATIVE_RENDERABLE, EGL_TRUE); // Let's say yes
+	_eglSetConfigKey(&conf->base, EGL_NATIVE_VISUAL_ID, 0); // No visual
+	_eglSetConfigKey(&conf->base, EGL_NATIVE_VISUAL_TYPE, EGL_NONE); // No visual
+	_eglSetConfigKey(&conf->base, EGL_RENDERABLE_TYPE, 0x8);
+	_eglSetConfigKey(&conf->base, EGL_SAMPLE_BUFFERS, 0); // TODO: How to get the right value ?
+	_eglSetConfigKey(&conf->base, EGL_SAMPLES, _eglGetConfigKey(&conf->base, EGL_SAMPLE_BUFFERS) == 0 ? 0 : 0);
+	_eglSetConfigKey(&conf->base, EGL_DEPTH_SIZE, 24); // TODO: How to get the right value ?
+	_eglSetConfigKey(&conf->base, EGL_LEVEL, 0);
+	_eglSetConfigKey(&conf->base, EGL_MAX_PBUFFER_WIDTH, 0); // TODO: How to get the right value ?
+	_eglSetConfigKey(&conf->base, EGL_MAX_PBUFFER_HEIGHT, 0); // TODO: How to get the right value ?
+	_eglSetConfigKey(&conf->base, EGL_MAX_PBUFFER_PIXELS, 0); // TODO: How to get the right value ?
+	_eglSetConfigKey(&conf->base, EGL_SURFACE_TYPE, EGL_WINDOW_BIT /*| EGL_PIXMAP_BIT | EGL_PBUFFER_BIT*/);
 
 	TRACE("Config configuated\n");
 	if (!_eglValidateConfig(&conf->base, EGL_FALSE)) {
@@ -205,7 +206,7 @@ cleanup:
 
 extern "C"
 EGLBoolean
-init_haiku(_EGLDisplay *disp)
+init_haiku(_EGLDriver *drv, _EGLDisplay *disp)
 {
 	_EGLDevice *dev;
 	CALLED();
@@ -221,6 +222,8 @@ init_haiku(_EGLDisplay *disp)
 	if (!haiku_add_configs_for_visuals(disp))
 		return EGL_FALSE;
 
+	disp->Version = 14;
+
 	TRACE("Initialization finished\n");
 
 	return EGL_TRUE;
@@ -229,7 +232,7 @@ init_haiku(_EGLDisplay *disp)
 
 extern "C"
 EGLBoolean
-haiku_terminate(_EGLDisplay *disp)
+haiku_terminate(_EGLDriver* drv,_EGLDisplay *disp)
 {
 	return EGL_TRUE;
 }
@@ -237,7 +240,7 @@ haiku_terminate(_EGLDisplay *disp)
 
 extern "C"
 _EGLContext*
-haiku_create_context(_EGLDisplay *disp, _EGLConfig *conf,
+haiku_create_context(_EGLDriver *drv, _EGLDisplay *disp, _EGLConfig *conf,
 	_EGLContext *share_list, const EGLint *attrib_list)
 {
 	CALLED();
@@ -263,7 +266,7 @@ cleanup:
 
 extern "C"
 EGLBoolean
-haiku_destroy_context(_EGLDisplay *disp, _EGLContext* ctx)
+haiku_destroy_context(_EGLDriver* drv, _EGLDisplay *disp, _EGLContext* ctx)
 {
 	struct haiku_egl_context* context = haiku_egl_context(ctx);
 
@@ -278,7 +281,7 @@ haiku_destroy_context(_EGLDisplay *disp, _EGLContext* ctx)
 
 extern "C"
 EGLBoolean
-haiku_make_current(_EGLDisplay *disp, _EGLSurface *dsurf,
+haiku_make_current(_EGLDriver* drv, _EGLDisplay *disp, _EGLSurface *dsurf,
 	_EGLSurface *rsurf, _EGLContext *ctx)
 {
 	CALLED();
@@ -299,7 +302,7 @@ haiku_make_current(_EGLDisplay *disp, _EGLSurface *dsurf,
 
 extern "C"
 EGLBoolean
-haiku_swap_buffers(_EGLDisplay *disp, _EGLSurface *surf)
+haiku_swap_buffers(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf)
 {
 	struct haiku_egl_surface* surface = haiku_egl_surface(surf);
 
@@ -309,16 +312,27 @@ haiku_swap_buffers(_EGLDisplay *disp, _EGLSurface *surf)
 }
 
 
+/**
+ * This is the main entrypoint into the driver, called by libEGL.
+ * Gets an _EGLDriver object and init its dispatch table.
+ */
 extern "C"
-const _EGLDriver _eglDriver = {
-	.Initialize = init_haiku,
-	.Terminate = haiku_terminate,
-	.CreateContext = haiku_create_context,
-	.DestroyContext = haiku_destroy_context,
-	.MakeCurrent = haiku_make_current,
-	.CreateWindowSurface = haiku_create_window_surface,
-	.CreatePixmapSurface = haiku_create_pixmap_surface,
-	.CreatePbufferSurface = haiku_create_pbuffer_surface,
-	.DestroySurface = haiku_destroy_surface,
-	.SwapBuffers = haiku_swap_buffers,
-};
+void
+_eglInitDriver(_EGLDriver *driver)
+{
+	CALLED();
+
+	driver->API.Initialize = init_haiku;
+	driver->API.Terminate = haiku_terminate;
+	driver->API.CreateContext = haiku_create_context;
+	driver->API.DestroyContext = haiku_destroy_context;
+	driver->API.MakeCurrent = haiku_make_current;
+	driver->API.CreateWindowSurface = haiku_create_window_surface;
+	driver->API.CreatePixmapSurface = haiku_create_pixmap_surface;
+	driver->API.CreatePbufferSurface = haiku_create_pbuffer_surface;
+	driver->API.DestroySurface = haiku_destroy_surface;
+
+	driver->API.SwapBuffers = haiku_swap_buffers;
+
+	TRACE("API Calls defined\n");
+}

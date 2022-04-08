@@ -55,7 +55,7 @@
 #include "brw_defines.h"
 #include "brw_wm.h"
 
-static const uint32_t wb_mocs[] = {
+uint32_t wb_mocs[] = {
    [7] = GEN7_MOCS_L3,
    [8] = BDW_MOCS_WB,
    [9] = SKL_MOCS_WB,
@@ -63,7 +63,7 @@ static const uint32_t wb_mocs[] = {
    [11] = ICL_MOCS_WB,
 };
 
-static const uint32_t pte_mocs[] = {
+uint32_t pte_mocs[] = {
    [7] = GEN7_MOCS_L3,
    [8] = BDW_MOCS_PTE,
    [9] = SKL_MOCS_PTE,
@@ -166,7 +166,10 @@ brw_emit_surface_state(struct brw_context *brw,
       /* We only really need a clear color if we also have an auxiliary
        * surface.  Without one, it does nothing.
        */
-      clear_color = intel_miptree_get_clear_color(mt, &clear_bo, &clear_offset);
+      clear_color =
+         intel_miptree_get_clear_color(devinfo, mt, view.format,
+                                       view.usage & ISL_SURF_USAGE_TEXTURE_BIT,
+                                       &clear_bo, &clear_offset);
    }
 
    void *state = brw_state_batch(brw,
@@ -625,7 +628,7 @@ brw_emit_buffer_surface_state(struct brw_context *brw,
                               uint32_t *out_offset,
                               struct brw_bo *bo,
                               unsigned buffer_offset,
-                              enum isl_format format,
+                              unsigned surface_format,
                               unsigned buffer_size,
                               unsigned pitch,
                               unsigned reloc_flags)
@@ -643,7 +646,7 @@ brw_emit_buffer_surface_state(struct brw_context *brw,
                                                     bo, buffer_offset,
                                                     reloc_flags),
                          .size_B = buffer_size,
-                         .format = format,
+                         .format = surface_format,
                          .swizzle = ISL_SWIZZLE_IDENTITY,
                          .stride_B = pitch,
                          .mocs = brw_get_bo_mocs(devinfo, bo));
@@ -975,8 +978,7 @@ gen4_update_renderbuffer_surface(struct brw_context *brw,
 
    if (devinfo->gen < 6) {
       /* _NEW_COLOR */
-      if (!ctx->Color.ColorLogicOpEnabled &&
-          ctx->Color._AdvancedBlendMode == BLEND_NONE &&
+      if (!ctx->Color.ColorLogicOpEnabled && !ctx->Color._AdvancedBlendMode &&
           (ctx->Color.BlendEnabled & (1 << unit)))
 	 surf[0] |= BRW_SURFACE_BLEND_ENABLED;
 
@@ -1325,7 +1327,9 @@ upload_buffer_surface(struct brw_context *brw,
                       enum isl_format format,
                       unsigned reloc_flags)
 {
-   if (!binding->BufferObject) {
+   struct gl_context *ctx = &brw->ctx;
+
+   if (binding->BufferObject == ctx->Shared->NullBufferObj) {
       emit_null_surface_state(brw, NULL, out_offset);
    } else {
       ptrdiff_t size = binding->BufferObject->Size - binding->Offset;
@@ -1360,39 +1364,33 @@ brw_upload_ubo_surfaces(struct brw_context *brw, struct gl_program *prog,
                  prog->info.num_abos == 0))
       return;
 
-   if (prog->info.num_ubos) {
-      assert(prog_data->binding_table.ubo_start < BRW_MAX_SURFACES);
-      uint32_t *ubo_surf_offsets =
-         &stage_state->surf_offset[prog_data->binding_table.ubo_start];
+   uint32_t *ubo_surf_offsets =
+      &stage_state->surf_offset[prog_data->binding_table.ubo_start];
 
-      for (int i = 0; i < prog->info.num_ubos; i++) {
-         struct gl_buffer_binding *binding =
-            &ctx->UniformBufferBindings[prog->sh.UniformBlocks[i]->Binding];
-         upload_buffer_surface(brw, binding, &ubo_surf_offsets[i],
-                               ISL_FORMAT_R32G32B32A32_FLOAT, 0);
-      }
+   for (int i = 0; i < prog->info.num_ubos; i++) {
+      struct gl_buffer_binding *binding =
+         &ctx->UniformBufferBindings[prog->sh.UniformBlocks[i]->Binding];
+      upload_buffer_surface(brw, binding, &ubo_surf_offsets[i],
+                            ISL_FORMAT_R32G32B32A32_FLOAT, 0);
    }
 
-   if (prog->info.num_ssbos || prog->info.num_abos) {
-      assert(prog_data->binding_table.ssbo_start < BRW_MAX_SURFACES);
-      uint32_t *ssbo_surf_offsets =
-         &stage_state->surf_offset[prog_data->binding_table.ssbo_start];
-      uint32_t *abo_surf_offsets = ssbo_surf_offsets + prog->info.num_ssbos;
+   uint32_t *abo_surf_offsets =
+      &stage_state->surf_offset[prog_data->binding_table.ssbo_start];
+   uint32_t *ssbo_surf_offsets = abo_surf_offsets + prog->info.num_abos;
 
-      for (int i = 0; i < prog->info.num_abos; i++) {
-         struct gl_buffer_binding *binding =
-            &ctx->AtomicBufferBindings[prog->sh.AtomicBuffers[i]->Binding];
-         upload_buffer_surface(brw, binding, &abo_surf_offsets[i],
-                               ISL_FORMAT_RAW, RELOC_WRITE);
-      }
+   for (int i = 0; i < prog->info.num_abos; i++) {
+      struct gl_buffer_binding *binding =
+         &ctx->AtomicBufferBindings[prog->sh.AtomicBuffers[i]->Binding];
+      upload_buffer_surface(brw, binding, &abo_surf_offsets[i],
+                            ISL_FORMAT_RAW, RELOC_WRITE);
+   }
 
-      for (int i = 0; i < prog->info.num_ssbos; i++) {
-         struct gl_buffer_binding *binding =
-            &ctx->ShaderStorageBufferBindings[prog->sh.ShaderStorageBlocks[i]->Binding];
+   for (int i = 0; i < prog->info.num_ssbos; i++) {
+      struct gl_buffer_binding *binding =
+         &ctx->ShaderStorageBufferBindings[prog->sh.ShaderStorageBlocks[i]->Binding];
 
-         upload_buffer_surface(brw, binding, &ssbo_surf_offsets[i],
-                               ISL_FORMAT_RAW, RELOC_WRITE);
-      }
+      upload_buffer_surface(brw, binding, &ssbo_surf_offsets[i],
+                            ISL_FORMAT_RAW, RELOC_WRITE);
    }
 
    stage_state->push_constants_dirty = true;

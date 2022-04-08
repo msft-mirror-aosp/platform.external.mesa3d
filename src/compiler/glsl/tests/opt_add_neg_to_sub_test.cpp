@@ -44,8 +44,6 @@ public:
 void
 add_neg_to_sub::SetUp()
 {
-   glsl_type_singleton_init_or_ref();
-
    mem_ctx = ralloc_context(NULL);
 
    instructions.make_empty();
@@ -72,8 +70,6 @@ add_neg_to_sub::TearDown()
 
    ralloc_free(mem_ctx);
    mem_ctx = NULL;
-
-   glsl_type_singleton_decref();
 }
 
 TEST_F(add_neg_to_sub, a_plus_b)

@@ -25,6 +25,6 @@
 
 struct pipe_screen;
 
-struct pipe_screen *virgl_drm_screen_create(int fd, const struct pipe_screen_config *config);
+struct pipe_screen *virgl_drm_screen_create(int fd);
 
 #endif

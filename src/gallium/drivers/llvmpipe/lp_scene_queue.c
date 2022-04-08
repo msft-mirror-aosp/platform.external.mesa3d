@@ -32,33 +32,25 @@
  * which are produced by the "rast" code when it finishes rendering a scene.
  */
 
-#include "os/os_thread.h"
+#include "util/u_ringbuffer.h"
 #include "util/u_memory.h"
 #include "lp_scene_queue.h"
-#include "util/u_math.h"
 
 
 
-#define SCENE_QUEUE_SIZE 4
+#define MAX_SCENE_QUEUE 4
 
-
+struct scene_packet {
+   struct util_packet header;
+   struct lp_scene *scene;
+};
 
 /**
  * A queue of scenes
  */
 struct lp_scene_queue
 {
-   struct lp_scene *scenes[SCENE_QUEUE_SIZE];
-
-   mtx_t mutex;
-   cnd_t change;
-
-   /* These values wrap around, so that head == tail means empty.  When used
-    * to index the array, we use them modulo the queue size.  This scheme
-    * works because the queue size is a power of two.
-    */
-   unsigned head;
-   unsigned tail;
+   struct util_ringbuffer *ring;
 };
 
 
@@ -67,19 +59,20 @@ struct lp_scene_queue
 struct lp_scene_queue *
 lp_scene_queue_create(void)
 {
-   /* Circular queue behavior depends on size being a power of two. */
-   STATIC_ASSERT(SCENE_QUEUE_SIZE > 0);
-   STATIC_ASSERT((SCENE_QUEUE_SIZE & (SCENE_QUEUE_SIZE - 1)) == 0);
-
    struct lp_scene_queue *queue = CALLOC_STRUCT(lp_scene_queue);
-
    if (!queue)
       return NULL;
 
-   (void) mtx_init(&queue->mutex, mtx_plain);
-   cnd_init(&queue->change);
+   queue->ring = util_ringbuffer_create( MAX_SCENE_QUEUE * 
+                                         sizeof( struct scene_packet ) / 4);
+   if (queue->ring == NULL)
+      goto fail;
 
    return queue;
+
+fail:
+   FREE(queue);
+   return NULL;
 }
 
 
@@ -87,8 +80,7 @@ lp_scene_queue_create(void)
 void
 lp_scene_queue_destroy(struct lp_scene_queue *queue)
 {
-   cnd_destroy(&queue->change);
-   mtx_destroy(&queue->mutex);
+   util_ringbuffer_destroy(queue->ring);
    FREE(queue);
 }
 
@@ -97,25 +89,19 @@ lp_scene_queue_destroy(struct lp_scene_queue *queue)
 struct lp_scene *
 lp_scene_dequeue(struct lp_scene_queue *queue, boolean wait)
 {
-   mtx_lock(&queue->mutex);
+   struct scene_packet packet;
+   enum pipe_error ret;
 
-   if (wait) {
-      /* Wait for queue to be not empty. */
-      while (queue->head == queue->tail)
-         cnd_wait(&queue->change, &queue->mutex);
-   } else {
-      if (queue->head == queue->tail) {
-         mtx_unlock(&queue->mutex);
-         return NULL;
-      }
-   }
+   packet.scene = NULL;
 
-   struct lp_scene *scene = queue->scenes[queue->head++ % SCENE_QUEUE_SIZE];
+   ret = util_ringbuffer_dequeue(queue->ring,
+                                 &packet.header,
+                                 sizeof packet / 4,
+                                 wait );
+   if (ret != PIPE_OK)
+      return NULL;
 
-   cnd_signal(&queue->change);
-   mtx_unlock(&queue->mutex);
-
-   return scene;
+   return packet.scene;
 }
 
 
@@ -123,14 +109,16 @@ lp_scene_dequeue(struct lp_scene_queue *queue, boolean wait)
 void
 lp_scene_enqueue(struct lp_scene_queue *queue, struct lp_scene *scene)
 {
-   mtx_lock(&queue->mutex);
+   struct scene_packet packet;
 
-   /* Wait for free space. */
-   while (queue->tail - queue->head >= SCENE_QUEUE_SIZE)
-      cnd_wait(&queue->change, &queue->mutex);
+   packet.header.dwords = sizeof packet / 4;
+   packet.header.data24 = 0;
+   packet.scene = scene;
 
-   queue->scenes[queue->tail++ % SCENE_QUEUE_SIZE] = scene;
-
-   cnd_signal(&queue->change);
-   mtx_unlock(&queue->mutex);
+   util_ringbuffer_enqueue(queue->ring, &packet.header);
 }
+
+
+
+
+

@@ -33,34 +33,35 @@ endif
 
 libxvmc_gallium = shared_library(
   'XvMCgallium',
-  'target.c',
-  gnu_symbol_visibility : 'hidden',
+  ['target.c', xmlpool_options_h],
+  c_args : c_vis_args,
+  cpp_args : cpp_vis_args,
   link_args : [xvmc_link_args, ld_args_gc_sections],
   include_directories : [
-    inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux, inc_util, inc_gallium_winsys, inc_gallium_drivers,
+    inc_common, inc_util, inc_gallium_winsys, inc_gallium_drivers,
   ],
   link_whole : [libxvmc_st],
   link_with : [
-    libgalliumvlwinsys, libgalliumvl, libgallium,
+    libgalliumvlwinsys, libgalliumvl, libgallium, libmesa_util,
     libpipe_loader_static, libws_null, libwsw, libswdri, libswkmsdri,
   ],
-  dependencies : [idep_mesautil, driver_r600, driver_nouveau],
+  dependencies : [dep_thread, driver_r600, driver_nouveau],
   link_depends : xvmc_link_depends,
   # Will be deleted during installation, see install_megadrivers.py
   install : true,
   install_dir : xvmc_drivers_path,
   name_suffix : 'so',
-  version : '@0@.@1@.0'.format(XVMC_MAJOR, XVMC_MINOR),
 )
 
 foreach d : [[with_gallium_r600, 'r600'], [with_gallium_nouveau, 'nouveau']]
   if d[0]
-    xvmc_drivers += 'libXvMC@0@.so.@1@.@2@.0'.format(d[1], XVMC_MAJOR, XVMC_MINOR)
+    xvmc_drivers += 'libXvMC@0@.so'.format(d[1])
   endif
 endforeach
 
 meson.add_install_script(
-  install_megadrivers_py.path(),
+  prog_python.path(),
+  join_paths(meson.source_root(), 'bin/install_megadrivers.py'),
   libxvmc_gallium.full_path(),
   xvmc_drivers_path,
   xvmc_drivers,

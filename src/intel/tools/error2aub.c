@@ -38,7 +38,20 @@
 #include "drm-uapi/i915_drm.h"
 #include "intel_aub.h"
 
-#define fail_if(cond, ...) _fail_if(cond, NULL, __VA_ARGS__)
+static void __attribute__ ((format(__printf__, 2, 3)))
+fail_if(int cond, const char *format, ...)
+{
+   va_list args;
+
+   if (!cond)
+      return;
+
+   va_start(args, format);
+   vfprintf(stderr, format, args);
+   va_end(args);
+
+   raise(SIGTRAP);
+}
 
 #define fail(...) fail_if(true, __VA_ARGS__)
 
@@ -227,7 +240,7 @@ int
 main(int argc, char *argv[])
 {
    int i, c;
-   bool help = false, verbose = false;
+   bool help = false, verbose;
    char *out_filename = NULL, *in_filename = NULL;
    const struct option aubinator_opts[] = {
       { "help",       no_argument,       NULL,     'h' },
@@ -279,7 +292,6 @@ main(int argc, char *argv[])
    int active_engine_instance = -1;
 
    enum address_space active_gtt = PPGTT;
-   enum address_space default_gtt = PPGTT;
 
    struct {
       struct {
@@ -309,7 +321,8 @@ main(int argc, char *argv[])
                        NULL, pci_id, "error_state");
          if (verbose)
             aub.verbose_log_file = stdout;
-         default_gtt = active_gtt = aub_use_execlists(&aub) ? PPGTT : GGTT;
+         fail_if(!aub_use_execlists(&aub),
+                 "%s currently only works on gen8+\n", argv[0]);
          continue;
       }
 
@@ -337,7 +350,7 @@ main(int argc, char *argv[])
          char *ring = line + strlen(active_start);
 
          engine_from_name(ring, &active_engine_class, &active_engine_instance);
-         active_gtt = default_gtt;
+         active_gtt = PPGTT;
 
          char *count = strchr(ring, '[');
          fail_if(!count || sscanf(count, "[%d]:", &num_ring_bos) < 1,
@@ -356,6 +369,7 @@ main(int argc, char *argv[])
       if (num_ring_bos > 0) {
          unsigned hi, lo, size;
          if (sscanf(line, " %x_%x %d", &hi, &lo, &size) == 3) {
+            assert(aub_use_execlists(&aub));
             struct bo *bo_entry = find_or_create(&bo_list, ((uint64_t)hi) << 32 | lo,
                                                  active_gtt,
                                                  active_engine_class,
@@ -394,8 +408,8 @@ main(int argc, char *argv[])
             enum bo_type type;
             enum address_space gtt;
          } bo_types[] = {
-            { "gtt_offset", BO_TYPE_BATCH,      default_gtt },
-            { "user",       BO_TYPE_USER,       default_gtt },
+            { "gtt_offset", BO_TYPE_BATCH,      PPGTT },
+            { "user",       BO_TYPE_USER,       PPGTT },
             { "HW context", BO_TYPE_CONTEXT,    GGTT },
             { "ringbuffer", BO_TYPE_RINGBUFFER, GGTT },
             { "HW Status",  BO_TYPE_STATUS,     GGTT },
@@ -447,25 +461,18 @@ main(int argc, char *argv[])
    list_for_each_entry(struct bo, bo_entry, &bo_list, link) {
       switch (bo_entry->type) {
       case BO_TYPE_BATCH:
-         if (bo_entry->gtt == PPGTT) {
-            aub_map_ppgtt(&aub, bo_entry->addr, bo_entry->size);
-            aub_write_trace_block(&aub, AUB_TRACE_TYPE_BATCH,
-                                  bo_entry->data, bo_entry->size, bo_entry->addr);
-         } else
-            aub_write_ggtt(&aub, bo_entry->addr, bo_entry->size, bo_entry->data);
+         aub_map_ppgtt(&aub, bo_entry->addr, bo_entry->size);
+         aub_write_trace_block(&aub, AUB_TRACE_TYPE_BATCH,
+                               bo_entry->data, bo_entry->size, bo_entry->addr);
          break;
       case BO_TYPE_USER:
-         if (bo_entry->gtt == PPGTT) {
-            aub_map_ppgtt(&aub, bo_entry->addr, bo_entry->size);
-            aub_write_trace_block(&aub, AUB_TRACE_TYPE_NOTYPE,
-                                  bo_entry->data, bo_entry->size, bo_entry->addr);
-         } else
-            aub_write_ggtt(&aub, bo_entry->addr, bo_entry->size, bo_entry->data);
+         aub_map_ppgtt(&aub, bo_entry->addr, bo_entry->size);
+         aub_write_trace_block(&aub, AUB_TRACE_TYPE_NOTYPE,
+                               bo_entry->data, bo_entry->size, bo_entry->addr);
          break;
       case BO_TYPE_CONTEXT:
          if (bo_entry->engine_class == batch_bo->engine_class &&
-             bo_entry->engine_instance == batch_bo->engine_instance &&
-             aub_use_execlists(&aub)) {
+             bo_entry->engine_instance == batch_bo->engine_instance) {
             hwsp_bo = bo_entry;
 
             uint32_t *context = (uint32_t *) (bo_entry->data + 4096 /* GuC */ + 4096 /* HWSP */);
@@ -491,7 +498,7 @@ main(int argc, char *argv[])
             fprintf(stdout, "context dump:\n");
             for (int i = 0; i < 60; i++) {
                if (i % 4 == 0)
-                  fprintf(stdout, "\n 0x%08" PRIx64 ": ", bo_entry->addr + 8192 + i * 4);
+                  fprintf(stdout, "\n 0x%08lx: ", bo_entry->addr + 8192 + i * 4);
                fprintf(stdout, "0x%08x ", context[i]);
             }
             fprintf(stdout, "\n");
@@ -524,15 +531,8 @@ main(int argc, char *argv[])
       }
    }
 
-   if (aub_use_execlists(&aub)) {
-      fail_if(!hwsp_bo, "Failed to find Context buffer.\n");
-      aub_write_context_execlists(&aub, hwsp_bo->addr + 4096 /* skip GuC page */, hwsp_bo->engine_class);
-   } else {
-      /* Use context id 0 -- if we are not using execlists it doesn't matter
-       * anyway
-       */
-      aub_write_exec(&aub, 0, batch_bo->addr, 0, I915_ENGINE_CLASS_RENDER);
-   }
+   fail_if(!hwsp_bo, "Failed to find Context buffer.\n");
+   aub_write_context_execlists(&aub, hwsp_bo->addr + 4096 /* skip GuC page */, hwsp_bo->engine_class);
 
    /* Cleanup */
    list_for_each_entry_safe(struct bo, bo_entry, &bo_list, link) {

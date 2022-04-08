@@ -79,9 +79,6 @@ struct _egl_image_attribs
    struct _egl_image_attrib_int DMABufSampleRangeHint;
    struct _egl_image_attrib_int DMABufChromaHorizontalSiting;
    struct _egl_image_attrib_int DMABufChromaVerticalSiting;
-
-   /* EGL_EXT_protected_surface */
-   EGLBoolean ProtectedContent;
 };
 
 /**

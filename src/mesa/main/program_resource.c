@@ -164,12 +164,10 @@ _mesa_GetProgramInterfaceiv(GLuint program, GLenum programInterface,
                   shProg->data->ProgramResourceList[i].Data;
                GLint block_params = 0;
                for (unsigned j = 0; j < block->NumUniforms; j++) {
+                  const char *iname = block->Uniforms[j].IndexName;
                   struct gl_program_resource *uni =
-                     _mesa_program_resource_find_active_variable(
-                        shProg,
-                        GL_BUFFER_VARIABLE,
-                        block,
-                        j);
+                     _mesa_program_resource_find_name(shProg, GL_BUFFER_VARIABLE,
+                                                      iname, NULL);
                   if (!uni)
                      continue;
                   block_params++;

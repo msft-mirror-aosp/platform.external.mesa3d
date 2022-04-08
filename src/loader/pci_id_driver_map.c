@@ -21,9 +21,7 @@
  * SOFTWARE.
  */
 
-#include <stdbool.h>
-
-bool is_nouveau_vieux(int fd);
+int is_nouveau_vieux(int fd);
 
 #ifdef HAVE_LIBDRM
 
@@ -44,7 +42,7 @@ nouveau_chipset(int fd)
    return gp.value;
 }
 
-bool
+int
 is_nouveau_vieux(int fd)
 {
    int chipset = nouveau_chipset(fd);
@@ -54,6 +52,6 @@ is_nouveau_vieux(int fd)
 
 #else
 
-bool is_nouveau_vieux(int fd) { return false; }
+int is_nouveau_vieux(int fd) { return 0; }
 
 #endif

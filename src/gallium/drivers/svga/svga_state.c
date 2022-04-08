@@ -60,80 +60,24 @@ static const struct svga_tracked_state *hw_clear_state[] =
 };
 
 
-/**
- * Atoms to update hardware state prior to emitting a draw packet
- * for VGPU9 device.
+/* Atoms to update hardware state prior to emitting a draw packet.
  */
-static const struct svga_tracked_state *hw_draw_state_vgpu9[] =
-{
-   &svga_hw_fs,
-   &svga_hw_vs,
-   &svga_hw_rss,
-   &svga_hw_tss,
-   &svga_hw_tss_binding,
-   &svga_hw_clip_planes,
-   &svga_hw_vdecl,
-   &svga_hw_fs_constants,
-   &svga_hw_vs_constants,
-   NULL
-};
-
-
-/**
- * Atoms to update hardware state prior to emitting a draw packet
- * for VGPU10 device.
- * Geometry Shader is new to VGPU10.
- * TSS and TSS bindings are replaced by sampler and sampler bindings.
- */
-static const struct svga_tracked_state *hw_draw_state_vgpu10[] =
+static const struct svga_tracked_state *hw_draw_state[] =
 {
    &svga_need_tgsi_transform,
    &svga_hw_fs,
    &svga_hw_gs,
    &svga_hw_vs,
    &svga_hw_rss,
-   &svga_hw_sampler,
-   &svga_hw_sampler_bindings,
+   &svga_hw_sampler,           /* VGPU10 */
+   &svga_hw_sampler_bindings,  /* VGPU10 */
+   &svga_hw_tss,               /* pre-VGPU10 */
+   &svga_hw_tss_binding,       /* pre-VGPU10 */
    &svga_hw_clip_planes,
    &svga_hw_vdecl,
    &svga_hw_fs_constants,
-   &svga_hw_fs_constbufs,
    &svga_hw_gs_constants,
-   &svga_hw_gs_constbufs,
    &svga_hw_vs_constants,
-   &svga_hw_vs_constbufs,
-   NULL
-};
-
-
-/**
- * Atoms to update hardware state prior to emitting a draw packet
- * for SM5 device.
- * TCS and TES Shaders are new to SM5 device.
- */
-static const struct svga_tracked_state *hw_draw_state_sm5[] =
-{
-   &svga_need_tgsi_transform,
-   &svga_hw_fs,
-   &svga_hw_gs,
-   &svga_hw_tes,
-   &svga_hw_tcs,
-   &svga_hw_vs,
-   &svga_hw_rss,
-   &svga_hw_sampler,
-   &svga_hw_sampler_bindings,
-   &svga_hw_clip_planes,
-   &svga_hw_vdecl,
-   &svga_hw_fs_constants,
-   &svga_hw_fs_constbufs,
-   &svga_hw_gs_constants,
-   &svga_hw_gs_constbufs,
-   &svga_hw_tes_constants,
-   &svga_hw_tes_constbufs,
-   &svga_hw_tcs_constants,
-   &svga_hw_tcs_constbufs,
-   &svga_hw_vs_constants,
-   &svga_hw_vs_constbufs,
    NULL
 };
 
@@ -145,7 +89,6 @@ static const struct svga_tracked_state *swtnl_draw_state[] =
    NULL
 };
 
-
 /* Flattens the graph of state dependencies.  Could swap the positions
  * of hw_clear_state and need_swtnl_state without breaking anything.
  */
@@ -153,26 +96,27 @@ static const struct svga_tracked_state **state_levels[] =
 {
    need_swtnl_state,
    hw_clear_state,
-   NULL,              /* hw_draw_state, to be set to the right version */
+   hw_draw_state,
    swtnl_draw_state
 };
 
 
-static uint64_t
-check_state(uint64_t a, uint64_t b)
+
+static unsigned
+check_state(unsigned a, unsigned b)
 {
    return (a & b);
 }
 
 static void
-accumulate_state(uint64_t *a, uint64_t b)
+accumulate_state(unsigned *a, unsigned b)
 {
    *a |= b;
 }
 
 
 static void
-xor_states(uint64_t *result, uint64_t a, uint64_t b)
+xor_states(unsigned *result, unsigned a, unsigned b)
 {
    *result = a ^ b;
 }
@@ -181,7 +125,7 @@ xor_states(uint64_t *result, uint64_t a, uint64_t b)
 static enum pipe_error
 update_state(struct svga_context *svga,
              const struct svga_tracked_state *atoms[],
-             uint64_t *state)
+             unsigned *state)
 {
 #ifdef DEBUG
    boolean debug = TRUE;
@@ -200,13 +144,13 @@ update_state(struct svga_context *svga,
        * state flags which are generated and checked to help ensure
        * state atoms are ordered correctly in the list.
        */
-      uint64_t examined, prev;
+      unsigned examined, prev;
 
       examined = 0;
       prev = *state;
 
       for (i = 0; atoms[i] != NULL; i++) {
-         uint64_t generated;
+         unsigned generated;
 
          assert(atoms[i]->dirty);
          assert(atoms[i]->update);
@@ -303,7 +247,12 @@ svga_update_state_retry(struct svga_context *svga, unsigned max_level)
 {
    enum pipe_error ret;
 
-   SVGA_RETRY_OOM(svga, ret, svga_update_state( svga, max_level ));
+   ret = svga_update_state( svga, max_level );
+
+   if (ret != PIPE_OK) {
+      svga_context_flush(svga, NULL);
+      ret = svga_update_state( svga, max_level );
+   }
 
    return ret == PIPE_OK;
 }
@@ -375,15 +324,4 @@ svga_emit_initial_state(struct svga_context *svga)
 
       return PIPE_OK;
    }
-}
-
-
-void
-svga_init_tracked_state(struct svga_context *svga)
-{
-   /* Set the hw_draw_state atom list to the one for the particular gpu version.
-    */
-   state_levels[2] = svga_have_sm5(svga) ? hw_draw_state_sm5 :
-                       (svga_have_vgpu10(svga) ? hw_draw_state_vgpu10 :
-                                                 hw_draw_state_vgpu9);
 }

@@ -101,11 +101,13 @@ _mesa_update_shader_textures_used(struct gl_shader_program *shProg,
                                   struct gl_program *prog)
 {
    GLbitfield mask = prog->SamplersUsed;
-   ASSERTED gl_shader_stage prog_stage =
+   gl_shader_stage prog_stage =
       _mesa_program_enum_to_shader_stage(prog->Target);
+   MAYBE_UNUSED struct gl_linked_shader *shader =
+      shProg->_LinkedShaders[prog_stage];
    GLuint s;
 
-   assert(shProg->_LinkedShaders[prog_stage]);
+   assert(shader);
 
    memset(prog->TexturesUsed, 0, sizeof(prog->TexturesUsed));
 
@@ -1005,7 +1007,7 @@ _mesa_GetUniformLocation(GLuint programObj, const GLcharARB *name)
 
    shProg = _mesa_lookup_shader_program_err(ctx, programObj,
 					    "glGetUniformLocation");
-   if (!shProg || !name)
+   if (!shProg)
       return -1;
 
    /* Page 80 (page 94 of the PDF) of the OpenGL 2.1 spec says:

@@ -56,7 +56,6 @@ struct gl_bitmap_glyph
  */
 struct gl_bitmap_atlas
 {
-   GLint Id;
    bool complete;     /**< Is the atlas ready to use? */
    bool incomplete;   /**< Did we fail to construct this atlas? */
 

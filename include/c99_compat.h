@@ -96,7 +96,7 @@
  * - http://cellperformance.beyond3d.com/articles/2006/05/demystifying-the-restrict-keyword.html
  */
 #ifndef restrict
-#  if (__STDC_VERSION__ >= 199901L) && !defined(__cplusplus)
+#  if (__STDC_VERSION__ >= 199901L)
      /* C99 */
 #  elif defined(__GNUC__)
 #    define restrict __restrict__
@@ -135,8 +135,9 @@ test_c99_compat_h(const void * restrict a,
 #endif
 
 
-/* Fallback definitions, for scons which doesn't auto-detect these things. */
-#ifdef HAVE_SCONS
+/* Fallback definitions, for build systems other than autoconfig which don't
+ * auto-detect these things. */
+#ifdef HAVE_NO_AUTOCONF
 
 #  ifndef _WIN32
 #    define HAVE_PTHREAD
@@ -177,7 +178,7 @@ test_c99_compat_h(const void * restrict a,
 
 #  endif /* __GNUC__ */
 
-#endif /* HAVE_SCONS */
+#endif /* !HAVE_AUTOCONF */
 
 
 #endif /* _C99_COMPAT_H_ */

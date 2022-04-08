@@ -295,53 +295,10 @@ private:
 
 typedef std::pair<Value *, Value *> ValuePair;
 
-class MergedDefs
-{
-private:
-   std::list<ValueDef *>& entry(Value *val) {
-      auto it = defs.find(val);
-
-      if (it == defs.end()) {
-         std::list<ValueDef *> &res = defs[val];
-         res = val->defs;
-         return res;
-      } else {
-         return (*it).second;
-      }
-   }
-
-   std::unordered_map<Value *, std::list<ValueDef *> > defs;
-
-public:
-   std::list<ValueDef *>& operator()(Value *val) {
-      return entry(val);
-   }
-
-   void add(Value *val, const std::list<ValueDef *> &vals) {
-      assert(val);
-      std::list<ValueDef *> &valdefs = entry(val);
-      valdefs.insert(valdefs.end(), vals.begin(), vals.end());
-   }
-
-   void removeDefsOfInstruction(Instruction *insn) {
-      for (int d = 0; insn->defExists(d); ++d) {
-         ValueDef *def = &insn->def(d);
-         defs.erase(def->get());
-         for (auto &p : defs)
-            p.second.remove(def);
-      }
-   }
-
-   void merge() {
-      for (auto &p : defs)
-         p.first->defs = p.second;
-   }
-};
-
 class SpillCodeInserter
 {
 public:
-   SpillCodeInserter(Function *fn, MergedDefs &mergedDefs) : func(fn), mergedDefs(mergedDefs), stackSize(0), stackBase(0) { }
+   SpillCodeInserter(Function *fn) : func(fn), stackSize(0), stackBase(0) { }
 
    bool run(const std::list<ValuePair>&);
 
@@ -351,7 +308,6 @@ public:
 
 private:
    Function *func;
-   MergedDefs &mergedDefs;
 
    struct SpillSlot
    {
@@ -668,6 +624,8 @@ RegAlloc::BuildIntervalsPass::collectLiveValues(BasicBlock *bb)
       // trickery to save a loop of OR'ing liveSets
       // aliasing works fine with BitSet::setOr
       for (Graph::EdgeIterator ei = bb->cfg.outgoing(); !ei.end(); ei.next()) {
+         if (ei.getType() == Graph::Edge::DUMMY)
+            continue;
          if (bbA) {
             bb->liveSet.setOr(&bbA->liveSet, &bbB->liveSet);
             bbA = bb;
@@ -752,7 +710,7 @@ RegAlloc::BuildIntervalsPass::visit(BasicBlock *bb)
 class GCRA
 {
 public:
-   GCRA(Function *, SpillCodeInserter&, MergedDefs&);
+   GCRA(Function *, SpillCodeInserter&);
    ~GCRA();
 
    bool allocateRegisters(ArrayList& insns);
@@ -869,8 +827,6 @@ private:
 
    SpillCodeInserter& spill;
    std::list<ValuePair> mustSpill;
-
-   MergedDefs &mergedDefs;
 };
 
 const GCRA::RelDegree GCRA::relDegree;
@@ -1000,13 +956,13 @@ GCRA::coalesceValues(Value *dst, Value *src, bool force)
             rep->id, rep->reg.data.id, val->id);
 
    // set join pointer of all values joined with val
-   const std::list<ValueDef *> &defs = mergedDefs(val);
-   for (ValueDef *def : defs)
-      def->get()->join = rep;
+   for (Value::DefIterator def = val->defs.begin(); def != val->defs.end();
+        ++def)
+      (*def)->get()->join = rep;
    assert(rep->join == rep && val->join == rep);
 
    // add val's definitions to rep and extend the live interval of its RIG node
-   mergedDefs.add(rep, defs);
+   rep->defs.insert(rep->defs.end(), val->defs.begin(), val->defs.end());
    nRep->livei.unify(nVal->livei);
    nRep->degreeLimit = MIN2(nRep->degreeLimit, nVal->degreeLimit);
    nRep->maxReg = MIN2(nRep->maxReg, nVal->maxReg);
@@ -1034,8 +990,6 @@ GCRA::coalesce(ArrayList& insns)
    case 0x110:
    case 0x120:
    case 0x130:
-   case 0x140:
-   case 0x160:
       ret = doCoalesce(insns, JOIN_MASK_UNION);
       break;
    default:
@@ -1209,11 +1163,10 @@ GCRA::RIG_Node::addRegPreference(RIG_Node *node)
    prefRegs.push_back(node);
 }
 
-GCRA::GCRA(Function *fn, SpillCodeInserter& spill, MergedDefs& mergedDefs) :
+GCRA::GCRA(Function *fn, SpillCodeInserter& spill) :
    func(fn),
    regs(fn->getProgram()->getTarget()),
-   spill(spill),
-   mergedDefs(mergedDefs)
+   spill(spill)
 {
    prog = func->getProgram();
 }
@@ -1308,8 +1261,10 @@ GCRA::calculateSpillWeights()
 
       if (!val->noSpill) {
          int rc = 0;
-         for (ValueDef *def : mergedDefs(val))
-            rc += def->get()->refCount();
+         for (Value::DefIterator it = val->defs.begin();
+              it != val->defs.end();
+              ++it)
+            rc += (*it)->get()->refCount();
 
          nodes[i].weight =
             (float)rc * (float)rc / (float)nodes[i].livei.extent();
@@ -1410,17 +1365,17 @@ GCRA::checkInterference(const RIG_Node *node, Graph::EdgeIterator& ei)
 
    if (intf->reg < 0)
       return;
-   LValue *vA = node->getValue();
-   LValue *vB = intf->getValue();
+   const LValue *vA = node->getValue();
+   const LValue *vB = intf->getValue();
 
    const uint8_t intfMask = ((1 << intf->colors) - 1) << (intf->reg & 7);
 
    if (vA->compound | vB->compound) {
       // NOTE: this only works for >aligned< register tuples !
-      for (const ValueDef *D : mergedDefs(vA)) {
-      for (const ValueDef *d : mergedDefs(vB)) {
-         const LValue *vD = D->get()->asLValue();
-         const LValue *vd = d->get()->asLValue();
+      for (Value::DefCIterator D = vA->defs.begin(); D != vA->defs.end(); ++D) {
+      for (Value::DefCIterator d = vB->defs.begin(); d != vB->defs.end(); ++d) {
+         const LValue *vD = (*D)->get()->asLValue();
+         const LValue *vd = (*d)->get()->asLValue();
 
          if (!vD->livei.overlaps(vd->livei)) {
             INFO_DBG(prog->dbgFlags, REG_ALLOC, "(%%%i) X (%%%i): no overlap\n",
@@ -1589,7 +1544,6 @@ GCRA::allocateRegisters(ArrayList& insns)
       if (prog->dbgFlags & NV50_IR_DEBUG_REG_ALLOC)
          func->print();
    } else {
-      mergedDefs.merge();
       prog->maxGPR = std::max(prog->maxGPR, regs.getMaxAssigned(FILE_GPR));
    }
 
@@ -1615,10 +1569,14 @@ GCRA::cleanup(const bool success)
       if (lval->join == lval)
          continue;
 
-      if (success)
+      if (success) {
          lval->reg.data.id = lval->join->reg.data.id;
-      else
+      } else {
+         for (Value::DefIterator d = lval->defs.begin(); d != lval->defs.end();
+              ++d)
+            lval->join->defs.remove(*d);
          lval->join = lval;
+      }
    }
 
    if (success)
@@ -1811,8 +1769,7 @@ SpillCodeInserter::run(const std::list<ValuePair>& lst)
       // multiple destinations that all need to be spilled (like OP_SPLIT).
       unordered_set<Instruction *> to_del;
 
-      std::list<ValueDef *> &defs = mergedDefs(lval);
-      for (Value::DefIterator d = defs.begin(); d != defs.end();
+      for (Value::DefIterator d = lval->defs.begin(); d != lval->defs.end();
            ++d) {
          Value *slot = mem ?
             static_cast<Value *>(mem) : new_LValue(func, FILE_GPR);
@@ -1848,7 +1805,7 @@ SpillCodeInserter::run(const std::list<ValuePair>& lst)
 
          assert(defi);
          if (defi->isPseudo()) {
-            d = defs.erase(d);
+            d = lval->defs.erase(d);
             --d;
             if (slot->reg.file == FILE_MEMORY_LOCAL)
                to_del.insert(defi);
@@ -1860,10 +1817,8 @@ SpillCodeInserter::run(const std::list<ValuePair>& lst)
       }
 
       for (unordered_set<Instruction *>::const_iterator it = to_del.begin();
-           it != to_del.end(); ++it) {
-         mergedDefs.removeDefsOfInstruction(*it);
+           it != to_del.end(); ++it)
          delete_Instruction(func->getProgram(), *it);
-      }
    }
 
    // TODO: We're not trying to reuse old slots in a potential next iteration.
@@ -1891,14 +1846,13 @@ RegAlloc::exec()
 bool
 RegAlloc::execFunc()
 {
-   MergedDefs mergedDefs;
    InsertConstraintsPass insertConstr;
    PhiMovesPass insertPhiMoves;
    ArgumentMovesPass insertArgMoves;
    BuildIntervalsPass buildIntervals;
-   SpillCodeInserter insertSpills(func, mergedDefs);
+   SpillCodeInserter insertSpills(func);
 
-   GCRA gcra(func, insertSpills, mergedDefs);
+   GCRA gcra(func, insertSpills);
 
    unsigned int i, retries;
    bool ret;
@@ -2345,25 +2299,13 @@ RegAlloc::InsertConstraintsPass::texConstraintGM107(TexInstruction *tex)
    if (isTextureOp(tex->op))
       textureMask(tex);
 
-   if (targ->getChipset() < NVISA_GV100_CHIPSET) {
-      if (isScalarTexGM107(tex)) {
-         handleScalarTexGM107(tex);
-         return;
-      }
-
-      assert(!tex->tex.scalar);
-      condenseDefs(tex);
-   } else {
-      if (isTextureOp(tex->op)) {
-         int defCount = tex->defCount(0xff);
-         if (defCount > 3)
-            condenseDefs(tex, 2, 3);
-         if (defCount > 1)
-            condenseDefs(tex, 0, 1);
-      } else {
-         condenseDefs(tex);
-      }
+   if (isScalarTexGM107(tex)) {
+      handleScalarTexGM107(tex);
+      return;
    }
+
+   assert(!tex->tex.scalar);
+   condenseDefs(tex);
 
    if (isSurfaceOp(tex->op)) {
       int s = tex->tex.target.getDim() +
@@ -2545,8 +2487,6 @@ RegAlloc::InsertConstraintsPass::visit(BasicBlock *bb)
          case 0x110:
          case 0x120:
          case 0x130:
-         case 0x140:
-         case 0x160:
             texConstraintGM107(tex);
             break;
          default:

@@ -28,9 +28,7 @@
 #define __KMSRO_DRM_PUBLIC_H__
 
 struct pipe_screen;
-struct pipe_screen_config;
 
-struct pipe_screen *kmsro_drm_screen_create(int fd,
-                                            const struct pipe_screen_config *config);
+struct pipe_screen *kmsro_drm_screen_create(int fd);
 
 #endif /* __KMSRO_DRM_PUBLIC_H__ */

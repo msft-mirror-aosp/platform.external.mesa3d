@@ -238,18 +238,14 @@ svga_tgsi_vgpu9_translate(struct svga_context *svga,
    memcpy(&variant->key, key, sizeof(*key));
    variant->id = UTIL_BITMASK_INVALID_INDEX;
 
-   if (unit == PIPE_SHADER_FRAGMENT) {
-      struct svga_fs_variant *fs_variant = svga_fs_variant(variant);
+   variant->pstipple_sampler_unit = emit.pstipple_sampler_unit;
 
-      fs_variant->pstipple_sampler_unit = emit.pstipple_sampler_unit;
-
-      /* If there was exactly one write to a fragment shader output register
-       * and it came from a constant buffer, we know all fragments will have
-       * the same color (except for blending).
-       */
-      fs_variant->constant_color_output =
-         emit.constant_color_output && emit.num_output_writes == 1;
-   }
+   /* If there was exactly one write to a fragment shader output register
+    * and it came from a constant buffer, we know all fragments will have
+    * the same color (except for blending).
+    */
+   variant->constant_color_output =
+      emit.constant_color_output && emit.num_output_writes == 1;
 
 #if 0
    if (!svga_shader_verify(variant->tokens, variant->nr_tokens) ||

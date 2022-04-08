@@ -37,7 +37,6 @@
 #include "util/os_time.h"
 #include "os/os_thread.h"
 #include "util/u_memory.h"
-#include "util/u_string.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <dirent.h>

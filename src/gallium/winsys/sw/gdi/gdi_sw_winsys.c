@@ -39,10 +39,10 @@
 #include "pipe/p_format.h"
 #include "pipe/p_context.h"
 #include "util/u_inlines.h"
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
-#include "frontend/sw_winsys.h"
+#include "state_tracker/sw_winsys.h"
 #include "gdi_sw_winsys.h"
 
 
@@ -69,7 +69,7 @@ gdi_sw_displaytarget( struct sw_displaytarget *buf )
 }
 
 
-static bool
+static boolean
 gdi_sw_is_displaytarget_format_supported( struct sw_winsys *ws,
                                                 unsigned tex_usage,
                                                 enum pipe_format format )
@@ -77,13 +77,13 @@ gdi_sw_is_displaytarget_format_supported( struct sw_winsys *ws,
    switch(format) {
    case PIPE_FORMAT_B8G8R8X8_UNORM:
    case PIPE_FORMAT_B8G8R8A8_UNORM:
-      return true;
+      return TRUE;
 
    /* TODO: Support other formats possible with BMPs, as described in 
     * http://msdn.microsoft.com/en-us/library/dd183376(VS.85).aspx */
       
    default:
-      return false;
+      return FALSE;
    }
 }
 
@@ -182,13 +182,13 @@ gdi_sw_displaytarget_from_handle(struct sw_winsys *winsys,
 }
 
 
-static bool
+static boolean
 gdi_sw_displaytarget_get_handle(struct sw_winsys *winsys,
                                 struct sw_displaytarget *dt,
                                 struct winsys_handle *whandle)
 {
    assert(0);
-   return false;
+   return FALSE;
 }
 
 

@@ -221,6 +221,7 @@ dri3_alloc_back_buffer(struct vl_dri3_screen *scrn)
    int buffer_fd, fence_fd;
    struct pipe_resource templ, *pixmap_buffer_texture;
    struct winsys_handle whandle;
+   unsigned usage;
 
    buffer = CALLOC_STRUCT(vl_dri3_buffer);
    if (!buffer)
@@ -270,8 +271,10 @@ dri3_alloc_back_buffer(struct vl_dri3_screen *scrn)
    }
    memset(&whandle, 0, sizeof(whandle));
    whandle.type= WINSYS_HANDLE_TYPE_FD;
+   usage = PIPE_HANDLE_USAGE_EXPLICIT_FLUSH;
    scrn->base.pscreen->resource_get_handle(scrn->base.pscreen, NULL,
-                                           pixmap_buffer_texture, &whandle, 0);
+                                           pixmap_buffer_texture, &whandle,
+                                           usage);
    buffer_fd = whandle.handle;
    buffer->pitch = whandle.stride;
    buffer->width = templ.width0;
@@ -435,7 +438,6 @@ dri3_set_drawable(struct vl_dri3_screen *scrn, Drawable drawable)
          ret = false;
       else {
          scrn->is_pixmap = true;
-         scrn->base.set_back_texture_from_output = NULL;
          if (scrn->front_buffer) {
             dri3_free_front_buffer(scrn, scrn->front_buffer);
             scrn->front_buffer = NULL;
@@ -829,7 +831,8 @@ vl_dri3_screen_create(Display *display, int screen)
    if (!scrn->base.pscreen)
       goto release_pipe;
 
-   scrn->pipe = pipe_create_multimedia_context(scrn->base.pscreen);
+   scrn->pipe = scrn->base.pscreen->context_create(scrn->base.pscreen,
+                                                   NULL, 0);
    if (!scrn->pipe)
        goto no_context;
 

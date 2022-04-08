@@ -112,8 +112,7 @@ static uint64_t msm_bo_iova(struct fd_bo *bo)
 	int ret;
 
 	ret = drmCommandWriteRead(bo->dev->fd, DRM_MSM_GEM_INFO, &req, sizeof(req));
-	if (ret)
-		return 0;
+	debug_assert(ret == 0);
 
 	return req.value;
 }

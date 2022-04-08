@@ -65,8 +65,7 @@ link_uniform_blocks(void *mem_ctx,
 bool
 validate_intrastage_arrays(struct gl_shader_program *prog,
                            ir_variable *const var,
-                           ir_variable *const existing,
-                           bool match_precision = true);
+                           ir_variable *const existing);
 
 void
 validate_intrastage_interface_blocks(struct gl_shader_program *prog,

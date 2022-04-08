@@ -131,8 +131,8 @@ void peephole::optimize_cc_op2(alu_node* a) {
 		std::swap(a->src[0],a->src[1]);
 		swapped = true;
 		// clear modifiers
-		a->bc.src[0].clear();
-		a->bc.src[1].clear();
+		memset(&a->bc.src[0], 0, sizeof(bc_alu_src));
+		memset(&a->bc.src[1], 0, sizeof(bc_alu_src));
 	}
 
 	if (swapped || (a->src[1]->is_const() &&

@@ -27,14 +27,12 @@
  */
 
 #include <stdio.h>
-#include <stddef.h>
 
 #include "main/glheader.h"
+#include "main/imports.h"
 #include "main/macros.h"
 
 #include "m_vector.h"
-
-#include "util/u_memory.h"
 
 
 
@@ -81,13 +79,6 @@ static const GLubyte size_bits[5] = {
 void
 _mesa_vector4f_init( GLvector4f *v, GLbitfield flags, GLfloat (*storage)[4] )
 {
-   STATIC_ASSERT(V4F_DATA == offsetof(GLvector4f, data));
-   STATIC_ASSERT(V4F_START == offsetof(GLvector4f, start));
-   STATIC_ASSERT(V4F_COUNT == offsetof(GLvector4f, count));
-   STATIC_ASSERT(V4F_STRIDE == offsetof(GLvector4f, stride));
-   STATIC_ASSERT(V4F_SIZE == offsetof(GLvector4f, size));
-   STATIC_ASSERT(V4F_FLAGS == offsetof(GLvector4f, flags));
-
    v->stride = 4 * sizeof(GLfloat);
    v->size = 2;   /* may change: 2-4 for vertices and 1-4 for texcoords */
    v->data = storage;
@@ -110,7 +101,7 @@ _mesa_vector4f_alloc( GLvector4f *v, GLbitfield flags, GLuint count,
 {
    v->stride = 4 * sizeof(GLfloat);
    v->size = 2;
-   v->storage = align_malloc( count * 4 * sizeof(GLfloat), alignment );
+   v->storage = _mesa_align_malloc( count * 4 * sizeof(GLfloat), alignment );
    v->storage_count = count;
    v->start = (GLfloat *) v->storage;
    v->data = (GLfloat (*)[4]) v->storage;
@@ -128,7 +119,7 @@ void
 _mesa_vector4f_free( GLvector4f *v )
 {
    if (v->flags & VEC_MALLOC) {
-      align_free( v->storage );
+      _mesa_align_free( v->storage );
       v->data = NULL;
       v->start = NULL;
       v->storage = NULL;

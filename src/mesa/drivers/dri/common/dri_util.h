@@ -320,9 +320,6 @@ struct __DRIdrawableRec {
 extern uint32_t
 driGLFormatToImageFormat(mesa_format format);
 
-extern uint32_t
-driGLFormatToSizedInternalGLFormat(mesa_format format);
-
 extern mesa_format
 driImageFormatToGLFormat(uint32_t image_format);
 

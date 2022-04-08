@@ -21,12 +21,11 @@
 libgraw_xlib = shared_library(
   'graw_xlib',
   ['graw_xlib.c'],
-  gnu_symbol_visibility : 'hidden',
-  include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux, inc_gallium_drivers, inc_gallium_winsys],
+  include_directories : [inc_common, inc_gallium_drivers, inc_gallium_winsys],
   link_with : [
-    libgraw_util, libgallium, libws_xlib
+    libgraw_util, libmesa_util, libgallium, libws_xlib
   ],
-  dependencies : [idep_mesautil, driver_swrast],
+  dependencies : [dep_thread, driver_swrast],
   version : '1.0',
 )
 

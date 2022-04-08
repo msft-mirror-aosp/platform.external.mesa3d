@@ -13,20 +13,16 @@ void u_default_buffer_subdata(struct pipe_context *pipe,
    struct pipe_box box;
    uint8_t *map = NULL;
 
-   assert(!(usage & PIPE_MAP_READ));
+   assert(!(usage & PIPE_TRANSFER_READ));
 
    /* the write flag is implicit by the nature of buffer_subdata */
-   usage |= PIPE_MAP_WRITE;
+   usage |= PIPE_TRANSFER_WRITE;
 
-   /* buffer_subdata implicitly discards the rewritten buffer range.
-    * PIPE_MAP_DIRECTLY supresses that.
-    */
-   if (!(usage & PIPE_MAP_DIRECTLY)) {
-      if (offset == 0 && size == resource->width0) {
-         usage |= PIPE_MAP_DISCARD_WHOLE_RESOURCE;
-      } else {
-         usage |= PIPE_MAP_DISCARD_RANGE;
-      }
+   /* buffer_subdata implicitly discards the rewritten buffer range */
+   if (offset == 0 && size == resource->width0) {
+      usage |= PIPE_TRANSFER_DISCARD_WHOLE_RESOURCE;
+   } else {
+      usage |= PIPE_TRANSFER_DISCARD_RANGE;
    }
 
    u_box_1d(offset, size, &box);
@@ -52,13 +48,13 @@ void u_default_texture_subdata(struct pipe_context *pipe,
    const uint8_t *src_data = data;
    uint8_t *map = NULL;
 
-   assert(!(usage & PIPE_MAP_READ));
+   assert(!(usage & PIPE_TRANSFER_READ));
 
    /* the write flag is implicit by the nature of texture_subdata */
-   usage |= PIPE_MAP_WRITE;
+   usage |= PIPE_TRANSFER_WRITE;
 
    /* texture_subdata implicitly discards the rewritten buffer range */
-   usage |= PIPE_MAP_DISCARD_RANGE;
+   usage |= PIPE_TRANSFER_DISCARD_RANGE;
 
    map = pipe->transfer_map(pipe,
                             resource,
@@ -85,9 +81,9 @@ void u_default_texture_subdata(struct pipe_context *pipe,
 }
 
 
-bool u_default_resource_get_handle(UNUSED struct pipe_screen *screen,
-                                   UNUSED struct pipe_resource *resource,
-                                   UNUSED struct winsys_handle *handle)
+boolean u_default_resource_get_handle(UNUSED struct pipe_screen *screen,
+                                      UNUSED struct pipe_resource *resource,
+                                      UNUSED struct winsys_handle *handle)
 {
    return FALSE;
 }
@@ -114,11 +110,11 @@ u_resource( struct pipe_resource *res )
    return (struct u_resource *)res;
 }
 
-bool u_resource_get_handle_vtbl(struct pipe_screen *screen,
-                                UNUSED struct pipe_context *ctx,
-                                struct pipe_resource *resource,
-                                struct winsys_handle *handle,
-                                UNUSED unsigned usage)
+boolean u_resource_get_handle_vtbl(struct pipe_screen *screen,
+                                   UNUSED struct pipe_context *ctx,
+                                   struct pipe_resource *resource,
+                                   struct winsys_handle *handle,
+                                   UNUSED unsigned usage)
 {
    struct u_resource *ur = u_resource(resource);
    return ur->vtbl->resource_get_handle(screen, resource, handle);

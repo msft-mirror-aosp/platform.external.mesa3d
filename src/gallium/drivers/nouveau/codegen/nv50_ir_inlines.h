@@ -222,7 +222,7 @@ Instruction *Value::getUniqueInsn() const
             return (*it)->getInsn();
       // should be unreachable and trigger assertion at the end
    }
-#ifndef NDEBUG
+#ifdef DEBUG
    if (reg.data.id < 0) {
       int n = 0;
       for (DefCIterator it = defs.begin(); n < 2 && it != defs.end(); ++it)

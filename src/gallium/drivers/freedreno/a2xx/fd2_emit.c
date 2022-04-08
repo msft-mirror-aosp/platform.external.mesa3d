@@ -199,7 +199,7 @@ fd2_emit_state_binning(struct fd_context *ctx, const enum fd_dirty_3d_state dirt
 	if (dirty & (FD_DIRTY_PROG | FD_DIRTY_CONST)) {
 		emit_constants(ring,  VS_CONST_BASE * 4,
 				&ctx->constbuf[PIPE_SHADER_VERTEX],
-				(dirty & FD_DIRTY_PROG) ? ctx->prog.vs : NULL);
+				(dirty & FD_DIRTY_PROG) ? ctx->prog.vp : NULL);
 	}
 
 	if (dirty & FD_DIRTY_VIEWPORT) {
@@ -217,9 +217,15 @@ fd2_emit_state_binning(struct fd_context *ctx, const enum fd_dirty_3d_state dirt
 
 	/* not sure why this is needed */
 	if (dirty & (FD_DIRTY_BLEND | FD_DIRTY_FRAMEBUFFER)) {
+		enum pipe_format format =
+			pipe_surface_format(ctx->batch->framebuffer.cbufs[0]);
+		bool has_alpha = util_format_has_alpha(format);
+
 		OUT_PKT3(ring, CP_SET_CONSTANT, 2);
 		OUT_RING(ring, CP_REG(REG_A2XX_RB_BLEND_CONTROL));
-		OUT_RING(ring, blend->rb_blendcontrol);
+		OUT_RING(ring, blend->rb_blendcontrol_alpha |
+			COND(has_alpha, blend->rb_blendcontrol_rgb) |
+			COND(!has_alpha, blend->rb_blendcontrol_no_alpha_rgb));
 
 		OUT_PKT3(ring, CP_SET_CONSTANT, 2);
 		OUT_RING(ring, CP_REG(REG_A2XX_RB_COLOR_MASK));
@@ -236,7 +242,7 @@ fd2_emit_state(struct fd_context *ctx, const enum fd_dirty_3d_state dirty)
 {
 	struct fd2_blend_stateobj *blend = fd2_blend_stateobj(ctx->blend);
 	struct fd2_zsa_stateobj *zsa = fd2_zsa_stateobj(ctx->zsa);
-	struct fd2_shader_stateobj *fs = ctx->prog.fs;
+	struct fd2_shader_stateobj *fp = ctx->prog.fp;
 	struct fd_ringbuffer *ring = ctx->batch->draw;
 
 	/* NOTE: we probably want to eventually refactor this so each state
@@ -256,7 +262,7 @@ fd2_emit_state(struct fd_context *ctx, const enum fd_dirty_3d_state dirty)
 		struct pipe_stencil_ref *sr = &ctx->stencil_ref;
 		uint32_t val = zsa->rb_depthcontrol;
 
-		if (fs->has_kill)
+		if (fp->has_kill)
 			val &= ~A2XX_RB_DEPTHCONTROL_EARLY_Z_ENABLE;
 
 		OUT_PKT3(ring, CP_SET_CONSTANT, 2);
@@ -295,18 +301,6 @@ fd2_emit_state(struct fd_context *ctx, const enum fd_dirty_3d_state dirty)
 		OUT_RING(ring, fui(1.0));                /* PA_CL_GB_VERT_DISC_ADJ */
 		OUT_RING(ring, fui(1.0));                /* PA_CL_GB_HORZ_CLIP_ADJ */
 		OUT_RING(ring, fui(1.0));                /* PA_CL_GB_HORZ_DISC_ADJ */
-
-		if (rasterizer->base.offset_tri) {
-			/* TODO: why multiply scale by 2 ? without it deqp test fails
-			 * deqp/piglit tests aren't very precise
-			 */
-			OUT_PKT3(ring, CP_SET_CONSTANT, 5);
-			OUT_RING(ring, CP_REG(REG_A2XX_PA_SU_POLY_OFFSET_FRONT_SCALE));
-			OUT_RING(ring, fui(rasterizer->base.offset_scale * 2.0f)); /* FRONT_SCALE */
-			OUT_RING(ring, fui(rasterizer->base.offset_units));        /* FRONT_OFFSET */
-			OUT_RING(ring, fui(rasterizer->base.offset_scale * 2.0f)); /* BACK_SCALE */
-			OUT_RING(ring, fui(rasterizer->base.offset_units));        /* BACK_OFFSET */
-		}
 	}
 
 	/* NOTE: scissor enabled bit is part of rasterizer state: */
@@ -357,10 +351,10 @@ fd2_emit_state(struct fd_context *ctx, const enum fd_dirty_3d_state dirty)
 	if (dirty & (FD_DIRTY_PROG | FD_DIRTY_CONST)) {
 		emit_constants(ring,  VS_CONST_BASE * 4,
 				&ctx->constbuf[PIPE_SHADER_VERTEX],
-				(dirty & FD_DIRTY_PROG) ? ctx->prog.vs : NULL);
+				(dirty & FD_DIRTY_PROG) ? ctx->prog.vp : NULL);
 		emit_constants(ring, PS_CONST_BASE * 4,
 				&ctx->constbuf[PIPE_SHADER_FRAGMENT],
-				(dirty & FD_DIRTY_PROG) ? ctx->prog.fs : NULL);
+				(dirty & FD_DIRTY_PROG) ? ctx->prog.fp : NULL);
 	}
 
 	if (dirty & (FD_DIRTY_BLEND | FD_DIRTY_ZSA)) {
@@ -370,9 +364,15 @@ fd2_emit_state(struct fd_context *ctx, const enum fd_dirty_3d_state dirty)
 	}
 
 	if (dirty & (FD_DIRTY_BLEND | FD_DIRTY_FRAMEBUFFER)) {
+		enum pipe_format format =
+			pipe_surface_format(ctx->batch->framebuffer.cbufs[0]);
+		bool has_alpha = util_format_has_alpha(format);
+
 		OUT_PKT3(ring, CP_SET_CONSTANT, 2);
 		OUT_RING(ring, CP_REG(REG_A2XX_RB_BLEND_CONTROL));
-		OUT_RING(ring, blend->rb_blendcontrol);
+		OUT_RING(ring, blend->rb_blendcontrol_alpha |
+			COND(has_alpha, blend->rb_blendcontrol_rgb) |
+			COND(!has_alpha, blend->rb_blendcontrol_no_alpha_rgb));
 
 		OUT_PKT3(ring, CP_SET_CONSTANT, 2);
 		OUT_RING(ring, CP_REG(REG_A2XX_RB_COLOR_MASK));
@@ -563,14 +563,15 @@ fd2_emit_restore(struct fd_context *ctx, struct fd_ringbuffer *ring)
 			A2XX_PA_CL_VTE_CNTL_VPORT_Z_OFFSET_ENA);
 }
 
-void
-fd2_emit_init_screen(struct pipe_screen *pscreen)
+static void
+fd2_emit_ib(struct fd_ringbuffer *ring, struct fd_ringbuffer *target)
 {
-	struct fd_screen *screen = fd_screen(pscreen);
-	screen->emit_ib = fd2_emit_ib;
+	__OUT_IB(ring, false, target);
 }
 
 void
 fd2_emit_init(struct pipe_context *pctx)
 {
+	struct fd_context *ctx = fd_context(pctx);
+	ctx->emit_ib = fd2_emit_ib;
 }

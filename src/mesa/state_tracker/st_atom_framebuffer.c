@@ -43,7 +43,7 @@
 #include "cso_cache/cso_context.h"
 #include "util/u_math.h"
 #include "util/u_inlines.h"
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 #include "util/u_framebuffer.h"
 #include "main/framebuffer.h"
 
@@ -146,7 +146,7 @@ st_update_framebuffer_state( struct st_context *st )
 
       if (strb) {
          if (strb->is_rtt || (strb->texture &&
-             _mesa_is_format_srgb(strb->Base.Format))) {
+             _mesa_get_format_color_encoding(strb->Base.Format) == GL_SRGB)) {
             /* rendering to a GL texture, may have to update surface */
             st_update_renderbuffer_surface(st, strb);
          }
@@ -188,7 +188,7 @@ st_update_framebuffer_state( struct st_context *st )
    else
       framebuffer.zsbuf = NULL;
 
-#ifndef NDEBUG
+#ifdef DEBUG
    /* Make sure the resource binding flags were set properly */
    for (i = 0; i < framebuffer.nr_cbufs; i++) {
       assert(!framebuffer.cbufs[i] ||

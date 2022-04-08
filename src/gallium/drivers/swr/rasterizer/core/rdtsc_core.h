@@ -100,86 +100,90 @@ enum CORE_BUCKETS
     NumBuckets
 };
 
-void rdtscReset(BucketManager* pBucketMgr);
-void rdtscInit(BucketManager* pBucketMgr, int threadId);
-void rdtscStart(BucketManager* pBucketMgr, uint32_t bucketId);
-void rdtscStop(BucketManager* pBucketMgr, uint32_t bucketId, uint32_t count, uint64_t drawId);
-void rdtscEvent(BucketManager* pBucketMgr, uint32_t bucketId, uint32_t count1, uint32_t count2);
-void rdtscEndFrame(BucketManager* pBucketMgr);
+void rdtscReset();
+void rdtscInit(int threadId);
+void rdtscStart(uint32_t bucketId);
+void rdtscStop(uint32_t bucketId, uint32_t count, uint64_t drawId);
+void rdtscEvent(uint32_t bucketId, uint32_t count1, uint32_t count2);
+void rdtscEndFrame();
 
 #ifdef KNOB_ENABLE_RDTSC
-#define RDTSC_RESET(pBucketMgr) rdtscReset(pBucketMgr)
-#define RDTSC_INIT(pBucketMgr, threadId) rdtscInit(pBucketMgr,threadId)
-#define RDTSC_START(pBucketMgr, bucket) rdtscStart(pBucketMgr, bucket)
-#define RDTSC_STOP(pBucketMgr, bucket, count, draw) rdtscStop(pBucketMgr, bucket, count, draw)
-#define RDTSC_EVENT(pBucketMgr, bucket, count1, count2) rdtscEvent(pBucketMgr, bucket, count1, count2)
-#define RDTSC_ENDFRAME(pBucketMgr) rdtscEndFrame(pBucketMgr)
+#define RDTSC_RESET() rdtscReset()
+#define RDTSC_INIT(threadId) rdtscInit(threadId)
+#define RDTSC_START(bucket) rdtscStart(bucket)
+#define RDTSC_STOP(bucket, count, draw) rdtscStop(bucket, count, draw)
+#define RDTSC_EVENT(bucket, count1, count2) rdtscEvent(bucket, count1, count2)
+#define RDTSC_ENDFRAME() rdtscEndFrame()
 #else
-#define RDTSC_RESET(pBucketMgr)
-#define RDTSC_INIT(pBucketMgr, threadId)
-#define RDTSC_START(pBucketMgr, bucket)
-#define RDTSC_STOP(pBucketMgr, bucket, count, draw)
-#define RDTSC_EVENT(pBucketMgr, bucket, count1, count2)
-#define RDTSC_ENDFRAME(pBucketMgr)
+#define RDTSC_RESET()
+#define RDTSC_INIT(threadId)
+#define RDTSC_START(bucket)
+#define RDTSC_STOP(bucket, count, draw)
+#define RDTSC_EVENT(bucket, count1, count2)
+#define RDTSC_ENDFRAME()
 #endif
 
+extern std::vector<uint32_t> gBucketMap;
+extern BucketManager         gBucketMgr;
 extern BUCKET_DESC           gCoreBuckets[];
+extern uint32_t              gCurrentFrame;
+extern bool                  gBucketsInitialized;
 
-INLINE void rdtscReset(BucketManager *pBucketMgr)
+INLINE void rdtscReset()
 {
-    pBucketMgr->mCurrentFrame = 0;
-    pBucketMgr->ClearThreads();
+    gCurrentFrame = 0;
+    gBucketMgr.ClearThreads();
 }
 
-INLINE void rdtscInit(BucketManager* pBucketMgr, int threadId)
+INLINE void rdtscInit(int threadId)
 {
     // register all the buckets once
-    if (!pBucketMgr->mBucketsInitialized && (threadId == 0))
+    if (!gBucketsInitialized && (threadId == 0))
     {
-        pBucketMgr->mBucketMap.resize(NumBuckets);
+        gBucketMap.resize(NumBuckets);
         for (uint32_t i = 0; i < NumBuckets; ++i)
         {
-            pBucketMgr->mBucketMap[i] = pBucketMgr->RegisterBucket(gCoreBuckets[i]);
+            gBucketMap[i] = gBucketMgr.RegisterBucket(gCoreBuckets[i]);
         }
-        pBucketMgr->mBucketsInitialized = true;
+        gBucketsInitialized = true;
     }
 
     std::string name = threadId == 0 ? "API" : "WORKER";
-    pBucketMgr->RegisterThread(name);
+    gBucketMgr.RegisterThread(name);
 }
 
-INLINE void rdtscStart(BucketManager* pBucketMgr, uint32_t bucketId)
+INLINE void rdtscStart(uint32_t bucketId)
 {
-    uint32_t id = pBucketMgr->mBucketMap[bucketId];
-    pBucketMgr->StartBucket(id);
+    uint32_t id = gBucketMap[bucketId];
+    gBucketMgr.StartBucket(id);
 }
 
-INLINE void rdtscStop(BucketManager* pBucketMgr, uint32_t bucketId, uint32_t count, uint64_t drawId)
+INLINE void rdtscStop(uint32_t bucketId, uint32_t count, uint64_t drawId)
 {
-    uint32_t id = pBucketMgr->mBucketMap[bucketId];
-    pBucketMgr->StopBucket(id);
+    uint32_t id = gBucketMap[bucketId];
+    gBucketMgr.StopBucket(id);
 }
 
-INLINE void rdtscEvent(BucketManager* pBucketMgr, uint32_t bucketId, uint32_t count1, uint32_t count2)
+INLINE void rdtscEvent(uint32_t bucketId, uint32_t count1, uint32_t count2)
 {
-    uint32_t id = pBucketMgr->mBucketMap[bucketId];
-    pBucketMgr->AddEvent(id, count1);
+    uint32_t id = gBucketMap[bucketId];
+    gBucketMgr.AddEvent(id, count1);
 }
 
-INLINE void rdtscEndFrame(BucketManager* pBucketMgr)
+INLINE void rdtscEndFrame()
 {
-    pBucketMgr->mCurrentFrame++;
+    gCurrentFrame++;
 
-    if (pBucketMgr->mCurrentFrame == KNOB_BUCKETS_START_FRAME &&
+    if (gCurrentFrame == KNOB_BUCKETS_START_FRAME &&
         KNOB_BUCKETS_START_FRAME < KNOB_BUCKETS_END_FRAME)
     {
-        pBucketMgr->StartCapture();
+        gBucketMgr.StartCapture();
     }
 
-    if (pBucketMgr->mCurrentFrame == KNOB_BUCKETS_END_FRAME &&
+    if (gCurrentFrame == KNOB_BUCKETS_END_FRAME &&
         KNOB_BUCKETS_START_FRAME < KNOB_BUCKETS_END_FRAME)
     {
-        pBucketMgr->StopCapture();
-        pBucketMgr->PrintReport("rdtsc.txt");
+        gBucketMgr.StopCapture();
+        gBucketMgr.PrintReport("rdtsc.txt");
     }
 }

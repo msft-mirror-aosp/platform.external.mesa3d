@@ -68,9 +68,7 @@ etna_texture_tile(void *dest, void *src, unsigned basex, unsigned basey,
                   unsigned dst_stride, unsigned width, unsigned height,
                   unsigned src_stride, unsigned elmtsize)
 {
-   if (elmtsize == 8) {
-      DO_TILE(uint64_t)
-   } else if (elmtsize == 4) {
+   if (elmtsize == 4) {
       DO_TILE(uint32_t)
    } else if (elmtsize == 2) {
       DO_TILE(uint16_t)
@@ -86,9 +84,7 @@ etna_texture_untile(void *dest, void *src, unsigned basex, unsigned basey,
                     unsigned src_stride, unsigned width, unsigned height,
                     unsigned dst_stride, unsigned elmtsize)
 {
-   if (elmtsize == 8) {
-      DO_UNTILE(uint64_t)
-   } else if (elmtsize == 4) {
+   if (elmtsize == 4) {
       DO_UNTILE(uint32_t);
    } else if (elmtsize == 2) {
       DO_UNTILE(uint16_t);

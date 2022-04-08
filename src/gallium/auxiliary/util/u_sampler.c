@@ -26,7 +26,7 @@
  **************************************************************************/
 
 
-#include "util/format/u_format.h"
+#include "u_format.h"
 #include "u_sampler.h"
 
 

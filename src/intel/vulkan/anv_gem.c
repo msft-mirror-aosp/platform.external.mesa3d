@@ -31,8 +31,18 @@
 
 #include "anv_private.h"
 #include "common/gen_defines.h"
-#include "common/gen_gem.h"
-#include "drm-uapi/sync_file.h"
+
+static int
+anv_ioctl(int fd, unsigned long request, void *arg)
+{
+   int ret;
+
+   do {
+      ret = ioctl(fd, request, arg);
+   } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+
+   return ret;
+}
 
 /**
  * Wrapper around DRM_IOCTL_I915_GEM_CREATE.
@@ -46,7 +56,7 @@ anv_gem_create(struct anv_device *device, uint64_t size)
       .size = size,
    };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_CREATE, &gem_create);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_CREATE, &gem_create);
    if (ret != 0) {
       /* FIXME: What do we do if this fails? */
       return 0;
@@ -62,50 +72,7 @@ anv_gem_close(struct anv_device *device, uint32_t gem_handle)
       .handle = gem_handle,
    };
 
-   gen_ioctl(device->fd, DRM_IOCTL_GEM_CLOSE, &close);
-}
-
-/**
- * Wrapper around DRM_IOCTL_I915_GEM_MMAP. Returns MAP_FAILED on error.
- */
-static void*
-anv_gem_mmap_offset(struct anv_device *device, uint32_t gem_handle,
-                    uint64_t offset, uint64_t size, uint32_t flags)
-{
-   struct drm_i915_gem_mmap_offset gem_mmap = {
-      .handle = gem_handle,
-      .flags = (flags & I915_MMAP_WC) ?
-         I915_MMAP_OFFSET_WC : I915_MMAP_OFFSET_WB,
-   };
-   assert(offset == 0);
-
-   /* Get the fake offset back */
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_MMAP_OFFSET, &gem_mmap);
-   if (ret != 0)
-      return MAP_FAILED;
-
-   /* And map it */
-   void *map = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
-                    device->fd, gem_mmap.offset);
-   return map;
-}
-
-static void*
-anv_gem_mmap_legacy(struct anv_device *device, uint32_t gem_handle,
-                    uint64_t offset, uint64_t size, uint32_t flags)
-{
-   struct drm_i915_gem_mmap gem_mmap = {
-      .handle = gem_handle,
-      .offset = offset,
-      .size = size,
-      .flags = flags,
-   };
-
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_MMAP, &gem_mmap);
-   if (ret != 0)
-      return MAP_FAILED;
-
-   return (void *)(uintptr_t) gem_mmap.addr_ptr;
+   anv_ioctl(device->fd, DRM_IOCTL_GEM_CLOSE, &close);
 }
 
 /**
@@ -115,23 +82,26 @@ void*
 anv_gem_mmap(struct anv_device *device, uint32_t gem_handle,
              uint64_t offset, uint64_t size, uint32_t flags)
 {
-   void *map;
-   if (device->physical->has_mmap_offset)
-      map = anv_gem_mmap_offset(device, gem_handle, offset, size, flags);
-   else
-      map = anv_gem_mmap_legacy(device, gem_handle, offset, size, flags);
+   struct drm_i915_gem_mmap gem_mmap = {
+      .handle = gem_handle,
+      .offset = offset,
+      .size = size,
+      .flags = flags,
+   };
 
-   if (map != MAP_FAILED)
-      VG(VALGRIND_MALLOCLIKE_BLOCK(map, size, 0, 1));
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_MMAP, &gem_mmap);
+   if (ret != 0)
+      return MAP_FAILED;
 
-   return map;
+   VG(VALGRIND_MALLOCLIKE_BLOCK(gem_mmap.addr_ptr, gem_mmap.size, 0, 1));
+   return (void *)(uintptr_t) gem_mmap.addr_ptr;
 }
 
 /* This is just a wrapper around munmap, but it also notifies valgrind that
  * this map is no longer valid.  Pair this with anv_gem_mmap().
  */
 void
-anv_gem_munmap(struct anv_device *device, void *p, uint64_t size)
+anv_gem_munmap(void *p, uint64_t size)
 {
    VG(VALGRIND_FREELIKE_BLOCK(p, 0));
    munmap(p, size);
@@ -146,7 +116,7 @@ anv_gem_userptr(struct anv_device *device, void *mem, size_t size)
       .flags = 0,
    };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_USERPTR, &userptr);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_USERPTR, &userptr);
    if (ret == -1)
       return 0;
 
@@ -162,7 +132,7 @@ anv_gem_set_caching(struct anv_device *device,
       .caching = caching,
    };
 
-   return gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_SET_CACHING, &gem_caching);
+   return anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_SET_CACHING, &gem_caching);
 }
 
 int
@@ -175,7 +145,7 @@ anv_gem_set_domain(struct anv_device *device, uint32_t gem_handle,
       .write_domain = write_domain,
    };
 
-   return gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_SET_DOMAIN, &gem_set_domain);
+   return anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_SET_DOMAIN, &gem_set_domain);
 }
 
 /**
@@ -188,7 +158,7 @@ anv_gem_busy(struct anv_device *device, uint32_t gem_handle)
       .handle = gem_handle,
    };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_BUSY, &busy);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_BUSY, &busy);
    if (ret < 0)
       return ret;
 
@@ -207,7 +177,7 @@ anv_gem_wait(struct anv_device *device, uint32_t gem_handle, int64_t *timeout_ns
       .flags = 0,
    };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_WAIT, &wait);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_WAIT, &wait);
    *timeout_ns = wait.timeout_ns;
 
    return ret;
@@ -218,9 +188,9 @@ anv_gem_execbuffer(struct anv_device *device,
                    struct drm_i915_gem_execbuffer2 *execbuf)
 {
    if (execbuf->flags & I915_EXEC_FENCE_OUT)
-      return gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_EXECBUFFER2_WR, execbuf);
+      return anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_EXECBUFFER2_WR, execbuf);
    else
-      return gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_EXECBUFFER2, execbuf);
+      return anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_EXECBUFFER2, execbuf);
 }
 
 /** Return -1 on error. */
@@ -231,12 +201,7 @@ anv_gem_get_tiling(struct anv_device *device, uint32_t gem_handle)
       .handle = gem_handle,
    };
 
-   /* FIXME: On discrete platforms we don't have DRM_IOCTL_I915_GEM_GET_TILING
-    * anymore, so we will need another way to get the tiling. Apparently this
-    * is only used in Android code, so we may need some other way to
-    * communicate the tiling mode.
-    */
-   if (gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_GET_TILING, &get_tiling)) {
+   if (anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_GET_TILING, &get_tiling)) {
       assert(!"Failed to get BO tiling");
       return -1;
    }
@@ -250,14 +215,8 @@ anv_gem_set_tiling(struct anv_device *device,
 {
    int ret;
 
-   /* On discrete platforms we don't have DRM_IOCTL_I915_GEM_SET_TILING. So
-    * nothing needs to be done.
-    */
-   if (!device->info.has_tiling_uapi)
-      return 0;
-
    /* set_tiling overwrites the input on the error path, so we have to open
-    * code gen_ioctl.
+    * code anv_ioctl.
     */
    do {
       struct drm_i915_gem_set_tiling set_tiling = {
@@ -282,22 +241,11 @@ anv_gem_get_param(int fd, uint32_t param)
       .value = &tmp,
    };
 
-   int ret = gen_ioctl(fd, DRM_IOCTL_I915_GETPARAM, &gp);
+   int ret = anv_ioctl(fd, DRM_IOCTL_I915_GETPARAM, &gp);
    if (ret == 0)
       return tmp;
 
    return 0;
-}
-
-uint64_t
-anv_gem_get_drm_cap(int fd, uint32_t capability)
-{
-   struct drm_get_cap cap = {
-      .capability = capability,
-   };
-
-   gen_ioctl(fd, DRM_IOCTL_GET_CAP, &cap);
-   return cap.value;
 }
 
 bool
@@ -310,7 +258,7 @@ anv_gem_get_bit6_swizzle(int fd, uint32_t tiling)
       .size = 4096,
    };
 
-   if (gen_ioctl(fd, DRM_IOCTL_I915_GEM_CREATE, &gem_create)) {
+   if (anv_ioctl(fd, DRM_IOCTL_I915_GEM_CREATE, &gem_create)) {
       assert(!"Failed to create GEM BO");
       return false;
    }
@@ -318,7 +266,7 @@ anv_gem_get_bit6_swizzle(int fd, uint32_t tiling)
    bool swizzled = false;
 
    /* set_tiling overwrites the input on the error path, so we have to open
-    * code gen_ioctl.
+    * code anv_ioctl.
     */
    do {
       struct drm_i915_gem_set_tiling set_tiling = {
@@ -339,7 +287,7 @@ anv_gem_get_bit6_swizzle(int fd, uint32_t tiling)
       .handle = gem_create.handle,
    };
 
-   if (gen_ioctl(fd, DRM_IOCTL_I915_GEM_GET_TILING, &get_tiling)) {
+   if (anv_ioctl(fd, DRM_IOCTL_I915_GEM_GET_TILING, &get_tiling)) {
       assert(!"Failed to get BO tiling");
       goto close_and_return;
    }
@@ -350,7 +298,7 @@ close_and_return:
 
    memset(&close, 0, sizeof(close));
    close.handle = gem_create.handle;
-   gen_ioctl(fd, DRM_IOCTL_GEM_CLOSE, &close);
+   anv_ioctl(fd, DRM_IOCTL_GEM_CLOSE, &close);
 
    return swizzled;
 }
@@ -367,7 +315,7 @@ anv_gem_create_context(struct anv_device *device)
 {
    struct drm_i915_gem_context_create create = { 0 };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_CONTEXT_CREATE, &create);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_CONTEXT_CREATE, &create);
    if (ret == -1)
       return -1;
 
@@ -381,7 +329,7 @@ anv_gem_destroy_context(struct anv_device *device, int context)
       .ctx_id = context,
    };
 
-   return gen_ioctl(device->fd, DRM_IOCTL_I915_GEM_CONTEXT_DESTROY, &destroy);
+   return anv_ioctl(device->fd, DRM_IOCTL_I915_GEM_CONTEXT_DESTROY, &destroy);
 }
 
 int
@@ -394,7 +342,7 @@ anv_gem_set_context_param(int fd, int context, uint32_t param, uint64_t value)
    };
    int err = 0;
 
-   if (gen_ioctl(fd, DRM_IOCTL_I915_GEM_CONTEXT_SETPARAM, &p))
+   if (anv_ioctl(fd, DRM_IOCTL_I915_GEM_CONTEXT_SETPARAM, &p))
       err = -errno;
    return err;
 }
@@ -407,11 +355,25 @@ anv_gem_get_context_param(int fd, int context, uint32_t param, uint64_t *value)
       .param = param,
    };
 
-   int ret = gen_ioctl(fd, DRM_IOCTL_I915_GEM_CONTEXT_GETPARAM, &gp);
+   int ret = anv_ioctl(fd, DRM_IOCTL_I915_GEM_CONTEXT_GETPARAM, &gp);
    if (ret == -1)
       return -1;
 
    *value = gp.value;
+   return 0;
+}
+
+int
+anv_gem_get_aperture(int fd, uint64_t *size)
+{
+   struct drm_i915_gem_get_aperture aperture = { 0 };
+
+   int ret = anv_ioctl(fd, DRM_IOCTL_I915_GEM_GET_APERTURE, &aperture);
+   if (ret == -1)
+      return -1;
+
+   *size = aperture.aper_available_size;
+
    return 0;
 }
 
@@ -423,7 +385,7 @@ anv_gem_gpu_get_reset_stats(struct anv_device *device,
       .ctx_id = device->context_id,
    };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_I915_GET_RESET_STATS, &stats);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_I915_GET_RESET_STATS, &stats);
    if (ret == 0) {
       *active = stats.batch_active;
       *pending = stats.batch_pending;
@@ -437,10 +399,10 @@ anv_gem_handle_to_fd(struct anv_device *device, uint32_t gem_handle)
 {
    struct drm_prime_handle args = {
       .handle = gem_handle,
-      .flags = DRM_CLOEXEC | DRM_RDWR,
+      .flags = DRM_CLOEXEC,
    };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &args);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &args);
    if (ret == -1)
       return -1;
 
@@ -454,7 +416,7 @@ anv_gem_fd_to_handle(struct anv_device *device, int fd)
       .fd = fd,
    };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_PRIME_FD_TO_HANDLE, &args);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_PRIME_FD_TO_HANDLE, &args);
    if (ret == -1)
       return 0;
 
@@ -462,17 +424,35 @@ anv_gem_fd_to_handle(struct anv_device *device, int fd)
 }
 
 int
-anv_gem_reg_read(int fd, uint32_t offset, uint64_t *result)
+anv_gem_reg_read(struct anv_device *device, uint32_t offset, uint64_t *result)
 {
    struct drm_i915_reg_read args = {
       .offset = offset
    };
 
-   int ret = gen_ioctl(fd, DRM_IOCTL_I915_REG_READ, &args);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_I915_REG_READ, &args);
 
    *result = args.val;
    return ret;
 }
+
+#ifndef SYNC_IOC_MAGIC
+/* duplicated from linux/sync_file.h to avoid build-time dependency
+ * on new (v4.7) kernel headers.  Once distro's are mostly using
+ * something newer than v4.7 drop this and #include <linux/sync_file.h>
+ * instead.
+ */
+struct sync_merge_data {
+   char  name[32];
+   __s32 fd2;
+   __s32 fence;
+   __u32 flags;
+   __u32 pad;
+};
+
+#define SYNC_IOC_MAGIC '>'
+#define SYNC_IOC_MERGE _IOWR(SYNC_IOC_MAGIC, 3, struct sync_merge_data)
+#endif
 
 int
 anv_gem_sync_file_merge(struct anv_device *device, int fd1, int fd2)
@@ -483,7 +463,7 @@ anv_gem_sync_file_merge(struct anv_device *device, int fd1, int fd2)
       .fence = -1,
    };
 
-   int ret = gen_ioctl(fd1, SYNC_IOC_MERGE, &args);
+   int ret = anv_ioctl(fd1, SYNC_IOC_MERGE, &args);
    if (ret == -1)
       return -1;
 
@@ -497,7 +477,7 @@ anv_gem_syncobj_create(struct anv_device *device, uint32_t flags)
       .flags = flags,
    };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_CREATE, &args);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_CREATE, &args);
    if (ret)
       return 0;
 
@@ -511,7 +491,7 @@ anv_gem_syncobj_destroy(struct anv_device *device, uint32_t handle)
       .handle = handle,
    };
 
-   gen_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_DESTROY, &args);
+   anv_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_DESTROY, &args);
 }
 
 int
@@ -521,7 +501,7 @@ anv_gem_syncobj_handle_to_fd(struct anv_device *device, uint32_t handle)
       .handle = handle,
    };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD, &args);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD, &args);
    if (ret)
       return -1;
 
@@ -535,7 +515,7 @@ anv_gem_syncobj_fd_to_handle(struct anv_device *device, int fd)
       .fd = fd,
    };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE, &args);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE, &args);
    if (ret)
       return 0;
 
@@ -550,7 +530,7 @@ anv_gem_syncobj_export_sync_file(struct anv_device *device, uint32_t handle)
       .flags = DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE,
    };
 
-   int ret = gen_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD, &args);
+   int ret = anv_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD, &args);
    if (ret)
       return -1;
 
@@ -567,7 +547,7 @@ anv_gem_syncobj_import_sync_file(struct anv_device *device,
       .flags = DRM_SYNCOBJ_FD_TO_HANDLE_FLAGS_IMPORT_SYNC_FILE,
    };
 
-   return gen_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE, &args);
+   return anv_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE, &args);
 }
 
 void
@@ -578,18 +558,45 @@ anv_gem_syncobj_reset(struct anv_device *device, uint32_t handle)
       .count_handles = 1,
    };
 
-   gen_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_RESET, &args);
+   anv_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_RESET, &args);
 }
 
 bool
 anv_gem_supports_syncobj_wait(int fd)
 {
-   return gen_gem_supports_syncobj_wait(fd);
+   int ret;
+
+   struct drm_syncobj_create create = {
+      .flags = 0,
+   };
+   ret = anv_ioctl(fd, DRM_IOCTL_SYNCOBJ_CREATE, &create);
+   if (ret)
+      return false;
+
+   uint32_t syncobj = create.handle;
+
+   struct drm_syncobj_wait wait = {
+      .handles = (uint64_t)(uintptr_t)&create,
+      .count_handles = 1,
+      .timeout_nsec = 0,
+      .flags = DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT,
+   };
+   ret = anv_ioctl(fd, DRM_IOCTL_SYNCOBJ_WAIT, &wait);
+
+   struct drm_syncobj_destroy destroy = {
+      .handle = syncobj,
+   };
+   anv_ioctl(fd, DRM_IOCTL_SYNCOBJ_DESTROY, &destroy);
+
+   /* If it timed out, then we have the ioctl and it supports the
+    * DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT flag.
+    */
+   return ret == -1 && errno == ETIME;
 }
 
 int
 anv_gem_syncobj_wait(struct anv_device *device,
-                     const uint32_t *handles, uint32_t num_handles,
+                     uint32_t *handles, uint32_t num_handles,
                      int64_t abs_timeout_ns, bool wait_all)
 {
    struct drm_syncobj_wait args = {
@@ -602,61 +609,5 @@ anv_gem_syncobj_wait(struct anv_device *device,
    if (wait_all)
       args.flags |= DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL;
 
-   return gen_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_WAIT, &args);
-}
-
-int
-anv_gem_syncobj_timeline_wait(struct anv_device *device,
-                              const uint32_t *handles, const uint64_t *points,
-                              uint32_t num_items, int64_t abs_timeout_ns,
-                              bool wait_all, bool wait_materialize)
-{
-   assert(device->physical->has_syncobj_wait_available);
-
-   struct drm_syncobj_timeline_wait args = {
-      .handles = (uint64_t)(uintptr_t)handles,
-      .points = (uint64_t)(uintptr_t)points,
-      .count_handles = num_items,
-      .timeout_nsec = abs_timeout_ns,
-      .flags = DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT,
-   };
-
-   if (wait_all)
-      args.flags |= DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL;
-   if (wait_materialize)
-      args.flags |= DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE;
-
-   return gen_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT, &args);
-}
-
-int
-anv_gem_syncobj_timeline_signal(struct anv_device *device,
-                                const uint32_t *handles, const uint64_t *points,
-                                uint32_t num_items)
-{
-   assert(device->physical->has_syncobj_wait_available);
-
-   struct drm_syncobj_timeline_array args = {
-      .handles = (uint64_t)(uintptr_t)handles,
-      .points = (uint64_t)(uintptr_t)points,
-      .count_handles = num_items,
-   };
-
-   return gen_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL, &args);
-}
-
-int
-anv_gem_syncobj_timeline_query(struct anv_device *device,
-                               const uint32_t *handles, uint64_t *points,
-                               uint32_t num_items)
-{
-   assert(device->physical->has_syncobj_wait_available);
-
-   struct drm_syncobj_timeline_array args = {
-      .handles = (uint64_t)(uintptr_t)handles,
-      .points = (uint64_t)(uintptr_t)points,
-      .count_handles = num_items,
-   };
-
-   return gen_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_QUERY, &args);
+   return anv_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_WAIT, &args);
 }

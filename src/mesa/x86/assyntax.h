@@ -1736,11 +1736,4 @@
 #  define HIDDEN(x)
 #endif
 
-/* Control flow enforcement support */
-#ifdef HAVE_CET_H
-#include <cet.h>
-#else
-#define _CET_ENDBR
-#endif
-
 #endif /* __ASSYNTAX_H__ */

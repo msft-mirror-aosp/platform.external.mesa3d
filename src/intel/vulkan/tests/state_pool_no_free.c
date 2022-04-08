@@ -21,10 +21,11 @@
  * IN THE SOFTWARE.
  */
 
+#undef NDEBUG
+
 #include <pthread.h>
 
 #include "anv_private.h"
-#include "test_common.h"
 
 #define NUM_THREADS 16
 #define STATES_PER_THREAD 1024
@@ -55,15 +56,14 @@ static void *alloc_states(void *_job)
 
 static void run_test()
 {
-   struct anv_physical_device physical_device = { };
+   struct anv_instance instance;
    struct anv_device device = {
-      .physical = &physical_device,
+      .instance = &instance,
    };
    struct anv_state_pool state_pool;
 
    pthread_mutex_init(&device.mutex, NULL);
-   anv_bo_cache_init(&device.bo_cache);
-   anv_state_pool_init(&state_pool, &device, 4096, 0, 64);
+   anv_state_pool_init(&state_pool, &device, 4096, 64, 0);
 
    pthread_barrier_init(&barrier, NULL, NUM_THREADS);
 
@@ -102,7 +102,7 @@ static void run_test()
          break;
 
       /* That next element had better be higher than the previous highest */
-      ASSERT(jobs[max_thread_idx].offsets[next[max_thread_idx]] > highest);
+      assert(jobs[max_thread_idx].offsets[next[max_thread_idx]] > highest);
 
       highest = jobs[max_thread_idx].offsets[next[max_thread_idx]];
       next[max_thread_idx]++;
@@ -112,7 +112,7 @@ static void run_test()
    pthread_mutex_destroy(&device.mutex);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
    for (unsigned i = 0; i < NUM_RUNS; i++)
       run_test();

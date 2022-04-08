@@ -41,11 +41,10 @@ libgl = shared_library(
   'GL',
   files('xlib.c'),
   include_directories : [
-    inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux, inc_gallium_winsys, inc_gallium_drivers,
-    include_directories('../../frontends/glx/xlib'),
+    inc_common, inc_gallium_winsys, inc_gallium_drivers,
+    include_directories('../../state_trackers/glx/xlib'),
   ],
-  c_args : [gallium_xlib_c_args],
-  gnu_symbol_visibility : 'hidden',
+  c_args : [c_vis_args, gallium_xlib_c_args],
   link_args : [ld_args_bsymbolic, ld_args_gc_sections, gallium_xlib_ld_args],
   link_depends : gallium_xlib_link_depends,
   link_with : [

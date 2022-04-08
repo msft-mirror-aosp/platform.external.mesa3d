@@ -75,7 +75,7 @@ svga_resource_from_handle(struct pipe_screen * screen,
  * and format can be created.
  * \Return TRUE if OK, FALSE if too large.
  */
-static bool
+static boolean
 svga_can_create_resource(struct pipe_screen *screen,
                          const struct pipe_resource *res)
 {
@@ -102,7 +102,7 @@ svga_can_create_resource(struct pipe_screen *screen,
 
       format = svga_translate_format(svgascreen, res->format, res->bind);
       if (format == SVGA3D_FORMAT_INVALID)
-         return false;
+         return FALSE;
 
       base_level_size.width = res->width0;
       base_level_size.height = res->height0;

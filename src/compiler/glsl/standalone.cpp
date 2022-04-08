@@ -44,7 +44,6 @@
 #include "builtin_functions.h"
 #include "opt_add_neg_to_sub.h"
 #include "main/mtypes.h"
-#include "program/program.h"
 
 class dead_variable_visitor : public ir_hierarchical_visitor {
 public:
@@ -99,21 +98,32 @@ private:
 };
 
 static void
-init_gl_program(struct gl_program *prog, bool is_arb_asm, gl_shader_stage stage)
+init_gl_program(struct gl_program *prog, bool is_arb_asm)
 {
    prog->RefCount = 1;
    prog->Format = GL_PROGRAM_FORMAT_ASCII_ARB;
    prog->is_arb_asm = is_arb_asm;
-   prog->info.stage = stage;
 }
 
 static struct gl_program *
-new_program(UNUSED struct gl_context *ctx, gl_shader_stage stage,
+new_program(UNUSED struct gl_context *ctx, GLenum target,
             UNUSED GLuint id, bool is_arb_asm)
 {
-   struct gl_program *prog = rzalloc(NULL, struct gl_program);
-   init_gl_program(prog, is_arb_asm, stage);
-   return prog;
+   switch (target) {
+   case GL_VERTEX_PROGRAM_ARB: /* == GL_VERTEX_PROGRAM_NV */
+   case GL_GEOMETRY_PROGRAM_NV:
+   case GL_TESS_CONTROL_PROGRAM_NV:
+   case GL_TESS_EVALUATION_PROGRAM_NV:
+   case GL_FRAGMENT_PROGRAM_ARB:
+   case GL_COMPUTE_PROGRAM_NV: {
+      struct gl_program *prog = rzalloc(NULL, struct gl_program);
+      init_gl_program(prog, is_arb_asm);
+      return prog;
+   }
+   default:
+      printf("bad target in new_program\n");
+      return NULL;
+   }
 }
 
 static const struct standalone_options *options;
@@ -122,7 +132,7 @@ static void
 initialize_context(struct gl_context *ctx, gl_api api)
 {
    initialize_context_to_defaults(ctx, api);
-   _mesa_glsl_builtin_functions_init_or_ref();
+   glsl_type_singleton_init_or_ref();
 
    /* The standalone compiler needs to claim support for almost
     * everything in order to compile the built-in functions.
@@ -434,17 +444,6 @@ standalone_compile_shader(const struct standalone_options *_options,
       initialize_context(ctx, options->glsl_version > 130 ? API_OPENGL_CORE : API_OPENGL_COMPAT);
    }
 
-   if (options->lower_precision) {
-      for (unsigned i = MESA_SHADER_VERTEX; i <= MESA_SHADER_FRAGMENT; i++) {
-         struct gl_shader_compiler_options *options =
-            &ctx->Const.ShaderCompilerOptions[i];
-         options->LowerPrecisionFloat16 = true;
-         options->LowerPrecisionInt16 = true;
-         options->LowerPrecisionDerivatives = true;
-         options->LowerPrecisionConstants = true;
-      }
-   }
-
    struct gl_shader_program *whole_program;
 
    whole_program = rzalloc (NULL, struct gl_shader_program);
@@ -619,5 +618,6 @@ standalone_compiler_cleanup(struct gl_shader_program *whole_program)
    delete whole_program->FragDataIndexBindings;
 
    ralloc_free(whole_program);
-   _mesa_glsl_builtin_functions_decref();
+   glsl_type_singleton_decref();
+   _mesa_glsl_release_builtin_functions();
 }

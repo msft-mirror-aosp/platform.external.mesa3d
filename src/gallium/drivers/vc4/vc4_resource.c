@@ -23,8 +23,9 @@
  */
 
 #include "pipe/p_defines.h"
+#include "util/u_blit.h"
 #include "util/u_memory.h"
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 #include "util/u_inlines.h"
 #include "util/u_surface.h"
 #include "util/u_transfer_helper.h"
@@ -80,7 +81,7 @@ vc4_resource_transfer_unmap(struct pipe_context *pctx,
                 struct vc4_resource *rsc = vc4_resource(ptrans->resource);
                 struct vc4_resource_slice *slice = &rsc->slices[ptrans->level];
 
-                if (ptrans->usage & PIPE_MAP_WRITE) {
+                if (ptrans->usage & PIPE_TRANSFER_WRITE) {
                         vc4_store_tiled_image(rsc->bo->map + slice->offset +
                                               ptrans->box.z * rsc->cube_map_stride,
                                               slice->stride,
@@ -112,8 +113,8 @@ vc4_resource_transfer_map(struct pipe_context *pctx,
         /* Upgrade DISCARD_RANGE to WHOLE_RESOURCE if the whole resource is
          * being mapped.
          */
-        if ((usage & PIPE_MAP_DISCARD_RANGE) &&
-            !(usage & PIPE_MAP_UNSYNCHRONIZED) &&
+        if ((usage & PIPE_TRANSFER_DISCARD_RANGE) &&
+            !(usage & PIPE_TRANSFER_UNSYNCHRONIZED) &&
             !(prsc->flags & PIPE_RESOURCE_FLAG_MAP_PERSISTENT) &&
             prsc->last_level == 0 &&
             prsc->width0 == box->width &&
@@ -121,10 +122,10 @@ vc4_resource_transfer_map(struct pipe_context *pctx,
             prsc->depth0 == box->depth &&
             prsc->array_size == 1 &&
             rsc->bo->private) {
-                usage |= PIPE_MAP_DISCARD_WHOLE_RESOURCE;
+                usage |= PIPE_TRANSFER_DISCARD_WHOLE_RESOURCE;
         }
 
-        if (usage & PIPE_MAP_DISCARD_WHOLE_RESOURCE) {
+        if (usage & PIPE_TRANSFER_DISCARD_WHOLE_RESOURCE) {
                 if (vc4_resource_bo_alloc(rsc)) {
                         /* If it might be bound as one of our vertex buffers,
                          * make sure we re-emit vertex buffer state.
@@ -137,18 +138,18 @@ vc4_resource_transfer_map(struct pipe_context *pctx,
                          */
                         vc4_flush_jobs_reading_resource(vc4, prsc);
                 }
-        } else if (!(usage & PIPE_MAP_UNSYNCHRONIZED)) {
+        } else if (!(usage & PIPE_TRANSFER_UNSYNCHRONIZED)) {
                 /* If we're writing and the buffer is being used by the CL, we
                  * have to flush the CL first.  If we're only reading, we need
                  * to flush if the CL has written our buffer.
                  */
-                if (usage & PIPE_MAP_WRITE)
+                if (usage & PIPE_TRANSFER_WRITE)
                         vc4_flush_jobs_reading_resource(vc4, prsc);
                 else
                         vc4_flush_jobs_writing_resource(vc4, prsc);
         }
 
-        if (usage & PIPE_MAP_WRITE) {
+        if (usage & PIPE_TRANSFER_WRITE) {
                 rsc->writes++;
                 rsc->initialized_buffers = ~0;
         }
@@ -168,7 +169,7 @@ vc4_resource_transfer_map(struct pipe_context *pctx,
         ptrans->usage = usage;
         ptrans->box = *box;
 
-        if (usage & PIPE_MAP_UNSYNCHRONIZED)
+        if (usage & PIPE_TRANSFER_UNSYNCHRONIZED)
                 buf = vc4_bo_map_unsynchronized(rsc->bo);
         else
                 buf = vc4_bo_map(rsc->bo);
@@ -184,7 +185,7 @@ vc4_resource_transfer_map(struct pipe_context *pctx,
                 /* No direct mappings of tiled, since we need to manually
                  * tile/untile.
                  */
-                if (usage & PIPE_MAP_DIRECTLY)
+                if (usage & PIPE_TRANSFER_MAP_DIRECTLY)
                         return NULL;
 
                 if (format == PIPE_FORMAT_ETC1_RGB8) {
@@ -206,7 +207,7 @@ vc4_resource_transfer_map(struct pipe_context *pctx,
 
                 trans->map = malloc(ptrans->layer_stride * ptrans->box.depth);
 
-                if (usage & PIPE_MAP_READ) {
+                if (usage & PIPE_TRANSFER_READ) {
                         vc4_load_tiled_image(trans->map, ptrans->stride,
                                              buf + slice->offset +
                                              ptrans->box.z * rsc->cube_map_stride,
@@ -247,7 +248,7 @@ vc4_texture_subdata(struct pipe_context *pctx,
         /* For a direct mapping, we can just take the u_transfer path. */
         if (!rsc->tiled ||
             box->depth != 1 ||
-            (usage & PIPE_MAP_DISCARD_WHOLE_RESOURCE)) {
+            (usage & PIPE_TRANSFER_DISCARD_WHOLE_RESOURCE)) {
                 return u_default_texture_subdata(pctx, prsc, level, usage, box,
                                                  data, stride, layer_stride);
         }
@@ -256,7 +257,7 @@ vc4_texture_subdata(struct pipe_context *pctx,
          * texture.
          */
         void *buf;
-        if (usage & PIPE_MAP_UNSYNCHRONIZED)
+        if (usage & PIPE_TRANSFER_UNSYNCHRONIZED)
                 buf = vc4_bo_map_unsynchronized(rsc->bo);
         else
                 buf = vc4_bo_map(rsc->bo);
@@ -283,7 +284,7 @@ vc4_resource_destroy(struct pipe_screen *pscreen,
         free(rsc);
 }
 
-static bool
+static boolean
 vc4_resource_get_handle(struct pipe_screen *pscreen,
                         struct pipe_context *pctx,
                         struct pipe_resource *prsc,
@@ -314,7 +315,7 @@ vc4_resource_get_handle(struct pipe_screen *pscreen,
                          * control node was used for pl111.
                          */
                         fprintf(stderr, "flink unsupported with pl111\n");
-                        return false;
+                        return FALSE;
                 }
 
                 return vc4_bo_flink(rsc->bo, &whandle->handle);
@@ -324,7 +325,7 @@ vc4_resource_get_handle(struct pipe_screen *pscreen,
                         return renderonly_get_handle(rsc->scanout, whandle);
                 }
                 whandle->handle = rsc->bo->handle;
-                return true;
+                return TRUE;
         case WINSYS_HANDLE_TYPE_FD:
                 /* FDs are cross-device, so we can export directly from vc4.
                  */
@@ -332,7 +333,7 @@ vc4_resource_get_handle(struct pipe_screen *pscreen,
                 return whandle->handle != -1;
         }
 
-        return false;
+        return FALSE;
 }
 
 static void
@@ -1089,7 +1090,7 @@ vc4_get_shadow_index_buffer(struct pipe_context *pctx,
                 src = pipe_buffer_map_range(pctx, &orig->base,
                                             offset,
                                             count * 4,
-                                            PIPE_MAP_READ, &src_transfer);
+                                            PIPE_TRANSFER_READ, &src_transfer);
         }
 
         for (int i = 0; i < count; i++) {

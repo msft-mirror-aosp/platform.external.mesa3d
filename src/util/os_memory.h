@@ -1,6 +1,6 @@
 /**************************************************************************
  *
- * Copyright 2010 VMware, Inc.
+ * Copyright 2010 Vmware, Inc.
  * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -34,7 +34,12 @@
 #ifndef _OS_MEMORY_H_
 #define _OS_MEMORY_H_
 
-#if defined(EMBEDDED_DEVICE)
+
+#include "pipe/p_config.h"
+#include "pipe/p_compiler.h"
+
+
+#if defined(PIPE_SUBSYSTEM_EMBEDDED)
 
 #ifdef __cplusplus
 extern "C" {
@@ -58,12 +63,13 @@ os_malloc_aligned(size_t size, size_t alignment);
 void
 os_free_aligned(void *ptr);
 
-void *
-os_realloc_aligned(void *ptr, size_t oldsize, size_t newsize, size_t alignemnt);
-
 #ifdef __cplusplus
 }
 #endif
+
+#elif defined(PIPE_OS_WINDOWS) && defined(DEBUG) && !defined(DEBUG_MEMORY_IMPLEMENTATION)
+
+#  include "os_memory_debug.h"
 
 #else
 

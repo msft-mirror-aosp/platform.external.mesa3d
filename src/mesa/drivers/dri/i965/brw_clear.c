@@ -63,7 +63,7 @@ debug_mask(const char *name, GLbitfield mask)
 {
    GLuint i;
 
-   if (INTEL_DEBUG & DEBUG_BLIT) {
+   if (unlikely(INTEL_DEBUG & DEBUG_BLIT)) {
       DBG("%s clear:", name);
       for (i = 0; i < BUFFER_COUNT; i++) {
 	 if (mask & (1 << i))
@@ -107,9 +107,6 @@ brw_fast_clear_depth(struct gl_context *ctx)
    struct intel_mipmap_tree *mt = depth_irb->mt;
    struct gl_renderbuffer_attachment *depth_att = &fb->Attachment[BUFFER_DEPTH];
    const struct gen_device_info *devinfo = &brw->screen->devinfo;
-
-   if (INTEL_DEBUG & DEBUG_NO_FAST_CLEAR)
-      return false;
 
    if (devinfo->gen < 6)
       return false;
@@ -170,7 +167,7 @@ brw_fast_clear_depth(struct gl_context *ctx)
     */
    float clear_value =
       mt->format == MESA_FORMAT_Z_FLOAT32 ? ctx->Depth.Clear :
-      _mesa_lroundeven(ctx->Depth.Clear * fb->_DepthMax) / (float)(fb->_DepthMax);
+      (unsigned)(ctx->Depth.Clear * fb->_DepthMax) / (float)fb->_DepthMax;
 
    const uint32_t num_layers = depth_att->Layered ? depth_irb->layer_count : 1;
 

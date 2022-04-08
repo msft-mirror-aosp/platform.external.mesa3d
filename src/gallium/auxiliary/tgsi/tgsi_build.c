@@ -169,7 +169,6 @@ tgsi_default_declaration_dimension()
    struct tgsi_declaration_dimension dim;
 
    dim.Index2D = 0;
-   dim.Padding = 0;
 
    return dim;
 }

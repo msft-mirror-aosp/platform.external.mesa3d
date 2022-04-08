@@ -31,11 +31,11 @@
 #include "pipe/p_defines.h"
 #include "pipe/p_format.h"
 #include "util/u_inlines.h"
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
-#include "frontend/api.h"
-#include "frontend/sw_winsys.h"
+#include "state_tracker/st_api.h"
+#include "state_tracker/sw_winsys.h"
 
 #include "bitmap_wrapper.h"
 #include "hgl_sw_winsys.h"
@@ -81,12 +81,12 @@ hgl_winsys_destroy(struct sw_winsys* winsys)
 }
 
 
-static bool
+static boolean
 hgl_winsys_is_displaytarget_format_supported(struct sw_winsys* winsys,
 	unsigned textureUsage, enum pipe_format format)
 {
 	// TODO STUB
-	return true;
+	return TRUE;
 }
 
 static color_space
@@ -164,11 +164,11 @@ hgl_winsys_displaytarget_from_handle(struct sw_winsys* winsys,
 }
 
 
-static bool
+static boolean
 hgl_winsys_displaytarget_get_handle(struct sw_winsys* winsys,
 	struct sw_displaytarget* displayTarget, struct winsys_handle* whandle)
 {
-	return false;
+	return FALSE;
 }
 
 

@@ -25,7 +25,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 
-#include "util/format/u_format.h"
+#include "util/u_format.h"
 #include "util/u_sampler.h"
 #include "vl/vl_zscan.h"
 
@@ -619,7 +619,7 @@ nv84_video_buffer_create(struct pipe_context *pipe,
       debug_printf("Require interlaced video buffers\n");
       return NULL;
    }
-   if (pipe_format_to_chroma_format(template->buffer_format) != PIPE_VIDEO_CHROMA_FORMAT_420) {
+   if (template->chroma_format != PIPE_VIDEO_CHROMA_FORMAT_420) {
       debug_printf("Must use 4:2:0 format\n");
       return NULL;
    }
@@ -638,6 +638,7 @@ nv84_video_buffer_create(struct pipe_context *pipe,
    buffer->base.buffer_format = template->buffer_format;
    buffer->base.context = pipe;
    buffer->base.destroy = nv84_video_buffer_destroy;
+   buffer->base.chroma_format = template->chroma_format;
    buffer->base.width = template->width;
    buffer->base.height = template->height;
    buffer->base.get_sampler_view_planes = nv84_video_buffer_sampler_view_planes;
@@ -844,7 +845,7 @@ nv84_screen_get_video_param(struct pipe_screen *pscreen,
    }
 }
 
-bool
+boolean
 nv84_screen_video_supported(struct pipe_screen *screen,
                             enum pipe_format format,
                             enum pipe_video_profile profile,
