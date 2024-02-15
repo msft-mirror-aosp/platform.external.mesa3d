@@ -32,7 +32,6 @@ LOCAL_C_INCLUDES += \
 	$(MESA_TOP)/src \
 	$(MESA_TOP)/include
 
-MESA_VERSION := $(shell cat $(MESA_TOP)/VERSION)
 LOCAL_CFLAGS += \
 	-Wno-error \
 	-Werror=incompatible-pointer-types \
@@ -101,6 +100,7 @@ LOCAL_CFLAGS += \
 	-Wno-typedef-redefinition \
 	-Wno-uninitialized \
 	-Wno-implicit-const-int-float-conversion \
+	-Wno-sync-alignment \
 
 LOCAL_CPPFLAGS += \
 	-D__STDC_CONSTANT_MACROS \
