@@ -1,28 +1,6 @@
 /*
- * Copyright (C) 2009 Nicolai Haehnle.
- *
- * All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice (including the
- * next paragraph) shall be included in all copies or substantial
- * portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE COPYRIGHT OWNER(S) AND/OR ITS SUPPLIERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
+ * Copyright 2009 Nicolai Haehnle.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "radeon_opcodes.h"
@@ -30,7 +8,9 @@
 
 #include "radeon_program_constants.h"
 
-struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
+#include "util/compiler.h"
+
+const struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 	{
 		.Opcode = RC_OPCODE_NOP,
 		.Name = "NOP"
@@ -38,13 +18,6 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 	{
 		.Opcode = RC_OPCODE_ILLEGAL_OPCODE,
 		.Name = "ILLEGAL OPCODE"
-	},
-	{
-		.Opcode = RC_OPCODE_ABS,
-		.Name = "ABS",
-		.NumSrcRegs = 1,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
 	},
 	{
 		.Opcode = RC_OPCODE_ADD,
@@ -64,20 +37,6 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.Name = "ARR",
 		.NumSrcRegs = 1,
 		.HasDstReg = 1
-	},
-	{
-		.Opcode = RC_OPCODE_CEIL,
-		.Name = "CEIL",
-		.NumSrcRegs = 1,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
-	},
-	{
-		.Opcode = RC_OPCODE_CLAMP,
-		.Name = "CLAMP",
-		.NumSrcRegs = 3,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
 	},
 	{
 		.Opcode = RC_OPCODE_CMP,
@@ -133,12 +92,6 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.HasDstReg = 1
 	},
 	{
-		.Opcode = RC_OPCODE_DPH,
-		.Name = "DPH",
-		.NumSrcRegs = 2,
-		.HasDstReg = 1
-	},
-	{
 		.Opcode = RC_OPCODE_DST,
 		.Name = "DST",
 		.NumSrcRegs = 2,
@@ -156,13 +109,6 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.Name = "EXP",
 		.NumSrcRegs = 1,
 		.HasDstReg = 1
-	},
-	{
-		.Opcode = RC_OPCODE_FLR,
-		.Name = "FLR",
-		.NumSrcRegs = 1,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
 	},
 	{
 		.Opcode = RC_OPCODE_FRC,
@@ -194,13 +140,6 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.Name = "LOG",
 		.NumSrcRegs = 1,
 		.HasDstReg = 1
-	},
-	{
-		.Opcode = RC_OPCODE_LRP,
-		.Name = "LRP",
-		.NumSrcRegs = 3,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
 	},
 	{
 		.Opcode = RC_OPCODE_MAD,
@@ -266,22 +205,9 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.IsStandardScalar = 1
 	},
 	{
-		.Opcode = RC_OPCODE_SCS,
-		.Name = "SCS",
-		.NumSrcRegs = 1,
-		.HasDstReg = 1
-	},
-	{
 		.Opcode = RC_OPCODE_SEQ,
 		.Name = "SEQ",
 		.NumSrcRegs = 2,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
-	},
-	{
-		.Opcode = RC_OPCODE_SFL,
-		.Name = "SFL",
-		.NumSrcRegs = 0,
 		.HasDstReg = 1,
 		.IsComponentwise = 1
 	},
@@ -293,25 +219,11 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.IsComponentwise = 1
 	},
 	{
-		.Opcode = RC_OPCODE_SGT,
-		.Name = "SGT",
-		.NumSrcRegs = 2,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
-	},
-	{
 		.Opcode = RC_OPCODE_SIN,
 		.Name = "SIN",
 		.NumSrcRegs = 1,
 		.HasDstReg = 1,
 		.IsStandardScalar = 1
-	},
-	{
-		.Opcode = RC_OPCODE_SLE,
-		.Name = "SLE",
-		.NumSrcRegs = 2,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
 	},
 	{
 		.Opcode = RC_OPCODE_SLT,
@@ -326,40 +238,6 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.NumSrcRegs = 2,
 		.HasDstReg = 1,
 		.IsComponentwise = 1
-	},
-	{
-		.Opcode = RC_OPCODE_SSG,
-		.Name = "SSG",
-		.NumSrcRegs = 1,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
-	},
-	{
-		.Opcode = RC_OPCODE_SUB,
-		.Name = "SUB",
-		.NumSrcRegs = 2,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
-	},
-	{
-		.Opcode = RC_OPCODE_SWZ,
-		.Name = "SWZ",
-		.NumSrcRegs = 1,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
-	},
-	{
-		.Opcode = RC_OPCODE_TRUNC,
-		.Name = "TRUNC",
-		.NumSrcRegs = 1,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
-	},
-	{
-		.Opcode = RC_OPCODE_XPD,
-		.Name = "XPD",
-		.NumSrcRegs = 2,
-		.HasDstReg = 1
 	},
 	{
 		.Opcode = RC_OPCODE_TEX,
@@ -560,7 +438,6 @@ void rc_compute_sources_for_writemask(
 			srcmasks[1] |= RC_MASK_XY;
 			break;
 		case RC_OPCODE_DP3:
-		case RC_OPCODE_XPD:
 			srcmasks[0] |= RC_MASK_XYZ;
 			srcmasks[1] |= RC_MASK_XYZ;
 			break;
@@ -568,15 +445,11 @@ void rc_compute_sources_for_writemask(
 			srcmasks[0] |= RC_MASK_XYZW;
 			srcmasks[1] |= RC_MASK_XYZW;
 			break;
-		case RC_OPCODE_DPH:
-			srcmasks[0] |= RC_MASK_XYZ;
-			srcmasks[1] |= RC_MASK_XYZW;
-			break;
 		case RC_OPCODE_TXB:
 		case RC_OPCODE_TXP:
 		case RC_OPCODE_TXL:
 			srcmasks[0] |= RC_MASK_W;
-			/* Fall through */
+			FALLTHROUGH;
 		case RC_OPCODE_TEX:
 			switch (inst->U.I.TexSrcTarget) {
 				case RC_TEXTURE_1D:
@@ -598,7 +471,7 @@ void rc_compute_sources_for_writemask(
 			switch (inst->U.I.TexSrcTarget) {
 				case RC_TEXTURE_1D_ARRAY:
 					srcmasks[0] |= RC_MASK_Y;
-					/* Fall through. */
+					FALLTHROUGH;
 				case RC_TEXTURE_1D:
 					srcmasks[0] |= RC_MASK_X;
 					srcmasks[1] |= RC_MASK_X;
@@ -606,7 +479,7 @@ void rc_compute_sources_for_writemask(
 					break;
 				case RC_TEXTURE_2D_ARRAY:
 					srcmasks[0] |= RC_MASK_Z;
-					/* Fall through. */
+					FALLTHROUGH;
 				case RC_TEXTURE_2D:
 				case RC_TEXTURE_RECT:
 					srcmasks[0] |= RC_MASK_XY;

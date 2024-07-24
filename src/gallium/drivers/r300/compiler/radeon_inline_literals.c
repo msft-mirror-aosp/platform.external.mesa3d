@@ -1,26 +1,7 @@
 /*
  * Copyright 2012 Advanced Micro Devices, Inc.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * on the rights to use, copy, modify, merge, publish, distribute, sub
- * license, and/or sell copies of the Software, and to permit persons to whom
- * the Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHOR(S) AND/OR THEIR SUPPLIERS BE LIABLE FOR ANY CLAIM,
- * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
- * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
- * USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
  * Author: Tom Stellard <thomas.stellard@amd.com>
+ * SPDX-License-Identifier: MIT
  */
 
 #include "radeon_compiler.h"
@@ -28,6 +9,7 @@
 #include "radeon_dataflow.h"
 #include "radeon_program.h"
 #include "radeon_program_constants.h"
+#include "radeon_swizzle.h"
 #include "util/u_bitcast.h"
 #include <stdio.h>
 
@@ -64,8 +46,8 @@ static int ieee_754_to_r300_float(float f, unsigned char *r300_float_out)
 	}
 
 	if (mantissa & mantissa_mask) {
-		DBG("Failed mantisa has too many bits:\n"
-			"manitssa=0x%x mantissa_mask=0x%x, and=0x%x\n\n",
+		DBG("Failed mantissa has too many bits:\n"
+			"mantissa=0x%x mantissa_mask=0x%x, and=0x%x\n\n",
 			mantissa, mantissa_mask,
 			mantissa & mantissa_mask);
 		return 0;
@@ -104,26 +86,21 @@ void rc_inline_literals(struct radeon_compiler *c, void *user)
 		/* We aren't using rc_for_all_reads_src here, because presub
 		 * sources need to be handled differently. */
 		for (src_idx = 0; src_idx < info->NumSrcRegs; src_idx++) {
-			unsigned new_swizzle;
 			unsigned use_literal = 0;
-			unsigned negate_mask = 0;
 			unsigned swz, chan;
-			struct rc_src_register * src_reg =
-						&inst->U.I.SrcReg[src_idx];
-			swz = RC_SWIZZLE_UNUSED;
-			if (src_reg->File != RC_FILE_CONSTANT) {
+			struct rc_src_register src_reg = inst->U.I.SrcReg[src_idx];
+			if (src_reg.File != RC_FILE_CONSTANT) {
 				continue;
 			}
 			constant =
-				&c->Program.Constants.Constants[src_reg->Index];
+				&c->Program.Constants.Constants[src_reg.Index];
 			if (constant->Type != RC_CONSTANT_IMMEDIATE) {
 				continue;
 			}
-			new_swizzle = rc_init_swizzle(RC_SWIZZLE_UNUSED, 0);
 			for (chan = 0; chan < 4; chan++) {
 				unsigned char r300_float_tmp;
-				swz = GET_SWZ(src_reg->Swizzle, chan);
-				if (swz == RC_SWIZZLE_UNUSED) {
+				swz = GET_SWZ(src_reg.Swizzle, chan);
+				if (swz >= RC_SWIZZLE_ZERO) {
 					continue;
 				}
 				float_value = constant->u.Immediate[swz];
@@ -135,7 +112,7 @@ void rc_inline_literals(struct radeon_compiler *c, void *user)
 					break;
 				}
 
-				if (ret == -1 && src_reg->Abs) {
+				if (ret == -1 && src_reg.Abs) {
 					use_literal = 0;
 					break;
 				}
@@ -145,21 +122,29 @@ void rc_inline_literals(struct radeon_compiler *c, void *user)
 					use_literal = 1;
 				}
 
-				/* Use RC_SWIZZLE_W for the inline constant, so
-				 * it will become one of the alpha sources. */
-				SET_SWZ(new_swizzle, chan, RC_SWIZZLE_W);
+				/* We can use any swizzle, so if this is ADD it might
+				 * be smart to us the same swizzle as the other src uses
+				 * so that we potentially enable presubtract later.
+				 * Use RC_SWIZZLE_W otherwise, so it will become one of
+				 * the alpha sources.
+				 */
+				if (info->Opcode == RC_OPCODE_ADD &&
+					GET_SWZ(inst->U.I.SrcReg[1 - src_idx].Swizzle, chan) == chan) {
+					SET_SWZ(src_reg.Swizzle, chan, chan);
+				} else {
+					SET_SWZ(src_reg.Swizzle, chan, RC_SWIZZLE_W);
+				}
 				if (ret == -1) {
-					negate_mask |= (1 << chan);
+					src_reg.Negate ^= (1 << chan);
 				}
 			}
 
-			if (!use_literal) {
+			src_reg.File = RC_FILE_INLINE;
+			src_reg.Index = r300_float;
+			if (!use_literal || !c->SwizzleCaps->IsNative(inst->U.I.Opcode, src_reg)) {
 				continue;
 			}
-			src_reg->File = RC_FILE_INLINE;
-			src_reg->Index = r300_float;
-			src_reg->Swizzle = new_swizzle;
-			src_reg->Negate = src_reg->Negate ^ negate_mask;
+			inst->U.I.SrcReg[src_idx] = src_reg;
 		}
 	}
 }

@@ -10,12 +10,13 @@
 /**
  * Instantiate a drm_driver_descriptor struct.
  */
-#define DEFINE_DRM_DRIVER_DESCRIPTOR(descriptor_name, driver, _driconf, _driconf_count, func) \
+#define DEFINE_DRM_DRIVER_DESCRIPTOR(descriptor_name, driver, _driconf, _driconf_count, func, ...) \
 const struct drm_driver_descriptor descriptor_name = {         \
    .driver_name = #driver,                                     \
    .driconf = _driconf,                                        \
    .driconf_count = _driconf_count,                            \
    .create_screen = func,                                      \
+   ##__VA_ARGS__                                               \
 };
 
 /* The static pipe loader refers to the *_driver_descriptor structs for all
@@ -33,8 +34,8 @@ const struct drm_driver_descriptor descriptor_name = {         \
 
 #ifdef PIPE_LOADER_DYNAMIC
 
-#define DRM_DRIVER_DESCRIPTOR(driver, driconf, driconf_count)           \
-   PUBLIC DEFINE_DRM_DRIVER_DESCRIPTOR(driver_descriptor, driver, driconf, driconf_count, pipe_##driver##_create_screen)
+#define DRM_DRIVER_DESCRIPTOR(driver, driconf, driconf_count, ...)      \
+   PUBLIC DEFINE_DRM_DRIVER_DESCRIPTOR(driver_descriptor, driver, driconf, driconf_count, pipe_##driver##_create_screen, __VA_ARGS__)
 
 #define DRM_DRIVER_DESCRIPTOR_STUB(driver)
 
@@ -42,8 +43,8 @@ const struct drm_driver_descriptor descriptor_name = {         \
 
 #else
 
-#define DRM_DRIVER_DESCRIPTOR(driver, driconf, driconf_count)                          \
-   DEFINE_DRM_DRIVER_DESCRIPTOR(driver##_driver_descriptor, driver, driconf, driconf_count, pipe_##driver##_create_screen)
+#define DRM_DRIVER_DESCRIPTOR(driver, driconf, driconf_count, ...)      \
+   DEFINE_DRM_DRIVER_DESCRIPTOR(driver##_driver_descriptor, driver, driconf, driconf_count, pipe_##driver##_create_screen, __VA_ARGS__)
 
 #define DRM_DRIVER_DESCRIPTOR_STUB(driver)                              \
    static struct pipe_screen *                                          \
@@ -56,8 +57,18 @@ const struct drm_driver_descriptor descriptor_name = {         \
 
 #define DRM_DRIVER_DESCRIPTOR_ALIAS(driver, alias, driconf, driconf_count) \
    DEFINE_DRM_DRIVER_DESCRIPTOR(alias##_driver_descriptor, alias, driconf, \
-                                driconf_count, pipe_##driver##_create_screen)
+                                driconf_count, pipe_##driver##_create_screen, NULL)
 
+#endif
+
+#ifdef GALLIUM_KMSRO_ONLY
+#undef GALLIUM_V3D
+#undef GALLIUM_VC4
+#undef GALLIUM_FREEDRENO
+#undef GALLIUM_ETNAVIV
+#undef GALLIUM_PANFROST
+#undef GALLIUM_LIMA
+#undef GALLIUM_ASAHI
 #endif
 
 #ifdef GALLIUM_I915
@@ -103,6 +114,26 @@ DRM_DRIVER_DESCRIPTOR(iris, iris_driconf, ARRAY_SIZE(iris_driconf))
 DRM_DRIVER_DESCRIPTOR_STUB(iris)
 #endif
 
+#ifdef GALLIUM_CROCUS
+#include "crocus/drm/crocus_drm_public.h"
+
+static struct pipe_screen *
+pipe_crocus_create_screen(int fd, const struct pipe_screen_config *config)
+{
+   struct pipe_screen *screen;
+
+   screen = crocus_drm_screen_create(fd, config);
+   return screen ? debug_screen_wrap(screen) : NULL;
+}
+
+const driOptionDescription crocus_driconf[] = {
+      #include "crocus/driinfo_crocus.h"
+};
+DRM_DRIVER_DESCRIPTOR(crocus, crocus_driconf, ARRAY_SIZE(crocus_driconf))
+#else
+DRM_DRIVER_DESCRIPTOR_STUB(crocus)
+#endif
+
 #ifdef GALLIUM_NOUVEAU
 #include "nouveau/drm/nouveau_drm_public.h"
 
@@ -126,30 +157,8 @@ const driOptionDescription v3d_driconf[] = {
 };
 #endif
 
-#ifdef GALLIUM_KMSRO
-#include "kmsro/drm/kmsro_drm_public.h"
-
-static struct pipe_screen *
-pipe_kmsro_create_screen(int fd, const struct pipe_screen_config *config)
-{
-   struct pipe_screen *screen;
-
-   screen = kmsro_drm_screen_create(fd, config);
-   return screen ? debug_screen_wrap(screen) : NULL;
-}
-#if defined(GALLIUM_VC4) || defined(GALLIUM_V3D)
-DRM_DRIVER_DESCRIPTOR(kmsro, v3d_driconf, ARRAY_SIZE(v3d_driconf))
-#else
-DRM_DRIVER_DESCRIPTOR(kmsro, NULL, 0)
-#endif
-
-#else
-DRM_DRIVER_DESCRIPTOR_STUB(kmsro)
-#endif
-
 #ifdef GALLIUM_R300
-#include "radeon/radeon_winsys.h"
-#include "radeon/drm/radeon_drm_public.h"
+#include "winsys/radeon_winsys.h"
 #include "r300/r300_public.h"
 
 static struct pipe_screen *
@@ -167,8 +176,7 @@ DRM_DRIVER_DESCRIPTOR_STUB(r300)
 #endif
 
 #ifdef GALLIUM_R600
-#include "radeon/radeon_winsys.h"
-#include "radeon/drm/radeon_drm_public.h"
+#include "winsys/radeon_winsys.h"
 #include "r600/r600_public.h"
 
 static struct pipe_screen *
@@ -236,25 +244,41 @@ pipe_msm_create_screen(int fd, const struct pipe_screen_config *config)
 {
    struct pipe_screen *screen;
 
-   screen = fd_drm_screen_create(fd, NULL);
+   screen = fd_drm_screen_create_renderonly(fd, NULL, config);
    return screen ? debug_screen_wrap(screen) : NULL;
 }
-DRM_DRIVER_DESCRIPTOR(msm, NULL, 0)
+
+static bool
+pipe_msm_probe_nctx(int fd, const struct virgl_renderer_capset_drm *caps)
+{
+   return fd_drm_probe_nctx(fd, caps);
+}
+
+const driOptionDescription msm_driconf[] = {
+#ifdef GALLIUM_FREEDRENO
+      #include "freedreno/driinfo_freedreno.h"
+#endif
+};
+DRM_DRIVER_DESCRIPTOR(msm, msm_driconf, ARRAY_SIZE(msm_driconf),
+                      .probe_nctx = pipe_msm_probe_nctx)
+DRM_DRIVER_DESCRIPTOR_ALIAS(msm, kgsl, msm_driconf, ARRAY_SIZE(msm_driconf))
 #else
 DRM_DRIVER_DESCRIPTOR_STUB(msm)
+DRM_DRIVER_DESCRIPTOR_STUB(kgsl)
 #endif
-DRM_DRIVER_DESCRIPTOR_ALIAS(msm, kgsl, NULL, 0)
 
-#ifdef GALLIUM_VIRGL
+#if defined(GALLIUM_VIRGL)
 #include "virgl/drm/virgl_drm_public.h"
 #include "virgl/virgl_public.h"
 
 static struct pipe_screen *
 pipe_virtio_gpu_create_screen(int fd, const struct pipe_screen_config *config)
 {
-   struct pipe_screen *screen;
+   struct pipe_screen *screen = NULL;
 
-   screen = virgl_drm_screen_create(fd, config);
+   if (!screen)
+      screen = virgl_drm_screen_create(fd, config);
+
    return screen ? debug_screen_wrap(screen) : NULL;
 }
 
@@ -309,13 +333,19 @@ pipe_panfrost_create_screen(int fd, const struct pipe_screen_config *config)
 {
    struct pipe_screen *screen;
 
-   screen = panfrost_drm_screen_create(fd);
+   screen = panfrost_drm_screen_create(fd, config);
    return screen ? debug_screen_wrap(screen) : NULL;
 }
-DRM_DRIVER_DESCRIPTOR(panfrost, NULL, 0)
+
+const driOptionDescription pan_driconf[] = {
+      #include "panfrost/driinfo_panfrost.h"
+};
+DRM_DRIVER_DESCRIPTOR(panfrost, pan_driconf, ARRAY_SIZE(pan_driconf))
+DRM_DRIVER_DESCRIPTOR_ALIAS(panfrost, panthor, pan_driconf, ARRAY_SIZE(pan_driconf))
 
 #else
 DRM_DRIVER_DESCRIPTOR_STUB(panfrost)
+DRM_DRIVER_DESCRIPTOR_STUB(panthor)
 #endif
 
 #ifdef GALLIUM_ETNAVIV
@@ -389,5 +419,38 @@ DRM_DRIVER_DESCRIPTOR(zink, zink_driconf, ARRAY_SIZE(zink_driconf))
 #else
 DRM_DRIVER_DESCRIPTOR_STUB(zink)
 #endif
+
+#ifdef GALLIUM_KMSRO
+#include "kmsro/drm/kmsro_drm_public.h"
+
+static struct pipe_screen *
+pipe_kmsro_create_screen(int fd, const struct pipe_screen_config *config)
+{
+   struct pipe_screen *screen;
+
+   screen = kmsro_drm_screen_create(fd, config);
+   return screen ? debug_screen_wrap(screen) : NULL;
+}
+const driOptionDescription kmsro_driconf[] = {
+#if defined(GALLIUM_VC4) || defined(GALLIUM_V3D)
+      #include "v3d/driinfo_v3d.h"
+#endif
+#ifdef GALLIUM_ASAHI
+      #include "asahi/driinfo_asahi.h"
+#endif
+#ifdef GALLIUM_FREEDRENO
+      #include "freedreno/driinfo_freedreno.h"
+#endif
+#ifdef GALLIUM_PANFROST
+      #include "panfrost/driinfo_panfrost.h"
+#endif
+};
+DRM_DRIVER_DESCRIPTOR(kmsro, kmsro_driconf, ARRAY_SIZE(kmsro_driconf))
+
+#else
+DRM_DRIVER_DESCRIPTOR_STUB(kmsro)
+#endif
+
+/* kmsro should be the last entry in the file. */
 
 #endif /* DRM_HELPER_H */

@@ -1,28 +1,6 @@
 /*
  * Copyright 2008 Corbin Simpson <MostAwesomeDude@gmail.com>
- *
- * All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice (including the
- * next paragraph) shall be included in all copies or substantial
- * portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE COPYRIGHT OWNER(S) AND/OR ITS SUPPLIERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
+ * SPDX-License-Identifier: MIT
  */
 
 #include "r500_fragprog.h"
@@ -34,23 +12,21 @@
 #include "radeon_variable.h"
 #include "r300_reg.h"
 
+#include "util/compiler.h"
+
 /**
  * Rewrite IF instructions to use the ALU result special register.
  */
-int r500_transform_IF(
+static void r500_transform_IF_instr(
 	struct radeon_compiler * c,
 	struct rc_instruction * inst_if,
-	void *data)
+	struct rc_list * var_list)
 {
+
 	struct rc_variable * writer;
 	struct rc_list * writer_list, * list_ptr;
-	struct rc_list * var_list = rc_get_variables(c);
 	unsigned int generic_if = 0;
 	unsigned int alu_chan;
-
-	if (inst_if->U.I.Opcode != RC_OPCODE_IF) {
-		return 0;
-	}
 
 	writer_list = rc_variable_list_get_writers(
 			var_list, inst_if->Type, &inst_if->U.I.SrcReg[0]);
@@ -124,7 +100,6 @@ int r500_transform_IF(
 		}
 	} else {
 		rc_compare_func compare_func = RC_COMPARE_FUNC_NEVER;
-		unsigned int reverse_srcs = 0;
 		unsigned int preserve_opcode = 0;
 		for (list_ptr = writer_list; list_ptr;
 						list_ptr = list_ptr->Next) {
@@ -136,15 +111,9 @@ int r500_transform_IF(
 			case RC_OPCODE_SNE:
 				compare_func = RC_COMPARE_FUNC_NOTEQUAL;
 				break;
-			case RC_OPCODE_SLE:
-				reverse_srcs = 1;
-				/* Fall through */
 			case RC_OPCODE_SGE:
 				compare_func = RC_COMPARE_FUNC_GEQUAL;
 				break;
-			case RC_OPCODE_SGT:
-				reverse_srcs = 1;
-				/* Fall through */
 			case RC_OPCODE_SLT:
 				compare_func = RC_COMPARE_FUNC_LESS;
 				break;
@@ -154,19 +123,14 @@ int r500_transform_IF(
 				break;
 			}
 			if (!preserve_opcode) {
-				writer->Inst->U.I.Opcode = RC_OPCODE_SUB;
+				writer->Inst->U.I.Opcode = RC_OPCODE_ADD;
+				writer->Inst->U.I.SrcReg[1].Negate =
+					~writer->Inst->U.I.SrcReg[1].Negate;
 			}
 			writer->Inst->U.I.DstReg.WriteMask = 0;
 			writer->Inst->U.I.DstReg.File = RC_FILE_NONE;
 			writer->Inst->U.I.WriteALUResult = alu_chan;
 			writer->Inst->U.I.ALUResultCompare = compare_func;
-			if (reverse_srcs) {
-				struct rc_src_register temp_src;
-				temp_src = writer->Inst->U.I.SrcReg[0];
-				writer->Inst->U.I.SrcReg[0] =
-					writer->Inst->U.I.SrcReg[1];
-				writer->Inst->U.I.SrcReg[1] = temp_src;
-			}
 		}
 	}
 
@@ -176,8 +140,22 @@ int r500_transform_IF(
 				RC_SWIZZLE_X, RC_SWIZZLE_UNUSED,
 				RC_SWIZZLE_UNUSED, RC_SWIZZLE_UNUSED);
 	inst_if->U.I.SrcReg[0].Negate = 0;
+}
 
-	return 1;
+void r500_transform_IF(
+	struct radeon_compiler * c,
+	void *user)
+{
+	struct rc_list * var_list = rc_get_variables(c);
+
+	struct rc_instruction * inst = c->Program.Instructions.Next;
+	while(inst != &c->Program.Instructions) {
+		struct rc_instruction * current = inst;
+		inst = inst->Next;
+
+		if (current->U.I.Opcode == RC_OPCODE_IF)
+			r500_transform_IF_instr(c, current, var_list);
+	}
 }
 
 static int r500_swizzle_is_native(rc_opcode opcode, struct rc_src_register reg)
@@ -218,8 +196,6 @@ static int r500_swizzle_is_native(rc_opcode opcode, struct rc_src_register reg)
 			return 1;
 
 		return 0;
-	} else if (reg.File == RC_FILE_INLINE) {
-		return 1;
 	} else {
 		/* ALU instructions support almost everything */
 		relevant = 0;
@@ -264,7 +240,7 @@ static void r500_swizzle_split(struct rc_src_register src, unsigned int usemask,
 	}
 }
 
-struct rc_swizzle_caps r500_swizzle_caps = {
+const struct rc_swizzle_caps r500_swizzle_caps = {
 	.IsNative = r500_swizzle_is_native,
 	.Split = r500_swizzle_split
 };

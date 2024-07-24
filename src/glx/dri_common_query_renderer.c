@@ -21,7 +21,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#if defined(GLX_DIRECT_RENDERING) && !defined(GLX_USE_APPLEGL)
+#if defined(GLX_DIRECT_RENDERING) && (!defined(GLX_USE_APPLEGL) || defined(GLX_USE_APPLE))
 
 #include "glxclient.h"
 #include "glx_error.h"
@@ -137,7 +137,7 @@ dri3_query_renderer_integer(struct glx_screen *base, int attribute,
    if (psc->rendererQuery == NULL)
       return -1;
 
-   ret = psc->rendererQuery->queryInteger(psc->driScreen, dri_attribute,
+   ret = psc->rendererQuery->queryInteger(psc->driScreenRenderGPU, dri_attribute,
                                           value);
    dri_convert_context_profile_bits(attribute, value);
 
@@ -159,7 +159,7 @@ dri3_query_renderer_string(struct glx_screen *base, int attribute,
    if (psc->rendererQuery == NULL)
       return -1;
 
-   return psc->rendererQuery->queryString(psc->driScreen, dri_attribute, value);
+   return psc->rendererQuery->queryString(psc->driScreenRenderGPU, dri_attribute, value);
 }
 #endif /* HAVE_DRI3 */
 

@@ -1,33 +1,9 @@
 /*
  * Copyright 2010 Tom Stellard <tstellar@gmail.com>
- *
- * All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice (including the
- * next paragraph) shall be included in all copies or substantial
- * portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE COPYRIGHT OWNER(S) AND/OR ITS SUPPLIERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
+ * SPDX-License-Identifier: MIT
  */
 
-/**
- * \file
- */
+#include "util/u_math.h"
 
 #include "radeon_rename_regs.h"
 
@@ -46,9 +22,7 @@
  */
 void rc_rename_regs(struct radeon_compiler *c, void *user)
 {
-	unsigned int used_length;
 	struct rc_instruction * inst;
-	unsigned char * used;
 	struct rc_list * variables;
 	struct rc_list * var_ptr;
 
@@ -60,11 +34,6 @@ void rc_rename_regs(struct radeon_compiler *c, void *user)
 			return;
 	}
 
-	used_length = 2 * rc_recompute_ips(c);
-	used = memory_pool_malloc(&c->Pool, sizeof(unsigned char) * used_length);
-	memset(used, 0, sizeof(unsigned char) * used_length);
-
-	rc_get_used_temporaries(c, used, used_length);
 	variables = rc_get_variables(c);
 
 	for (var_ptr = variables; var_ptr; var_ptr = var_ptr->Next) {
@@ -76,8 +45,7 @@ void rc_rename_regs(struct radeon_compiler *c, void *user)
 			continue;
 		}
 
-		new_index = rc_find_free_temporary_list(c, used, used_length,
-						RC_MASK_XYZW);
+		new_index = rc_find_free_temporary(c);
 		if (new_index < 0) {
 			rc_error(c, "Ran out of temporary registers\n");
 			return;

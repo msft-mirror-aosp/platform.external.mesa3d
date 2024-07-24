@@ -1,26 +1,7 @@
 /*
  * Copyright 2012 Advanced Micro Devices, Inc.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * on the rights to use, copy, modify, merge, publish, distribute, sub
- * license, and/or sell copies of the Software, and to permit persons to whom
- * the Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHOR(S) AND/OR THEIR SUPPLIERS BE LIABLE FOR ANY CLAIM,
- * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
- * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
- * USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
  * Author: Tom Stellard <thomas.stellard@amd.com>
+ * SPDX-License-Identifier: MIT
  */
 
 #include "radeon_compiler.h"
@@ -36,7 +17,6 @@ struct vert_fc_state {
 	unsigned LoopsReserved;
 	int PredStack[R500_PVS_MAX_LOOP_DEPTH];
 	int PredicateReg;
-	unsigned InCFBreak;
 };
 
 static void build_pred_src(
@@ -161,7 +141,7 @@ static void lower_brk(
 {
 	if (fc_state->LoopDepth == 1) {
 		inst->U.I.Opcode = RC_OPCODE_RCP;
-		inst->U.I.DstReg.Pred = RC_PRED_INV;
+		inst->U.I.DstReg.Pred = RC_PRED_SET;
 		inst->U.I.SrcReg[0].Index = 0;
 		inst->U.I.SrcReg[0].File = RC_FILE_NONE;
 		inst->U.I.SrcReg[0].Swizzle = RC_SWIZZLE_0000;
@@ -203,17 +183,8 @@ static void lower_if(
 		}
 	}
 
-	if (inst->Next->U.I.Opcode == RC_OPCODE_BRK) {
-		fc_state->InCFBreak = 1;
-	}
-	if ((fc_state->BranchDepth == 0 && fc_state->LoopDepth == 0)
-			|| (fc_state->LoopDepth == 1 && fc_state->InCFBreak)) {
-		if (fc_state->InCFBreak) {
-			inst->U.I.Opcode = RC_ME_PRED_SEQ;
-			inst->U.I.DstReg.Pred = RC_PRED_SET;
-		} else {
-			inst->U.I.Opcode = RC_ME_PRED_SNEQ;
-		}
+	if (fc_state->BranchDepth == 0 && fc_state->LoopDepth == 0) {
+		inst->U.I.Opcode = RC_ME_PRED_SNEQ;
 	} else {
 		unsigned swz;
 		inst->U.I.Opcode = RC_VE_PRED_SNEQ_PUSH;
@@ -257,10 +228,10 @@ void rc_vert_fc(struct radeon_compiler *c, void *user)
 			if (fc_state.BranchDepth != 0
 					|| fc_state.LoopDepth != 1) {
 				lower_endloop(inst, &fc_state);
+				/* Skip the new PRED_RESTORE */
+				inst = inst->Next;
 			}
 			fc_state.LoopDepth--;
-			/* Skip PRED_RESTORE */
-			inst = inst->Next;
 			break;
 		case RC_OPCODE_IF:
 			lower_if(inst, &fc_state);
@@ -274,17 +245,13 @@ void rc_vert_fc(struct radeon_compiler *c, void *user)
 			break;
 
 		case RC_OPCODE_ENDIF:
-			if (fc_state.LoopDepth == 1 && fc_state.InCFBreak) {
-				struct rc_instruction * to_delete = inst;
-				inst = inst->Prev;
-				rc_remove_instruction(to_delete);
-				/* XXX: Delete the endif instruction */
-			} else {
-				inst->U.I.Opcode = RC_ME_PRED_SET_POP;
-				build_pred_dst(&inst->U.I.DstReg, &fc_state);
-				build_pred_src(&inst->U.I.SrcReg[0], &fc_state);
-			}
-			fc_state.InCFBreak = 0;
+			/* TODO: If LoopDepth == 1 and there is only a single break
+			 * we can optimize out the endif just after the break. However
+			 * previous attempts were buggy, so keep it simple for now.
+			 */
+			inst->U.I.Opcode = RC_ME_PRED_SET_POP;
+			build_pred_dst(&inst->U.I.DstReg, &fc_state);
+			build_pred_src(&inst->U.I.SrcReg[0], &fc_state);
 			fc_state.BranchDepth--;
 			break;
 

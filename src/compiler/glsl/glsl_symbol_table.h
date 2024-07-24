@@ -73,11 +73,6 @@ struct glsl_symbol_table {
    /*@}*/
 
    /**
-    * Add an function at global scope without checking for scoping conflicts.
-    */
-   void add_global_function(ir_function *f);
-
-   /**
     * \name Methods to get symbols from the table
     */
    /*@{*/
@@ -107,7 +102,7 @@ private:
 
    struct _mesa_symbol_table *table;
    void *mem_ctx;
-   void *linalloc;
+   linear_ctx *linalloc;
 };
 
 #endif /* GLSL_SYMBOL_TABLE */

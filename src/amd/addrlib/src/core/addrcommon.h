@@ -1,28 +1,10 @@
 /*
- * Copyright © 2007-2019 Advanced Micro Devices, Inc.
- * All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sub license, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
- * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS, AUTHORS
- * AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
- * USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
- * The above copyright notice and this permission notice (including the
- * next paragraph) shall be included in all copies or substantial portions
- * of the Software.
- */
+************************************************************************************************************************
+*
+*  Copyright (C) 2007-2022 Advanced Micro Devices, Inc.  All rights reserved.
+*  SPDX-License-Identifier: MIT
+*
+***********************************************************************************************************************/
 
 /**
 ****************************************************************************************************
@@ -36,40 +18,35 @@
 
 #include "addrinterface.h"
 
-// ADDR_LNX_KERNEL_BUILD is for internal build
-// Moved from addrinterface.h so __KERNEL__ is not needed any more
-#if ADDR_LNX_KERNEL_BUILD // || (defined(__GNUC__) && defined(__KERNEL__))
-    #include <string.h>
-#elif !defined(__APPLE__) || defined(HAVE_TSERVER)
+
+#if !defined(__APPLE__) || defined(HAVE_TSERVER)
     #include <stdlib.h>
     #include <string.h>
 #endif
 
-#include <assert.h>
-#include "util/macros.h"
-#include "util/u_endian.h"
-
-#if !defined(DEBUG)
-#ifdef NDEBUG
-#define DEBUG 0
-#else
-#define DEBUG 1
-#endif
+#if defined(__GNUC__)
+    #include <signal.h>
+    #include <assert.h>
 #endif
 
-#if UTIL_ARCH_LITTLE_ENDIAN
-#define LITTLEENDIAN_CPU
-#elif UTIL_ARCH_BIG_ENDIAN
-#define BIGENDIAN_CPU
+#if defined(_WIN32)
+#include <intrin.h>
 #endif
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Platform specific debug break defines
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+#if !defined(DEBUG)
+    #ifdef NDEBUG
+        #define DEBUG 0
+    #else
+        #define DEBUG 1
+    #endif
+#endif
+
 #if DEBUG
     #if defined(__GNUC__)
-        #define ADDR_DBG_BREAK()    assert(false)
+        #define ADDR_DBG_BREAK()    { assert(false); }
     #elif defined(__APPLE__)
         #define ADDR_DBG_BREAK()    { IOPanic("");}
     #else
@@ -78,6 +55,95 @@
 #else
     #define ADDR_DBG_BREAK()
 #endif
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Debug print macro
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#if DEBUG
+
+// Forward decl.
+namespace Addr {
+
+/// @brief Debug print helper
+/// This function sends messages to thread-local callbacks for printing. If no callback is present
+/// it is sent to stderr.
+///
+VOID DebugPrint( const CHAR* pDebugString, ...);
+
+/// This function sets thread-local callbacks (or NULL) for printing. It should be called when
+/// entering addrlib and is implicitly called by GetLib().
+VOID ApplyDebugPrinters(ADDR_DEBUGPRINT pfnDebugPrint, ADDR_CLIENT_HANDLE pClientHandle);
+}
+
+/// @brief Printf-like macro for printing messages
+#define ADDR_PRNT(msg, ...) Addr::DebugPrint(msg, ##__VA_ARGS__)
+
+/// @brief Resets thread-local debug state
+/// @ingroup util
+///
+/// This macro resets any thread-local state on where to print a message.
+/// It should be called before returning from addrlib.
+#define ADDR_RESET_DEBUG_PRINTERS() Addr::ApplyDebugPrinters(NULL, NULL)
+
+/// @brief Macro for reporting informational messages
+/// @ingroup util
+///
+/// This macro optionally prints an informational message to stdout.
+/// The first parameter is a condition -- if it is true, nothing is done.
+/// The second parameter is a message that may have printf-like args.
+/// Any remaining parameters are used to format the message.
+///
+#define ADDR_INFO(cond, msg, ...)         \
+do { if (!(cond)) { Addr::DebugPrint(msg, ##__VA_ARGS__); } } while (0)
+
+
+/// @brief Macro for reporting error warning messages
+/// @ingroup util
+///
+/// This macro optionally prints an error warning message to stdout,
+/// followed by the file name and line number where the macro was called.
+/// The first parameter is a condition -- if it is true, nothing is done.
+/// The second parameter is a message that may have printf-like args.
+/// Any remaining parameters are used to format the message.
+///
+#define ADDR_WARN(cond, msg, ...)         \
+do { if (!(cond))                         \
+  { Addr::DebugPrint(msg, ##__VA_ARGS__); \
+    Addr::DebugPrint("  WARNING in file %s, line %d\n", __FILE__, __LINE__); \
+} } while (0)
+
+
+/// @brief Macro for reporting fatal error conditions
+/// @ingroup util
+///
+/// This macro optionally stops execution of the current routine
+/// after printing an error warning message to stdout,
+/// followed by the file name and line number where the macro was called.
+/// The first parameter is a condition -- if it is true, nothing is done.
+/// The second parameter is a message that may have printf-like args.
+/// Any remaining parameters are used to format the message.
+///
+#define ADDR_EXIT(cond, msg, ...)                           \
+do { if (!(cond))                                           \
+  { Addr::DebugPrint(msg, ##__VA_ARGS__); ADDR_DBG_BREAK(); \
+} } while (0)
+
+#else // DEBUG
+
+#define ADDR_RESET_DEBUG_PRINTERS()
+
+#define ADDR_PRNT(msg, ...)
+
+#define ADDR_DBG_BREAK()
+
+#define ADDR_INFO(cond, msg, ...)
+
+#define ADDR_WARN(cond, msg, ...)
+
+#define ADDR_EXIT(cond, msg, ...)
+
+#endif // DEBUG
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -90,21 +156,31 @@
 #endif
 
 #if DEBUG
-    #if defined( _WIN32 )
-        #define ADDR_ASSERT(__e)                                \
-        {                                                       \
-            ADDR_ANALYSIS_ASSUME(__e);                          \
-            if ( !((__e) ? TRUE : FALSE)) { ADDR_DBG_BREAK(); } \
-        }
+    #define ADDR_BREAK_WITH_MSG(msg)                                      \
+        do {                                                              \
+            Addr::DebugPrint(msg " in file %s:%d\n", __FILE__, __LINE__); \
+            ADDR_DBG_BREAK();                                             \
+        } while (0)
+
+    #define ADDR_ASSERT(__e)                                    \
+    do {                                                        \
+        ADDR_ANALYSIS_ASSUME(__e);                              \
+        if ( !((__e) ? TRUE : FALSE)) {                         \
+            ADDR_BREAK_WITH_MSG("Assertion '" #__e "' failed"); \
+        }                                                       \
+    } while (0)
+
+    #if ADDR_SILENCE_ASSERT_ALWAYS
+        #define ADDR_ASSERT_ALWAYS()
     #else
-        #define ADDR_ASSERT(__e) if ( !((__e) ? TRUE : FALSE)) { ADDR_DBG_BREAK(); }
+        #define ADDR_ASSERT_ALWAYS() ADDR_BREAK_WITH_MSG("Unconditional assert failed")
     #endif
-    #define ADDR_ASSERT_ALWAYS() ADDR_DBG_BREAK()
-    #define ADDR_UNHANDLED_CASE() ADDR_ASSERT(!"Unhandled case")
-    #define ADDR_NOT_IMPLEMENTED() ADDR_ASSERT(!"Not implemented");
+
+    #define ADDR_UNHANDLED_CASE() ADDR_BREAK_WITH_MSG("Unhandled case")
+    #define ADDR_NOT_IMPLEMENTED() ADDR_BREAK_WITH_MSG("Not implemented");
 #else //DEBUG
     #if defined( _WIN32 )
-        #define ADDR_ASSERT(__e) { ADDR_ANALYSIS_ASSUME(__e); }
+        #define ADDR_ASSERT(__e) ADDR_ANALYSIS_ASSUME(__e)
     #else
         #define ADDR_ASSERT(__e)
     #endif
@@ -114,85 +190,17 @@
 #endif //DEBUG
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Debug print macro from legacy address library
-////////////////////////////////////////////////////////////////////////////////////////////////////
-#if DEBUG
-
-#define ADDR_PRNT(a)    Object::DebugPrint a
-
-/// @brief Macro for reporting informational messages
-/// @ingroup util
-///
-/// This macro optionally prints an informational message to stdout.
-/// The first parameter is a condition -- if it is true, nothing is done.
-/// The second pararmeter MUST be a parenthesis-enclosed list of arguments,
-/// starting with a string. This is passed to printf() or an equivalent
-/// in order to format the informational message. For example,
-/// ADDR_INFO(0, ("test %d",3) ); prints out "test 3".
-///
-#define ADDR_INFO(cond, a)         \
-{ if (!(cond)) { ADDR_PRNT(a); } }
-
-
-/// @brief Macro for reporting error warning messages
-/// @ingroup util
-///
-/// This macro optionally prints an error warning message to stdout,
-/// followed by the file name and line number where the macro was called.
-/// The first parameter is a condition -- if it is true, nothing is done.
-/// The second pararmeter MUST be a parenthesis-enclosed list of arguments,
-/// starting with a string. This is passed to printf() or an equivalent
-/// in order to format the informational message. For example,
-/// ADDR_WARN(0, ("test %d",3) ); prints out "test 3" followed by
-/// a second line with the file name and line number.
-///
-#define ADDR_WARN(cond, a)         \
-{ if (!(cond))                     \
-  { ADDR_PRNT(a);                  \
-    ADDR_PRNT(("  WARNING in file %s, line %d\n", __FILE__, __LINE__)); \
-} }
-
-
-/// @brief Macro for reporting fatal error conditions
-/// @ingroup util
-///
-/// This macro optionally stops execution of the current routine
-/// after printing an error warning message to stdout,
-/// followed by the file name and line number where the macro was called.
-/// The first parameter is a condition -- if it is true, nothing is done.
-/// The second pararmeter MUST be a parenthesis-enclosed list of arguments,
-/// starting with a string. This is passed to printf() or an equivalent
-/// in order to format the informational message. For example,
-/// ADDR_EXIT(0, ("test %d",3) ); prints out "test 3" followed by
-/// a second line with the file name and line number, then stops execution.
-///
-#define ADDR_EXIT(cond, a)         \
-{ if (!(cond))                     \
-  { ADDR_PRNT(a); ADDR_DBG_BREAK();\
-} }
-
-#else // DEBUG
-
-#define ADDRDPF 1 ? (void)0 : (void)
-
-#define ADDR_PRNT(a)
-
-#define ADDR_DBG_BREAK()
-
-#define ADDR_INFO(cond, a)
-
-#define ADDR_WARN(cond, a)
-
-#define ADDR_EXIT(cond, a)
-
-#endif // DEBUG
-////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #if defined(static_assert)
 #define ADDR_C_ASSERT(__e) static_assert(__e, "")
 #else
-#define ADDR_C_ASSERT(__e) typedef char __ADDR_C_ASSERT__[(__e) ? 1 : -1]
+   /* This version of STATIC_ASSERT() relies on VLAs.  If COND is
+    * false/zero, the array size will be -1 and we'll get a compile
+    * error
+    */
+#  define ADDR_C_ASSERT(__e) do {         \
+      (void) sizeof(char [1 - 2*!(__e)]); \
+   } while (0)
 #endif
 
 namespace Addr
@@ -260,6 +268,7 @@ enum ChipFamily
     ADDR_CHIP_FAMILY_VI,
     ADDR_CHIP_FAMILY_AI,
     ADDR_CHIP_FAMILY_NAVI,
+    ADDR_CHIP_FAMILY_UNKNOWN,
 };
 
 /**
@@ -321,6 +330,49 @@ static inline UINT_32 XorReduce(
     }
 
     return result;
+}
+
+/**
+****************************************************************************************************
+*   Unset least bit
+*
+*   @brief
+*       Returns a copy of the value with the least-significant '1' bit unset
+****************************************************************************************************
+*/
+static inline UINT_32 UnsetLeastBit(
+    UINT_32 val)
+{
+    return val & (val - 1);
+}
+
+/**
+****************************************************************************************************
+*   BitScanForward
+*
+*   @brief
+*       Returns the index-position of the least-significant '1' bit. Must not be 0.
+****************************************************************************************************
+*/
+static inline UINT_32 BitScanForward(
+    UINT_32 mask) ///< [in] Bitmask to scan
+{
+    ADDR_ASSERT(mask > 0);
+    unsigned long out = 0;
+#if (defined(_WIN64) && defined(_M_X64)) || (defined(_WIN32) && defined(_M_IX64))
+    out = ::_tzcnt_u32(mask);
+#elif (defined(_WIN32) || defined(_WIN64))
+    ::_BitScanForward(&out, mask);
+#elif defined(__GNUC__)
+    out = __builtin_ctz(mask);
+#else
+    while ((mask & 1) == 0)
+    {
+        mask >>= 1;
+        out++;
+    }
+#endif
+    return out;
 }
 
 /**
@@ -449,6 +501,38 @@ static inline INT_32 Max(
     INT_32 value2)
 {
     return ((value1 > (value2)) ? (value1) : value2);
+}
+
+/**
+****************************************************************************************************
+*   RoundUpQuotient
+*
+*   @brief
+*       Divides two numbers, rounding up any remainder.
+****************************************************************************************************
+*/
+static inline UINT_32 RoundUpQuotient(
+    UINT_32 numerator,
+    UINT_32 denominator)
+{
+    ADDR_ASSERT(denominator > 0);
+    return ((numerator + (denominator - 1)) / denominator);
+}
+
+/**
+****************************************************************************************************
+*   RoundUpQuotient
+*
+*   @brief
+*       Divides two numbers, rounding up any remainder.
+****************************************************************************************************
+*/
+static inline UINT_64 RoundUpQuotient(
+    UINT_64 numerator,
+    UINT_64 denominator)
+{
+    ADDR_ASSERT(denominator > 0);
+    return ((numerator + (denominator - 1)) / denominator);
 }
 
 /**
@@ -588,24 +672,6 @@ static inline VOID SafeAssign(
 static inline VOID SafeAssign(
     UINT_64*    pLVal,  ///< [in] Pointer to left val
     UINT_64     rVal)   ///< [in] Right value
-{
-    if (pLVal)
-    {
-        *pLVal = rVal;
-    }
-}
-
-/**
-****************************************************************************************************
-*   SafeAssign
-*
-*   @brief
-*       NULL pointer safe assignment for AddrTileMode
-****************************************************************************************************
-*/
-static inline VOID SafeAssign(
-    AddrTileMode*    pLVal, ///< [in] Pointer to left val
-    AddrTileMode     rVal)  ///< [in] Right value
 {
     if (pLVal)
     {
@@ -949,10 +1015,41 @@ static inline UINT_32 GetCoordActiveMask(
 
 /**
 ****************************************************************************************************
+*   FillEqBitComponents
+*
+*   @brief
+*       Fill the 'numBitComponents' field based on the equation.
+****************************************************************************************************
+*/
+static inline void FillEqBitComponents(
+    ADDR_EQUATION *pEquation) // [in/out] Equation to calculate bit components for
+{
+    pEquation->numBitComponents = 1; // We always have at least the address
+    for (UINT_32 xorN = 1; xorN < ADDR_MAX_EQUATION_COMP; xorN++)
+    {
+        for (UINT_32 bit = 0; bit < ADDR_MAX_EQUATION_BIT; bit++)
+        {
+            if (pEquation->comps[xorN][bit].valid)
+            {
+                pEquation->numBitComponents = xorN + 1;
+                break;
+            }
+        }
+
+        if (pEquation->numBitComponents != (xorN + 1))
+        {
+            // Skip following components if this one wasn't valid
+            break;
+        }
+    }
+}
+
+/**
+****************************************************************************************************
 *   ShiftCeil
 *
 *   @brief
-*       Apply righ-shift with ceiling
+*       Apply right-shift with ceiling
 ****************************************************************************************************
 */
 static inline UINT_32 ShiftCeil(
@@ -960,6 +1057,21 @@ static inline UINT_32 ShiftCeil(
     UINT_32 b)  ///< [in] number of bits to shift
 {
     return (a >> b) + (((a & ((1 << b) - 1)) != 0) ? 1 : 0);
+}
+
+/**
+****************************************************************************************************
+*   ShiftRight
+*
+*   @brief
+*       Return right-shift value and minimum is 1
+****************************************************************************************************
+*/
+static inline UINT_32 ShiftRight(
+    UINT_32 a,  ///< [in] value to be right-shifted
+    UINT_32 b)  ///< [in] number of bits to shift
+{
+    return Max(a >> b, 1u);
 }
 
 } // Addr
