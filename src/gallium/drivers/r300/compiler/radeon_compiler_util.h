@@ -1,34 +1,14 @@
 /*
  * Copyright 2010 Tom Stellard <tstellar@gmail.com>
- *
- * All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice (including the
- * next paragraph) shall be included in all copies or substantial
- * portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE COPYRIGHT OWNER(S) AND/OR ITS SUPPLIERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
+ * SPDX-License-Identifier: MIT
  */
 
 #include "radeon_program_constants.h"
 
 #ifndef RADEON_PROGRAM_UTIL_H
 #define RADEON_PROGRAM_UTIL_H
+
+#include <stdbool.h>
 
 #include "radeon_opcodes.h"
 
@@ -87,6 +67,7 @@ unsigned int rc_source_type_swz(unsigned int swizzle);
 unsigned int rc_source_type_mask(unsigned int mask);
 
 unsigned int rc_inst_can_use_presub(
+	struct radeon_compiler * c,
 	struct rc_instruction * inst,
 	rc_presubtract_op presub_op,
 	unsigned int presub_writemask,
@@ -98,11 +79,9 @@ int rc_get_max_index(
 	struct radeon_compiler * c,
 	rc_register_file file);
 
-unsigned int rc_pair_remove_src(
-	struct rc_instruction * inst,
+void rc_pair_remove_src(struct rc_instruction * inst,
 	unsigned int src_type,
-	unsigned int source,
-	unsigned int new_readmask);
+	unsigned int source);
 
 rc_opcode rc_get_flow_control_inst(struct rc_instruction * inst);
 
@@ -127,4 +106,7 @@ float rc_get_constant_value(
 
 unsigned int rc_get_scalar_src_swz(unsigned int swizzle);
 
+bool rc_inst_has_three_diff_temp_srcs(struct rc_instruction *inst);
+
+float rc_inline_to_float(int index);
 #endif /* RADEON_PROGRAM_UTIL_H */

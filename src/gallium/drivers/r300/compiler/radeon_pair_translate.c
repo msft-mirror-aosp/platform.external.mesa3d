@@ -1,34 +1,14 @@
 /*
- * Copyright (C) 2009 Nicolai Haehnle.
- *
- * All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice (including the
- * next paragraph) shall be included in all copies or substantial
- * portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE COPYRIGHT OWNER(S) AND/OR ITS SUPPLIERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
+ * Copyright 2009 Nicolai Haehnle.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "radeon_program_pair.h"
 
 #include "radeon_compiler.h"
 #include "radeon_compiler_util.h"
+
+#include "util/compiler.h"
 
 
 /**
@@ -120,7 +100,7 @@ static void classify_instruction(struct rc_sub_instruction * inst,
 		break;
 	case RC_OPCODE_DP4:
 		*needalpha = 1;
-		/* fall through */
+		FALLTHROUGH;
 	case RC_OPCODE_DP3:
 		*needrgb = 1;
 		break;
@@ -228,7 +208,23 @@ static void set_pair_instruction(struct r300_fragment_program_compiler *c,
 				else if (swz == RC_SWIZZLE_W)
 					srcalpha = 1;
 
-				if (swz < RC_SWIZZLE_UNUSED)
+				/* We check for ZERO here as well because otherwise the zero
+				 * sign (which doesn't matter and we already ignore it previously
+				 * when checking for valid swizzle) could mess up the final negate sign.
+				 * Example problematic pattern where this would be produced is:
+				 *   CONST[1] FLT32 {   0.0000,     0.0000,    -4.0000,     0.0000}
+				 *   ADD temp[0].xyz, const[0].xyz_, -const[1].z00_;
+				 *
+				 * after inline literals would become:
+				 *   ADD temp[0].xyz, const[0].xyz_, 4.000000 (0x48).w-0-0-_;
+				 *
+				 * and after pair translate:
+				 *   src0.xyz = const[0], src0.w = 4.000000 (0x48)
+				 *   MAD temp[0].xyz, src0.xyz, src0.111, src0.w00
+				 *
+				 * Without the zero check there would be -src0.w00.
+				 */
+				if (swz < RC_SWIZZLE_UNUSED && swz != RC_SWIZZLE_ZERO)
 					srcmask |= 1 << j;
 			}
 			source = rc_pair_alloc_source(pair, srcrgb, srcalpha,

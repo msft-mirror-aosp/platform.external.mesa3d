@@ -19,7 +19,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from __future__ import print_function
 import argparse
 import errno
 import os
@@ -75,7 +74,7 @@ def main():
             expected = f.read().splitlines()
 
         proc= subprocess.run(
-            runner + ['--just-log', '--version', '150', file],
+            runner + ['--just-log', '--version', '150', '--link', file],
             stdout=subprocess.PIPE
         )
         if proc.returncode == 255:

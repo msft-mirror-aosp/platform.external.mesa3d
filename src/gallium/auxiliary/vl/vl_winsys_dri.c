@@ -52,6 +52,8 @@
 #include "vl/vl_compositor.h"
 #include "vl/vl_winsys.h"
 
+#include "drm-uapi/drm_fourcc.h"
+
 struct vl_dri_screen
 {
    struct vl_screen base;
@@ -118,9 +120,10 @@ vl_dri2_get_flush_reply(struct vl_dri_screen *scrn)
 
 static void
 vl_dri2_flush_frontbuffer(struct pipe_screen *screen,
+                          struct pipe_context *pipe,
                           struct pipe_resource *resource,
                           unsigned level, unsigned layer,
-                          void *context_private, struct pipe_box *sub_box)
+                          void *context_private, unsigned nboxes, struct pipe_box *sub_box)
 {
    struct vl_dri_screen *scrn = (struct vl_dri_screen *)context_private;
    uint32_t msc_hi, msc_lo;
@@ -183,7 +186,7 @@ vl_dri2_screen_texture_from_drawable(struct vl_screen *vscreen, void *drawable)
    struct pipe_resource templ, *tex;
 
    xcb_dri2_get_buffers_reply_t *reply;
-   xcb_dri2_dri2_buffer_t *buffers, *back_left;
+   xcb_dri2_dri2_buffer_t *buffers, *back_left = NULL;
 
    unsigned depth = ((xcb_screen_t *)(vscreen->xcb_screen))->root_depth;
    unsigned i;
@@ -214,7 +217,7 @@ vl_dri2_screen_texture_from_drawable(struct vl_screen *vscreen, void *drawable)
       }
    }
 
-   if (i == reply->count) {
+   if (i == reply->count || !back_left) {
       free(reply);
       return NULL;
    }
@@ -234,6 +237,7 @@ vl_dri2_screen_texture_from_drawable(struct vl_screen *vscreen, void *drawable)
    dri2_handle.type = WINSYS_HANDLE_TYPE_SHARED;
    dri2_handle.handle = back_left->name;
    dri2_handle.stride = back_left->pitch;
+   dri2_handle.modifier = DRM_FORMAT_MOD_INVALID;
 
    memset(&templ, 0, sizeof(templ));
    templ.target = PIPE_TEXTURE_2D;
@@ -454,8 +458,8 @@ vl_dri2_screen_create(Display *display, int screen)
    if (authenticate == NULL || !authenticate->authenticated)
       goto free_authenticate;
 
-   if (pipe_loader_drm_probe_fd(&scrn->base.dev, fd))
-      scrn->base.pscreen = pipe_loader_create_screen(scrn->base.dev);
+   if (pipe_loader_drm_probe_fd(&scrn->base.dev, fd, false))
+      scrn->base.pscreen = pipe_loader_create_screen(scrn->base.dev, false);
 
    if (!scrn->base.pscreen)
       goto release_pipe;

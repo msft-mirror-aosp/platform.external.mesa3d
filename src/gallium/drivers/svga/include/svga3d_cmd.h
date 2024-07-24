@@ -1,27 +1,9 @@
-/**********************************************************
- * Copyright 1998-2017 VMware, Inc.  All rights reserved.
- *
- * Permission is hereby granted, free of charge, to any person
- * obtaining a copy of this software and associated documentation
- * files (the "Software"), to deal in the Software without
- * restriction, including without limitation the rights to use, copy,
- * modify, merge, publish, distribute, sublicense, and/or sell copies
- * of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be
- * included in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
- **********************************************************/
+/*
+ * Copyright (c) 2012-2024 Broadcom. All Rights Reserved.
+ * The term “Broadcom” refers to Broadcom Inc.
+ * and/or its subsidiaries.
+ * SPDX-License-Identifier: GPL-2.0 OR MIT
+ */
 
 /*
  * svga3d_cmd.h --
@@ -321,20 +303,43 @@ typedef enum {
    SVGA_3D_CMD_DEFINE_GB_SURFACE_V4                       = 1267,
    SVGA_3D_CMD_DX_SET_CS_UA_VIEWS                         = 1268,
    SVGA_3D_CMD_DX_SET_MIN_LOD                             = 1269,
-   SVGA_3D_CMD_DX_CLEAR_RENDERTARGET_VIEW_BOX             = 1270,
-   SVGA_3D_CMD_DX_CLEAR_UA_VIEW_BOX                       = 1271,
+
+
+
    SVGA_3D_CMD_DX_DEFINE_DEPTHSTENCIL_VIEW_V2             = 1272,
    SVGA_3D_CMD_DX_DEFINE_STREAMOUTPUT_WITH_MOB            = 1273,
    SVGA_3D_CMD_DX_SET_SHADER_IFACE                        = 1274,
    SVGA_3D_CMD_DX_BIND_STREAMOUTPUT                       = 1275,
+   SVGA_3D_CMD_SURFACE_STRETCHBLT_NON_MS_TO_MS            = 1276,
+   SVGA_3D_CMD_DX_BIND_SHADER_IFACE                       = 1277,
 
-   SVGA_3D_CMD_MAX                                        = 1276,
+   SVGA_3D_CMD_UPDATE_GB_SCREENTARGET_MOVE                = 1278,
+
+
+
+   SVGA_3D_CMD_DX_PRED_STAGING_COPY                       = 1281,
+   SVGA_3D_CMD_DX_STAGING_COPY                            = 1282,
+   SVGA_3D_CMD_DX_PRED_STAGING_COPY_REGION                = 1283,
+   SVGA_3D_CMD_DX_SET_VERTEX_BUFFERS_V2                   = 1284,
+   SVGA_3D_CMD_DX_SET_INDEX_BUFFER_V2                     = 1285,
+   SVGA_3D_CMD_DX_SET_VERTEX_BUFFERS_OFFSET_AND_SIZE      = 1286,
+   SVGA_3D_CMD_DX_SET_INDEX_BUFFER_OFFSET_AND_SIZE        = 1287,
+   SVGA_3D_CMD_DX_DEFINE_RASTERIZER_STATE_V2              = 1288,
+   SVGA_3D_CMD_DX_PRED_STAGING_CONVERT_REGION             = 1289,
+   SVGA_3D_CMD_DX_PRED_STAGING_CONVERT                    = 1290,
+   SVGA_3D_CMD_DX_STAGING_BUFFER_COPY                     = 1291,
+
+
+
+
+
+   SVGA_3D_CMD_MAX                                        = 1303,
    SVGA_3D_CMD_FUTURE_MAX                                 = 3000
 } SVGAFifo3dCmdId;
 
-/*
- * FIFO command format definitions:
- */
+#define SVGA_NUM_3D_CMD (SVGA_3D_CMD_MAX - SVGA_3D_CMD_BASE)
+
+
 
 /*
  * The data size header following cmdNum for every 3d command
@@ -1113,7 +1118,7 @@ SVGA3dCmdEndQuery;                  /* SVGA_3D_CMD_END_QUERY */
  *
  *    A query will be identified by the gmrId and offset of the guestResult
  *    member. If the device can't find an SVGA_3D_CMD_END_QUERY that has
- *    been sent previously with an indentical gmrId and offset, it will
+ *    been sent previously with an identical gmrId and offset, it will
  *    effectively end all queries with an identical type issued with the
  *    same cid, and the SVGA3dQueryResult structure pointed to by
  *    guestResult will not be written to. This property can be used to

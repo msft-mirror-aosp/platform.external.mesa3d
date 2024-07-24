@@ -1,30 +1,7 @@
 /*
- * Copyright (C) 2008 Nicolai Haehnle.
- *
- * All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice (including the
- * next paragraph) shall be included in all copies or substantial
- * portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE COPYRIGHT OWNER(S) AND/OR ITS SUPPLIERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
+ * Copyright 2008 Nicolai Haehnle.
+ * SPDX-License-Identifier: MIT
  */
-
 /**
  * @file
  * Utilities to deal with the somewhat odd restriction on R300 fragment
@@ -64,6 +41,9 @@ static const struct swizzle_data native_swizzles[] = {
 };
 
 static const int num_native_swizzles = ARRAY_SIZE(native_swizzles);
+/* Only swizzles with srcp_stride != 0 can be used for presub, so
+ * just the first five from the list. */
+static const int num_presub_swizzles = 5;
 
 /**
  * Find a native RGB swizzle that matches the given swizzle.
@@ -86,12 +66,12 @@ static const struct swizzle_data* lookup_native_swizzle(unsigned int swizzle)
 			return sd;
 	}
 
-	return 0;
+	return NULL;
 }
 
 /**
  * Determines if the given swizzle is valid for r300/r400.  In most situations
- * it is better to use r300_swizzle_is_native() which can be accesed via
+ * it is better to use r300_swizzle_is_native() which can be accessed via
  * struct radeon_compiler *c; c->SwizzleCaps->IsNative().
  */
 int r300_swizzle_is_native_basic(unsigned int swizzle)
@@ -158,7 +138,9 @@ static void r300_swizzle_split(
 		unsigned int best_matchmask = 0;
 		int i, comp;
 
-		for(i = 0; i < num_native_swizzles; ++i) {
+		unsigned num_swizzles = src.File == RC_FILE_PRESUB ? num_presub_swizzles : num_native_swizzles;
+
+		for(i = 0; i < num_swizzles; ++i) {
 			const struct swizzle_data *sd = &native_swizzles[i];
 			unsigned int matchcount = 0;
 			unsigned int matchmask = 0;
@@ -195,7 +177,7 @@ static void r300_swizzle_split(
 	}
 }
 
-struct rc_swizzle_caps r300_swizzle_caps = {
+const struct rc_swizzle_caps r300_swizzle_caps = {
 	.IsNative = r300_swizzle_is_native,
 	.Split = r300_swizzle_split
 };

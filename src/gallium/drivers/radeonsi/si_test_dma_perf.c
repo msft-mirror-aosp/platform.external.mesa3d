@@ -1,32 +1,12 @@
 /*
- * Copyright 2018 Advanced Micro Devices, Inc.
- * All Rights Reserved.
+ * Copyright 2024 Advanced Micro Devices, Inc.
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
+ * SPDX-License-Identifier: MIT
  */
-
-/* This file implements tests on the si_clearbuffer function. */
 
 #include "si_pipe.h"
 #include "si_query.h"
+#include "util/streaming-load-memcpy.h"
 
 #define MIN_SIZE   512
 #define MAX_SIZE   (128 * 1024 * 1024)
@@ -45,16 +25,16 @@ void si_test_dma_perf(struct si_screen *sscreen)
    struct si_context *sctx = (struct si_context *)ctx;
    const uint32_t clear_value = 0x12345678;
    static const unsigned cs_dwords_per_thread_list[] = {64, 32, 16, 8, 4, 2, 1};
-   static const unsigned cs_waves_per_sh_list[] = {0, 4, 8, 16};
+   /* The list of per-SA wave limits to test. */
+   static const unsigned cs_waves_per_sh_list[] = {0, 8};
 
 #define NUM_SHADERS ARRAY_SIZE(cs_dwords_per_thread_list)
-#define NUM_METHODS (4 + 3 * NUM_SHADERS * ARRAY_SIZE(cs_waves_per_sh_list))
+#define NUM_METHODS (3 + 3 * NUM_SHADERS * ARRAY_SIZE(cs_waves_per_sh_list))
 
    static const char *method_str[] = {
       "CP MC   ",
       "CP L2   ",
       "CP L2   ",
-      "SDMA    ",
    };
    static const char *placement_str[] = {
       /* Clear */
@@ -80,7 +60,6 @@ void si_test_dma_perf(struct si_screen *sscreen)
    struct si_result {
       bool is_valid;
       bool is_cp;
-      bool is_sdma;
       bool is_cs;
       unsigned cache_policy;
       unsigned dwords_per_thread;
@@ -100,9 +79,8 @@ void si_test_dma_perf(struct si_screen *sscreen)
 
       for (unsigned method = 0; method < NUM_METHODS; method++) {
          bool test_cp = method <= 2;
-         bool test_sdma = method == 3;
-         bool test_cs = method >= 4;
-         unsigned cs_method = method - 4;
+         bool test_cs = method >= 3;
+         unsigned cs_method = method - 3;
          unsigned cs_waves_per_sh =
             test_cs ? cs_waves_per_sh_list[cs_method / (3 * NUM_SHADERS)] : 0;
          cs_method %= 3 * NUM_SHADERS;
@@ -111,10 +89,7 @@ void si_test_dma_perf(struct si_screen *sscreen)
          unsigned cs_dwords_per_thread =
             test_cs ? cs_dwords_per_thread_list[cs_method % NUM_SHADERS] : 0;
 
-         if (test_sdma && !sctx->sdma_cs)
-            continue;
-
-         if (sctx->chip_class == GFX6) {
+         if (sctx->gfx_level == GFX6) {
             /* GFX6 doesn't support CP DMA operations through L2. */
             if (test_cp && cache_policy != L2_BYPASS)
                continue;
@@ -123,10 +98,10 @@ void si_test_dma_perf(struct si_screen *sscreen)
                continue;
          }
 
-         /* SI_RESOURCE_FLAG_UNCACHED setting RADEON_FLAG_UNCACHED doesn't affect
+         /* SI_RESOURCE_FLAG_GL2_BYPASS setting RADEON_FLAG_GL2_BYPASS doesn't affect
           * chips before gfx9.
           */
-         if (test_cs && cache_policy && sctx->chip_class < GFX9)
+         if (test_cs && cache_policy && sctx->gfx_level < GFX9)
             continue;
 
          printf("%s ,", placement_str[placement]);
@@ -144,8 +119,7 @@ void si_test_dma_perf(struct si_screen *sscreen)
 
          void *compute_shader = NULL;
          if (test_cs) {
-            compute_shader = si_create_dma_compute_shader(ctx, cs_dwords_per_thread,
-                                              cache_policy == L2_STREAM, is_copy);
+            compute_shader = si_create_dma_compute_shader(sctx, cs_dwords_per_thread, is_copy);
          }
 
          double score = 0;
@@ -159,14 +133,7 @@ void si_test_dma_perf(struct si_screen *sscreen)
             enum pipe_resource_usage dst_usage, src_usage;
             struct pipe_resource *dst, *src;
             unsigned query_type = PIPE_QUERY_TIME_ELAPSED;
-            unsigned flags = cache_policy == L2_BYPASS ? SI_RESOURCE_FLAG_UNCACHED : 0;
-
-            if (test_sdma) {
-               if (sctx->chip_class == GFX6)
-                  query_type = SI_QUERY_TIME_ELAPSED_SDMA_SI;
-               else
-                  query_type = SI_QUERY_TIME_ELAPSED_SDMA;
-            }
+            unsigned flags = cache_policy == L2_BYPASS ? SI_RESOURCE_FLAG_GL2_BYPASS : 0;
 
             if (placement == 0 || placement == 2 || placement == 4)
                dst_usage = PIPE_USAGE_DEFAULT;
@@ -185,7 +152,7 @@ void si_test_dma_perf(struct si_screen *sscreen)
             sctx->flags |= SI_CONTEXT_CS_PARTIAL_FLUSH |
                            SI_CONTEXT_FLUSH_AND_INV_CB |
                            SI_CONTEXT_FLUSH_AND_INV_DB;
-            sctx->emit_cache_flush(sctx);
+            si_emit_cache_flush_direct(sctx);
 
             struct pipe_query *q = ctx->create_query(ctx, query_type, 0);
             ctx->begin_query(ctx, q);
@@ -195,18 +162,12 @@ void si_test_dma_perf(struct si_screen *sscreen)
                if (test_cp) {
                   /* CP DMA */
                   if (is_copy) {
-                     si_cp_dma_copy_buffer(sctx, dst, src, 0, 0, size, 0, SI_COHERENCY_NONE,
-                                           cache_policy);
+                     si_cp_dma_copy_buffer(sctx, dst, src, 0, 0, size, SI_OP_SYNC_BEFORE_AFTER,
+                                           SI_COHERENCY_NONE, cache_policy);
                   } else {
-                     si_cp_dma_clear_buffer(sctx, sctx->gfx_cs, dst, 0, size, clear_value, 0,
-                                            SI_COHERENCY_NONE, cache_policy);
-                  }
-               } else if (test_sdma) {
-                  /* SDMA */
-                  if (is_copy) {
-                     si_sdma_copy_buffer(sctx, dst, src, 0, 0, size);
-                  } else {
-                     si_sdma_clear_buffer(sctx, dst, 0, size, clear_value);
+                     si_cp_dma_clear_buffer(sctx, &sctx->gfx_cs, dst, 0, size, clear_value,
+                                            SI_OP_SYNC_BEFORE_AFTER, SI_COHERENCY_NONE,
+                                            cache_policy);
                   }
                } else {
                   /* Compute */
@@ -230,12 +191,12 @@ void si_test_dma_perf(struct si_screen *sscreen)
                   info.grid[2] = 1;
 
                   struct pipe_shader_buffer sb[2] = {};
-                  sb[0].buffer = dst;
-                  sb[0].buffer_size = size;
+                  sb[is_copy].buffer = dst;
+                  sb[is_copy].buffer_size = size;
 
                   if (is_copy) {
-                     sb[1].buffer = src;
-                     sb[1].buffer_size = size;
+                     sb[0].buffer = src;
+                     sb[0].buffer_size = size;
                   } else {
                      for (unsigned i = 0; i < 4; i++)
                         sctx->cs_user_data[i] = clear_value;
@@ -252,12 +213,10 @@ void si_test_dma_perf(struct si_screen *sscreen)
                }
 
                /* Flush L2, so that we don't just test L2 cache performance except for L2_LRU. */
-               if (!test_sdma) {
-                  sctx->flags |= SI_CONTEXT_INV_VCACHE |
-                                 (cache_policy == L2_LRU ? 0 : SI_CONTEXT_INV_L2) |
-                                 SI_CONTEXT_CS_PARTIAL_FLUSH;
-                  sctx->emit_cache_flush(sctx);
-               }
+               sctx->flags |= SI_CONTEXT_INV_VCACHE |
+                              (cache_policy == L2_LRU ? 0 : SI_CONTEXT_INV_L2) |
+                              SI_CONTEXT_CS_PARTIAL_FLUSH;
+               si_emit_cache_flush_direct(sctx);
             }
 
             ctx->end_query(ctx, q);
@@ -280,7 +239,6 @@ void si_test_dma_perf(struct si_screen *sscreen)
             struct si_result *r = &results[util_logbase2(size)][placement][method];
             r->is_valid = true;
             r->is_cp = test_cp;
-            r->is_sdma = test_sdma;
             r->is_cs = test_cs;
             r->cache_policy = cache_policy;
             r->dwords_per_thread = cs_dwords_per_thread;
@@ -329,7 +287,7 @@ void si_test_dma_perf(struct si_screen *sscreen)
          bool cached = mode == 1;
 
          if (async)
-            puts("      if (async) { /* SDMA or async compute */");
+            puts("      if (async) { /* async compute */");
          else if (cached)
             puts("      if (cached) { /* gfx ring */");
          else
@@ -353,7 +311,7 @@ void si_test_dma_perf(struct si_screen *sscreen)
                /* Ban CP DMA clears via MC on <= GFX8. They are super slow
                 * on GTT, which we can get due to BO evictions.
                 */
-               if (sctx->chip_class <= GFX8 && placement == 1 && r->is_cp &&
+               if (sctx->gfx_level <= GFX8 && placement == 1 && r->is_cp &&
                    r->cache_policy == L2_BYPASS)
                   continue;
 
@@ -380,10 +338,6 @@ void si_test_dma_perf(struct si_screen *sscreen)
                   if (r->is_cs && r->waves_per_sh == 0)
                      continue;
                } else {
-                  /* SDMA is always asynchronous */
-                  if (r->is_sdma)
-                     continue;
-
                   if (cached && r->cache_policy == L2_BYPASS)
                      continue;
                   if (!cached && r->cache_policy == L2_LRU)
@@ -420,7 +374,7 @@ void si_test_dma_perf(struct si_screen *sscreen)
                 */
                if (!best ||
                    /* If it's the same method as for the previous size: */
-                   (prev->is_cp == best->is_cp && prev->is_sdma == best->is_sdma &&
+                   (prev->is_cp == best->is_cp &&
                     prev->is_cs == best->is_cs && prev->cache_policy == best->cache_policy &&
                     prev->dwords_per_thread == best->dwords_per_thread &&
                     prev->waves_per_sh == best->waves_per_sh) ||
@@ -461,8 +415,6 @@ void si_test_dma_perf(struct si_screen *sscreen)
             if (best->is_cp) {
                printf("CP_DMA(%s);\n", cache_policy_str);
             }
-            if (best->is_sdma)
-               printf("SDMA;\n");
             if (best->is_cs) {
                printf("COMPUTE(%s, %u, %u);\n", cache_policy_str,
                       best->dwords_per_thread, best->waves_per_sh);
@@ -475,5 +427,112 @@ void si_test_dma_perf(struct si_screen *sscreen)
    puts("}");
 
    ctx->destroy(ctx);
+   exit(0);
+}
+
+void
+si_test_mem_perf(struct si_screen *sscreen)
+{
+   struct radeon_winsys *ws = sscreen->ws;
+   const size_t buffer_size = 16 * 1024 * 1024;
+   const enum radeon_bo_domain domains[] = { 0, RADEON_DOMAIN_VRAM, RADEON_DOMAIN_GTT };
+   const uint64_t flags[] = { 0, RADEON_FLAG_GTT_WC };
+   const int n_loops = 2;
+   char *title[] = { "Write To", "Read From", "Stream From" };
+   char *domain_str[] = { "RAM", "VRAM", "GTT" };
+
+   for (int i = 0; i < 3; i++) {
+      printf("| %12s", title[i]);
+
+      printf(" | Size (kB) | Flags |");
+      for (int l = 0; l < n_loops; l++)
+          printf(" Run %d (MB/s) |", l + 1);
+      printf("\n");
+
+      printf("|--------------|-----------|-------|");
+      for (int l = 0; l < n_loops; l++)
+          printf("--------------|");
+      printf("\n");
+      for (int j = 0; j < ARRAY_SIZE(domains); j++) {
+         enum radeon_bo_domain domain = domains[j];
+         for (int k = 0; k < ARRAY_SIZE(flags); k++) {
+            if (k && domain != RADEON_DOMAIN_GTT)
+               continue;
+
+            struct pb_buffer_lean *bo = NULL;
+            void *ptr = NULL;
+
+            if (domains[j]) {
+               bo = ws->buffer_create(ws, buffer_size, 4096, domains[j],
+                                      RADEON_FLAG_NO_INTERPROCESS_SHARING | RADEON_FLAG_NO_SUBALLOC |
+                                      flags[k]);
+               if (!bo)
+                  continue;
+
+               ptr = ws->buffer_map(ws, bo, NULL, RADEON_MAP_TEMPORARY | (i ? PIPE_MAP_READ : PIPE_MAP_WRITE));
+               if (!ptr) {
+                  radeon_bo_reference(ws, &bo, NULL);
+                  continue;
+               }
+            } else {
+               ptr = malloc(buffer_size);
+            }
+
+            printf("| %12s |", domain_str[j]);
+
+            printf("%10zu |", buffer_size / 1024);
+
+            printf(" %5s |", domain == RADEON_DOMAIN_VRAM ? "(WC)" : (k == 0 ? "" : "WC "));
+
+            int *cpu = calloc(1, buffer_size);
+            memset(cpu, 'c', buffer_size);
+            fflush(stdout);
+
+            int64_t before, after;
+
+            for (int loop = 0; loop < n_loops; loop++) {
+               before = os_time_get_nano();
+
+               switch (i) {
+               case 0:
+                  memcpy(ptr, cpu, buffer_size);
+                  break;
+               case 1:
+                  memcpy(cpu, ptr, buffer_size);
+                  break;
+               case 2:
+               default:
+                  util_streaming_load_memcpy(cpu, ptr, buffer_size);
+                  break;
+               }
+
+               after = os_time_get_nano();
+
+               /* Pretend to do something with the result to make sure it's
+                * not skipped.
+                */
+               if (debug_get_num_option("AMD_DEBUG", 0) == 0x123)
+                   assert(memcmp(ptr, cpu, buffer_size));
+
+               float dt = (after - before) / (1000000000.0);
+               float bandwidth = (buffer_size / (1024 * 1024)) / dt;
+
+               printf("%13.3f |", bandwidth);
+            }
+            printf("\n");
+
+            free(cpu);
+            if (bo) {
+               ws->buffer_unmap(ws, bo);
+               radeon_bo_reference(ws, &bo, NULL);
+            } else {
+               free(ptr);
+            }
+         }
+      }
+      printf("\n");
+   }
+
+
    exit(0);
 }

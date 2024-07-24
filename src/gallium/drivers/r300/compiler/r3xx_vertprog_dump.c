@@ -1,24 +1,7 @@
 /*
  * Copyright 2009 Nicolai Hähnle <nhaehnle@gmail.com>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * on the rights to use, copy, modify, merge, publish, distribute, sub
- * license, and/or sell copies of the Software, and to permit persons to whom
- * the Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHOR(S) AND/OR THEIR SUPPLIERS BE LIABLE FOR ANY CLAIM,
- * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
- * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
- * USE OR OTHER DEALINGS IN THE SOFTWARE. */
+ * SPDX-License-Identifier: MIT
+ */
 
 #include "radeon_compiler.h"
 #include "radeon_code.h"
@@ -26,7 +9,7 @@
 
 #include <stdio.h>
 
-static char* r300_vs_ve_ops[] = {
+static const char* r300_vs_ve_ops[] = {
 	/* R300 vector ops */
 	"                 VE_NO_OP",
 	"           VE_DOT_PRODUCT",
@@ -63,7 +46,7 @@ static char* r300_vs_ve_ops[] = {
 	"               (reserved)",
 };
 
-static char* r300_vs_me_ops[] = {
+static const char* r300_vs_me_ops[] = {
 	/* R300 math ops */
 	"                 ME_NO_OP",
 	"          ME_EXP_BASE2_DX",
@@ -101,14 +84,14 @@ static char* r300_vs_me_ops[] = {
 };
 
 /* XXX refactor to avoid clashing symbols */
-static char* r300_vs_src_debug[] = {
+static const char* r300_vs_src_debug[] = {
 	"t",
 	"i",
 	"c",
 	"a",
 };
 
-static char* r300_vs_dst_debug[] = {
+static const char* r300_vs_dst_debug[] = {
 	"t",
 	"a0",
 	"o",
@@ -119,7 +102,7 @@ static char* r300_vs_dst_debug[] = {
 	"u",
 };
 
-static char* r300_vs_swiz_debug[] = {
+static const char* r300_vs_swiz_debug[] = {
 	"X",
 	"Y",
 	"Z",

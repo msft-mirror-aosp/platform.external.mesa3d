@@ -1,29 +1,7 @@
 /*
- * Copyright (C) 2010 Corbin Simpson
- * Copyright (C) 2010 Marek Olšák <maraeo@gmail.com>
- *
- * All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice (including the
- * next paragraph) shall be included in all copies or substantial
- * portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE COPYRIGHT OWNER(S) AND/OR ITS SUPPLIERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
+ * Copyright 2010 Corbin Simpson
+ * Copyright 2010 Marek Olšák <maraeo@gmail.com>
+ * SPDX-License-Identifier: MIT
  */
 
 #include "radeon_program_tex.h"
@@ -127,8 +105,7 @@ int radeonTransformTEX(
 	struct r300_fragment_program_compiler *compiler =
 		(struct r300_fragment_program_compiler*)data;
 	rc_wrap_mode wrapmode = compiler->state.unit[inst->U.I.TexSrcUnit].wrap_mode;
-	int is_rect = inst->U.I.TexSrcTarget == RC_TEXTURE_RECT ||
-		      compiler->state.unit[inst->U.I.TexSrcUnit].non_normalized_coords;
+	int is_rect = inst->U.I.TexSrcTarget == RC_TEXTURE_RECT;
 
 	if (inst->U.I.Opcode != RC_OPCODE_TEX &&
 		inst->U.I.Opcode != RC_OPCODE_TXB &&
@@ -140,7 +117,7 @@ int radeonTransformTEX(
 
 	/* ARB_shadow & EXT_shadow_funcs */
 	if (inst->U.I.Opcode != RC_OPCODE_KIL &&
-		((c->Program.ShadowSamplers & (1 << inst->U.I.TexSrcUnit)) ||
+		((c->Program.ShadowSamplers & (1U << inst->U.I.TexSrcUnit)) ||
 		 (compiler->state.unit[inst->U.I.TexSrcUnit].compare_mode_enabled))) {
 		rc_compare_func comparefunc = compiler->state.unit[inst->U.I.TexSrcUnit].texture_compare_func;
 
@@ -231,7 +208,7 @@ int radeonTransformTEX(
 			else
 				inst_add->U.I.SrcReg[0].Negate = inst_add->U.I.SrcReg[0].Negate ^ RC_MASK_XYZW;
 
-			/* This negates the whole expresion: */
+			/* This negates the whole expression: */
 			if (comparefunc == RC_COMPARE_FUNC_LESS || comparefunc == RC_COMPARE_FUNC_GREATER ||
 			    comparefunc == RC_COMPARE_FUNC_NOTEQUAL) {
 				pass = 1;

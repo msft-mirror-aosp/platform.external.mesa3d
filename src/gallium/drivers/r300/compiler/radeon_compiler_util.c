@@ -1,38 +1,15 @@
 /*
  * Copyright 2010 Tom Stellard <tstellar@gmail.com>
- *
- * All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice (including the
- * next paragraph) shall be included in all copies or substantial
- * portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE COPYRIGHT OWNER(S) AND/OR ITS SUPPLIERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
- */
-
-/**
- * \file
+ * SPDX-License-Identifier: MIT
  */
 
 #include "radeon_compiler_util.h"
 
 #include "radeon_compiler.h"
 #include "radeon_dataflow.h"
+#include "r300_fragprog_swizzle.h"
+
+#include "util/u_math.h"
 /**
  */
 unsigned int rc_swizzle_to_writemask(unsigned int swz)
@@ -142,8 +119,15 @@ static unsigned int srcs_need_rewrite(const struct rc_opcode_info * info)
 }
 
 /**
- * @return A swizzle the results from converting old_swizzle using
- * conversion_swizzle
+ * This function moves the old swizzles to new channels using the values
+ * in the conversion swizzle. For example if the instruction writemask is
+ * changed from x to y, then conversion_swizzle should be y___ and this
+ * function will adjust the old argument swizzles (of the same instruction)
+ * to the new channels, so x___ will become _x__, etc...
+ *
+ * @param old_swizzle The swizzle to change
+ * @param conversion_swizzle Describes the conversion to perform on the swizzle
+ * @return A new swizzle
  */
 unsigned int rc_adjust_channels(
 	unsigned int old_swizzle,
@@ -213,6 +197,20 @@ static void normal_rewrite_writemask_cb(
 {
 	unsigned int * conversion_swizzle = (unsigned int *)userdata;
 	src->Swizzle = rc_adjust_channels(src->Swizzle, *conversion_swizzle);
+
+	/* Per-channel negates are possible in vertex shaders,
+	 * so we need to rewrite it properly as well. */
+	unsigned int new_negate = 0;
+	for (unsigned int i = 0; i < 4; i++) {
+		unsigned int new_chan = get_swz(*conversion_swizzle, i);
+
+		if (new_chan == RC_SWIZZLE_UNUSED)
+			continue;
+
+		if ((1 << i) & src->Negate)
+			new_negate |= 1 << new_chan;
+	}
+	src->Negate = new_negate;
 }
 
 /**
@@ -362,6 +360,7 @@ struct src_select {
 	rc_register_file File;
 	int Index;
 	unsigned int SrcType;
+	unsigned int Swizzle;
 };
 
 struct can_use_presub_data {
@@ -375,14 +374,15 @@ static void can_use_presub_data_add_select(
 	struct can_use_presub_data * data,
 	rc_register_file file,
 	unsigned int index,
-	unsigned int src_type)
+	unsigned int swizzle)
 {
 	struct src_select * select;
 
 	select = &data->Selects[data->SelectCount++];
 	select->File = file;
 	select->Index = index;
-	select->SrcType = src_type;
+	select->SrcType = rc_source_type_swz(swizzle);
+	select->Swizzle = swizzle;
 }
 
 /**
@@ -405,10 +405,11 @@ static void can_use_presub_read_cb(
 		return;
 
 	can_use_presub_data_add_select(d, src->File, src->Index,
-					rc_source_type_swz(src->Swizzle));
+					src->Swizzle);
 }
 
 unsigned int rc_inst_can_use_presub(
+	struct radeon_compiler * c,
 	struct rc_instruction * inst,
 	rc_presubtract_op presub_op,
 	unsigned int presub_writemask,
@@ -432,6 +433,22 @@ unsigned int rc_inst_can_use_presub(
 		return 0;
 	}
 
+	struct rc_src_register test_reg = *replace_reg;
+	test_reg.File = RC_FILE_PRESUB;
+	if (!c->SwizzleCaps->IsNative(info->Opcode, test_reg)) {
+		return 0;
+	}
+
+	/* We can't allow constant swizzles from presubtract, because it is not possible
+	 * to rewrite it to a native swizzle later. */
+	if (!c->is_r500) {
+		for (i = 0; i < 4; i++) {
+			rc_swizzle swz = GET_SWZ(replace_reg->Swizzle, i);
+			if (swz > RC_SWIZZLE_W && swz < RC_SWIZZLE_UNUSED)
+				return 0;
+		}
+	}
+
 	/* We can't use more than one presubtract value in an
 	 * instruction, unless the two prsubtract operations
 	 * are the same and read from the same registers.
@@ -452,14 +469,14 @@ unsigned int rc_inst_can_use_presub(
 	can_use_presub_data_add_select(&d,
 		presub_src0->File,
 		presub_src0->Index,
-		src_type0);
+		presub_src0->Swizzle);
 
 	if (num_presub_srcs > 1) {
 		src_type1 = rc_source_type_swz(presub_src1->Swizzle);
 		can_use_presub_data_add_select(&d,
 			presub_src1->File,
 			presub_src1->Index,
-			src_type1);
+			presub_src1->Swizzle);
 
 		/* Even if both of the presub sources read from the same
 		 * register, we still need to use 2 different source selects
@@ -483,6 +500,12 @@ unsigned int rc_inst_can_use_presub(
 		unsigned int j;
 		unsigned int src_type = d.Selects[i].SrcType;
 		for (j = i + 1; j < d.SelectCount; j++) {
+			/* Even if the sources are the same now, they will not be the
+			 * same later, if we have to rewrite some non-native swizzle. */
+			if(!c->is_r500 && (
+				!r300_swizzle_is_native_basic(d.Selects[i].Swizzle) ||
+				!r300_swizzle_is_native_basic(d.Selects[j].Swizzle)))
+				continue;
 			if (d.Selects[i].File == d.Selects[j].File
 			    && d.Selects[i].Index == d.Selects[j].Index) {
 				src_type &= ~d.Selects[j].SrcType;
@@ -550,50 +573,18 @@ int rc_get_max_index(
 	}
 }
 
-static unsigned int get_source_readmask(
-	struct rc_pair_sub_instruction * sub,
-	unsigned int source,
-	unsigned int src_type)
-{
-	unsigned int i;
-	unsigned int readmask = 0;
-	const struct rc_opcode_info * info = rc_get_opcode_info(sub->Opcode);
-
-	for (i = 0; i < info->NumSrcRegs; i++) {
-		if (sub->Arg[i].Source != source
-		    || src_type != rc_source_type_swz(sub->Arg[i].Swizzle)) {
-			continue;
-		}
-		readmask |= rc_swizzle_to_writemask(sub->Arg[i].Swizzle);
-	}
-	return readmask;
-}
-
 /**
- * This function attempts to remove a source from a pair instructions.
+ * This function removes a source from a pair instructions.
  * @param inst
  * @param src_type RC_SOURCE_RGB, RC_SOURCE_ALPHA, or both bitwise or'd
  * @param source The index of the source to remove
- * @param new_readmask A mask representing the components that are read by
- * the source that is intended to replace the one you are removing.  If you
- * want to remove a source only and not replace it, this parameter should be
- * zero.
- * @return 1 if the source was successfully removed, 0 if it was not
+
  */
-unsigned int rc_pair_remove_src(
+void rc_pair_remove_src(
 	struct rc_instruction * inst,
 	unsigned int src_type,
-	unsigned int source,
-	unsigned int new_readmask)
+	unsigned int source)
 {
-	unsigned int readmask = 0;
-
-	readmask |= get_source_readmask(&inst->U.P.RGB, source, src_type);
-	readmask |= get_source_readmask(&inst->U.P.Alpha, source, src_type);
-
-	if ((new_readmask & readmask) != readmask)
-		return 0;
-
 	if (src_type & RC_SOURCE_RGB) {
 		memset(&inst->U.P.RGB.Src[source], 0,
 			sizeof(struct rc_pair_instruction_source));
@@ -603,8 +594,6 @@ unsigned int rc_pair_remove_src(
 		memset(&inst->U.P.Alpha.Src[source], 0,
 			sizeof(struct rc_pair_instruction_source));
 	}
-
-	return 1;
 }
 
 /**
@@ -750,4 +739,27 @@ unsigned int rc_get_scalar_src_swz(unsigned int swizzle)
 	}
 	assert(swz != RC_SWIZZLE_UNUSED);
 	return swz;
+}
+
+bool rc_inst_has_three_diff_temp_srcs(struct rc_instruction *inst)
+{
+	return (inst->U.I.SrcReg[0].File == RC_FILE_TEMPORARY &&
+		inst->U.I.SrcReg[1].File == RC_FILE_TEMPORARY &&
+		inst->U.I.SrcReg[2].File == RC_FILE_TEMPORARY &&
+		inst->U.I.SrcReg[0].Index != inst->U.I.SrcReg[1].Index &&
+		inst->U.I.SrcReg[1].Index != inst->U.I.SrcReg[2].Index &&
+		inst->U.I.SrcReg[0].Index != inst->U.I.SrcReg[2].Index);
+}
+
+float rc_inline_to_float(int index)
+{
+	int r300_exponent = (index >> 3) & 0xf;
+	unsigned r300_mantissa = index & 0x7;
+	unsigned float_exponent;
+	unsigned real_float;
+
+	r300_exponent -= 7;
+	float_exponent = r300_exponent + 127;
+	real_float = (r300_mantissa << 20) | (float_exponent << 23);
+	return uif(real_float);
 }

@@ -1,28 +1,6 @@
 /*
- * Copyright (C) 2009 Nicolai Haehnle.
- *
- * All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice (including the
- * next paragraph) shall be included in all copies or substantial
- * portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE COPYRIGHT OWNER(S) AND/OR ITS SUPPLIERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
+ * Copyright 2009 Nicolai Haehnle.
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef RADEON_PROGRAM_CONSTANTS_H
@@ -101,7 +79,7 @@ enum {
 	RC_NUM_SPECIAL_REGISTERS
 };
 
-#define RC_REGISTER_INDEX_BITS 10
+#define RC_REGISTER_INDEX_BITS 11
 #define RC_REGISTER_MAX_INDEX (1 << RC_REGISTER_INDEX_BITS)
 
 typedef enum {
@@ -114,6 +92,11 @@ typedef enum {
 	RC_SWIZZLE_HALF,
 	RC_SWIZZLE_UNUSED
 } rc_swizzle;
+
+static inline int is_swizzle_inline_constant(rc_swizzle swizzle){
+	return swizzle >= RC_SWIZZLE_ZERO;
+
+}
 
 #define RC_MAKE_SWIZZLE(a,b,c,d) (((a)<<0) | ((b)<<3) | ((c)<<6) | ((d)<<9))
 #define RC_MAKE_SWIZZLE_SMEAR(a) RC_MAKE_SWIZZLE((a),(a),(a),(a))
