@@ -263,6 +263,11 @@ if freedreno_kmds.length() != 0 and freedreno_kmds != [ 'msm' ] and with_freedre
   endif
 endif
 
+# Magma is a 'kernel mode' driver interface, used by drivers natively on Fuchsia,
+# and by drivers running in virtualized Linux/Android on Fuchsia.  Details on Magma:
+# https://fuchsia.dev/fuchsia-src/development/graphics/magma
+with_vk_magma = freedreno_kmds.contains('magma')
+
 with_dri = false
 if with_gallium and system_has_kms_drm
   _glx = get_option('glx')
@@ -384,6 +389,22 @@ with_platform_x11 = _platforms.contains('x11')
 with_platform_wayland = _platforms.contains('wayland')
 with_platform_haiku = _platforms.contains('haiku')
 with_platform_windows = _platforms.contains('windows')
+with_platform_none = _platforms.contains('none')
+if with_platform_none and _platforms.length() > 1
+  error('Platforms cannot be combined with \'none\'')
+endif
+
+inc_magma_extras=[]
+if host_machine.system() == 'fuchsia'
+  magma_dep = dependency('libmagma', required: with_vk_magma)
+  inc_magma_extras+=include_directories('fuchsia-build/sysroot_extra/include')
+else
+  magma_dep = dependency('libmagma_virt', required: with_vk_magma)
+endif
+
+dep_magma = declare_dependency(compile_args: ['-DUSE_MAGMA=1'],
+  include_directories: [inc_magma_extras],
+  dependencies: magma_dep)
 
 with_glx = get_option('glx')
 if with_glx == 'auto'
@@ -415,7 +436,7 @@ if with_glx == 'dri'
 endif
 
 if not with_opengl and with_glx != 'disabled'
-  error('Building GLX without OpenGL is not supported.') \
+  error('Building GLX without OpenGL is not supported.')
 endif
 
 if not (with_dri or with_gallium or with_glx != 'disabled')
@@ -889,8 +910,7 @@ with_libbacktrace = get_option('android-libbacktrace') \
   .allowed()
 
 if with_libbacktrace
-  # no longer supported in Android
-  #cpp_args += '-DWITH_LIBBACKTRACE'
+  cpp_args += '-DWITH_LIBBACKTRACE'
 endif
 
 if with_platform_android
@@ -916,7 +936,6 @@ if with_platform_android
   if get_option('android-strict')
     pre_args += '-DANDROID_STRICT'
   endif
-  pre_args += '-DVK_USE_PLATFORM_ANDROID_KHR=1'
 endif
 
 # On Android, seccomp kills the process on kernels without

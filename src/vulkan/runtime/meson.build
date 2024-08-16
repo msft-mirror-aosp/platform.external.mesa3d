@@ -63,6 +63,10 @@ if with_platform_android
   vulkan_lite_runtime_deps += [dep_android, idep_u_gralloc]
 endif
 
+if with_vk_magma
+  vulkan_lite_runtime_deps += dep_magma
+endif
+
 vk_common_entrypoints = custom_target(
   'vk_common_entrypoints',
   input : [vk_entrypoints_gen, vk_api_xml],
@@ -184,6 +188,7 @@ vulkan_lite_runtime_files += [
 # as a runtime library dep to ensure header gen order
 vulkan_lite_runtime_header_gen_deps = declare_dependency(
   sources : [
+    spirv_info_h,
     vk_cmd_enqueue_entrypoints[0],
     vk_cmd_queue[1],
     vk_common_entrypoints[0],
