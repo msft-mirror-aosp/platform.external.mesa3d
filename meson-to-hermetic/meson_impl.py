@@ -2,6 +2,7 @@ from enum import Enum
 import os
 import re
 import subprocess
+import tomllib
 
 # The file used to write output build definitions.
 _gOutputFile = ''
@@ -20,6 +21,21 @@ _gCpu = _gCpuFamily
 
 _gProjectVersion = 'unknown'
 _gProjectOptions = []
+
+# Caches the list of dependencies found in .toml config files
+# Structure:
+# DependencyTargetType
+#   SHARED_LIBRARY = 1
+#   STATIC_LIBRARY = 2
+#   HEADER_LIBRARY = 3
+# See meson_impl.py
+# external_dep = {
+#   'zlib': {
+#       # target_name: target_type
+#       'libz': 2
+#   },
+# }
+external_dep = {}
 
 
 class IncludeDirectories:
@@ -512,19 +528,31 @@ def get_project_options():
 
 
 def load_config_file(filename):
-    with open(filename, 'r') as file:
-        for line in file:
-            key, value = line.strip().split('=')
-            if key == 'cpu_family':
-                global _gCpuFamily
-                _gCpuFamily = value
-                print('Config: cpu_family=%s' % _gCpuFamily)
-            elif key == 'cpu':
-                global _gCpu
-                _gCpu = value
-                print('Config: cpu=%s' % _gCpu)
-            else:
-                exit('Unhandled config key: %s' % key)
+    if not filename.endswith('.toml'):
+        exit('Config file that is not .toml is not supported.')
+
+    with open(filename, 'rb') as f:
+        data = tomllib.load(f)
+        project_configs = data.get('project_config')
+        if project_configs is None:
+            exit(f'meson_options not defined in {filename}.')
+        project_config = project_configs[0]
+        # TODO(bpnguyen): Make so project config isn't hardcoded to pick the first set of configs
+        host_machine_settings = project_config.get('host_machine')[0]
+        for key in host_machine_settings:
+            match key:
+                case 'cpu_family':
+                    cpu_fam = host_machine_settings.get(key)
+                    global _gCpuFamily
+                    _gCpuFamily = cpu_fam
+                    print(f'Config: cpu_family={_gCpuFamily}')
+                case 'cpu':
+                    cpu = host_machine_settings.get(key)
+                    global _gCpu
+                    _gCpu = cpu
+                    print(f'Config: cpu={_gCpu}')
+                case _:  # Default case
+                    exit(f'Unhandled config key: {key}')
 
 
 def add_project_arguments(args, language=[], native=False):
@@ -577,11 +605,37 @@ def get_linear_list(arg_list):
     return args
 
 
+def load_dependencies(config):
+    with open(config, 'rb') as f:
+        data = tomllib.load(f)
+        project_configs = data.get('project_config')
+        for project_config in project_configs:
+            list_of_deps = project_config.get('ext_dependencies')
+            for dependencies in list_of_deps:
+                for dep_name, targets in dependencies.items():
+                    dep_targets = {
+                        t.get('target_name'): t.get('target_type') for t in targets
+                    }
+                    external_dep[dep_name] = dep_targets
+
+
 def dependency(*names, required=True, version=''):
     for name in names:
         print('dependency: %s' % name)
         if name == '':
             return Dependency('null', version, found=False)
+
+        if name in external_dep:
+            targets = external_dep.get(name)
+            return Dependency(
+                name,
+                targets=[
+                    DependencyTarget(t, DependencyTargetType(targets[t]))
+                    for t in targets
+                ],
+                version=version,
+                found=True,
+            )
 
         if (
             name == 'backtrace'
@@ -604,8 +658,7 @@ def dependency(*names, required=True, version=''):
             return Dependency(name, version, found=False)
 
         if (
-            name == ''
-            or name == 'libarchive'
+            name == 'libarchive'
             or name == 'libelf'
             or name == 'threads'
             or name == 'vdpau'
