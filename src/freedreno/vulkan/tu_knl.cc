@@ -16,10 +16,13 @@
 #include <sys/sysmacros.h>
 #endif
 
+#include <sys/mman.h>
+
 #include "util/libdrm.h"
 
 #include "tu_device.h"
 #include "tu_knl.h"
+#include "tu_rmv.h"
 
 
 VkResult
@@ -55,9 +58,38 @@ tu_bo_finish(struct tu_device *dev, struct tu_bo *bo)
 }
 
 VkResult
-tu_bo_map(struct tu_device *dev, struct tu_bo *bo)
+tu_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
 {
-   return dev->instance->knl->bo_map(dev, bo);
+   if (bo->map && (placed_addr == NULL || placed_addr == bo->map))
+      return VK_SUCCESS;
+   else if (bo->map)
+      /* The BO is already mapped, but with a different address. */
+      return vk_errorf(dev, VK_ERROR_MEMORY_MAP_FAILED, "Cannot remap BO to a different address");
+
+   return dev->instance->knl->bo_map(dev, bo, placed_addr);
+}
+
+VkResult
+tu_bo_unmap(struct tu_device *dev, struct tu_bo *bo, bool reserve)
+{
+   if (!bo->map || bo->never_unmap)
+      return VK_SUCCESS;
+
+   TU_RMV(bo_unmap, dev, bo);
+
+   if (reserve) {
+      void *map = mmap(bo->map, bo->size, PROT_NONE,
+                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+      if (map == MAP_FAILED)
+         return vk_errorf(dev, VK_ERROR_MEMORY_MAP_FAILED,
+                          "Failed to replace mapping with reserved memory");
+   } else {
+      munmap(bo->map, bo->size);
+   }
+
+   bo->map = NULL;
+
+   return VK_SUCCESS;
 }
 
 void tu_bo_allow_dump(struct tu_device *dev, struct tu_bo *bo)
@@ -210,6 +242,9 @@ tu_physical_device_try_create(struct vk_instance *vk_instance,
    struct tu_instance *instance =
       container_of(vk_instance, struct tu_instance, vk);
 
+#ifdef TU_HAS_MAGMA
+   return VK_ERROR_INITIALIZATION_FAILED;
+#else
    /* Note that "msm" is a platform device, but "virtio_gpu" is a pci
     * device.  In general we shouldn't care about the bus type.
     */
@@ -266,6 +301,7 @@ tu_physical_device_try_create(struct vk_instance *vk_instance,
    }
 
    device->master_fd = master_fd;
+   device->kgsl_dma_fd = -1;
 
    assert(strlen(path) < ARRAY_SIZE(device->fd_path));
    snprintf(device->fd_path, ARRAY_SIZE(device->fd_path), "%s", path);
@@ -312,4 +348,5 @@ out:
    drmFreeVersion(version);
 
    return result;
+#endif
 }
