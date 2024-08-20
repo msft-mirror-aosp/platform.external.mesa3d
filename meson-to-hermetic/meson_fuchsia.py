@@ -84,7 +84,8 @@ def close_output_file():
 
 
 def load_config_file():
-    impl.load_config_file('meson-to-hermetic/generate_fuchsia_build.config')
+    # TODO(355681915): Fix the hardcoded path to config file
+    impl.load_config_file('meson-to-hermetic/fuchsia.toml')
 
 
 def add_subdirs_to_set(dir, dir_set):
@@ -147,6 +148,13 @@ def module_import(name: str):
     exit('Unhandled module: ' + name)
 
 
+def load_dependencies():
+    # Reads from the .toml config files and caches all external dependencies
+    # TODO(355681915): Fix the hardcoded path to config file
+    config_file = 'meson-to-hermetic/fuchsia.toml'
+    impl.load_dependencies(config_file)
+
+
 def dependency(
     *names,
     required=True,
@@ -160,36 +168,6 @@ def dependency(
     include_type='',
     native=False,
 ):
-    for name in names:
-        if name == 'zlib':
-            return impl.Dependency(
-                name,
-                version,
-                targets=[
-                    impl.DependencyTarget(
-                        '@zlib//:zlib',
-                        impl.DependencyTargetType.STATIC_LIBRARY,
-                    ),
-                ],
-                found=True,
-            )
-
-        if name == 'libmagma':
-            return impl.Dependency(
-                name,
-                targets=[
-                    impl.DependencyTarget(
-                        '@fuchsia_sdk//pkg/magma_client',
-                        impl.DependencyTargetType.STATIC_LIBRARY,
-                    )
-                ],
-                found=True,
-            )
-
-        if name == 'libmagma_virt':
-            return impl.Dependency(name, version, found=True)
-
-    # common deps
     return impl.dependency(*names)
 
 
