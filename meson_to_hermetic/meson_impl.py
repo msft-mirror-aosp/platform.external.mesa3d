@@ -1,7 +1,9 @@
 from enum import Enum
+from abc import ABC, abstractmethod
 import os
 import re
 import subprocess
+import tomllib
 
 # The file used to write output build definitions.
 _gOutputFile = ''
@@ -20,6 +22,21 @@ _gCpu = _gCpuFamily
 
 _gProjectVersion = 'unknown'
 _gProjectOptions = []
+
+# Caches the list of dependencies found in .toml config files
+# Structure:
+# DependencyTargetType
+#   SHARED_LIBRARY = 1
+#   STATIC_LIBRARY = 2
+#   HEADER_LIBRARY = 3
+# See meson_impl.py
+# external_dep = {
+#   'zlib': {
+#       # target_name: target_type
+#       'libz': 2
+#   },
+# }
+external_dep = {}
 
 
 class IncludeDirectories:
@@ -42,6 +59,9 @@ class Machine:
 
     def system(self):
         return self._system
+
+    def set_system(self, system: str):
+        self._system = system
 
     def cpu_family(self):
         return _gCpuFamily
@@ -107,7 +127,7 @@ class Dependency:
         return hash(self.unique_id)
 
     def __eq__(self, other):
-        return self.unique_id == other._unique_id
+        return self.unique_id == other.unique_id
 
 
 class CommandReturn:
@@ -287,6 +307,10 @@ class CustomTarget:
         self._generates_h = generates_h
         self._generates_c = generates_c
 
+    @property
+    def outputs(self):
+        return self._outputs
+
     def generates_h(self):
         return self._generates_h
 
@@ -330,6 +354,9 @@ class Meson:
     def get_compiler(self, language_string, native=False):
         return self._compiler
 
+    def set_compiler(self, compiler):
+        self._compiler = compiler
+
     def project_version(self):
         return _gProjectVersion
 
@@ -355,9 +382,38 @@ class Meson:
         return
 
 
-class Compiler:
+class Compiler(ABC):
+    def __init__(self):
+        self._id = 'clang'
+
+    @abstractmethod
+    def has_header_symbol(
+        self,
+        header: str,
+        symbol: str,
+        args=None,
+        dependencies=None,
+        include_directories=None,
+        no_builtin_args: bool = False,
+        prefix=None,
+        required: bool = False,
+    ) -> bool:
+        pass
+
+    @abstractmethod
+    def check_header(self, header: str, prefix: str = '') -> bool:
+        pass
+
+    @abstractmethod
+    def has_function(self, function, args=None, prefix='', dependencies='') -> bool:
+        pass
+
+    @abstractmethod
+    def links(self, snippet: str, name: str, args=None, dependencies=None) -> bool:
+        pass
+
     def get_id(self):
-        return 'clang'
+        return self._id
 
     def is_symbol_supported(self, header: str, symbol: str):
         if header == 'sys/mkdev.h' or symbol == 'program_invocation_name':
@@ -373,12 +429,12 @@ class Compiler:
             return False
         return True
 
-    def is_link_supported(self, name):
+    def is_link_supported(self, name: str):
         if name == 'GNU qsort_r' or name == 'BSD qsort_r':
             return False
         return True
 
-    def is_header_supported(self, header):
+    def is_header_supported(self, header: str):
         if (
             header == 'xlocale.h'
             or header == 'pthread_np.h'
@@ -387,29 +443,29 @@ class Compiler:
             return False
         return True
 
-    def get_define(self, define, prefix):
+    def get_define(self, define: str, prefix: str):
         if define == 'ETIME':
-            return 'ETIME'
+            return define
         exit('Unhandled define: ' + define)
 
-    def get_supported_function_attributes(self, attributes):
+    def get_supported_function_attributes(self, attributes: list[str]):
         # Assume all are supported
         return attributes
 
-    def has_function_attribute(self, attribute):
+    def has_function_attribute(self, attribute: str):
         return True
 
-    def has_argument(self, name):
+    def has_argument(self, name: str):
         result = True
         print("has_argument '%s': %s" % (name, str(result)))
         return result
 
-    def has_link_argument(self, name):
+    def has_link_argument(self, name: str):
         result = True
         print("has_link_argument '%s': %s" % (name, str(result)))
         return result
 
-    def compiles(self, snippet, name):
+    def compiles(self, snippet, name: str):
         # Exclude what is currently not working.
         result = True
         if name == '__uint128_t':
@@ -417,7 +473,7 @@ class Compiler:
         print("compiles '%s': %s" % (name, str(result)))
         return result
 
-    def has_member(sef, struct, member, prefix):
+    def has_member(self, struct, member, prefix):
         # Assume it does
         return True
 
@@ -452,6 +508,11 @@ class Compiler:
         if string not in table:
             exit('Unhandled compiler sizeof: ' + string)
         return table[string]
+
+
+class PkgConfigModule:
+    def generate(self, lib, name='', description='', extra_cflags=None):
+        pass
 
 
 ###################################################################################################
@@ -512,19 +573,33 @@ def get_project_options():
 
 
 def load_config_file(filename):
-    with open(filename, 'r') as file:
-        for line in file:
-            key, value = line.strip().split('=')
-            if key == 'cpu_family':
-                global _gCpuFamily
-                _gCpuFamily = value
-                print('Config: cpu_family=%s' % _gCpuFamily)
-            elif key == 'cpu':
-                global _gCpu
-                _gCpu = value
-                print('Config: cpu=%s' % _gCpu)
-            else:
-                exit('Unhandled config key: %s' % key)
+    if not filename.endswith('.toml'):
+        exit('Config file that is not .toml is not supported.')
+
+    with open(filename, 'rb') as f:
+        data = tomllib.load(f)
+        project_configs = data.get('project_config')
+        if project_configs is None:
+            exit(f'meson_options not defined in {filename}.')
+        project_config = project_configs[0]
+        # TODO(bpnguyen): Make so project config isn't hardcoded to pick the first set of configs
+        host_machine_settings = project_config.get('host_machine')
+        for key in host_machine_settings:
+            match key:
+                case 'cpu_family':
+                    cpu_fam = host_machine_settings.get(key)
+                    global _gCpuFamily
+                    _gCpuFamily = cpu_fam
+                    print(f'Config: cpu_family={_gCpuFamily}')
+                case 'cpu':
+                    cpu = host_machine_settings.get(key)
+                    global _gCpu
+                    _gCpu = cpu
+                    print(f'Config: cpu={_gCpu}')
+                case 'host_machine' | 'build_machine':
+                    continue
+                case _:  # Default case
+                    exit(f'Unhandled config key: {key}')
 
 
 def add_project_arguments(args, language=[], native=False):
@@ -577,11 +652,36 @@ def get_linear_list(arg_list):
     return args
 
 
+def load_dependencies(config):
+    with open(config, 'rb') as f:
+        data = tomllib.load(f)
+        project_configs = data.get('project_config')
+        for project_config in project_configs:
+            dependencies = project_config.get('ext_dependencies')
+            for dep_name, targets in dependencies.items():
+                dep_targets = {
+                    t.get('target_name'): t.get('target_type') for t in targets
+                }
+                external_dep[dep_name] = dep_targets
+
+
 def dependency(*names, required=True, version=''):
     for name in names:
         print('dependency: %s' % name)
         if name == '':
             return Dependency('null', version, found=False)
+
+        if name in external_dep:
+            targets = external_dep.get(name)
+            return Dependency(
+                name,
+                targets=[
+                    DependencyTarget(t, DependencyTargetType(targets[t]))
+                    for t in targets
+                ],
+                version=version,
+                found=True,
+            )
 
         if (
             name == 'backtrace'
@@ -604,8 +704,7 @@ def dependency(*names, required=True, version=''):
             return Dependency(name, version, found=False)
 
         if (
-            name == ''
-            or name == 'libarchive'
+            name == 'libarchive'
             or name == 'libelf'
             or name == 'threads'
             or name == 'vdpau'
