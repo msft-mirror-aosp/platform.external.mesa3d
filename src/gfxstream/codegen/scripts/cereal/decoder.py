@@ -29,6 +29,11 @@ DELAYED_DECODER_DELETE_DICT_ENTRIES = [
     "vkDestroyShaderModule",
 ]
 
+GLOBAL_COMMANDS_WITHOUT_DISPATCH = [
+    "vkEnumerateInstanceExtensionProperties",
+    "vkEnumerateInstanceLayerProperties",
+]
+
 SNAPSHOT_API_CALL_INFO_VARNAME = "snapshotApiCallInfo"
 
 global_state_prefix = "m_state->on_"
@@ -338,7 +343,11 @@ def emit_dispatch_call(api, cgen):
         else:
             cgen.stmt("m_state->lock()")
 
-    cgen.vkApiCall(api, customPrefix="vk->", customParameters=customParams, \
+    whichDispatch = "vk->"
+    if api.name in GLOBAL_COMMANDS_WITHOUT_DISPATCH:
+        whichDispatch = "m_vk->"
+
+    cgen.vkApiCall(api, customPrefix=whichDispatch, customParameters=customParams, \
         globalStatePrefix=global_state_prefix, checkForDeviceLost=True,
         checkForOutOfMemory=True)
 
@@ -744,11 +753,15 @@ custom_decodes = {
     "vkAcquireImageANDROID" : emit_global_state_wrapped_decoding,
     "vkQueueSignalReleaseImageANDROID" : emit_global_state_wrapped_decoding,
 
+    # Semaphores
     "vkCreateSemaphore" : emit_global_state_wrapped_decoding,
     "vkGetSemaphoreFdKHR" : emit_global_state_wrapped_decoding,
     "vkImportSemaphoreFdKHR" : emit_global_state_wrapped_decoding,
     "vkDestroySemaphore" : emit_global_state_wrapped_decoding,
+    "vkSignalSemaphore" : emit_global_state_wrapped_decoding,
+    "vkWaitSemaphores" : emit_global_state_wrapped_decoding,
 
+    # Fences
     "vkCreateFence" : emit_global_state_wrapped_decoding,
     "vkGetFenceStatus" : emit_global_state_wrapped_decoding,
     "vkWaitForFences" : emit_global_state_wrapped_decoding,
@@ -939,8 +952,6 @@ size_t VkDecoder::Impl::decode(void* buf, size_t len, IOStream* ioStream,
                 .setAnnotations(std::move(executionData))
                 .build();
         """)
-
-        self.cgen.stmt("auto vk = m_vk")
 
         self.cgen.line("switch (opcode)")
         self.cgen.beginBlock()  # switch stmt
