@@ -101,21 +101,18 @@ cc_library_static {
         default: [],
     }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
         ("x86_64", "linux_glibc", default): [
-            "cutils",
             "hardware",
             "log",
             "nativewindow",
             "sync",
         ],
         ("x86_64", "linux_musl", default): [
-            "cutils",
             "hardware",
             "log",
             "nativewindow",
             "sync",
         ],
         ("arm64", "linux_musl", default): [
-            "cutils",
             "hardware",
             "log",
             "nativewindow",
