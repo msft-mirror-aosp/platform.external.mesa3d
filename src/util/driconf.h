@@ -361,6 +361,10 @@
    DRI_CONF_OPT_I(intel_binding_table_block_size, def, min, max, \
                   "Intel binding table block allocation size (3DSTATE_BINDING_TABLE_POOL_ALLOC)")
 
+#define DRI_CONF_INTEL_DISABLE_PUSH_CONSTANT_ALLOC(def) \
+   DRI_CONF_OPT_B(intel_disable_push_constant_alloc, def, \
+                  "Disable push constant space allocations")
+
 #define DRI_CONFIG_INTEL_TBIMR(def) \
    DRI_CONF_OPT_B(intel_tbimr, def, "Enable TBIMR tiled rendering")
 
@@ -967,6 +971,10 @@
 #define DRI_CONF_ANV_BRW_DISABLE_SUBGROUP_SIZE_CONTROL(def) \
    DRI_CONF_OPT_B(anv_brw_disable_subgroup_size_control, def, \
                   "Disable EXT_subgroup_size_control support when using brw compiler.")
+
+#define DRI_CONF_ANV_ENABLE_SCRATCH_PAGE(def) \
+   DRI_CONF_OPT_B(anv_enable_scratch_page, def, \
+                  "Disables surface padding and suppresses all page faults, drops writes and returns zeros on reads.")
 
 /**
  * \brief HASVK specific configuration options

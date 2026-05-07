@@ -34,6 +34,7 @@ static const driOptionDescription anv_dri_options[] = {
       DRI_CONF_NO_16BIT(false)
       DRI_CONF_INTEL_BINDING_TABLE_BLOCK_SIZE(BINDING_TABLE_POOL_DEFAULT_BLOCK_SIZE,
                                               1024, 128 * 1024)
+      DRI_CONF_INTEL_DISABLE_PUSH_CONSTANT_ALLOC(true)
       DRI_CONF_INTEL_ENABLE_WA_14018912822(false)
       DRI_CONF_INTEL_ENABLE_WA_14024015672_MSAA(false)
       DRI_CONF_INTEL_SAMPLER_ROUTE_TO_LSC(false)
@@ -108,6 +109,7 @@ static const driOptionDescription anv_dri_options[] = {
       DRI_CONF_VK_REQUIRE_ASTC(false)
 #endif
       DRI_CONF_ANV_VF_COMPONENT_PACKING(true)
+      DRI_CONF_ANV_ENABLE_SCRATCH_PAGE(false)
    DRI_CONF_SECTION_END
 
    DRI_CONF_SECTION_QUALITY
@@ -117,14 +119,17 @@ static const driOptionDescription anv_dri_options[] = {
 
 static const struct debug_control debug_control[] = {
    { "bindless",     ANV_DEBUG_BINDLESS},
+   { "desc-dirty",   ANV_DEBUG_DESCRIPTOR_DIRTY},
+   { "dgc-dump",     ANV_DEBUG_DGC_DUMP},
+   { "experimental", ANV_DEBUG_EXPERIMENTAL},
    { "no-gpl",       ANV_DEBUG_NO_GPL},
+   { "no-slab",      ANV_DEBUG_NO_SLAB},
    { "no-sparse",    ANV_DEBUG_NO_SPARSE},
    { "sparse-trtt",  ANV_DEBUG_SPARSE_TRTT},
    { "video-decode", ANV_DEBUG_VIDEO_DECODE},
    { "video-encode", ANV_DEBUG_VIDEO_ENCODE},
+   { "shader-dump",  ANV_DEBUG_SHADER_DUMP},
    { "shader-hash",  ANV_DEBUG_SHADER_HASH},
-   { "no-slab",      ANV_DEBUG_NO_SLAB},
-   { "desc-dirty",   ANV_DEBUG_DESCRIPTOR_DIRTY},
    { "shader-print", ANV_DEBUG_SHADER_PRINT},
    { NULL,    0 }
 };
@@ -288,6 +293,8 @@ anv_init_dri_options(struct anv_instance *instance)
        driQueryOptionb(&instance->dri_options, "anv_barrier_post_typed_clear_shader");
     instance->barrier_post_untyped_clear_shader =
        driQueryOptionb(&instance->dri_options, "anv_barrier_post_untyped_clear_shader");
+    instance->disable_push_constant_alloc =
+       driQueryOptionb(&instance->dri_options, "intel_disable_push_constant_alloc");
 
     if (instance->vk.app_info.engine_name &&
         !strcmp(instance->vk.app_info.engine_name, "DXVK")) {

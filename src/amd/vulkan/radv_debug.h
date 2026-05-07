@@ -15,6 +15,7 @@
 enum {
    RADV_DEBUG_NO_FAST_CLEARS = 1ull << 0,
    RADV_DEBUG_NO_DCC = 1ull << 1,
+   RADV_DEBUG_NO_CACHE_COMPAT = 1ull << 2,
    RADV_DEBUG_NO_CACHE = 1ull << 3,
    RADV_DEBUG_DUMP_SHADER_STATS = 1ull << 4,
    RADV_DEBUG_NO_HIZ = 1ull << 5,
@@ -124,6 +125,15 @@ enum {
    RADV_TRAP_EXCP_FLOAT_DIV_BY_ZERO = 1u << 1,
    RADV_TRAP_EXCP_FLOAT_OVERFLOW = 1u << 2,
    RADV_TRAP_EXCP_FLOAT_UNDERFLOW = 1u << 3,
+};
+
+enum {
+   RADV_QUEUE_DISABLE_GENERAL = 1u << 0,
+   RADV_QUEUE_DISABLE_COMPUTE = 1u << 1,
+   RADV_QUEUE_DISABLE_VIDEO_DEC = 1u << 2,
+   RADV_QUEUE_DISABLE_VIDEO_ENC = 1u << 3,
+   RADV_QUEUE_DISABLE_TRANSFER = 1u << 4,
+   RADV_QUEUE_DISABLE_SPARSE = 1u << 5,
 };
 
 bool radv_init_trace(struct radv_device *device);

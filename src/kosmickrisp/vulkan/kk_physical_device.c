@@ -80,6 +80,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
       .KHR_timeline_semaphore = true,
       .KHR_uniform_buffer_standard_layout = true,
       .KHR_vulkan_memory_model = true, /* Required in Vulkan 1.3 */
+      .EXT_buffer_device_address = true,
       .EXT_descriptor_indexing = true,
       .EXT_host_query_reset = true,
       .EXT_sampler_filter_minmax = false,
@@ -114,18 +115,19 @@ kk_get_device_extensions(const struct kk_instance *instance,
       .EXT_ycbcr_2plane_444_formats = true,
 
       /* Vulkan 1.4 */
+      .KHR_global_priority = true,
       .KHR_load_store_op_none = true,
       .KHR_map_memory2 = true,
       .KHR_push_descriptor = true,
       .KHR_shader_expect_assume = true,
       .KHR_vertex_attribute_divisor = true,
+      .EXT_global_priority = true,
+      .EXT_global_priority_query = true,
       .EXT_vertex_attribute_divisor = true,
 
       /* Optional extensions */
       .KHR_calibrated_timestamps = true,
-      /* Temporarily disabled due to failing tests in
-       * dEQP-VK.reconvergence.maximal.compute.nesting* */
-      .KHR_shader_maximal_reconvergence = false,
+      .KHR_shader_maximal_reconvergence = true,
       .KHR_shader_relaxed_extended_instruction = true,
       .KHR_shader_subgroup_uniform_control_flow = true,
 #ifdef KK_USE_WSI_PLATFORM
@@ -136,6 +138,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
 
       .EXT_calibrated_timestamps = true,
       .EXT_depth_clip_control = true,
+      .EXT_extended_dynamic_state3 = true,
       .EXT_external_memory_metal = true,
       .EXT_image_2d_view_of_3d = true,
       .EXT_load_store_op_none = true,
@@ -276,6 +279,7 @@ kk_get_device_features(
       .vulkanMemoryModelDeviceScope = true,
 
       /* Vulkan 1.4 */
+      .globalPriorityQuery = true,
       .pushDescriptor = true,
       .vertexAttributeInstanceRateDivisor = true,
       .vertexAttributeInstanceRateZeroDivisor = true,
@@ -287,9 +291,7 @@ kk_get_device_features(
       .shaderExpectAssume = true,
 
       /* VK_KHR_shader_maximal_reconvergence */
-      /* Temporarily disabled due to failing tests in
-       * dEQP-VK.reconvergence.maximal.compute.nesting* */
-      .shaderMaximalReconvergence = false,
+      .shaderMaximalReconvergence = true,
 
       /* VK_KHR_shader_relaxed_extended_instruction */
       .shaderRelaxedExtendedInstruction = true,
@@ -306,6 +308,10 @@ kk_get_device_features(
 
       /* VK_EXT_depth_clip_control */
       .depthClipControl = true,
+
+      /* VK_EXT_extended_dynamic_state3 */
+      .extendedDynamicState3DepthClampEnable = true,
+      .extendedDynamicState3DepthClipNegativeOneToOne = true,
 
       /* EXT_image_2d_view_of_3d */
       .image2DViewOf3D = true,
@@ -1037,6 +1043,22 @@ kk_GetPhysicalDeviceQueueFamilyProperties2(
             0; /* TODO_KOSMICKRISP Timestamp queries */
          p->queueFamilyProperties.minImageTransferGranularity =
             (VkExtent3D){1, 1, 1};
+
+         vk_foreach_struct(ext, p->pNext)
+         {
+            switch (ext->sType) {
+            case VK_STRUCTURE_TYPE_QUEUE_FAMILY_GLOBAL_PRIORITY_PROPERTIES: {
+               VkQueueFamilyGlobalPriorityProperties *p = (void *)ext;
+               p->priorityCount = 1;
+               p->priorities[0] = VK_QUEUE_GLOBAL_PRIORITY_MEDIUM;
+               break;
+            }
+
+            default:
+               vk_debug_ignored_stype(ext->sType);
+               break;
+            }
+         }
       }
    }
 }

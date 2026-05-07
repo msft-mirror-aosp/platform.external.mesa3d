@@ -390,9 +390,13 @@ radv_pipeline_needed_dynamic_state(const struct radv_device *device, const struc
 
    /* Disable dynamic states that are useless when rasterization is disabled. */
    if (!raster_enabled) {
-      states = RADV_DYNAMIC_PRIMITIVE_TOPOLOGY | RADV_DYNAMIC_VERTEX_INPUT_BINDING_STRIDE |
-               RADV_DYNAMIC_PRIMITIVE_RESTART_ENABLE | RADV_DYNAMIC_RASTERIZER_DISCARD_ENABLE |
-               RADV_DYNAMIC_VERTEX_INPUT;
+      states = RADV_DYNAMIC_RASTERIZER_DISCARD_ENABLE;
+
+      if (state->ia)
+         states |= RADV_DYNAMIC_PRIMITIVE_TOPOLOGY | RADV_DYNAMIC_PRIMITIVE_RESTART_ENABLE;
+
+      if (state->vi)
+         states |= RADV_DYNAMIC_VERTEX_INPUT | RADV_DYNAMIC_VERTEX_INPUT_BINDING_STRIDE;
 
       if (pipeline->active_stages & VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT)
          states |= RADV_DYNAMIC_PATCH_CONTROL_POINTS | RADV_DYNAMIC_TESS_DOMAIN_ORIGIN;
@@ -1522,7 +1526,7 @@ radv_generate_ps_epilog_key(const struct radv_compiler_info *compiler_info, cons
    key.spi_shader_col_format = col_format;
    key.color_is_int8 = compiler_info->ac->has_cb_lt16bit_int_clamp_bug ? is_int8 : 0;
    key.color_is_int10 = compiler_info->ac->has_cb_lt16bit_int_clamp_bug ? is_int10 : 0;
-   key.enable_mrt_output_nan_fixup = compiler_info->cache_key->enable_mrt_output_nan_fixup ? is_float32 : 0;
+   key.enable_mrt_output_nan_fixup = compiler_info->key.enable_mrt_output_nan_fixup ? is_float32 : 0;
    key.no_signed_zero = no_signed_zero;
    key.colors_written = state->colors_written;
    key.mrt0_is_dual_src = state->mrt0_is_dual_src && key.colors_needed & 0xf;
@@ -1735,7 +1739,7 @@ radv_generate_graphics_state_key(const struct radv_compiler_info *compiler_info,
    key.dynamic_rasterization_samples = BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_MS_RASTERIZATION_SAMPLES) ||
                                        (!!(state->shader_stages & VK_SHADER_STAGE_FRAGMENT_BIT) && !state->ms);
 
-   if (compiler_info->use_ngg) {
+   if (compiler_info->key.use_ngg) {
       VkShaderStageFlags ngg_stage;
 
       if (state->shader_stages & VK_SHADER_STAGE_GEOMETRY_BIT) {
@@ -1816,7 +1820,7 @@ static void
 radv_fill_shader_info_ngg(const struct radv_compiler_info *compiler_info, struct radv_shader_stage *stages,
                           VkShaderStageFlagBits active_nir_stages)
 {
-   if (!compiler_info->cache_key->use_ngg)
+   if (!compiler_info->key.use_ngg)
       return;
 
    if (stages[MESA_SHADER_VERTEX].nir && stages[MESA_SHADER_VERTEX].info.next_stage != MESA_SHADER_TESS_CTRL) {
@@ -1852,7 +1856,7 @@ radv_fill_shader_info_ngg(const struct radv_compiler_info *compiler_info, struct
       }
 
       if ((last_vgt_stage && last_vgt_stage->nir->xfb_info) ||
-          (compiler_info->cache_key->no_ngg_gs && stages[MESA_SHADER_GEOMETRY].nir)) {
+          (compiler_info->key.no_ngg_gs && stages[MESA_SHADER_GEOMETRY].nir)) {
          /* NGG needs to be disabled on GFX10/GFX10.3 when:
           * - streamout is used because NGG streamout isn't supported
           * - NGG GS is explictly disabled to workaround performance issues
@@ -1982,6 +1986,9 @@ radv_fill_shader_info(const struct radv_compiler_info *compiler_info, const enum
          consider_force_vrs = radv_consider_force_vrs(gfx_state, &stages[i], &stages[MESA_SHADER_FRAGMENT]);
       }
 
+      if (i == MESA_SHADER_FRAGMENT)
+         NIR_PASS(_, stages[i].nir, ac_nir_assign_fs_input_locations);
+
       radv_nir_shader_info_pass(compiler_info, stages[i].nir, &stages[i].layout, &stages[i].key, gfx_state,
                                 pipeline_type, consider_force_vrs, &stages[i].info);
    }
@@ -2071,14 +2078,13 @@ radv_create_gs_copy_shader(const struct radv_compiler_info *compiler_info, struc
    gs_copy_stage.info.user_sgprs_locs = gs_copy_stage.args.user_sgprs_locs;
    gs_copy_stage.info.inline_push_constant_mask = gs_copy_stage.args.ac.inline_push_const_mask;
 
-   NIR_PASS(
-      _, nir, ac_nir_lower_intrinsics_to_args, &gs_copy_stage.args.ac,
-      &(ac_nir_lower_intrinsics_to_args_options){.gfx_level = compiler_info->ac->gfx_level,
-                                                 .has_ls_vgpr_init_bug = compiler_info->ac->has_ls_vgpr_init_bug,
-                                                 .hw_stage = AC_HW_VERTEX_SHADER,
-                                                 .wave_size = 64,
-                                                 .workgroup_size = 64,
-                                                 .use_llvm = compiler_info->debug.use_llvm});
+   NIR_PASS(_, nir, ac_nir_lower_intrinsics_to_args, &gs_copy_stage.args.ac,
+            &(ac_nir_lower_intrinsics_to_args_options){.gfx_level = compiler_info->ac->gfx_level,
+                                                       .has_ls_vgpr_init_bug = compiler_info->ac->has_ls_vgpr_init_bug,
+                                                       .hw_stage = AC_HW_VERTEX_SHADER,
+                                                       .wave_size = 64,
+                                                       .workgroup_size = 64,
+                                                       .use_llvm = compiler_info->key.use_llvm});
    NIR_PASS(_, nir, radv_nir_lower_abi, compiler_info->ac->gfx_level, &gs_copy_stage, gfx_state, compiler_info->hw.address32_hi);
 
    NIR_PASS(_, nir, ac_nir_lower_global_access);
@@ -2222,7 +2228,6 @@ static void
 radv_pipeline_import_retained_shaders(const struct radv_device *device, struct radv_graphics_lib_pipeline *lib,
                                       struct radv_shader_stage *stages)
 {
-   const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radv_retained_shaders *retained_shaders = &lib->retained_shaders;
 
    /* Import the stages (SPIR-V only in case of cache hits). */
@@ -2241,7 +2246,7 @@ radv_pipeline_import_retained_shaders(const struct radv_device *device, struct r
       int64_t stage_start = os_time_get_nano();
 
       /* Deserialize the NIR shader. */
-      const struct nir_shader_compiler_options *options = &pdev->nir_options[s];
+      const struct nir_shader_compiler_options *options = &device->compiler_info.nir_options[s];
       struct blob_reader blob_reader;
       blob_reader_init(&blob_reader, retained_shaders->stages[s].serialized_nir,
                        retained_shaders->stages[s].serialized_nir_size);
@@ -2435,7 +2440,7 @@ radv_graphics_shaders_compile(const struct radv_compiler_info *compiler_info, st
          active_nir_stages |= mesa_to_vk_shader_stage(i);
    }
 
-   if (!compiler_info->hw.mesh_fast_launch_2 && stages[MESA_SHADER_MESH].nir &&
+   if (compiler_info->ac->gfx_level < GFX11 && stages[MESA_SHADER_MESH].nir &&
        BITSET_TEST(stages[MESA_SHADER_MESH].nir->info.system_values_read, SYSTEM_VALUE_WORKGROUP_ID)) {
       nir_shader *mesh = stages[MESA_SHADER_MESH].nir;
       nir_shader *task = stages[MESA_SHADER_TASK].nir;

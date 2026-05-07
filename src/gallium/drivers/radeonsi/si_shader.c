@@ -51,6 +51,12 @@ bool si_is_merged_shader(struct si_shader *shader)
    return shader->key.ge.as_ngg || si_is_multi_part_shader(shader);
 }
 
+static bool si_is_color_builtin(unsigned loc)
+{
+   return loc == VARYING_SLOT_COL0 || loc == VARYING_SLOT_COL1 ||
+          loc == VARYING_SLOT_BFC0 || loc == VARYING_SLOT_BFC1;
+}
+
 /**
  * Returns a unique index for a semantic name and index. The index must be
  * less than 64, so that a 64-bit bitmask of used inputs or outputs can be
@@ -159,7 +165,7 @@ unsigned si_get_max_workgroup_size(const struct si_shader *shader)
    /* Without multi-row export, we need at least number of output vertex/primitive
     * threads in workgroup for export (one vertex/primitive per thread).
     */
-   if (stage == MESA_SHADER_MESH && !sscreen->info.mesh_fast_launch_2) {
+   if (stage == MESA_SHADER_MESH && sscreen->info.gfx_level < GFX11) {
       max_work_group_size = MAX3(max_work_group_size,
                                  shader->selector->info.base.mesh.max_vertices_out,
                                  shader->selector->info.base.mesh.max_primitives_out);
@@ -212,7 +218,7 @@ unsigned si_calculate_needed_lds_size(enum amd_gfx_level gfx_level, struct si_sh
    }
 
    /* Check that the LDS size is within hw limits. */
-   assert(lds_size <= shader->selector->screen->info.lds_size_per_workgroup);
+   assert(lds_size <= shader->selector->screen->info.compiler_info.lds_size_per_workgroup);
    return lds_size;
 }
 
@@ -299,7 +305,7 @@ static void si_calculate_max_simd_waves(struct si_shader *shader)
       max_simd_waves = MIN2(max_simd_waves, max_vgprs / num_vgprs);
    }
 
-   unsigned max_lds_per_simd = sscreen->info.lds_size_per_workgroup / sscreen->info.compiler_info.num_simd_per_compute_unit;
+   unsigned max_lds_per_simd = sscreen->info.compiler_info.lds_size_per_workgroup / sscreen->info.compiler_info.num_simd_per_compute_unit;
    if (lds_per_wave)
       max_simd_waves = MIN2(max_simd_waves, max_lds_per_simd / lds_per_wave);
 
@@ -593,6 +599,30 @@ static void si_assign_param_offsets(nir_shader *nir, struct si_shader *shader,
    memset(temp_info->vs_output_param_offset, AC_EXP_PARAM_UNDEFINED,
           sizeof(temp_info->vs_output_param_offset));
 
+    /* Before we mess with io locations set clamp flag for color builtins */
+   if (nir->info.stage == MESA_SHADER_VERTEX ||
+       nir->info.stage == MESA_SHADER_TESS_EVAL ||
+       nir->info.stage == MESA_SHADER_GEOMETRY) {
+      nir_function_impl *impl = nir_shader_get_entrypoint(nir);
+      assert(impl);
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr_safe(instr, block) {
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+
+            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+            if (intr->intrinsic != nir_intrinsic_store_output)
+               continue;
+
+            nir_io_semantics sem = nir_intrinsic_io_semantics(intr);
+            if (si_is_color_builtin(sem.location)) {
+               sem.clamp = 1;
+               nir_intrinsic_set_io_semantics(intr,sem);
+            }
+         }
+      }
+   }
+
    /* A slot remapping table for duplicated outputs, so that 1 vertex shader output can be
     * mapped to multiple fragment shader inputs.
     */
@@ -665,7 +695,7 @@ static void si_preprocess_nir(struct si_nir_shader_ctx *ctx)
    }
 
    if (mesa_shader_stage_is_compute(nir->info.stage)) {
-      if (sel->screen->info.has_cs_regalloc_hang_bug) {
+      if (sel->screen->info.compiler_info.has_cs_regalloc_hang_bug) {
          const uint32_t wg_size = nir->info.workgroup_size[0] *
                                   nir->info.workgroup_size[1] *
                                   nir->info.workgroup_size[2];
@@ -709,7 +739,7 @@ static void si_preprocess_nir(struct si_nir_shader_ctx *ctx)
       }
    }
 
-   if (nir->info.stage == MESA_SHADER_MESH && !sel->screen->info.mesh_fast_launch_2) {
+   if (nir->info.stage == MESA_SHADER_MESH && sel->screen->info.gfx_level < GFX11) {
       NIR_PASS(progress, nir, nir_lower_compute_system_values,
                &(nir_lower_compute_system_values_options){
                   /* Mesh shaders run as NGG which can implement local_invocation_index from
@@ -933,10 +963,15 @@ static void si_postprocess_nir(struct si_nir_shader_ctx *ctx)
    if (nir->info.stage == MESA_SHADER_FRAGMENT)
       NIR_PASS(progress, nir, nir_lower_fragcoord_wtrans);
 
+   NIR_PASS(progress, nir, ac_nir_lower_tex_coords,
+            &(ac_nir_lower_tex_coords_options){
+               .gfx_level = sel->screen->info.gfx_level,
+               .lower_array_layer_round_even = !sel->screen->info.compiler_info.conformant_trunc_coord,
+            });
+
    NIR_PASS(progress, nir, ac_nir_lower_image_tex,
             &(ac_nir_lower_image_tex_options){
                .gfx_level = sel->screen->info.gfx_level,
-               .lower_array_layer_round_even = !sel->screen->info.compiler_info.conformant_trunc_coord,
             });
 
    if (nir->info.uses_resource_info_query)

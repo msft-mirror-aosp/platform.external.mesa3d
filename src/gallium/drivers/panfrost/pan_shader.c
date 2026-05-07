@@ -186,7 +186,7 @@ panfrost_shader_compile(struct panfrost_screen *screen, const nir_shader *ir,
    /* Lower resource indices */
    NIR_PASS(_, s, panfrost_nir_lower_res_indices, &inputs);
 
-   pan_postprocess_nir(s, panfrost_device_gpu_id(dev));
+   pan_postprocess_nir(s, &inputs, &out->info);
 
    if (s->info.stage == MESA_SHADER_VERTEX) {
       NIR_PASS(_, s, nir_inline_sysval,
@@ -543,6 +543,12 @@ panfrost_create_shader_state(struct pipe_context *pctx,
             nir_var_shader_in | nir_var_shader_out, UINT32_MAX);
    NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
             glsl_type_size, nir_lower_io_use_interpolated_input_intrinsics);
+   /* nir_lower_io just computes offsets based on the original deref and
+    * lower_indirect_derefs ensures that the array derefs have a constant
+    * index.  Constant-fold to get us actual constants in in load/store
+    * instructions.
+    */
+   NIR_PASS(_, nir, nir_opt_constant_folding);
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT)
       so->noperspective_varyings =

@@ -322,7 +322,7 @@ declare_ms_input_sgprs(struct radv_shader_args_state *state, const struct radv_s
 static void
 declare_ms_input_vgprs(const struct radv_compiler_info *compiler_info, struct radv_shader_args_state *state)
 {
-   if (compiler_info->hw.mesh_fast_launch_2) {
+   if (compiler_info->ac->gfx_level >= GFX11) {
       RADV_ADD_ARG(state, AC_ARG_VGPR, 1, AC_ARG_VALUE, ac.local_invocation_ids_packed);
    } else {
       RADV_ADD_ARG(state, AC_ARG_VGPR, 1, AC_ARG_VALUE, ac.vertex_id);
@@ -379,8 +379,8 @@ radv_init_shader_args(const struct radv_compiler_info *compiler_info, struct rad
 {
    memset(state->args, 0, sizeof(*state->args));
 
-   state->args->explicit_scratch_args = !compiler_info->debug.use_llvm;
-   state->args->remap_spi_ps_input = !compiler_info->debug.use_llvm;
+   state->args->explicit_scratch_args = !compiler_info->key.use_llvm;
+   state->args->remap_spi_ps_input = !compiler_info->key.use_llvm;
 
    for (int i = 0; i < MAX_SETS; i++)
       state->args->user_sgprs_locs.descriptor_sets[i].sgpr_idx = -1;
@@ -612,7 +612,7 @@ declare_shader_args(const struct radv_compiler_info *compiler_info, struct radv_
       declare_global_input_sgprs(state, gfx_level, info, user_sgpr_info);
 
       if (info->cs.uses_grid_size) {
-         if (compiler_info->load_grid_size_from_user_sgpr)
+         if (compiler_info->key.load_grid_size_from_user_sgpr)
             RADV_ADD_UD_ARG(state, 3, AC_ARG_VALUE, ac.num_work_groups, AC_UD_CS_GRID_SIZE);
          else
             RADV_ADD_UD_ARG(state, 2, AC_ARG_CONST_ADDR, ac.num_work_groups, AC_UD_CS_GRID_SIZE);
@@ -829,7 +829,7 @@ declare_shader_args(const struct radv_compiler_info *compiler_info, struct radv_
                   RADV_ADD_UD_ARG(state, 1, AC_ARG_VALUE, ngg_query_buf_va, AC_UD_NGG_QUERY_BUF_VA);
             }
 
-            if (previous_stage != MESA_SHADER_MESH || !compiler_info->hw.mesh_fast_launch_2) {
+            if (previous_stage != MESA_SHADER_MESH || compiler_info->ac->gfx_level < GFX11) {
                if (gfx_level >= GFX12) {
                   RADV_ADD_ARRAY_ARG(state, AC_ARG_VGPR, 1, AC_ARG_VALUE, ac.gs_vtx_offset, 0);
                   RADV_ADD_ARG(state, AC_ARG_VGPR, 1, AC_ARG_VALUE, ac.gs_prim_id);

@@ -638,9 +638,6 @@ Intel driver environment variables
    ``sf``
       emit messages about the strips & fans unit (for old gens, includes
       the SF program)
-   ``shader-print``
-      allow developer print traces added by `brw_nir_printf` to be
-      printed out on the console
    ``soft64``
       enable implementation of software 64bit floating point support
    ``sparse``
@@ -937,6 +934,10 @@ Anvil(ANV) driver environment variables
 
   ``bindless``
     Forces all descriptor sets to use the internal :ref:`Bindless model`
+  ``desc-dirty``
+    Print out what dirties descriptors
+  ``experimental``
+    Enable experimental features
   ``no-gpl``
     Disables `VK_KHR_graphics_pipeline_library` support
   ``no-secondary-call``
@@ -953,6 +954,9 @@ Anvil(ANV) driver environment variables
     Emits dummy (MI_STORE_DATA_IMM) instructions containing the shader
     source hash, preceding shader programming instructions (internal
     shaders & ray-tracing shaders are omitted)
+  ``shader-print``
+    Allow developer print traces added by `brw_nir_printf` to be
+    printed out on the console
 
    If defined to ``1`` or ``true``, this will prevent usage of self
    modifying command buffers to implement ``vkCmdExecuteCommands``. As
@@ -1554,6 +1558,26 @@ RADV driver environment variables
       Enable tracking of VA ranges for radv_build_is_valid_va.
    ``vm``
       add a gap between all VA allocations to check for page faults
+   ``nocachecompat``
+      disable changes to code generation which increases shader cache compatiblity
+      between devices
+
+.. envvar:: RADV_QUEUE_DISABLE
+
+   a comma-separated list of named queues to disable for testing purposes:
+
+   ``gfx``
+      disable the general/gfx queue
+   ``compute``
+      disable the compute queue
+   ``vdec``
+      disable the video decode queue
+   ``venc``
+      disable the video encode queue
+   ``transfer``
+      disable the transfer queue
+   ``sparse``
+      disable the sparse queue
 
 .. envvar:: RADV_FORCE_VRS
 

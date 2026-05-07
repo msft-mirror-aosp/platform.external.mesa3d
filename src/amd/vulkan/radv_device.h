@@ -54,14 +54,6 @@ struct radv_layer_dispatch_tables {
    struct vk_device_dispatch_table ctx_roll;
 };
 
-struct radv_device_cache_key {
-   uint32_t image_2d_view_of_3d : 1;
-   uint32_t mesh_shader_queries : 1;
-   uint32_t primitives_generated_query : 1;
-
-   uint32_t reserved : 29;
-};
-
 enum radv_force_vrs {
    RADV_FORCE_VRS_1x1 = 0,
    RADV_FORCE_VRS_2x2,
@@ -89,7 +81,8 @@ struct radv_meta_state {
    mtx_t mtx;
 
    struct {
-      struct radix_sort_vk *radix_sort;
+      struct radix_sort_vk *radix_sort_64;
+      struct radix_sort_vk *radix_sort_96;
       struct vk_acceleration_structure_build_ops build_ops;
       struct vk_acceleration_structure_build_args build_args;
    } accel_struct_build;
@@ -199,9 +192,6 @@ struct radv_device {
 
    /* Whether to DMA shaders to invisible VRAM or to upload directly through BAR. */
    bool shader_use_invisible_vram;
-
-   /* Whether to inline the compute dispatch size in user sgprs. */
-   bool load_grid_size_from_user_sgpr;
 
    /* Whether anisotropy is forced with RADV_TEX_ANISO (-1 is disabled). */
    int force_aniso;
@@ -313,7 +303,6 @@ struct radv_device {
 
    struct radv_debug_nir debug_nir;
 
-   struct radv_device_cache_key cache_key;
    blake3_hash cache_hash;
 
    /* Not NULL if a GPU hang report has been generated for VK_EXT_device_fault. */

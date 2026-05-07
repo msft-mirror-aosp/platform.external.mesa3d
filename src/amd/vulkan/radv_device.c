@@ -864,30 +864,17 @@ capture_trace(VkQueue _queue)
 static void
 radv_device_init_cache_key(struct radv_device *device)
 {
-   const struct radv_physical_device *pdev = radv_device_physical(device);
-   struct radv_device_cache_key *key = &device->cache_key;
+   STATIC_ASSERT(sizeof(device->compiler_info.hw) == 8);
+   STATIC_ASSERT(sizeof(device->compiler_info.key) == 20);
+
+   uint32_t ptr_size = sizeof(void *);
+
    struct mesa_blake3 ctx;
-
-   key->image_2d_view_of_3d = device->vk.enabled_features.image2DViewOf3D && pdev->info.gfx_level == GFX9;
-   key->mesh_shader_queries = device->vk.enabled_features.meshShaderQueries && pdev->emulate_mesh_shader_queries;
-   key->primitives_generated_query = radv_uses_primitives_generated_query(device);
-
-   /* The Vulkan spec says:
-    *  "Binary shaders retrieved from a physical device with a certain shaderBinaryUUID are
-    *   guaranteed to be compatible with all other physical devices reporting the same
-    *   shaderBinaryUUID and the same or higher shaderBinaryVersion."
-    *
-    * That means the driver should compile shaders for the "worst" case of all features being
-    * enabled, regardless of what features are actually enabled on the logical device.
-    */
-   if (device->vk.enabled_features.shaderObject) {
-      key->image_2d_view_of_3d = pdev->info.gfx_level == GFX9;
-      key->primitives_generated_query = true;
-   }
-
    _mesa_blake3_init(&ctx);
-   _mesa_blake3_update(&ctx, &pdev->cache_key, sizeof(pdev->cache_key));
-   _mesa_blake3_update(&ctx, &device->cache_key, sizeof(device->cache_key));
+   _mesa_blake3_update(&ctx, &ptr_size, sizeof(ptr_size));
+   _mesa_blake3_update(&ctx, device->compiler_info.ac, sizeof(struct ac_compiler_info));
+   _mesa_blake3_update(&ctx, &device->compiler_info.hw, sizeof(device->compiler_info.hw));
+   _mesa_blake3_update(&ctx, &device->compiler_info.key, sizeof(device->compiler_info.key));
    _mesa_blake3_final(&ctx, device->cache_hash);
 }
 
@@ -1131,11 +1118,28 @@ radv_device_init_compiler_info(struct radv_device *device)
    if (instance->debug_flags & RADV_DEBUG_DUMP_CS)
       dump_shaders |= VK_SHADER_STAGE_COMPUTE_BIT | RADV_RT_STAGE_BITS;
 
-   if (pdev->cache_key.use_ngg_culling) {
+   if (pdev->use_ngg_culling) {
       /* Shader based culling efficiency can depend on PS throughput.
        * Estimate an upper limit for PS input param count based on GPU info.
        */
       nggc_max_ps_params = pdev->info.has_dedicated_vram ? 12 : 8;
+   }
+
+   bool image_2d_view_of_3d = device->vk.enabled_features.image2DViewOf3D && pdev->info.gfx_level == GFX9;
+   bool mesh_shader_queries = device->vk.enabled_features.meshShaderQueries && pdev->emulate_mesh_shader_queries;
+   bool primitives_generated_query = radv_uses_primitives_generated_query(device);
+
+   /* The Vulkan spec says:
+    *  "Binary shaders retrieved from a physical device with a certain shaderBinaryUUID are
+    *   guaranteed to be compatible with all other physical devices reporting the same
+    *   shaderBinaryUUID and the same or higher shaderBinaryVersion."
+    *
+    * That means the driver should compile shaders for the "worst" case of all features being
+    * enabled, regardless of what features are actually enabled on the logical device.
+    */
+   if (device->vk.enabled_features.shaderObject) {
+      image_2d_view_of_3d = pdev->info.gfx_level == GFX9;
+      primitives_generated_query = true;
    }
 
    struct radv_compiler_info info = {
@@ -1143,12 +1147,56 @@ radv_device_init_compiler_info(struct radv_device *device)
       .ac = &pdev->info.compiler_info,
       .hw =
          {
-            .family = pdev->info.family,
             .address32_hi = pdev->info.address32_hi,
+            .address_prt_wa_control_bit = pdev->info.address_prt_wa_control_bit,
             .rbplus_allowed = pdev->info.rbplus_allowed,
-            .mesh_fast_launch_2 = pdev->info.mesh_fast_launch_2,
-            .has_cs_regalloc_hang_bug = pdev->info.has_cs_regalloc_hang_bug,
-            .lds_size_per_workgroup = pdev->info.lds_size_per_workgroup,
+         },
+      /* Misc values included as part of the cache key */
+      .key =
+         {
+            /* Shader features */
+            .use_llvm = pdev->use_llvm,
+            .use_ngg = pdev->use_ngg,
+            .use_ngg_culling = pdev->use_ngg_culling,
+            .nggc_max_ps_params = nggc_max_ps_params,
+            .no_ngg_gs = instance->drirc.performance.disable_ngg_gs,
+            .load_grid_size_from_user_sgpr = pdev->load_grid_size_from_user_sgpr,
+            .emulate_ngg_gs_query_pipeline_stat = pdev->emulate_ngg_gs_query_pipeline_stat,
+            .primitives_generated_query = primitives_generated_query,
+            .mesh_shader_queries = mesh_shader_queries,
+            .image_2d_view_of_3d = image_2d_view_of_3d,
+            .use_fmask = pdev->use_fmask,
+            .robust_buffer_access = pdev->use_llvm && (device->vk.enabled_features.robustBufferAccess2 ||
+                                                       device->vk.enabled_features.robustBufferAccess),
+            .mitigate_smem_oob = pdev->info.compiler_info.has_smem_oob_access_bug &&
+                                 !(instance->debug_flags & RADV_DEBUG_NO_SMEM_MITIGATION),
+            .mitigate_smem_with_null_prt =
+               pdev->info.compiler_info.has_smem_with_null_prt_bug && radv_sparse_enabled(pdev),
+            .bvh8 = radv_use_bvh8(pdev),
+            .no_rt = !!(instance->debug_flags & RADV_DEBUG_NO_RT),
+            .rt_cps = !!(instance->perftest_flags & RADV_PERFTEST_RT_CPS),
+            .clear_lds = instance->drirc.misc.clear_lds,
+            .disable_aniso_single_level = instance->drirc.debug.disable_aniso_single_level,
+            .disable_shrink_image_store = instance->drirc.debug.disable_shrink_image_store,
+            .disable_sinking_load_input_fs = instance->drirc.debug.disable_sinking_load_input_fs,
+            .disable_trunc_coord = instance->drirc.debug.disable_trunc_coord,
+            .enable_mrt_output_nan_fixup = instance->drirc.debug.enable_mrt_output_nan_fixup,
+            .emulate_rt = radv_emulate_rt(pdev),
+            .invariant_geom = instance->drirc.debug.invariant_geom,
+            .split_fma = instance->drirc.debug.split_fma,
+            .ssbo_non_uniform = instance->drirc.debug.ssbo_non_uniform,
+            .tex_non_uniform = instance->drirc.debug.tex_non_uniform,
+            .lower_terminate_to_discard = instance->drirc.debug.lower_terminate_to_discard,
+            .no_implicit_varying_subgroup_size = instance->drirc.debug.no_implicit_varying_subgroup_size,
+            .force_aniso = device->force_aniso,
+            /* Use CHIP_UNKNOWN for increased compatiblity between caches. */
+            .family = pdev->use_llvm ? pdev->info.family : CHIP_UNKNOWN,
+
+            /* Wave/subgroup sizes */
+            .ge_wave_size = pdev->ge_wave_size,
+            .ps_wave_size = pdev->ps_wave_size,
+            .cs_wave_size = pdev->cs_wave_size,
+            .rt_wave_size = pdev->rt_wave_size,
          },
       /* Debug/tracing */
       .debug =
@@ -1164,7 +1212,6 @@ radv_device_init_compiler_info(struct radv_device *device)
             .dump_shaders = dump_shaders,
             .check_ir = !!(instance->debug_flags & RADV_DEBUG_CHECKIR),
             .printf_enabled = !!device->debug_nir.printf.buffer_addr,
-            .use_llvm = pdev->use_llvm,
             .trap_enabled = !!device->trap_handler_shader,
             .trap_excp_flags = instance->trap_excp_flags,
             .debug_report = &instance->vk.debug_report,
@@ -1175,13 +1222,13 @@ radv_device_init_compiler_info(struct radv_device *device)
             /* Capture shader statistics when RGP is enabled to correlate shader hashes with Fossilize. */
             .capture_shader_stats = (instance->debug_flags & (RADV_DEBUG_DUMP_SHADER_STATS | RADV_DEBUG_PSO_HISTORY)) ||
                                     device->keep_shader_info || (instance->vk.trace_mode & RADV_TRACE_MODE_RGP),
+            .family = pdev->info.family,
          },
       .rra_trace = &device->rra_trace,
       /* Cache */
       .cache_disabled = radv_device_is_cache_disabled(device),
       .enable_nir_cache = !!(instance->debug_flags & RADV_PERFTEST_NIR_CACHE),
       .mem_cache = device->mem_cache,
-      .cache_key = &pdev->cache_key,
       .override_graphics_shader_version = instance->drirc.misc.override_graphics_shader_version,
       .override_ray_tracing_shader_version = instance->drirc.misc.override_ray_tracing_shader_version,
       .override_compute_shader_version = instance->drirc.misc.override_compute_shader_version,
@@ -1195,36 +1242,19 @@ radv_device_init_compiler_info(struct radv_device *device)
       .image_descriptor_alignment = pdev->vk.properties.imageDescriptorAlignment,
       .buffer_descriptor_size = pdev->vk.properties.bufferDescriptorSize,
       .buffer_descriptor_alignment = pdev->vk.properties.bufferDescriptorAlignment,
-      /* Shader features */
+      /* Shader features, included as part of the pipeline key */
       .device_robustness_state = &device->vk.robustness_state,
-      .use_ngg = pdev->use_ngg,
-      .use_ngg_streamout = pdev->use_ngg_streamout,
-      .load_grid_size_from_user_sgpr = device->load_grid_size_from_user_sgpr,
-      .emulate_ngg_gs_query_pipeline_stat = pdev->emulate_ngg_gs_query_pipeline_stat,
-      .primitives_generated_query = device->cache_key.primitives_generated_query,
-      .mesh_shader_queries = device->cache_key.mesh_shader_queries,
-      .image_2d_view_of_3d = device->cache_key.image_2d_view_of_3d,
-      .use_fmask = pdev->use_fmask,
       .smooth_lines = device->vk.enabled_features.smoothLines,
       .force_vrs_enabled = device->force_vrs_enabled,
-      .robust_buffer_access =
-         (device->vk.enabled_features.robustBufferAccess2 || device->vk.enabled_features.robustBufferAccess),
-      .force_aniso = device->force_aniso,
-      .nggc_max_ps_params = nggc_max_ps_params,
       /* Wave/subgroup sizes */
       .subgroup_size = device->vk.physical->properties.subgroupSize,
       .min_subgroup_size = device->vk.physical->properties.minSubgroupSize,
       .max_subgroup_size = device->vk.physical->properties.maxSubgroupSize,
-      .ge_wave_size = pdev->ge_wave_size,
-      .ps_wave_size = pdev->ps_wave_size,
-      .cs_wave_size = pdev->cs_wave_size,
-      .rt_wave_size = pdev->rt_wave_size,
       /* NIR/SPIR-V */
       .spirv_caps = vk_physical_device_get_spirv_capabilities(device->vk.physical),
    };
 
-   for (uint32_t s = 0; s < MESA_VULKAN_SHADER_STAGES; s++)
-      info.nir_options[s] = pdev->nir_options[s];
+   radv_get_nir_options(&info);
 
    device->compiler_info = info;
 }
@@ -1349,9 +1379,6 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
 
    radv_init_shader_arenas(device);
 
-   /* Initialize the per-device cache key. */
-   radv_device_init_cache_key(device);
-
    if (!device->vk.disable_internal_cache) {
       result = radv_device_init_memory_cache(device);
       if (result != VK_SUCCESS)
@@ -1381,9 +1408,6 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
    if (device->force_aniso >= 0) {
       fprintf(stderr, "radv: Forcing anisotropy filter to %ix\n", 1 << util_logbase2(device->force_aniso));
    }
-
-   /* PKT3_LOAD_SH_REG_INDEX is supported on GFX8+, but it hangs with compute queues until GFX10.3. */
-   device->load_grid_size_from_user_sgpr = pdev->info.gfx_level >= GFX10_3;
 
    device->ws = pdev->ws;
    device->vk.sync = device->ws->get_sync_provider(device->ws);
@@ -1532,6 +1556,8 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
 
    radv_device_init_compiler_info(device);
 
+   radv_device_init_cache_key(device);
+
    if (device->vk.enabled_features.vertexInputDynamicState || device->vk.enabled_features.graphicsPipelineLibrary ||
        device->vk.enabled_features.shaderObject) {
       result = radv_device_init_vs_prologs(device);
@@ -1546,7 +1572,7 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
        device->vk.enabled_features.extendedDynamicState3ColorBlendEquation)
       radv_shader_part_cache_init(&device->ps_epilogs, &ps_epilog_ops);
 
-   if (pdev->info.has_zero_index_buffer_bug || pdev->cache_key.mitigate_smem_oob) {
+   if (pdev->info.has_zero_index_buffer_bug || device->compiler_info.key.mitigate_smem_oob) {
       result = radv_bo_create(device, NULL, 4096, 4096, RADEON_DOMAIN_VRAM,
                               RADEON_FLAG_NO_CPU_ACCESS | RADEON_FLAG_NO_INTERPROCESS_SHARING | RADEON_FLAG_READ_ONLY |
                                  RADEON_FLAG_ZERO_VRAM | RADEON_FLAG_32BIT,

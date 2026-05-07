@@ -69,7 +69,7 @@ gather_load_fs_input_info(const nir_shader *nir, const nir_intrinsic_instr *intr
 {
    const nir_io_semantics io_sem = nir_intrinsic_io_semantics(intrin);
    const unsigned location = io_sem.location;
-   const unsigned mapped_location = ac_nir_get_io_driver_location(nir, io_sem.location, true);
+   const unsigned mapped_location = nir_intrinsic_base(intrin);
    const unsigned attrib_count = io_sem.num_slots;
    const unsigned component = nir_intrinsic_component(intrin);
 
@@ -484,9 +484,9 @@ static void
 gather_shader_info_ngg_query(const struct radv_compiler_info *compiler_info, struct radv_shader_info *info)
 {
    info->gs.has_pipeline_stat_query =
-      compiler_info->emulate_ngg_gs_query_pipeline_stat && info->stage == MESA_SHADER_GEOMETRY;
+      compiler_info->key.emulate_ngg_gs_query_pipeline_stat && info->stage == MESA_SHADER_GEOMETRY;
    info->has_xfb_query = !!info->so.enabled_stream_buffers_mask;
-   info->has_prim_query = compiler_info->primitives_generated_query || info->has_xfb_query;
+   info->has_prim_query = compiler_info->key.primitives_generated_query || info->has_xfb_query;
 }
 
 uint64_t
@@ -754,7 +754,7 @@ gather_shader_info_mesh(const struct radv_compiler_info *compiler_info, const ni
    ngg_info->prim_amp_factor = nir->info.mesh.max_primitives_out;
    ngg_info->vgt_esgs_ring_itemsize = 1;
 
-   info->ms.has_query = compiler_info->mesh_shader_queries;
+   info->ms.has_query = compiler_info->key.mesh_shader_queries;
    info->ms.has_task = stage_key->has_task_shader;
 }
 
@@ -764,7 +764,7 @@ calc_mesh_workgroup_size(const struct radv_compiler_info *compiler_info, const n
 {
    unsigned api_workgroup_size = ac_compute_cs_workgroup_size(nir->info.workgroup_size, false, UINT32_MAX);
 
-   if (compiler_info->hw.mesh_fast_launch_2) {
+   if (compiler_info->ac->gfx_level >= GFX11) {
       /* Use multi-row export. It is also necessary to use the API workgroup size for non-emulated queries. */
       info->workgroup_size = api_workgroup_size;
    } else {
@@ -900,7 +900,7 @@ gather_shader_info_task(const struct radv_compiler_info *compiler_info, const ni
    info->cs.linear_taskmesh_dispatch =
       nir->info.mesh.ts_mesh_dispatch_dimensions[1] == 1 && nir->info.mesh.ts_mesh_dispatch_dimensions[2] == 1;
 
-   info->cs.has_query = compiler_info->mesh_shader_queries;
+   info->cs.has_query = compiler_info->key.mesh_shader_queries;
 }
 
 static uint32_t
@@ -1408,7 +1408,7 @@ radv_link_shaders_info(const struct radv_compiler_info *compiler_info, struct ra
             compiler_info->ac->gfx_level, MESA_SHADER_VERTEX, tcs_stage->info.num_tess_patches,
             gfx_state->ts.patch_control_points, tcs_stage->info.tcs.tcs_vertices_out);
 
-         if (!compiler_info->debug.use_llvm) {
+         if (!compiler_info->key.use_llvm) {
             /* When the number of TCS input and output vertices are the same (typically 3):
              * - There is an equal amount of LS and HS invocations
              * - In case of merged LSHS shaders, the LS and HS halves of the shader always process

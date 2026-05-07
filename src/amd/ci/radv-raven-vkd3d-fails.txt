@@ -1,1 +1,2 @@
-test_fence_pending_signal_cpu_rewind_plain,Fail
+test_compute_queue_depth_stencil_msaa,Fail
+test_copy_queue_depth_stencil_msaa,Fail

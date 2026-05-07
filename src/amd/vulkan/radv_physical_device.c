@@ -98,6 +98,9 @@ radv_sparse_enabled(const struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
+   if (instance->queue_disable_flags & RADV_QUEUE_DISABLE_SPARSE)
+      return false;
+
    return pdev->info.has_sparse || (instance->experimental_flags & RADV_EXPERIMENTAL_SPARSE);
 }
 
@@ -114,19 +117,25 @@ radv_transfer_queue_enabled(const struct radv_physical_device *pdev)
    if (!radv_compute_queue_enabled(pdev))
       return false;
 
-   return pdev->info.gfx_level >= GFX9;
+   return pdev->info.gfx_level >= GFX9 && !(instance->queue_disable_flags & RADV_QUEUE_DISABLE_TRANSFER);
 }
 
 static bool
 radv_video_decode_queue_enabled(const struct radv_physical_device *pdev)
 {
-   return pdev->video_decode_enabled && pdev->info.ip[pdev->vid_decode_ip].num_queues > 0;
+   const struct radv_instance *instance = radv_physical_device_instance(pdev);
+
+   return pdev->video_decode_enabled && pdev->info.ip[pdev->vid_decode_ip].num_queues > 0 &&
+          !(instance->queue_disable_flags & RADV_QUEUE_DISABLE_VIDEO_DEC);
 }
 
 static bool
 radv_video_encode_queue_enabled(const struct radv_physical_device *pdev)
 {
-   return pdev->video_encode_enabled && pdev->info.ip[AMD_IP_VCN_ENC].num_queues > 0;
+   const struct radv_instance *instance = radv_physical_device_instance(pdev);
+
+   return pdev->video_encode_enabled && pdev->info.ip[AMD_IP_VCN_ENC].num_queues > 0 &&
+          !(instance->queue_disable_flags & RADV_QUEUE_DISABLE_VIDEO_ENC);
 }
 
 bool
@@ -139,13 +148,15 @@ radv_compute_queue_enabled(const struct radv_physical_device *pdev)
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
    return pdev->info.ip[AMD_IP_COMPUTE].num_queues > 0 &&
-          (!(instance->debug_flags & RADV_DEBUG_NO_COMPUTE_QUEUE) || !pdev->info.has_graphics);
+          (!(instance->queue_disable_flags & RADV_QUEUE_DISABLE_COMPUTE) || !pdev->info.has_graphics);
 }
 
 static bool
 radv_graphics_queue_enabled(const struct radv_physical_device *pdev)
 {
-   return pdev->info.ip[AMD_IP_GFX].num_queues > 0;
+   const struct radv_instance *instance = radv_physical_device_instance(pdev);
+
+   return pdev->info.ip[AMD_IP_GFX].num_queues > 0 && !(instance->queue_disable_flags & RADV_QUEUE_DISABLE_GENERAL);
 }
 
 static bool
@@ -288,45 +299,6 @@ parse_hex(char *out, const char *in, unsigned length)
    }
 }
 
-static void
-radv_physical_device_init_cache_key(struct radv_physical_device *pdev)
-{
-   const struct radv_instance *instance = radv_physical_device_instance(pdev);
-   struct radv_physical_device_cache_key *key = &pdev->cache_key;
-
-   key->family = pdev->info.family;
-   key->ptr_size = sizeof(void *);
-   key->conformant_trunc_coord = pdev->info.compiler_info.conformant_trunc_coord;
-
-   key->clear_lds = instance->drirc.misc.clear_lds;
-   key->cs_wave32 = pdev->cs_wave_size == 32;
-   key->disable_aniso_single_level = instance->drirc.debug.disable_aniso_single_level;
-   key->disable_shrink_image_store = instance->drirc.debug.disable_shrink_image_store;
-   key->disable_sinking_load_input_fs = instance->drirc.debug.disable_sinking_load_input_fs;
-   key->disable_trunc_coord = instance->drirc.debug.disable_trunc_coord;
-   key->enable_mrt_output_nan_fixup = instance->drirc.debug.enable_mrt_output_nan_fixup;
-   key->emulate_rt = radv_emulate_rt(pdev);
-   key->bvh8 = radv_use_bvh8(pdev);
-   key->ge_wave32 = pdev->ge_wave_size == 32;
-   key->invariant_geom = instance->drirc.debug.invariant_geom;
-   key->no_fmask = !!(instance->debug_flags & RADV_DEBUG_NO_FMASK);
-   key->no_ngg_gs = instance->drirc.performance.disable_ngg_gs;
-   key->no_rt = !!(instance->debug_flags & RADV_DEBUG_NO_RT);
-   key->ps_wave32 = pdev->ps_wave_size == 32;
-   key->rt_wave64 = pdev->rt_wave_size == 64;
-   key->split_fma = instance->drirc.debug.split_fma;
-   key->ssbo_non_uniform = instance->drirc.debug.ssbo_non_uniform;
-   key->tex_non_uniform = instance->drirc.debug.tex_non_uniform;
-   key->lower_terminate_to_discard = instance->drirc.debug.lower_terminate_to_discard;
-   key->use_llvm = pdev->use_llvm;
-   key->use_ngg = pdev->use_ngg;
-   key->use_ngg_culling = pdev->use_ngg_culling;
-   key->no_implicit_varying_subgroup_size = instance->drirc.debug.no_implicit_varying_subgroup_size;
-   key->mitigate_smem_oob =
-      pdev->info.compiler_info.has_smem_oob_access_bug && !(instance->debug_flags & RADV_DEBUG_NO_SMEM_MITIGATION);
-   key->rt_cps = !!(instance->perftest_flags & RADV_PERFTEST_RT_CPS);
-}
-
 static int
 radv_device_get_cache_uuid(struct radv_physical_device *pdev, void *uuid)
 {
@@ -369,6 +341,24 @@ static void
 radv_get_device_uuid(const struct radeon_info *gpu_info, void *uuid)
 {
    ac_compute_device_uuid(gpu_info, uuid, VK_UUID_SIZE);
+}
+
+static void
+radv_get_optimal_tiling_layout_uuid(struct radv_physical_device *pdev, void *uuid)
+{
+   unsigned char blake3[BLAKE3_KEY_LEN];
+   uint8_t cache_uuid[VK_UUID_SIZE];
+   blake3_hasher ctx;
+
+   radv_device_get_cache_uuid(pdev, cache_uuid);
+
+   /* The block memcpy optimization in addrlib is chip-specific. */
+   _mesa_blake3_init(&ctx);
+   _mesa_blake3_update(&ctx, cache_uuid, sizeof(cache_uuid));
+   _mesa_blake3_update(&ctx, &pdev->info.family, sizeof(pdev->info.family));
+   _mesa_blake3_final(&ctx, blake3);
+
+   memcpy(uuid, blake3, VK_UUID_SIZE);
 }
 
 static void
@@ -1803,7 +1793,7 @@ radv_get_physical_device_properties(struct radv_physical_device *pdev)
       .maxFragmentOutputAttachments = 8,
       .maxFragmentDualSrcAttachments = 1,
       .maxFragmentCombinedOutputResources = max_descriptor_set_size,
-      .maxComputeSharedMemorySize = pdev->info.lds_size_per_workgroup,
+      .maxComputeSharedMemorySize = pdev->info.compiler_info.lds_size_per_workgroup,
       .maxComputeWorkGroupCount = {4294967295, 65535, 65535},
       .maxComputeWorkGroupInvocations = 1024,
       .maxComputeWorkGroupSize = {1024, 1024, 1024},
@@ -2348,8 +2338,8 @@ radv_get_physical_device_properties(struct radv_physical_device *pdev)
    p->conformanceVersion = (VkConformanceVersion){
       .major = 1,
       .minor = 4,
-      .subminor = 0,
-      .patch = 0,
+      .subminor = 5,
+      .patch = 3,
    };
 
    /* VK_EXT_host_image_copy */
@@ -2389,7 +2379,7 @@ radv_get_physical_device_properties(struct radv_physical_device *pdev)
    p->pCopySrcLayouts = (VkImageLayout *)supported_layouts;
    p->copyDstLayoutCount = ARRAY_SIZE(supported_layouts);
    p->pCopyDstLayouts = (VkImageLayout *)supported_layouts;
-   memcpy(p->optimalTilingLayoutUUID, pdev->driver_uuid, VK_UUID_SIZE);
+   memcpy(p->optimalTilingLayoutUUID, pdev->optimal_tiling_layout_uuid, VK_UUID_SIZE);
    p->identicalMemoryTypeRequirements = false;
 
    /* VK_EXT_physical_device_drm */
@@ -2586,6 +2576,7 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
 
    radv_get_driver_uuid(&pdev->driver_uuid);
    radv_get_device_uuid(&pdev->info, &pdev->device_uuid);
+   radv_get_optimal_tiling_layout_uuid(pdev, &pdev->optimal_tiling_layout_uuid);
 
    pdev->dcc_msaa_allowed = (instance->perftest_flags & RADV_PERFTEST_DCC_MSAA);
 
@@ -2622,11 +2613,12 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
                             (instance->perftest_flags & RADV_PERFTEST_NGGC)) &&
                            !(instance->debug_flags & RADV_DEBUG_NO_NGGC);
 
-   pdev->use_ngg_streamout = pdev->info.gfx_level >= GFX11;
-
    pdev->emulate_ngg_gs_query_pipeline_stat = pdev->use_ngg && pdev->info.gfx_level < GFX11;
 
    pdev->emulate_mesh_shader_queries = pdev->info.gfx_level == GFX10_3;
+
+   /* PKT3_LOAD_SH_REG_INDEX is supported on GFX8+, but it hangs with compute queues until GFX10.3. */
+   pdev->load_grid_size_from_user_sgpr = pdev->info.gfx_level >= GFX10_3;
 
    /* Determine the number of threads per wave for all stages. */
    pdev->cs_wave_size = 64;
@@ -2685,10 +2677,6 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
       pdev->render_devid = render_stat.st_rdev;
    }
 
-   radv_physical_device_init_cache_key(pdev);
-
-   radv_get_nir_options(pdev);
-
    if (radv_device_get_cache_uuid(pdev, pdev->cache_uuid)) {
       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED, "cannot generate UUID");
       goto fail_wsi;
@@ -2699,10 +2687,10 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
     */
    char buf[VK_UUID_SIZE * 2 + 1];
    mesa_bytes_to_hex(buf, pdev->cache_uuid, VK_UUID_SIZE);
-   pdev->vk.disk_cache = disk_cache_create(pdev->name, buf, 0);
+   pdev->vk.disk_cache = disk_cache_create("RADV", buf, 0);
 
    pdev->disk_cache_meta =
-      disk_cache_create_custom(pdev->name, buf, 0, "radv_builtin_shaders", 1024 * 1024 * 32 /* 32MiB */);
+      disk_cache_create_custom("RADV", buf, 0, "radv_builtin_shaders", 1024 * 1024 * 32 /* 32MiB */);
 
    radv_get_physical_device_properties(pdev);
 
