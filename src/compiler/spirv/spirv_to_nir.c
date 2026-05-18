@@ -844,6 +844,7 @@ vtn_handle_debug_printf(struct vtn_builder *b, SpvOp ext_opcode,
 
    if (argc) {
       glsl_struct_field *fields = calloc(argc, sizeof(glsl_struct_field));
+      int next_offset = 0;
       for (uint32_t i = 0; i < argc; i++) {
          struct vtn_ssa_value *arg = vtn_ssa_value(b, w[6 + i]);
 
@@ -852,8 +853,11 @@ vtn_handle_debug_printf(struct vtn_builder *b, SpvOp ext_opcode,
             fields[i].type = glsl_vector_type(fields[i].type->base_type, arg->def->num_components);
 
          fields[i].name = "";
+         fields[i].offset = next_offset;
 
-         info->arg_sizes[i] = arg->def->bit_size / 8;
+         int size = (int) arg->def->bit_size * arg->def->num_components / 8;
+         info->arg_sizes[i] = size;
+         next_offset += size;
       }
 
       nir_variable *packed_args = nir_local_variable_create(
@@ -7642,12 +7646,14 @@ spirv_to_nir(const uint32_t *words, size_t word_count,
       replacement_size = ftell(f);
       if (replacement_size == 0) {
          vtn_info("Replacement SPIR-V shader file %s is empty.", filename);
+         fclose(f);
          goto no_shader_replace;
       }
 
       uint32_t *replacement_words = malloc(replacement_size);
       if (replacement_words == NULL) {
          vtn_err("Failed to allocate memory for replacement SPIR-V shader %s", filename);
+         fclose(f);
          goto no_shader_replace;
       }
 

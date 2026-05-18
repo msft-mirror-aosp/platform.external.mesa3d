@@ -690,6 +690,7 @@ panfrost_init_screen_caps(struct panfrost_screen *screen)
    caps->depth_clip_disable = true;
    caps->mixed_framebuffer_sizes = true;
    caps->frontend_noop = true;
+   caps->texture_query_lod = dev->arch >= 9;
    caps->sample_shading = dev->arch >= 6;
    caps->fragment_shader_derivatives = true;
    caps->framebuffer_no_attachment = true;
@@ -1174,6 +1175,9 @@ panfrost_create_screen(int fd, const struct pipe_screen_config *config,
       break;
    case 13:
       panfrost_cmdstream_screen_init_v13(screen);
+      break;
+   case 14:
+      panfrost_cmdstream_screen_init_v14(screen);
       break;
    default:
       debug_printf("panfrost: Unhandled architecture major %d", dev->arch);

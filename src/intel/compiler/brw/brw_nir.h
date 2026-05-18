@@ -155,6 +155,7 @@ bool brw_nir_lower_cs_subgroup_id(nir_shader *nir,
 bool brw_nir_lower_alpha_to_coverage(nir_shader *shader);
 bool brw_needs_vertex_attributes_bypass(const nir_shader *shader);
 void brw_nir_lower_fs_barycentrics(nir_shader *shader);
+bool brw_nir_lower_fully_covered(nir_shader *nir);
 
 struct brw_lower_urb_cb_data {
    const struct intel_device_info *devinfo;
@@ -237,6 +238,9 @@ void brw_nir_lower_mesh_outputs(nir_shader *nir,
 void brw_nir_lower_fs_outputs(nir_shader *nir);
 bool brw_nir_lower_fs_load_output(nir_shader *shader,
                                   const struct brw_fs_prog_key *key);
+bool brw_nir_lower_fs_config_intel(nir_shader *nir,
+                                   const struct brw_fs_prog_key *key,
+                                   const struct brw_fs_prog_data *prog_data);
 
 bool brw_nir_lower_frag_coord_z(nir_shader *nir,
                                 const struct intel_device_info *devinfo);
@@ -349,11 +353,6 @@ brw_uniform_block_size(const struct intel_device_info *devinfo,
 }
 
 void brw_nir_optimize(struct brw_pass_tracker *pt);
-
-#define BRW_NIR_FRAG_OUTPUT_INDEX_SHIFT 0
-#define BRW_NIR_FRAG_OUTPUT_INDEX_MASK INTEL_MASK(0, 0)
-#define BRW_NIR_FRAG_OUTPUT_LOCATION_SHIFT 1
-#define BRW_NIR_FRAG_OUTPUT_LOCATION_MASK INTEL_MASK(31, 1)
 
 bool brw_nir_move_interpolation_to_top(nir_shader *nir);
 nir_def *brw_nir_load_global_const(nir_builder *b,
