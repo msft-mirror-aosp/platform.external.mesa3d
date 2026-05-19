@@ -105,13 +105,11 @@ cc_library_shared {
         "vulkan_gfxstream_header",
         "wsi_entrypoints_headers",
     ],
-    generated_sources: [
-        "gfxstream_guest_vk_autogen_impl",
-        "gfxstream_vk_entrypoints_impl",
-    ],
     srcs: [
         ":files_lib_vulkan_enc",
         ":files_lib_vulkan_enc_android",
+        ":gfxstream_guest_vk_autogen_impl",
+        ":gfxstream_vk_entrypoints_impl",
         "gfxstream_vk_cmd.cpp",
         "gfxstream_vk_device.cpp",
         "gfxstream_vk_wsi.cpp",
@@ -176,6 +174,7 @@ cc_library_shared {
         "libOpenglCodecCommon",
         "libbase",
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

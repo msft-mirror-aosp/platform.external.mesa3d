@@ -136,11 +136,9 @@ cc_library_static {
         "vk_struct_type_cast",
         "wsi_entrypoints_headers",
     ],
-    generated_sources: [
-        "lvp_entrypoints_impl",
-    ],
     srcs: [
         ":liblvp_files",
+        ":lvp_entrypoints_impl",
         "lvp_acceleration_structure.c",
         "lvp_cmd_buffer.c",
         "lvp_descriptor_set.c",
@@ -200,6 +198,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

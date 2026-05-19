@@ -14,6 +14,17 @@ package {
     default_applicable_licenses: ["external_mesa3d_license"],
 }
 
+filegroup {
+    name: "vk_bvh_includes_1",
+    srcs: [
+        "leaf.h",
+        "vk_build_helpers.h",
+        "vk_build_interface.h",
+        "vk_bvh.h",
+        "vk_debug.h",
+    ],
+}
+
 genrule {
     name: "hploc_internal.spv.h",
     out: [
@@ -37,7 +48,9 @@ genrule {
         "src/vulkan/runtime",
         "src/vulkan/runtime/bvh",
     ],
-    cmd: "$(location glslangValidator) -V   --target-env spirv1.5 -x -o " +
+    cmd: "$(location glslangValidator) -V " +
+        "-Iexternal/mesa3d/src/vulkan/runtime/bvh " +
+        "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location " +
         "hploc_internal.comp) --quiet '-P#extension GL_GOOGLE_include_directive " +
         ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 " +
@@ -83,7 +96,9 @@ genrule {
         "src/vulkan/runtime",
         "src/vulkan/runtime/bvh",
     ],
-    cmd: "$(location glslangValidator) -V   --target-env spirv1.5 -x -o " +
+    cmd: "$(location glslangValidator) -V " +
+        "-Iexternal/mesa3d/src/vulkan/runtime/bvh " +
+        "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location " +
         "lbvh_generate_ir.comp) --quiet '-P#extension " +
         "GL_GOOGLE_include_directive : require' '-P#extension " +
@@ -129,7 +144,9 @@ genrule {
         "src/vulkan/runtime",
         "src/vulkan/runtime/bvh",
     ],
-    cmd: "$(location glslangValidator) -V   --target-env spirv1.5 -x -o " +
+    cmd: "$(location glslangValidator) -V " +
+        "-Iexternal/mesa3d/src/vulkan/runtime/bvh " +
+        "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location " +
         "lbvh_main.comp) --quiet '-P#extension GL_GOOGLE_include_directive : " +
         "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : " +
@@ -174,7 +191,9 @@ genrule {
         "src/vulkan/runtime",
         "src/vulkan/runtime/bvh",
     ],
-    cmd: "$(location glslangValidator) -V   --target-env spirv1.5 -x -o " +
+    cmd: "$(location glslangValidator) -V " +
+        "-Iexternal/mesa3d/src/vulkan/runtime/bvh " +
+        "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/leaf.spv.h) $(location leaf.comp) " +
         "--quiet '-P#extension GL_GOOGLE_include_directive : require' " +
         "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' " +
@@ -219,7 +238,9 @@ genrule {
         "src/vulkan/runtime",
         "src/vulkan/runtime/bvh",
     ],
-    cmd: "$(location glslangValidator) -V   --target-env spirv1.5 -x -o " +
+    cmd: "$(location glslangValidator) -V " +
+        "-Iexternal/mesa3d/src/vulkan/runtime/bvh " +
+        "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/morton.spv.h) $(location " +
         "morton.comp) --quiet '-P#extension GL_GOOGLE_include_directive : " +
         "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : " +
@@ -264,7 +285,9 @@ genrule {
         "src/vulkan/runtime",
         "src/vulkan/runtime/bvh",
     ],
-    cmd: "$(location glslangValidator) -V   --target-env spirv1.5 -x -o " +
+    cmd: "$(location glslangValidator) -V " +
+        "-Iexternal/mesa3d/src/vulkan/runtime/bvh " +
+        "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location " +
         "ploc_internal.comp) --quiet '-P#extension GL_GOOGLE_include_directive " +
         ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 " +

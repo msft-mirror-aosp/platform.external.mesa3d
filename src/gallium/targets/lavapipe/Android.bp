@@ -121,6 +121,7 @@ cc_library_shared {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

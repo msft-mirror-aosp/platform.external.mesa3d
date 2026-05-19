@@ -544,6 +544,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -641,6 +642,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -706,18 +708,16 @@ cc_library_static {
         "vk_physical_device_properties_headers",
         "vk_struct_type_cast",
     ],
-    generated_sources: [
-        "vk_cmd_enqueue_entrypoints_impl",
-        "vk_cmd_queue_impl",
-        "vk_common_entrypoints_impl",
-        "vk_dispatch_trampolines_impl",
-        "vk_format_info_impl",
-        "vk_physical_device_features_impl",
-        "vk_physical_device_properties_impl",
-        "vk_physical_device_spirv_caps",
-        "vk_synchronization_helpers",
-    ],
     srcs: [
+        ":vk_cmd_enqueue_entrypoints_impl",
+        ":vk_cmd_queue_impl",
+        ":vk_common_entrypoints_impl",
+        ":vk_dispatch_trampolines_impl",
+        ":vk_format_info_impl",
+        ":vk_physical_device_features_impl",
+        ":vk_physical_device_properties_impl",
+        ":vk_physical_device_spirv_caps",
+        ":vk_synchronization_helpers",
         ":vulkan_lite_runtime_files",
         "vk_blend.c",
         "vk_buffer.c",
@@ -793,6 +793,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -938,6 +939,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
