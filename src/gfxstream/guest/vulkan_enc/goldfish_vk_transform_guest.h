@@ -3505,11 +3505,23 @@ void transform_fromhost_VkDeviceDeviceMemoryReportCreateInfoEXT(
 
 #endif
 #ifdef VK_EXT_robustness2
+void transform_tohost_VkPhysicalDeviceRobustness2FeaturesKHR(
+    ResourceTracker* resourceTracker, VkPhysicalDeviceRobustness2FeaturesKHR* toTransform);
+
+void transform_fromhost_VkPhysicalDeviceRobustness2FeaturesKHR(
+    ResourceTracker* resourceTracker, VkPhysicalDeviceRobustness2FeaturesKHR* toTransform);
+
 DEFINE_ALIAS_FUNCTION(transform_tohost_VkPhysicalDeviceRobustness2FeaturesKHR,
                       transform_tohost_VkPhysicalDeviceRobustness2FeaturesEXT)
 
 DEFINE_ALIAS_FUNCTION(transform_fromhost_VkPhysicalDeviceRobustness2FeaturesKHR,
                       transform_fromhost_VkPhysicalDeviceRobustness2FeaturesEXT)
+
+void transform_tohost_VkPhysicalDeviceRobustness2PropertiesKHR(
+    ResourceTracker* resourceTracker, VkPhysicalDeviceRobustness2PropertiesKHR* toTransform);
+
+void transform_fromhost_VkPhysicalDeviceRobustness2PropertiesKHR(
+    ResourceTracker* resourceTracker, VkPhysicalDeviceRobustness2PropertiesKHR* toTransform);
 
 DEFINE_ALIAS_FUNCTION(transform_tohost_VkPhysicalDeviceRobustness2PropertiesKHR,
                       transform_tohost_VkPhysicalDeviceRobustness2PropertiesEXT)
@@ -3519,6 +3531,12 @@ DEFINE_ALIAS_FUNCTION(transform_fromhost_VkPhysicalDeviceRobustness2PropertiesKH
 
 #endif
 #ifdef VK_EXT_custom_border_color
+void transform_tohost_VkSamplerCustomBorderColorCreateInfoEXT(
+    ResourceTracker* resourceTracker, VkSamplerCustomBorderColorCreateInfoEXT* toTransform);
+
+void transform_fromhost_VkSamplerCustomBorderColorCreateInfoEXT(
+    ResourceTracker* resourceTracker, VkSamplerCustomBorderColorCreateInfoEXT* toTransform);
+
 void transform_tohost_VkPhysicalDeviceCustomBorderColorPropertiesEXT(
     ResourceTracker* resourceTracker, VkPhysicalDeviceCustomBorderColorPropertiesEXT* toTransform);
 

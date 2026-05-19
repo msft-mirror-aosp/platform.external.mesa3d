@@ -2860,6 +2860,7 @@ DEFINE_ALIAS_FUNCTION(unmarshal_VkDescriptorUpdateTemplateCreateInfo,
 #define OP_vkCreateDescriptorUpdateTemplateKHR 20222
 #define OP_vkDestroyDescriptorUpdateTemplateKHR 20223
 #define OP_vkUpdateDescriptorSetWithTemplateKHR 20224
+#define OP_vkCmdPushDescriptorSetWithTemplateKHR 20221
 #endif
 #ifdef VK_KHR_imageless_framebuffer
 DEFINE_ALIAS_FUNCTION(marshal_VkPhysicalDeviceImagelessFramebufferFeatures,
@@ -4122,11 +4123,27 @@ void unmarshal_VkDeviceDeviceMemoryReportCreateInfoEXT(
 
 #endif
 #ifdef VK_EXT_robustness2
+void marshal_VkPhysicalDeviceRobustness2FeaturesKHR(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    const VkPhysicalDeviceRobustness2FeaturesKHR* forMarshaling);
+
+void unmarshal_VkPhysicalDeviceRobustness2FeaturesKHR(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    VkPhysicalDeviceRobustness2FeaturesKHR* forUnmarshaling);
+
 DEFINE_ALIAS_FUNCTION(marshal_VkPhysicalDeviceRobustness2FeaturesKHR,
                       marshal_VkPhysicalDeviceRobustness2FeaturesEXT)
 
 DEFINE_ALIAS_FUNCTION(unmarshal_VkPhysicalDeviceRobustness2FeaturesKHR,
                       unmarshal_VkPhysicalDeviceRobustness2FeaturesEXT)
+
+void marshal_VkPhysicalDeviceRobustness2PropertiesKHR(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    const VkPhysicalDeviceRobustness2PropertiesKHR* forMarshaling);
+
+void unmarshal_VkPhysicalDeviceRobustness2PropertiesKHR(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    VkPhysicalDeviceRobustness2PropertiesKHR* forUnmarshaling);
 
 DEFINE_ALIAS_FUNCTION(marshal_VkPhysicalDeviceRobustness2PropertiesKHR,
                       marshal_VkPhysicalDeviceRobustness2PropertiesEXT)
@@ -4136,6 +4153,14 @@ DEFINE_ALIAS_FUNCTION(unmarshal_VkPhysicalDeviceRobustness2PropertiesKHR,
 
 #endif
 #ifdef VK_EXT_custom_border_color
+void marshal_VkSamplerCustomBorderColorCreateInfoEXT(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    const VkSamplerCustomBorderColorCreateInfoEXT* forMarshaling);
+
+void unmarshal_VkSamplerCustomBorderColorCreateInfoEXT(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    VkSamplerCustomBorderColorCreateInfoEXT* forUnmarshaling);
+
 void marshal_VkPhysicalDeviceCustomBorderColorPropertiesEXT(
     VulkanStreamGuest* vkStream, VkStructureType rootType,
     const VkPhysicalDeviceCustomBorderColorPropertiesEXT* forMarshaling);

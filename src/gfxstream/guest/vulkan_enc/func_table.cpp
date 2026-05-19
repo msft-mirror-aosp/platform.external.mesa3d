@@ -3414,6 +3414,19 @@ void gfxstream_vk_UpdateDescriptorSetWithTemplateKHR(
                                                     true /* do lock */);
     }
 }
+void gfxstream_vk_CmdPushDescriptorSetWithTemplateKHR(
+    VkCommandBuffer commandBuffer, VkDescriptorUpdateTemplate descriptorUpdateTemplate,
+    VkPipelineLayout layout, uint32_t set, const void* pData) {
+    MESA_TRACE_SCOPE("vkCmdPushDescriptorSetWithTemplateKHR");
+    VK_FROM_HANDLE(gfxstream_vk_command_buffer, gfxstream_commandBuffer, commandBuffer);
+    {
+        auto vkEnc = gfxstream::vk::ResourceTracker::getCommandBufferEncoder(
+            gfxstream_commandBuffer->internal_object);
+        vkEnc->vkCmdPushDescriptorSetWithTemplateKHR(gfxstream_commandBuffer->internal_object,
+                                                     descriptorUpdateTemplate, layout, set, pData,
+                                                     true /* do lock */);
+    }
+}
 #endif
 #ifdef VK_KHR_create_renderpass2
 VkResult gfxstream_vk_CreateRenderPass2KHR(VkDevice device,

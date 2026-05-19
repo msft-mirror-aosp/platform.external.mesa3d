@@ -7881,7 +7881,59 @@ void count_VkDeviceDeviceMemoryReportCreateInfoEXT(
 }
 
 #endif
+#ifdef VK_EXT_robustness2
+void count_VkPhysicalDeviceRobustness2FeaturesKHR(
+    uint32_t featureBits, VkStructureType rootType,
+    const VkPhysicalDeviceRobustness2FeaturesKHR* toCount, size_t* count) {
+    (void)featureBits;
+    (void)rootType;
+    (void)toCount;
+    (void)count;
+    *count += sizeof(VkStructureType);
+    if (rootType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+        rootType = toCount->sType;
+    }
+    count_extension_struct(featureBits, rootType, toCount->pNext, count);
+    *count += sizeof(VkBool32);
+    *count += sizeof(VkBool32);
+    *count += sizeof(VkBool32);
+}
+
+void count_VkPhysicalDeviceRobustness2PropertiesKHR(
+    uint32_t featureBits, VkStructureType rootType,
+    const VkPhysicalDeviceRobustness2PropertiesKHR* toCount, size_t* count) {
+    (void)featureBits;
+    (void)rootType;
+    (void)toCount;
+    (void)count;
+    *count += sizeof(VkStructureType);
+    if (rootType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+        rootType = toCount->sType;
+    }
+    count_extension_struct(featureBits, rootType, toCount->pNext, count);
+    *count += sizeof(VkDeviceSize);
+    *count += sizeof(VkDeviceSize);
+}
+
+#endif
 #ifdef VK_EXT_custom_border_color
+void count_VkSamplerCustomBorderColorCreateInfoEXT(
+    uint32_t featureBits, VkStructureType rootType,
+    const VkSamplerCustomBorderColorCreateInfoEXT* toCount, size_t* count) {
+    (void)featureBits;
+    (void)rootType;
+    (void)toCount;
+    (void)count;
+    *count += sizeof(VkStructureType);
+    if (rootType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+        rootType = toCount->sType;
+    }
+    count_extension_struct(featureBits, rootType, toCount->pNext, count);
+    count_VkClearColorValue(featureBits, rootType,
+                            (VkClearColorValue*)(&toCount->customBorderColor), count);
+    *count += sizeof(VkFormat);
+}
+
 void count_VkPhysicalDeviceCustomBorderColorPropertiesEXT(
     uint32_t featureBits, VkStructureType rootType,
     const VkPhysicalDeviceCustomBorderColorPropertiesEXT* toCount, size_t* count) {
@@ -9805,7 +9857,30 @@ void count_extension_struct(uint32_t featureBits, VkStructureType rootType,
             break;
         }
 #endif
+#ifdef VK_EXT_robustness2
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR: {
+            count_VkPhysicalDeviceRobustness2FeaturesKHR(
+                featureBits, rootType,
+                reinterpret_cast<const VkPhysicalDeviceRobustness2FeaturesKHR*>(structExtension),
+                count);
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_PROPERTIES_KHR: {
+            count_VkPhysicalDeviceRobustness2PropertiesKHR(
+                featureBits, rootType,
+                reinterpret_cast<const VkPhysicalDeviceRobustness2PropertiesKHR*>(structExtension),
+                count);
+            break;
+        }
+#endif
 #ifdef VK_EXT_custom_border_color
+        case VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT: {
+            count_VkSamplerCustomBorderColorCreateInfoEXT(
+                featureBits, rootType,
+                reinterpret_cast<const VkSamplerCustomBorderColorCreateInfoEXT*>(structExtension),
+                count);
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_PROPERTIES_EXT: {
             count_VkPhysicalDeviceCustomBorderColorPropertiesEXT(
                 featureBits, rootType,

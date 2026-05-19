@@ -696,7 +696,18 @@ size_t goldfish_vk_extension_struct_size(VkStructureType rootType, const void* s
             return sizeof(VkDeviceDeviceMemoryReportCreateInfoEXT);
         }
 #endif
+#ifdef VK_EXT_robustness2
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR: {
+            return sizeof(VkPhysicalDeviceRobustness2FeaturesKHR);
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_PROPERTIES_KHR: {
+            return sizeof(VkPhysicalDeviceRobustness2PropertiesKHR);
+        }
+#endif
 #ifdef VK_EXT_custom_border_color
+        case VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT: {
+            return sizeof(VkSamplerCustomBorderColorCreateInfoEXT);
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_PROPERTIES_EXT: {
             return sizeof(VkPhysicalDeviceCustomBorderColorPropertiesEXT);
         }
@@ -1466,7 +1477,18 @@ size_t goldfish_vk_extension_struct_size_with_stream_features(uint32_t streamFea
             return sizeof(VkDeviceDeviceMemoryReportCreateInfoEXT);
         }
 #endif
+#ifdef VK_EXT_robustness2
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR: {
+            return sizeof(VkPhysicalDeviceRobustness2FeaturesKHR);
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_PROPERTIES_KHR: {
+            return sizeof(VkPhysicalDeviceRobustness2PropertiesKHR);
+        }
+#endif
 #ifdef VK_EXT_custom_border_color
+        case VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT: {
+            return sizeof(VkSamplerCustomBorderColorCreateInfoEXT);
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_PROPERTIES_EXT: {
             return sizeof(VkPhysicalDeviceCustomBorderColorPropertiesEXT);
         }
