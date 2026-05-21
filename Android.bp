@@ -29,6 +29,17 @@ license {
 }
 
 cc_defaults {
+    name: "_trial_c",
+    vendor: true,
+    cppflags: select((arch(), os()), {
+        ("arm64", "android"): [
+            "-Wno-unused-function",
+        ],
+        (default, default): [],
+    }),
+}
+
+cc_defaults {
     name: "_trial_msvc",
     vendor: true,
     host_supported: true,
@@ -108,7 +119,7 @@ cc_defaults {
         "-DHAVE_POSIX_MEMALIGN",
         "-DHAVE_PTHREAD",
         "-DHAVE_RANDOM_R",
-        "-DHAVE_RENDERDOC_INTEGRATION=true",
+        "-DHAVE_RENDERDOC_INTEGRATION=1",
         "-DHAVE_STRTOD_L",
         "-DHAVE_STRTOF",
         "-DHAVE_STRTOK_R",
@@ -116,6 +127,7 @@ cc_defaults {
         "-DHAVE_SYSCONF",
         "-DHAVE_SYS_INOTIFY_H",
         "-DHAVE_SYS_SHM_H",
+        "-DHAVE_ZLIB",
         "-DHAVE_ZSTD",
         "-DHAVE___BUILTIN_ADD_OVERFLOW",
         "-DHAVE___BUILTIN_BSWAP32",
@@ -312,7 +324,7 @@ cc_defaults {
         "-DHAVE_POSIX_MEMALIGN",
         "-DHAVE_PTHREAD",
         "-DHAVE_RANDOM_R",
-        "-DHAVE_RENDERDOC_INTEGRATION=true",
+        "-DHAVE_RENDERDOC_INTEGRATION=1",
         "-DHAVE_STRTOD_L",
         "-DHAVE_STRTOF",
         "-DHAVE_STRTOK_R",
@@ -320,6 +332,7 @@ cc_defaults {
         "-DHAVE_SYSCONF",
         "-DHAVE_SYS_INOTIFY_H",
         "-DHAVE_SYS_SHM_H",
+        "-DHAVE_ZLIB",
         "-DHAVE_ZSTD",
         "-DHAVE___BUILTIN_ADD_OVERFLOW",
         "-DHAVE___BUILTIN_BSWAP32",
@@ -469,6 +482,17 @@ cc_defaults {
     ldflags: [
         "-Wl,-Bsymbolic",
     ],
+}
+
+cc_defaults {
+    name: "ld_args_build_id",
+    vendor: true,
+    ldflags: select((arch(), os()), {
+        ("arm64", "android"): [
+            "-Wl,--build-id=sha1",
+        ],
+        (default, default): [],
+    }),
 }
 
 cc_defaults {

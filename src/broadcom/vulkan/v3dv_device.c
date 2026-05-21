@@ -189,6 +189,7 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .KHR_shader_float_controls            = true,
       .KHR_shader_non_semantic_info         = true,
       .KHR_shader_relaxed_extended_instruction = true,
+      .KHR_shader_subgroup_extended_types   = true,
       .KHR_sampler_mirror_clamp_to_edge     = true,
       .KHR_sampler_ycbcr_conversion         = true,
       .KHR_spirv_1_4                        = true,
@@ -1013,7 +1014,7 @@ get_device_properties(const struct v3dv_physical_device *device,
 
       /* Fragment limits */
       .maxFragmentInputComponents               = max_varying_components,
-      .maxFragmentOutputAttachments             = 4,
+      .maxFragmentOutputAttachments             = max_rts,
       .maxFragmentDualSrcAttachments            = 1,
       .maxFragmentCombinedOutputResources       = max_rts +
                                                   MAX_STORAGE_BUFFERS +

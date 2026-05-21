@@ -128,10 +128,8 @@ cc_library_static {
         "vk_struct_type_cast",
         "wsi_entrypoints_headers",
     ],
-    generated_sources: [
-        "wsi_entrypoints_impl",
-    ],
     srcs: [
+        ":wsi_entrypoints_impl",
         "wsi_common.c",
         "wsi_common_drm.c",
         "wsi_common_headless.c",
@@ -171,6 +169,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

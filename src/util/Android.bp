@@ -46,6 +46,18 @@ python_binary_host {
 }
 
 python_binary_host {
+    name: "glsl2spirv_py_binary",
+    main: "glsl2spirv.py",
+    srcs: [
+        "glsl2spirv.py",
+    ],
+    libs: [
+        "mako",
+        "pyyaml",
+    ],
+}
+
+python_binary_host {
     name: "process_shader_stats_py_binary",
     main: "process_shader_stats.py",
     srcs: [
@@ -239,13 +251,11 @@ cc_library_static {
         "u_format_gen.h",
         "u_format_pack.h",
     ],
-    generated_sources: [
-        "format_srgb",
-        "u_format_table.c",
-    ],
     srcs: [
         ":files_mesa_format",
         ":files_mesa_util",
+        ":format_srgb",
+        ":u_format_table.c",
         "anon_file.c",
         "bitscan.c",
         "blob.c",
@@ -369,6 +379,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -542,6 +553,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

@@ -62,13 +62,10 @@ cc_library_static {
         ],
         (default, default): [],
     }),
-    generated_headers: select((os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
-        ("android", "true"): [
-            "shader_stats.h",
-            "u_format_gen.h",
-        ],
-        (default, default): [],
-    }),
+    generated_headers: [
+        "shader_stats.h",
+        "u_format_gen.h",
+    ],
     srcs: select((os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
         ("android", "true"): [
             "pps.cc",
@@ -106,6 +103,7 @@ cc_library_static {
             "liblog",
             "libnativewindow",
             "libsync",
+            "libz",
             "libzstd",
         ],
         (default, default): [],

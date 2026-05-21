@@ -25,7 +25,6 @@ filegroup {
         "tgsi_from_mesa.c",
         "tgsi_info.c",
         "tgsi_iterate.c",
-        "tgsi_lowering.c",
         "tgsi_parse.c",
         "tgsi_point_sprite.c",
         "tgsi_sanity.c",

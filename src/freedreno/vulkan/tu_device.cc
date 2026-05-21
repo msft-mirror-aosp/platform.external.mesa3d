@@ -25,6 +25,7 @@
 #include "vk_debug_utils.h"
 #include "vk_shader_module.h"
 #include "vk_util.h"
+#include "vk_sampler.h"
 
 #include "common/freedreno_uuid.h"
 #include "fdl/freedreno_layout.h"
@@ -1435,7 +1436,8 @@ tu_get_properties(struct tu_physical_device *pdevice,
    /* VK_KHR_maintenance5 */
    props->earlyFragmentMultisampleCoverageAfterSampleCounting = true;
    props->earlyFragmentSampleMaskTestBeforeSampleCounting = true;
-   props->depthStencilSwizzleOneSupport = true;
+   props->depthStencilSwizzleOneSupport =
+      pdevice->info->props.has_z24uint_s8uint && pdevice->instance->enable_d24s8_border_color_workaround;
    props->polygonModePointSize = true;
    props->nonStrictWideLinesUseParallelogram = false;
    props->nonStrictSinglePixelWideLinesUseParallelogram = false;
@@ -1496,7 +1498,9 @@ tu_get_properties(struct tu_physical_device *pdevice,
       VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
       VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
       VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
+      VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR,
       VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT,
+      VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ,
    };
 
    props->pCopySrcLayouts = (VkImageLayout *)supported_layouts;
@@ -1686,6 +1690,7 @@ tu_physical_device_init(struct tu_physical_device *device,
    device->level1_dcache_size = util_cache_granularity();
    device->has_cached_non_coherent_memory =
       device->level1_dcache_size > 0 && !DETECT_ARCH_ARM;
+   device->preferred_uncached_as_cached_index = -1;
 
    device->memory.type_count = 1;
    device->memory.types[0] =
@@ -1699,6 +1704,11 @@ tu_physical_device_init(struct tu_physical_device *device,
          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
          VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+
+      if (instance->override_uncached_as_cache_coherent) {
+          /* Retain this memory type index to override later. */
+          device->preferred_uncached_as_cached_index = device->memory.type_count;
+      }
       device->memory.type_count++;
    }
 
@@ -1830,6 +1840,7 @@ static const driOptionDescription tu_dri_options[] = {
       DRI_CONF_VK_X11_STRICT_IMAGE_COUNT(false)
       DRI_CONF_VK_X11_ENSURE_MIN_IMAGE_COUNT(false)
       DRI_CONF_VK_XWAYLAND_WAIT_READY(false)
+      DRI_CONF_TU_ALLOW_CONCURRENT_BINNING(false)
    DRI_CONF_SECTION_END
 
    DRI_CONF_SECTION_DEBUG
@@ -1844,12 +1855,14 @@ static const driOptionDescription tu_dri_options[] = {
       DRI_CONF_DISABLE_CONSERVATIVE_LRZ(false)
       DRI_CONF_TU_DONT_RESERVE_DESCRIPTOR_SET(false)
       DRI_CONF_TU_ALLOW_OOB_INDIRECT_UBO_LOADS(false)
-      DRI_CONF_TU_DISABLE_D24S8_BORDER_COLOR_WORKAROUND(false)
+      DRI_CONF_TU_ENABLE_D24S8_BORDER_COLOR_WORKAROUND(false)
+      DRI_CONF_TU_ENABLE_FAST_BORDER_COLOR_FOR_UNDEFINED_FORMATS(false)
       DRI_CONF_TU_USE_TEX_COORD_ROUND_NEAREST_EVEN_MODE(false)
       DRI_CONF_TU_IGNORE_FRAG_DEPTH_DIRECTION(false)
       DRI_CONF_TU_ENABLE_SOFTFLOAT32(false)
       DRI_CONF_TU_EMULATE_ALPHA_TO_COVERAGE(false)
       DRI_CONF_TU_AUTOTUNE_ALGORITHM()
+      DRI_CONF_TU_OVERRIDE_UNCACHED_AS_CACHE_COHERENT(false)
    DRI_CONF_SECTION_END
 };
 
@@ -1872,8 +1885,10 @@ tu_init_dri_options(struct tu_instance *instance)
          !driQueryOptionb(&instance->dri_options, "tu_dont_reserve_descriptor_set");
    instance->allow_oob_indirect_ubo_loads =
          driQueryOptionb(&instance->dri_options, "tu_allow_oob_indirect_ubo_loads");
-   instance->disable_d24s8_border_color_workaround =
-         driQueryOptionb(&instance->dri_options, "tu_disable_d24s8_border_color_workaround");
+   instance->enable_d24s8_border_color_workaround =
+         driQueryOptionb(&instance->dri_options, "tu_enable_d24s8_border_color_workaround");
+   instance->enable_fast_border_color_for_undefined_formats =
+         driQueryOptionb(&instance->dri_options, "tu_enable_fast_border_color_for_undefined_formats");
    instance->use_tex_coord_round_nearest_even_mode =
          driQueryOptionb(&instance->dri_options, "tu_use_tex_coord_round_nearest_even_mode");
    instance->ignore_frag_depth_direction =
@@ -1884,6 +1899,11 @@ tu_init_dri_options(struct tu_instance *instance)
          driQueryOptionb(&instance->dri_options, "tu_emulate_alpha_to_coverage");
    instance->autotune_algo =
          driQueryOptionstr(&instance->dri_options, "tu_autotune_algorithm");
+   instance->override_uncached_as_cache_coherent =
+         driQueryOptionb(&instance->dri_options, "tu_override_uncached_as_cache_coherent");
+   instance->allow_concurrent_binning =
+      (driQueryOptionb(&instance->dri_options, "tu_allow_concurrent_binning") && !TU_DEBUG(NO_CONCURRENT_BINNING)) ||
+      TU_DEBUG(FORCE_CONCURRENT_BINNING);
 }
 
 static uint32_t instance_count = 0;
@@ -2375,10 +2395,9 @@ tu_create_copy_timestamp_cs(struct tu_u_trace_submission_data *submission_data,
 
       tu_cs_init(&submission_data->timestamp_copy_data->cs, device,
                  TU_CS_MODE_GROW, cs_size, "trace copy timestamp cs");
+      u_trace_init(&submission_data->timestamp_copy_data->trace,
+                   &device->trace_context);
    }
-
-   u_trace_init(&submission_data->timestamp_copy_data->trace,
-                &device->trace_context);
 
    tu_cs *cs = &submission_data->timestamp_copy_data->cs;
 
@@ -2472,7 +2491,7 @@ fail:
    return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
 }
 
-void
+static void
 tu_free_copy_timestamp_data(struct tu_device *device,
                             struct tu_copy_timestamp_data *data)
 {
@@ -2492,6 +2511,8 @@ tu_u_trace_submission_data_finish(
       if (u_trace_enabled(&device->trace_context)) {
          tu_cs_reset(&submission_data->timestamp_copy_data->cs);
          u_trace_fini(&submission_data->timestamp_copy_data->trace);
+         u_trace_init(&submission_data->timestamp_copy_data->trace,
+                      &device->trace_context);
 
          mtx_lock(&device->copy_timestamp_cs_pool_mutex);
          list_addtail(&submission_data->timestamp_copy_data->node,
@@ -2718,7 +2739,7 @@ tu_device_get_timestamp(struct vk_device *vk_device, uint64_t *timestamp)
    return ret == 0 ? VK_SUCCESS : VK_ERROR_UNKNOWN;
 }
 
-void
+static void
 tu_device_destroy_mutexes(struct tu_device *device)
 {
    mtx_destroy(&device->bo_mutex);
@@ -3030,6 +3051,12 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
 
    global->zero_64b = 0;
 
+   for (int i = 0; i < TU_BORDER_COLOR_BUILTIN; i++) {
+      VkClearColorValue border_color = vk_border_color_value((VkBorderColor) i);
+      tu6_pack_border_color(&global->bcolor_builtin[i], &border_color,
+                            vk_border_color_is_int((VkBorderColor) i));
+   }
+
    /* initialize to ones so ffs can be used to find unused slots */
    BITSET_ONES(device->custom_border_color);
 
@@ -3127,7 +3154,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
    device->use_z24uint_s8uint =
       physical_device->info->props.has_z24uint_s8uint &&
       (!border_color_without_format ||
-       physical_device->instance->disable_d24s8_border_color_workaround);
+       !physical_device->instance->enable_d24s8_border_color_workaround);
    device->use_lrz = !TU_DEBUG_START(NOLRZ);
 
    tu_gpu_tracepoint_config_variable();
@@ -3957,7 +3984,7 @@ tu_get_msrtss_temporary(struct tu_device *dev,
  * framebuffer with render passes or the command buffer with dynamic
  * rendering.
  */
-VkResult
+static VkResult
 tu_init_msrtss_attachments(struct tu_device *device,
                            const struct tu_render_pass *pass,
                            const struct tu_framebuffer *fb,

@@ -648,9 +648,13 @@
    DRI_CONF_OPT_B(tu_allow_oob_indirect_ubo_loads, def, \
                   "Some D3D11 games rely on out-of-bounds indirect UBO loads to return real values from underlying bound descriptor, this prevents us from lowering indirectly accessed UBOs to consts")
 
-#define DRI_CONF_TU_DISABLE_D24S8_BORDER_COLOR_WORKAROUND(def) \
-   DRI_CONF_OPT_B(tu_disable_d24s8_border_color_workaround, def, \
-                  "Use UBWC for D24S8 images with VK_IMAGE_USAGE_SAMPLED_BIT when customBorderColorWithoutFormat is enabled")
+#define DRI_CONF_TU_ENABLE_D24S8_BORDER_COLOR_WORKAROUND(def) \
+   DRI_CONF_OPT_B(tu_enable_d24s8_border_color_workaround, def, \
+                  "Disable UBWC for D24S8 images with VK_IMAGE_USAGE_SAMPLED_BIT when customBorderColorWithoutFormat is enabled")
+
+#define DRI_CONF_TU_ENABLE_FAST_BORDER_COLOR_FOR_UNDEFINED_FORMATS(def) \
+   DRI_CONF_OPT_B(tu_enable_fast_border_color_for_undefined_formats, def, \
+                  "Enables fast border color HW feature for VK_FORMAT_UNDEFINED sampler formats.")
 
 #define DRI_CONF_TU_USE_TEX_COORD_ROUND_NEAREST_EVEN_MODE(def) \
    DRI_CONF_OPT_B(tu_use_tex_coord_round_nearest_even_mode, def, \
@@ -671,6 +675,14 @@
 #define DRI_CONF_TU_AUTOTUNE_ALGORITHM() \
    DRI_CONF_OPT_S_NODEF(tu_autotune_algorithm, \
                         "Set the preferred autotune algorithm")
+
+#define DRI_CONF_TU_OVERRIDE_UNCACHED_AS_CACHE_COHERENT(def) \
+   DRI_CONF_OPT_B(tu_override_uncached_as_cache_coherent, def, \
+                  "Replaces uncached-host allocations with cached-coherent-host when possible. Only useful under x86 emulation where memory accesses tend to be atomic")
+
+#define DRI_CONF_TU_ALLOW_CONCURRENT_BINNING(def) \
+   DRI_CONF_OPT_B(tu_allow_concurrent_binning, def, \
+                  "Allow concurrent binning on A7XX+, the CB is disabled by default because it regresses performance on desktop games")
 
 /**
  * \brief Honeykrisp specific configuration options
@@ -841,10 +853,6 @@
    DRI_CONF_OPT_B(radv_cooperative_matrix2_nv, def, \
                   "Expose VK_NV_cooperative_matrix2 on supported hardware.")
 
-#define DRI_CONF_RADV_ALLOW_DGC_MULTIVIEW(def) \
-   DRI_CONF_OPT_B(radv_allow_dgc_multiview, def, \
-                  "Allow to use DGC with multiview for DX12 emulation.")
-
 #define DRI_CONF_RADV_GFX12_HIZ_WA() \
    DRI_CONF_OPT_S_NODEF(radv_gfx12_hiz_wa, \
                         "Choose the specific HiZ workaround to apply on GFX12 (RDNA4). " \
@@ -975,6 +983,10 @@
 #define DRI_CONF_ANV_ENABLE_SCRATCH_PAGE(def) \
    DRI_CONF_OPT_B(anv_enable_scratch_page, def, \
                   "Disables surface padding and suppresses all page faults, drops writes and returns zeros on reads.")
+
+#define DRI_CONF_ANV_ENABLE_FULLY_COVERED(def) \
+   DRI_CONF_OPT_B(anv_enable_fully_covered, def, \
+                  "Enable fullyCoveredFragmentShaderInputVariable (Alchemist and newer only).")
 
 /**
  * \brief HASVK specific configuration options

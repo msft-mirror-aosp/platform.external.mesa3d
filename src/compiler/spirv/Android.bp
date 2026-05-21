@@ -194,11 +194,9 @@ cc_library_static {
         "u_format_gen.h",
         "vtn_generator_ids.h",
     ],
-    generated_sources: [
-        "spirv_info_impl",
-        "vtn_gather_types.c",
-    ],
     srcs: [
+        ":spirv_info_impl",
+        ":vtn_gather_types.c",
         "gl_spirv.c",
         "spirv_to_nir.c",
         "vtn_alu.c",
@@ -237,6 +235,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

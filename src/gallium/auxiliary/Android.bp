@@ -76,8 +76,8 @@ genrule {
     tools: [
         "u_tracepoints_py_binary",
     ],
-    cmd: "$(location u_tracepoints_py_binary) -p /src/util/perf/ -C $(location " +
-        "u_tracepoints.c)",
+    cmd: "$(location u_tracepoints_py_binary) -p $(genDir)/src/util/perf/ -C " +
+        "$(location u_tracepoints.c)",
 }
 
 genrule {
@@ -93,8 +93,8 @@ genrule {
         "src/gallium",
         "src/gallium/auxiliary",
     ],
-    cmd: "$(location u_tracepoints_py_binary) -p /src/util/perf/ -H $(location " +
-        "src/gallium/auxiliary/u_tracepoints.h)",
+    cmd: "$(location u_tracepoints_py_binary) -p $(genDir)/src/util/perf/ -H " +
+        "$(location src/gallium/auxiliary/u_tracepoints.h)",
 }
 
 genrule {
@@ -262,12 +262,6 @@ cc_library_static {
         "u_format_gen.h",
         "u_tracepoints.h",
     ],
-    generated_sources: [
-        "tr_util.ch_impl",
-        "u_indices_gen.c",
-        "u_tracepoints.c",
-        "u_unfilled_gen.c",
-    ],
     srcs: [
         ":files_libgallium",
         ":files_libgallium_1",
@@ -285,6 +279,10 @@ cc_library_static {
         ":files_libgallium_7",
         ":files_libgallium_8",
         ":files_libgallium_9",
+        ":tr_util.ch_impl",
+        ":u_indices_gen.c",
+        ":u_tracepoints.c",
+        ":u_unfilled_gen.c",
     ],
     static_libs: [
         "blake3",
@@ -312,6 +310,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -393,6 +392,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -463,6 +463,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -535,6 +536,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

@@ -1,0 +1,29 @@
+/*
+ * Copyright (C) 2025-2026 The Magma GPU Project
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Generated via:
+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
+ *
+ * Submit patches, do not hand-edit.
+ *
+ */
+
+package {
+    // See: http://go/android-license-faq
+    default_applicable_licenses: ["external_mesa3d_license"],
+}
+
+cc_defaults {
+    name: "computerator_cpp_args",
+    vendor: true,
+    cppflags: select((arch(), os()), {
+        ("arm64", "android"): [
+            "-Wno-array-bounds",
+            "-Wno-c++11-narrowing",
+            "-Wno-narrowing",
+            "-Wno-sign-compare",
+        ],
+        (default, default): [],
+    }),
+}

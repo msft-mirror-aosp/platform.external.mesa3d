@@ -159,6 +159,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .KHR_depth_stencil_resolve             = true,
       .KHR_descriptor_update_template        = true,
       .KHR_device_group                      = true,
+      .KHR_device_address_commands           = true,
       .KHR_draw_indirect_count               = true,
       .KHR_driver_properties                 = true,
       .KHR_dynamic_rendering                 = true,
@@ -327,12 +328,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .EXT_host_image_copy                   = true,
       .EXT_host_query_reset                  = true,
       .EXT_image_2d_view_of_3d               = true,
-      /* Because of Xe2 PAT selected compression and the Vulkan spec
-       * requirement to always return the same memory types for Images with
-       * same properties we can't support EXT_image_compression_control on Xe2+
-       */
-      .EXT_image_compression_control         = device->instance->compression_control_enabled &&
-                                               device->info.ver < 20,
+      .EXT_image_compression_control         = device->has_compression_control,
       .EXT_image_drm_format_modifier         = true,
       .EXT_image_robustness                  = true,
       .EXT_image_sliced_view_of_3d           = true,
@@ -391,6 +387,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .EXT_shader_uniform_buffer_unsized_array = true,
       .EXT_subgroup_size_control             = !device->brw_disable_subgroup_size_control,
 #ifdef ANV_USE_WSI_PLATFORM
+      .EXT_image_compression_control_swapchain = device->has_compression_control,
       .EXT_swapchain_maintenance1            = true,
 #endif
       .EXT_texel_buffer_alignment            = true,
@@ -950,7 +947,7 @@ get_features(const struct anv_physical_device *pdevice,
       .videoDecodeVP9 = true,
 
       /* VK_EXT_image_compression_control */
-      .imageCompressionControl = true,
+      .imageCompressionControl = pdevice->has_compression_control,
 
       /* VK_KHR_shader_float_controls2 */
       .shaderFloatControls2 = true,
@@ -1051,6 +1048,12 @@ get_features(const struct anv_physical_device *pdevice,
 
       /* VK_KHR_maintenance11 */
       .maintenance11 = true,
+
+      /* VK_KHR_device_address_commands */
+      .deviceAddressCommands = true,
+
+      /* VK_EXT_swapchain_compression_control */
+      .imageCompressionControlSwapchain = pdevice->has_compression_control,
    };
 
    /* The new DOOM and Wolfenstein games require depthBounds without
@@ -1698,8 +1701,15 @@ get_properties(const struct anv_physical_device *pdevice,
       props->conservativePointAndLineRasterization = false;
       props->degenerateTrianglesRasterized = true;
       props->degenerateLinesRasterized = false;
-      props->fullyCoveredFragmentShaderInputVariable = false;
-      props->conservativeRasterizationPostDepthCoverage = true;
+
+      bool fully_covered = pdevice->instance->enable_fully_covered &&
+         pdevice->info.verx10 >= 125;
+
+      props->fullyCoveredFragmentShaderInputVariable = fully_covered;
+      /* InnerCoverage, used to implement fully covered, is mutually exclusive
+       * with PostDepthCoverage.
+       */
+      props->conservativeRasterizationPostDepthCoverage = !fully_covered;
    }
 
    /* VK_EXT_custom_border_color */
@@ -2875,9 +2885,16 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
       goto fail_base;
 
    device->has_cooperative_matrix =
-      (device->info.has_systolic || debug_get_bool_option("INTEL_LOWER_DPAS", false)) &&
-      device->info.cooperative_matrix_configurations[0].scope != INTEL_CMAT_SCOPE_NONE &&
+      (device->info.has_systolic ||
+       debug_get_bool_option("INTEL_LOWER_DPAS", false)) &&
       !intel_use_jay_any_stage(&device->info);
+
+   /* Because of Xe2 PAT selected compression and the Vulkan spec requirement
+    * to always return the same memory types for Images with same properties
+    * we can't support EXT_image_compression_control on Xe2+.
+    */
+   device->has_compression_control =
+      instance->compression_control_enabled && device->info.ver < 20;
 
    if (is_virtio) {
       struct util_sync_provider *sync = intel_virtio_sync_provider(fd);
@@ -3401,28 +3418,66 @@ VkResult anv_GetPhysicalDeviceFragmentShadingRatesKHR(
    return vk_outarray_status(&out);
 }
 
-static VkComponentTypeKHR
-convert_component_type(enum intel_cooperative_matrix_component_type t)
+static void
+anv_fill_all_cooperative_matrix_props(const struct anv_physical_device *pdevice, struct __vk_outarray *base,
+                                      void (*fill_cb)(struct __vk_outarray *base, unsigned exec_size,
+                                                      VkComponentTypeKHR a_type, VkComponentTypeKHR b_type,
+                                                      VkComponentTypeKHR c_type, VkComponentTypeKHR r_type,
+                                                      unsigned ops_per_chan, bool saturate))
 {
-   switch (t) {
-   case INTEL_CMAT_FLOAT16:  return VK_COMPONENT_TYPE_FLOAT16_KHR;
-   case INTEL_CMAT_FLOAT32:  return VK_COMPONENT_TYPE_FLOAT32_KHR;
-   case INTEL_CMAT_SINT32:   return VK_COMPONENT_TYPE_SINT32_KHR;
-   case INTEL_CMAT_SINT8:    return VK_COMPONENT_TYPE_SINT8_KHR;
-   case INTEL_CMAT_UINT32:   return VK_COMPONENT_TYPE_UINT32_KHR;
-   case INTEL_CMAT_UINT8:    return VK_COMPONENT_TYPE_UINT8_KHR;
-   case INTEL_CMAT_BFLOAT16: return VK_COMPONENT_TYPE_BFLOAT16_KHR;
+   const struct intel_device_info *devinfo = &pdevice->info;
+   if (!pdevice->has_cooperative_matrix)
+      return;
+
+   const bool emulated = debug_get_bool_option("INTEL_LOWER_DPAS", false);
+   const unsigned exec_size = devinfo->ver >= 20 ? 16 : 8;
+
+#define FILL(a_type, b_type, c_type, r_type, ops_per_chan, sat) \
+   fill_cb(base, exec_size,                                     \
+           VK_COMPONENT_TYPE_##a_type##_KHR,                    \
+           VK_COMPONENT_TYPE_##b_type##_KHR,                    \
+           VK_COMPONENT_TYPE_##c_type##_KHR,                    \
+           VK_COMPONENT_TYPE_##r_type##_KHR,                    \
+           ops_per_chan, sat)
+
+   /* Note: XeHP doesn't have this configuration. */
+   if (devinfo->ver >= 20 || emulated)
+      FILL(FLOAT16, FLOAT16, FLOAT16, FLOAT16, 2, false);
+
+   FILL(FLOAT16, FLOAT16, FLOAT32, FLOAT32, 2, false);
+
+   if (devinfo->has_bfloat16 && !emulated) {
+      if (devinfo->ver >= 20)
+         FILL(BFLOAT16, BFLOAT16, BFLOAT16, BFLOAT16, 2, false);
+      FILL(BFLOAT16, BFLOAT16, FLOAT32, FLOAT32, 2, false);
    }
-   UNREACHABLE("invalid cooperative matrix component type in configuration");
+
+   FILL(SINT8, SINT8, SINT32, SINT32, 4, false);
+   FILL(UINT8, UINT8, UINT32, UINT32, 4, false);
+
+#undef FILL
 }
 
-static VkScopeKHR
-convert_scope(enum intel_cmat_scope scope)
+static void
+anv_fill_cooperative_matrix_prop(struct __vk_outarray *base, unsigned exec_size,
+                                 VkComponentTypeKHR a_type, VkComponentTypeKHR b_type,
+                                 VkComponentTypeKHR c_type, VkComponentTypeKHR r_type,
+                                 unsigned ops_per_chan, bool saturate)
 {
-   switch (scope) {
-   case INTEL_CMAT_SCOPE_SUBGROUP: return VK_SCOPE_SUBGROUP_KHR;
-   default:
-      UNREACHABLE("invalid cooperative matrix scope in configuration");
+   vk_outarray(VkCooperativeMatrixPropertiesKHR) *out = (void *)base;
+
+   vk_outarray_append_typed(VkCooperativeMatrixPropertiesKHR, out, p)
+   {
+      *p = (struct VkCooperativeMatrixPropertiesKHR){.sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
+                                                     .MSize = 8,
+                                                     .NSize = exec_size,
+                                                     .KSize = 8 * ops_per_chan,
+                                                     .AType = a_type,
+                                                     .BType = b_type,
+                                                     .CType = c_type,
+                                                     .ResultType = r_type,
+                                                     .saturatingAccumulation = saturate,
+                                                     .scope = VK_SCOPE_SUBGROUP_KHR};
    }
 }
 
@@ -3432,74 +3487,8 @@ VkResult anv_GetPhysicalDeviceCooperativeMatrixPropertiesKHR(
    VkCooperativeMatrixPropertiesKHR*           pProperties)
 {
    ANV_FROM_HANDLE(anv_physical_device, pdevice, physicalDevice);
-   const struct intel_device_info *devinfo = &pdevice->info;
-
    VK_OUTARRAY_MAKE_TYPED(VkCooperativeMatrixPropertiesKHR, out, pProperties, pPropertyCount);
-
-   if (!pdevice->has_cooperative_matrix)
-      return vk_outarray_status(&out);
-
-   for (int i = 0; i < ARRAY_SIZE(devinfo->cooperative_matrix_configurations); i++) {
-      const struct intel_cooperative_matrix_configuration *cfg =
-         &devinfo->cooperative_matrix_configurations[i];
-
-      if (cfg->scope == INTEL_CMAT_SCOPE_NONE)
-         break;
-
-      vk_outarray_append_typed(VkCooperativeMatrixPropertiesKHR, &out, prop) {
-         prop->sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR;
-
-         prop->MSize = cfg->m;
-         prop->NSize = cfg->n;
-         prop->KSize = cfg->k;
-
-         prop->AType      = convert_component_type(cfg->a);
-         prop->BType      = convert_component_type(cfg->b);
-         prop->CType      = convert_component_type(cfg->c);
-         prop->ResultType = convert_component_type(cfg->result);
-
-         prop->saturatingAccumulation = VK_FALSE;
-         prop->scope = convert_scope(cfg->scope);
-      }
-
-      /* VUID-RuntimeSpirv-saturatingAccumulation-08983 says:
-       *
-       *    For OpCooperativeMatrixMulAddKHR, the SaturatingAccumulation
-       *    cooperative matrix operand must be present if and only if
-       *    VkCooperativeMatrixPropertiesKHR::saturatingAccumulation is
-       *    VK_TRUE.
-       *
-       * As a result, we have to advertise integer configs both with and
-       * without this flag set.
-       *
-       * The DPAS instruction does not support the .sat modifier, so only
-       * advertise the configurations when the DPAS would be lowered.
-       *
-       * FINISHME: It should be possible to do better than full lowering on
-       * platforms that support DPAS. Emit a DPAS with a NULL accumulator
-       * argument, then perform the correct sequence of saturating add
-       * instructions.
-       */
-      if (cfg->a != INTEL_CMAT_FLOAT16 &&
-          (devinfo->verx10 < 125 || debug_get_bool_option("INTEL_LOWER_DPAS", false))) {
-         vk_outarray_append_typed(VkCooperativeMatrixPropertiesKHR, &out, prop) {
-            prop->sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR;
-
-            prop->MSize = cfg->m;
-            prop->NSize = cfg->n;
-            prop->KSize = cfg->k;
-
-            prop->AType      = convert_component_type(cfg->a);
-            prop->BType      = convert_component_type(cfg->b);
-            prop->CType      = convert_component_type(cfg->c);
-            prop->ResultType = convert_component_type(cfg->result);
-
-            prop->saturatingAccumulation = VK_TRUE;
-            prop->scope = convert_scope(cfg->scope);
-         }
-      }
-   }
-
+   anv_fill_all_cooperative_matrix_props(pdevice, &out.base, anv_fill_cooperative_matrix_prop);
    return vk_outarray_status(&out);
 }
 
