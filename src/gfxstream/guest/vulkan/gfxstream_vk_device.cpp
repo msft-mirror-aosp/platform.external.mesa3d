@@ -130,6 +130,11 @@ static const char* const kGuestEmulatedDeviceExtensions[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
     VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
+#if DETECT_OS_ANDROID
+    // Implemented in Android's Vulkan framework
+    VK_KHR_PRESENT_WAIT_2_EXTENSION_NAME,
+    VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME,
+#endif
 };
 
 static bool isGuestEmulatedDeviceExtension(const char* name) {
@@ -562,6 +567,7 @@ VkResult gfxstream_vk_CreateDevice(VkPhysicalDevice physicalDevice,
     VK_FROM_HANDLE(gfxstream_vk_physical_device, gfxstream_physicalDevice, physicalDevice);
     VkResult result = (VkResult)0;
 
+#if DETECT_OS_ANDROID
     /*
      * Android's libvulkan implements VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT, but
      * passes it to the underlying driver anyways.  See:
@@ -577,6 +583,15 @@ VkResult gfxstream_vk_CreateDevice(VkPhysicalDevice physicalDevice,
     if (mutableSwapchainMaintenance1Features) {
         mutableSwapchainMaintenance1Features->swapchainMaintenance1 = VK_FALSE;
     }
+
+    // Similarly, filter emulated presentWait2 feature for the host side for Android guests
+    VkPhysicalDevicePresentWait2FeaturesKHR* mutablePresentWait2Features =
+        vk_find_struct(const_cast<VkDeviceCreateInfo*>(pCreateInfo),
+                       PHYSICAL_DEVICE_PRESENT_WAIT_2_FEATURES_KHR);
+    if (mutablePresentWait2Features) {
+        mutablePresentWait2Features->presentWait2 = VK_FALSE;
+    }
+#endif
 
     const VkAllocationCallbacks* pMesaAllocator =
         pAllocator ?: &gfxstream_physicalDevice->instance->vk.alloc;
