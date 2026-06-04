@@ -19,7 +19,6 @@ cc_defaults {
     vendor: true,
     host_supported: true,
     cppflags: [
-        "-DLINUX_GUEST_BUILD",
         "-DVK_BASE_VERSION_1_0",
         "-DVK_BASE_VERSION_1_1",
         "-DVK_BASE_VERSION_1_2",
