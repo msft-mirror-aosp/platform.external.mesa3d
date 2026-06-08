@@ -9803,15 +9803,8 @@ void reservedmarshal_VkDeviceDeviceMemoryReportCreateInfoEXT(
     memcpy((*ptr), &cgen_var_0, 8);
     gfxstream::aemu::Stream::toBe64((uint8_t*)(*ptr));
     *ptr += 8;
-    // WARNING PTR CHECK
-    uint64_t cgen_var_1 = (uint64_t)(uintptr_t)forMarshaling->pUserData;
-    memcpy((*ptr), &cgen_var_1, 8);
-    gfxstream::aemu::Stream::toBe64((uint8_t*)(*ptr));
-    *ptr += 8;
-    if (forMarshaling->pUserData) {
-        memcpy(*ptr, (void*)forMarshaling->pUserData, sizeof(uint8_t));
-        *ptr += sizeof(uint8_t);
-    }
+    memcpy(*ptr, (void*)forMarshaling->pUserData, sizeof(uint8_t));
+    *ptr += sizeof(uint8_t);
 }
 
 #endif

@@ -7873,11 +7873,7 @@ void count_VkDeviceDeviceMemoryReportCreateInfoEXT(
     count_extension_struct(featureBits, rootType, toCount->pNext, count);
     *count += sizeof(VkDeviceMemoryReportFlagsEXT);
     *count += 8;
-    // WARNING PTR CHECK
-    *count += 8;
-    if (toCount->pUserData) {
-        *count += sizeof(uint8_t);
-    }
+    *count += sizeof(uint8_t);
 }
 
 #endif
