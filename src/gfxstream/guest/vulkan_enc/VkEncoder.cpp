@@ -85,12 +85,7 @@ VkResult VkEncoder::vkCreateInstance(const VkInstanceCreateInfo* pCreateInfo,
         deepcopy_VkInstanceCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                       (VkInstanceCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkInstanceCreateInfo(sResourceTracker,
@@ -176,12 +171,7 @@ void VkEncoder::vkDestroyInstance(VkInstance instance, const VkAllocationCallbac
     VkInstance local_instance;
     VkAllocationCallbacks* local_pAllocator;
     local_instance = instance;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -925,12 +915,7 @@ VkResult VkEncoder::vkCreateDevice(VkPhysicalDevice physicalDevice,
         deepcopy_VkDeviceCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                     (VkDeviceCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkDeviceCreateInfo(sResourceTracker,
@@ -1024,12 +1009,7 @@ void VkEncoder::vkDestroyDevice(VkDevice device, const VkAllocationCallbacks* pA
     VkDevice local_device;
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -1876,12 +1856,7 @@ VkResult VkEncoder::vkAllocateMemory(VkDevice device, const VkMemoryAllocateInfo
         deepcopy_VkMemoryAllocateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocateInfo,
                                       (VkMemoryAllocateInfo*)(local_pAllocateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocateInfo) {
         transform_tohost_VkMemoryAllocateInfo(sResourceTracker,
@@ -1976,12 +1951,7 @@ void VkEncoder::vkFreeMemory(VkDevice device, VkDeviceMemory memory,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_memory = memory;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     sResourceTracker->deviceMemoryTransform_tohost(
         (VkDeviceMemory*)&local_memory, 1, (VkDeviceSize*)nullptr, 0, (VkDeviceSize*)nullptr, 0,
@@ -2984,12 +2954,7 @@ VkResult VkEncoder::vkCreateFence(VkDevice device, const VkFenceCreateInfo* pCre
         deepcopy_VkFenceCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                    (VkFenceCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkFenceCreateInfo(sResourceTracker,
@@ -3082,12 +3047,7 @@ void VkEncoder::vkDestroyFence(VkDevice device, VkFence fence,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_fence = fence;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -3365,12 +3325,7 @@ VkResult VkEncoder::vkCreateSemaphore(VkDevice device, const VkSemaphoreCreateIn
         deepcopy_VkSemaphoreCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                        (VkSemaphoreCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkSemaphoreCreateInfo(sResourceTracker,
@@ -3465,12 +3420,7 @@ void VkEncoder::vkDestroySemaphore(VkDevice device, VkSemaphore semaphore,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_semaphore = semaphore;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -3555,12 +3505,7 @@ VkResult VkEncoder::vkCreateQueryPool(VkDevice device, const VkQueryPoolCreateIn
         deepcopy_VkQueryPoolCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                        (VkQueryPoolCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkQueryPoolCreateInfo(sResourceTracker,
@@ -3655,12 +3600,7 @@ void VkEncoder::vkDestroyQueryPool(VkDevice device, VkQueryPool queryPool,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_queryPool = queryPool;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -3835,12 +3775,7 @@ VkResult VkEncoder::vkCreateBuffer(VkDevice device, const VkBufferCreateInfo* pC
         deepcopy_VkBufferCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                     (VkBufferCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkBufferCreateInfo(sResourceTracker,
@@ -3933,12 +3868,7 @@ void VkEncoder::vkDestroyBuffer(VkDevice device, VkBuffer buffer,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_buffer = buffer;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -4021,12 +3951,7 @@ VkResult VkEncoder::vkCreateImage(VkDevice device, const VkImageCreateInfo* pCre
         deepcopy_VkImageCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                    (VkImageCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     sResourceTracker->unwrap_vkCreateImage_pCreateInfo(pCreateInfo, local_pCreateInfo);
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
@@ -4121,12 +4046,7 @@ void VkEncoder::vkDestroyImage(VkDevice device, VkImage image,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_image = image;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -4288,12 +4208,7 @@ VkResult VkEncoder::vkCreateImageView(VkDevice device, const VkImageViewCreateIn
         deepcopy_VkImageViewCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                        (VkImageViewCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkImageViewCreateInfo(sResourceTracker,
@@ -4388,12 +4303,7 @@ void VkEncoder::vkDestroyImageView(VkDevice device, VkImageView imageView,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_imageView = imageView;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -4478,12 +4388,7 @@ VkResult VkEncoder::vkCreateCommandPool(VkDevice device, const VkCommandPoolCrea
         deepcopy_VkCommandPoolCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                          (VkCommandPoolCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkCommandPoolCreateInfo(sResourceTracker,
@@ -4579,12 +4484,7 @@ void VkEncoder::vkDestroyCommandPool(VkDevice device, VkCommandPool commandPool,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_commandPool = commandPool;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -6096,12 +5996,7 @@ VkResult VkEncoder::vkCreateEvent(VkDevice device, const VkEventCreateInfo* pCre
         deepcopy_VkEventCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                    (VkEventCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkEventCreateInfo(sResourceTracker,
@@ -6194,12 +6089,7 @@ void VkEncoder::vkDestroyEvent(VkDevice device, VkEvent event,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_event = event;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -6445,12 +6335,7 @@ VkResult VkEncoder::vkCreateBufferView(VkDevice device, const VkBufferViewCreate
         deepcopy_VkBufferViewCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                         (VkBufferViewCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkBufferViewCreateInfo(sResourceTracker,
@@ -6545,12 +6430,7 @@ void VkEncoder::vkDestroyBufferView(VkDevice device, VkBufferView bufferView,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_bufferView = bufferView;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -6636,12 +6516,7 @@ VkResult VkEncoder::vkCreateShaderModule(VkDevice device,
         deepcopy_VkShaderModuleCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                           (VkShaderModuleCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkShaderModuleCreateInfo(sResourceTracker,
@@ -6737,12 +6612,7 @@ void VkEncoder::vkDestroyShaderModule(VkDevice device, VkShaderModule shaderModu
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_shaderModule = shaderModule;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -6828,12 +6698,7 @@ VkResult VkEncoder::vkCreatePipelineCache(VkDevice device,
         deepcopy_VkPipelineCacheCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                            (VkPipelineCacheCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkPipelineCacheCreateInfo(sResourceTracker,
@@ -6929,12 +6794,7 @@ void VkEncoder::vkDestroyPipelineCache(VkDevice device, VkPipelineCache pipeline
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_pipelineCache = pipelineCache;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -7215,12 +7075,7 @@ VkResult VkEncoder::vkCreateComputePipelines(VkDevice device, VkPipelineCache pi
                 (VkComputePipelineCreateInfo*)(local_pCreateInfos + i));
         }
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfos) {
         for (uint32_t i = 0; i < (uint32_t)createInfoCount; ++i) {
@@ -7340,12 +7195,7 @@ void VkEncoder::vkDestroyPipeline(VkDevice device, VkPipeline pipeline,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_pipeline = pipeline;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -7431,12 +7281,7 @@ VkResult VkEncoder::vkCreatePipelineLayout(VkDevice device,
         deepcopy_VkPipelineLayoutCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                             (VkPipelineLayoutCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkPipelineLayoutCreateInfo(
@@ -7533,12 +7378,7 @@ void VkEncoder::vkDestroyPipelineLayout(VkDevice device, VkPipelineLayout pipeli
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_pipelineLayout = pipelineLayout;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -7623,12 +7463,7 @@ VkResult VkEncoder::vkCreateSampler(VkDevice device, const VkSamplerCreateInfo* 
         deepcopy_VkSamplerCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                      (VkSamplerCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkSamplerCreateInfo(sResourceTracker,
@@ -7721,12 +7556,7 @@ void VkEncoder::vkDestroySampler(VkDevice device, VkSampler sampler,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_sampler = sampler;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -7813,12 +7643,7 @@ VkResult VkEncoder::vkCreateDescriptorSetLayout(VkDevice device,
             pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
             (VkDescriptorSetLayoutCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkDescriptorSetLayoutCreateInfo(
@@ -7917,12 +7742,7 @@ void VkEncoder::vkDestroyDescriptorSetLayout(VkDevice device,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_descriptorSetLayout = descriptorSetLayout;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -8009,12 +7829,7 @@ VkResult VkEncoder::vkCreateDescriptorPool(VkDevice device,
         deepcopy_VkDescriptorPoolCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                             (VkDescriptorPoolCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkDescriptorPoolCreateInfo(
@@ -8111,12 +7926,7 @@ void VkEncoder::vkDestroyDescriptorPool(VkDevice device, VkDescriptorPool descri
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_descriptorPool = descriptorPool;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -9274,12 +9084,7 @@ VkResult VkEncoder::vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache p
                 (VkGraphicsPipelineCreateInfo*)(local_pCreateInfos + i));
         }
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfos) {
         for (uint32_t i = 0; i < (uint32_t)createInfoCount; ++i) {
@@ -9406,12 +9211,7 @@ VkResult VkEncoder::vkCreateFramebuffer(VkDevice device, const VkFramebufferCrea
         deepcopy_VkFramebufferCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                          (VkFramebufferCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkFramebufferCreateInfo(sResourceTracker,
@@ -9507,12 +9307,7 @@ void VkEncoder::vkDestroyFramebuffer(VkDevice device, VkFramebuffer framebuffer,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_framebuffer = framebuffer;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -9597,12 +9392,7 @@ VkResult VkEncoder::vkCreateRenderPass(VkDevice device, const VkRenderPassCreate
         deepcopy_VkRenderPassCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                         (VkRenderPassCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkRenderPassCreateInfo(sResourceTracker,
@@ -9698,12 +9488,7 @@ void VkEncoder::vkDestroyRenderPass(VkDevice device, VkRenderPass renderPass,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_renderPass = renderPass;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -13020,12 +12805,7 @@ VkResult VkEncoder::vkCreateDescriptorUpdateTemplate(
             pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
             (VkDescriptorUpdateTemplateCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkDescriptorUpdateTemplateCreateInfo(
@@ -13126,12 +12906,7 @@ void VkEncoder::vkDestroyDescriptorUpdateTemplate(
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_descriptorUpdateTemplate = descriptorUpdateTemplate;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -13376,12 +13151,7 @@ VkResult VkEncoder::vkCreateSamplerYcbcrConversion(
             pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
             (VkSamplerYcbcrConversionCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkSamplerYcbcrConversionCreateInfo(
@@ -13480,12 +13250,7 @@ void VkEncoder::vkDestroySamplerYcbcrConversion(VkDevice device,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_ycbcrConversion = ycbcrConversion;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -14185,12 +13950,7 @@ VkResult VkEncoder::vkCreateRenderPass2(VkDevice device, const VkRenderPassCreat
         deepcopy_VkRenderPassCreateInfo2(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                          (VkRenderPassCreateInfo2*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkRenderPassCreateInfo2(sResourceTracker,
@@ -14619,12 +14379,7 @@ VkResult VkEncoder::vkCreatePrivateDataSlot(VkDevice device,
         deepcopy_VkPrivateDataSlotCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                              (VkPrivateDataSlotCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkPrivateDataSlotCreateInfo(
@@ -14721,12 +14476,7 @@ void VkEncoder::vkDestroyPrivateDataSlot(VkDevice device, VkPrivateDataSlot priv
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_privateDataSlot = privateDataSlot;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -19239,12 +18989,7 @@ VkResult VkEncoder::vkCreateDescriptorUpdateTemplateKHR(
             pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
             (VkDescriptorUpdateTemplateCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkDescriptorUpdateTemplateCreateInfo(
@@ -19342,12 +19087,7 @@ void VkEncoder::vkDestroyDescriptorUpdateTemplateKHR(
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_descriptorUpdateTemplate = descriptorUpdateTemplate;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -19599,12 +19339,7 @@ VkResult VkEncoder::vkCreateRenderPass2KHR(VkDevice device,
         deepcopy_VkRenderPassCreateInfo2(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                          (VkRenderPassCreateInfo2*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkRenderPassCreateInfo2(sResourceTracker,
@@ -20420,12 +20155,7 @@ VkResult VkEncoder::vkCreateSamplerYcbcrConversionKHR(
             pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
             (VkSamplerYcbcrConversionCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkSamplerYcbcrConversionCreateInfo(
@@ -20524,12 +20254,7 @@ void VkEncoder::vkDestroySamplerYcbcrConversionKHR(VkDevice device,
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_ycbcrConversion = ycbcrConversion;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -25323,12 +25048,7 @@ VkResult VkEncoder::vkCreatePrivateDataSlotEXT(VkDevice device,
         deepcopy_VkPrivateDataSlotCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                              (VkPrivateDataSlotCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkPrivateDataSlotCreateInfo(
@@ -25424,12 +25144,7 @@ void VkEncoder::vkDestroyPrivateDataSlotEXT(VkDevice device, VkPrivateDataSlot p
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_privateDataSlot = privateDataSlot;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pAllocator) {
         transform_tohost_VkAllocationCallbacks(sResourceTracker,
@@ -26463,12 +26178,7 @@ VkResult VkEncoder::vkCreateImageWithRequirementsGOOGLE(
         deepcopy_VkImageCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                    (VkImageCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     sResourceTracker->unwrap_vkCreateImage_pCreateInfo(pCreateInfo, local_pCreateInfo);
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
@@ -26581,12 +26291,7 @@ VkResult VkEncoder::vkCreateBufferWithRequirementsGOOGLE(
         deepcopy_VkBufferCreateInfo(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pCreateInfo,
                                     (VkBufferCreateInfo*)(local_pCreateInfo));
     }
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     if (local_pCreateInfo) {
         transform_tohost_VkBufferCreateInfo(sResourceTracker,
@@ -26824,12 +26529,7 @@ VkResult VkEncoder::vkFreeMemorySyncGOOGLE(VkDevice device, VkDeviceMemory memor
     VkAllocationCallbacks* local_pAllocator;
     local_device = device;
     local_memory = memory;
-    local_pAllocator = nullptr;
-    if (pAllocator) {
-        local_pAllocator = (VkAllocationCallbacks*)pool->alloc(sizeof(const VkAllocationCallbacks));
-        deepcopy_VkAllocationCallbacks(pool, VK_STRUCTURE_TYPE_MAX_ENUM, pAllocator,
-                                       (VkAllocationCallbacks*)(local_pAllocator));
-    }
+    // Deepcopy intentionally skipped for `const VkAllocationCallbacks* pAllocator`
     local_pAllocator = nullptr;
     sResourceTracker->deviceMemoryTransform_tohost(
         (VkDeviceMemory*)&local_memory, 1, (VkDeviceSize*)nullptr, 0, (VkDeviceSize*)nullptr, 0,
