@@ -2154,6 +2154,16 @@ void count_VkDebugMetadataGOOGLE(uint32_t featureBits, VkStructureType rootType,
                                  const VkDebugMetadataGOOGLE* toCount, size_t* count);
 
 #endif
+#ifdef VK_EXT_border_color_swizzle
+void count_VkPhysicalDeviceBorderColorSwizzleFeaturesEXT(
+    uint32_t featureBits, VkStructureType rootType,
+    const VkPhysicalDeviceBorderColorSwizzleFeaturesEXT* toCount, size_t* count);
+
+void count_VkSamplerBorderColorComponentMappingCreateInfoEXT(
+    uint32_t featureBits, VkStructureType rootType,
+    const VkSamplerBorderColorComponentMappingCreateInfoEXT* toCount, size_t* count);
+
+#endif
 #ifdef VK_EXT_image_compression_control_swapchain
 void count_VkPhysicalDeviceImageCompressionControlSwapchainFeaturesEXT(
     uint32_t featureBits, VkStructureType rootType,

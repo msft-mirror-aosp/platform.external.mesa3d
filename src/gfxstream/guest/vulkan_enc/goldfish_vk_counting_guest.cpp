@@ -8385,6 +8385,41 @@ void count_VkDebugMetadataGOOGLE(uint32_t featureBits, VkStructureType rootType,
 }
 
 #endif
+#ifdef VK_EXT_border_color_swizzle
+void count_VkPhysicalDeviceBorderColorSwizzleFeaturesEXT(
+    uint32_t featureBits, VkStructureType rootType,
+    const VkPhysicalDeviceBorderColorSwizzleFeaturesEXT* toCount, size_t* count) {
+    (void)featureBits;
+    (void)rootType;
+    (void)toCount;
+    (void)count;
+    *count += sizeof(VkStructureType);
+    if (rootType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+        rootType = toCount->sType;
+    }
+    count_extension_struct(featureBits, rootType, toCount->pNext, count);
+    *count += sizeof(VkBool32);
+    *count += sizeof(VkBool32);
+}
+
+void count_VkSamplerBorderColorComponentMappingCreateInfoEXT(
+    uint32_t featureBits, VkStructureType rootType,
+    const VkSamplerBorderColorComponentMappingCreateInfoEXT* toCount, size_t* count) {
+    (void)featureBits;
+    (void)rootType;
+    (void)toCount;
+    (void)count;
+    *count += sizeof(VkStructureType);
+    if (rootType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+        rootType = toCount->sType;
+    }
+    count_extension_struct(featureBits, rootType, toCount->pNext, count);
+    count_VkComponentMapping(featureBits, rootType, (VkComponentMapping*)(&toCount->components),
+                             count);
+    *count += sizeof(VkBool32);
+}
+
+#endif
 #ifdef VK_EXT_image_compression_control_swapchain
 void count_VkPhysicalDeviceImageCompressionControlSwapchainFeaturesEXT(
     uint32_t featureBits, VkStructureType rootType,
@@ -10065,6 +10100,24 @@ void count_extension_struct(uint32_t featureBits, VkStructureType rootType,
             count_VkDebugMetadataGuestThreadIdGOOGLE(
                 featureBits, rootType,
                 reinterpret_cast<const VkDebugMetadataGuestThreadIdGOOGLE*>(structExtension),
+                count);
+            break;
+        }
+#endif
+#ifdef VK_EXT_border_color_swizzle
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT: {
+            count_VkPhysicalDeviceBorderColorSwizzleFeaturesEXT(
+                featureBits, rootType,
+                reinterpret_cast<const VkPhysicalDeviceBorderColorSwizzleFeaturesEXT*>(
+                    structExtension),
+                count);
+            break;
+        }
+        case VK_STRUCTURE_TYPE_SAMPLER_BORDER_COLOR_COMPONENT_MAPPING_CREATE_INFO_EXT: {
+            count_VkSamplerBorderColorComponentMappingCreateInfoEXT(
+                featureBits, rootType,
+                reinterpret_cast<const VkSamplerBorderColorComponentMappingCreateInfoEXT*>(
+                    structExtension),
                 count);
             break;
         }

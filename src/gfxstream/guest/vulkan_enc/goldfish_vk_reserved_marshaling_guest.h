@@ -2349,6 +2349,16 @@ void reservedmarshal_VkDebugMetadataGOOGLE(VulkanStreamGuest* vkStream, VkStruct
                                            uint8_t** ptr);
 
 #endif
+#ifdef VK_EXT_border_color_swizzle
+void reservedmarshal_VkPhysicalDeviceBorderColorSwizzleFeaturesEXT(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    const VkPhysicalDeviceBorderColorSwizzleFeaturesEXT* forMarshaling, uint8_t** ptr);
+
+void reservedmarshal_VkSamplerBorderColorComponentMappingCreateInfoEXT(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    const VkSamplerBorderColorComponentMappingCreateInfoEXT* forMarshaling, uint8_t** ptr);
+
+#endif
 #ifdef VK_EXT_image_compression_control_swapchain
 void reservedmarshal_VkPhysicalDeviceImageCompressionControlSwapchainFeaturesEXT(
     VulkanStreamGuest* vkStream, VkStructureType rootType,

@@ -15577,6 +15577,62 @@ void unmarshal_VkDebugMetadataGOOGLE(VulkanStreamGuest* vkStream, VkStructureTyp
 }
 
 #endif
+#ifdef VK_EXT_border_color_swizzle
+void marshal_VkPhysicalDeviceBorderColorSwizzleFeaturesEXT(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    const VkPhysicalDeviceBorderColorSwizzleFeaturesEXT* forMarshaling) {
+    (void)rootType;
+    vkStream->write((VkStructureType*)&forMarshaling->sType, sizeof(VkStructureType));
+    if (rootType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+        rootType = forMarshaling->sType;
+    }
+    marshal_extension_struct(vkStream, rootType, forMarshaling->pNext);
+    vkStream->write((VkBool32*)&forMarshaling->borderColorSwizzle, sizeof(VkBool32));
+    vkStream->write((VkBool32*)&forMarshaling->borderColorSwizzleFromImage, sizeof(VkBool32));
+}
+
+void unmarshal_VkPhysicalDeviceBorderColorSwizzleFeaturesEXT(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    VkPhysicalDeviceBorderColorSwizzleFeaturesEXT* forUnmarshaling) {
+    (void)rootType;
+    vkStream->read((VkStructureType*)&forUnmarshaling->sType, sizeof(VkStructureType));
+    if (rootType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+        rootType = forUnmarshaling->sType;
+    }
+    unmarshal_extension_struct(vkStream, rootType, (void*)(forUnmarshaling->pNext));
+    vkStream->read((VkBool32*)&forUnmarshaling->borderColorSwizzle, sizeof(VkBool32));
+    vkStream->read((VkBool32*)&forUnmarshaling->borderColorSwizzleFromImage, sizeof(VkBool32));
+}
+
+void marshal_VkSamplerBorderColorComponentMappingCreateInfoEXT(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    const VkSamplerBorderColorComponentMappingCreateInfoEXT* forMarshaling) {
+    (void)rootType;
+    vkStream->write((VkStructureType*)&forMarshaling->sType, sizeof(VkStructureType));
+    if (rootType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+        rootType = forMarshaling->sType;
+    }
+    marshal_extension_struct(vkStream, rootType, forMarshaling->pNext);
+    marshal_VkComponentMapping(vkStream, rootType,
+                               (VkComponentMapping*)(&forMarshaling->components));
+    vkStream->write((VkBool32*)&forMarshaling->srgb, sizeof(VkBool32));
+}
+
+void unmarshal_VkSamplerBorderColorComponentMappingCreateInfoEXT(
+    VulkanStreamGuest* vkStream, VkStructureType rootType,
+    VkSamplerBorderColorComponentMappingCreateInfoEXT* forUnmarshaling) {
+    (void)rootType;
+    vkStream->read((VkStructureType*)&forUnmarshaling->sType, sizeof(VkStructureType));
+    if (rootType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+        rootType = forUnmarshaling->sType;
+    }
+    unmarshal_extension_struct(vkStream, rootType, (void*)(forUnmarshaling->pNext));
+    unmarshal_VkComponentMapping(vkStream, rootType,
+                                 (VkComponentMapping*)(&forUnmarshaling->components));
+    vkStream->read((VkBool32*)&forUnmarshaling->srgb, sizeof(VkBool32));
+}
+
+#endif
 #ifdef VK_EXT_image_compression_control_swapchain
 void marshal_VkPhysicalDeviceImageCompressionControlSwapchainFeaturesEXT(
     VulkanStreamGuest* vkStream, VkStructureType rootType,
@@ -17117,6 +17173,22 @@ void marshal_extension_struct(VulkanStreamGuest* vkStream, VkStructureType rootT
             break;
         }
 #endif
+#ifdef VK_EXT_border_color_swizzle
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT: {
+            marshal_VkPhysicalDeviceBorderColorSwizzleFeaturesEXT(
+                vkStream, rootType,
+                reinterpret_cast<const VkPhysicalDeviceBorderColorSwizzleFeaturesEXT*>(
+                    structExtension));
+            break;
+        }
+        case VK_STRUCTURE_TYPE_SAMPLER_BORDER_COLOR_COMPONENT_MAPPING_CREATE_INFO_EXT: {
+            marshal_VkSamplerBorderColorComponentMappingCreateInfoEXT(
+                vkStream, rootType,
+                reinterpret_cast<const VkSamplerBorderColorComponentMappingCreateInfoEXT*>(
+                    structExtension));
+            break;
+        }
+#endif
 #ifdef VK_EXT_image_compression_control_swapchain
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_COMPRESSION_CONTROL_SWAPCHAIN_FEATURES_EXT: {
             marshal_VkPhysicalDeviceImageCompressionControlSwapchainFeaturesEXT(
@@ -18627,6 +18699,22 @@ void unmarshal_extension_struct(VulkanStreamGuest* vkStream, VkStructureType roo
             unmarshal_VkDebugMetadataGuestThreadIdGOOGLE(
                 vkStream, rootType,
                 reinterpret_cast<VkDebugMetadataGuestThreadIdGOOGLE*>(structExtension_out));
+            break;
+        }
+#endif
+#ifdef VK_EXT_border_color_swizzle
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT: {
+            unmarshal_VkPhysicalDeviceBorderColorSwizzleFeaturesEXT(
+                vkStream, rootType,
+                reinterpret_cast<VkPhysicalDeviceBorderColorSwizzleFeaturesEXT*>(
+                    structExtension_out));
+            break;
+        }
+        case VK_STRUCTURE_TYPE_SAMPLER_BORDER_COLOR_COMPONENT_MAPPING_CREATE_INFO_EXT: {
+            unmarshal_VkSamplerBorderColorComponentMappingCreateInfoEXT(
+                vkStream, rootType,
+                reinterpret_cast<VkSamplerBorderColorComponentMappingCreateInfoEXT*>(
+                    structExtension_out));
             break;
         }
 #endif

@@ -801,6 +801,14 @@ size_t goldfish_vk_extension_struct_size(VkStructureType rootType, const void* s
             return sizeof(VkDebugMetadataGuestThreadIdGOOGLE);
         }
 #endif
+#ifdef VK_EXT_border_color_swizzle
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT: {
+            return sizeof(VkPhysicalDeviceBorderColorSwizzleFeaturesEXT);
+        }
+        case VK_STRUCTURE_TYPE_SAMPLER_BORDER_COLOR_COMPONENT_MAPPING_CREATE_INFO_EXT: {
+            return sizeof(VkSamplerBorderColorComponentMappingCreateInfoEXT);
+        }
+#endif
 #ifdef VK_EXT_image_compression_control_swapchain
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_COMPRESSION_CONTROL_SWAPCHAIN_FEATURES_EXT: {
             return sizeof(VkPhysicalDeviceImageCompressionControlSwapchainFeaturesEXT);
@@ -1580,6 +1588,14 @@ size_t goldfish_vk_extension_struct_size_with_stream_features(uint32_t streamFea
         }
         case VK_STRUCTURE_TYPE_DEBUG_METADATA_GUEST_THREAD_ID_GOOGLE: {
             return sizeof(VkDebugMetadataGuestThreadIdGOOGLE);
+        }
+#endif
+#ifdef VK_EXT_border_color_swizzle
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT: {
+            return sizeof(VkPhysicalDeviceBorderColorSwizzleFeaturesEXT);
+        }
+        case VK_STRUCTURE_TYPE_SAMPLER_BORDER_COLOR_COMPONENT_MAPPING_CREATE_INFO_EXT: {
+            return sizeof(VkSamplerBorderColorComponentMappingCreateInfoEXT);
         }
 #endif
 #ifdef VK_EXT_image_compression_control_swapchain

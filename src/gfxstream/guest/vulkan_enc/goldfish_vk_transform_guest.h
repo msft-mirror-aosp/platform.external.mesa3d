@@ -3758,6 +3758,22 @@ void transform_fromhost_VkDebugMetadataGOOGLE(ResourceTracker* resourceTracker,
                                               VkDebugMetadataGOOGLE* toTransform);
 
 #endif
+#ifdef VK_EXT_border_color_swizzle
+void transform_tohost_VkPhysicalDeviceBorderColorSwizzleFeaturesEXT(
+    ResourceTracker* resourceTracker, VkPhysicalDeviceBorderColorSwizzleFeaturesEXT* toTransform);
+
+void transform_fromhost_VkPhysicalDeviceBorderColorSwizzleFeaturesEXT(
+    ResourceTracker* resourceTracker, VkPhysicalDeviceBorderColorSwizzleFeaturesEXT* toTransform);
+
+void transform_tohost_VkSamplerBorderColorComponentMappingCreateInfoEXT(
+    ResourceTracker* resourceTracker,
+    VkSamplerBorderColorComponentMappingCreateInfoEXT* toTransform);
+
+void transform_fromhost_VkSamplerBorderColorComponentMappingCreateInfoEXT(
+    ResourceTracker* resourceTracker,
+    VkSamplerBorderColorComponentMappingCreateInfoEXT* toTransform);
+
+#endif
 #ifdef VK_EXT_image_compression_control_swapchain
 void transform_tohost_VkPhysicalDeviceImageCompressionControlSwapchainFeaturesEXT(
     ResourceTracker* resourceTracker,
