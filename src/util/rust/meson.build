@@ -1,7 +1,7 @@
 # Copyright © 2024 Google
 # SPDX-License-Identifier: MIT
 
-dep_log = dependency('log',
+dep_log = dependency('rust-log',
   version: '>= 0.4.22',
   fallback: ['log-0.4-rs', 'dep_log'],
   required: true,
