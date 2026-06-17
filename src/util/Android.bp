@@ -15,9 +15,23 @@ package {
 }
 
 filegroup {
+    name: "00-turnip-defaults_conf",
+    srcs: [
+        "00-turnip-defaults.conf",
+    ],
+}
+
+filegroup {
     name: "blend_h",
     srcs: [
         "blend.h",
+    ],
+}
+
+filegroup {
+    name: "drirc_gen.py",
+    srcs: [
+        "drirc_gen.py",
     ],
 }
 
@@ -227,6 +241,7 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
+        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -467,6 +482,7 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
+        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "mesa_util_simd_c_flags",
@@ -504,6 +520,7 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
+        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",

@@ -291,6 +291,7 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
+        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -355,6 +356,7 @@ cc_library_static {
         "nir_linking_helpers.c",
         "nir_liveness.c",
         "nir_loop_analyze.c",
+        "nir_lower_abort.c",
         "nir_lower_alpha.c",
         "nir_lower_alu.c",
         "nir_lower_alu_width.c",

@@ -15,6 +15,18 @@ package {
 }
 
 genrule {
+    name: "draw_nir_lower_opcodes.c",
+    out: [
+        "draw_nir_lower_opcodes.c",
+    ],
+    tools: [
+        "draw_nir_lower_opcodes_py_binary",
+    ],
+    cmd: "$(location draw_nir_lower_opcodes_py_binary) -p " +
+        "$(genDir)/src/compiler/nir/ > $(location draw_nir_lower_opcodes.c)",
+}
+
+genrule {
     name: "tr_util.ch_headers",
     out: [
         "src/gallium/auxiliary/tr_util.h",
@@ -263,6 +275,7 @@ cc_library_static {
         "u_tracepoints.h",
     ],
     srcs: [
+        ":draw_nir_lower_opcodes.c",
         ":files_libgallium",
         ":files_libgallium_1",
         ":files_libgallium_10",

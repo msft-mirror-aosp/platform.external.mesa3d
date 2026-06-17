@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium_6",
+    name: "files_libgallium_8",
     srcs: [
         "u_primconvert.c",
     ],

@@ -15,6 +15,19 @@ package {
 }
 
 python_binary_host {
+    name: "tu_drirc_py_binary",
+    main: "tu_drirc_gen.py",
+    srcs: [
+        ":drirc_gen.py",
+        "tu_drirc_gen.py",
+    ],
+    libs: [
+        "mako",
+        "pyyaml",
+    ],
+}
+
+python_binary_host {
     name: "tu_tracepoints_py_binary",
     main: "tu_tracepoints.py",
     srcs: [
@@ -86,6 +99,45 @@ genrule {
         ":vk_api_xml) --sizeof-pointer -1 --icd-lib-path $(genDir) " +
         "--icd-filename libvulkan_freedreno.so --out $(location " +
         "freedreno_devenv_icd.aarch64.json)",
+}
+
+genrule {
+    name: "tu_drirc_headers",
+    out: [
+        "src/freedreno/vulkan/tu_drirc.h",
+    ],
+    srcs: [
+        ":00-turnip-defaults_conf",
+    ],
+    tools: [
+        "tu_drirc_py_binary",
+    ],
+    export_include_dirs: [
+        "src",
+        "src/freedreno",
+        "src/freedreno/vulkan",
+    ],
+    cmd: "$(location tu_drirc_py_binary) --import-path $(genDir)/src/util " +
+        "--drirc-src $(genDir)/src/freedreno/vulkan/tu_drirc.c --drirc-hdr " +
+        "$(location src/freedreno/vulkan/tu_drirc.h) --validate $(location " +
+        ":00-turnip-defaults_conf)",
+}
+
+genrule {
+    name: "tu_drirc_impl",
+    out: [
+        "src/freedreno/vulkan/tu_drirc.c",
+    ],
+    srcs: [
+        ":00-turnip-defaults_conf",
+    ],
+    tools: [
+        "tu_drirc_py_binary",
+    ],
+    cmd: "$(location tu_drirc_py_binary) --import-path $(genDir)/src/util " +
+        "--drirc-src $(location src/freedreno/vulkan/tu_drirc.c) --drirc-hdr " +
+        "$(genDir)/src/freedreno/vulkan/tu_drirc.h --validate $(location " +
+        ":00-turnip-defaults_conf)",
 }
 
 genrule {
@@ -234,6 +286,8 @@ cc_library_shared {
     cpp_std: "c++17",
     defaults: [
         "_trial_c",
+        "_trial_soong_c",
+        "_trial_soong_cpp",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -308,6 +362,7 @@ cc_library_shared {
         "ocmem.xml.h",
         "shader_stats.h",
         "spirv_info_headers",
+        "tu_drirc_headers",
         "tu_entrypoints_headers",
         "tu_tracepoints.ch_headers",
         "u_format_gen.h",
@@ -326,6 +381,7 @@ cc_library_shared {
     srcs: select((arch(), os()), {
         ("arm64", "android"): [
             ":libtu_files",
+            ":tu_drirc_impl",
             ":tu_entrypoints_impl",
             ":tu_tracepoints.ch_impl",
             "tu_acceleration_structure.cc",

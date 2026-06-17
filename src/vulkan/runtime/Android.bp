@@ -465,6 +465,7 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
+        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -566,6 +567,7 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
+        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -664,6 +666,7 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
+        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -815,6 +818,7 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
+        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",

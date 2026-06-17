@@ -31,11 +31,14 @@ license {
 cc_defaults {
     name: "_trial_c",
     vendor: true,
-    cppflags: select((arch(), os()), {
-        ("arm64", "android"): [
+    host_supported: true,
+    cppflags: [
+        "-Werror=missing-prototypes",
+    ] + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
+        ("arm64", "android", default): [
             "-Wno-unused-function",
         ],
-        (default, default): [],
+        (default, default, default): [],
     }),
 }
 
@@ -54,6 +57,43 @@ cc_defaults {
         "-Werror=pointer-arith",
         "-Werror=vla",
         "-Wgnu-pointer-arith",
+    ],
+}
+
+cc_defaults {
+    name: "_trial_soong_c",
+    vendor: true,
+    host_supported: true,
+    cflags: [
+        "-Werror=date-time",
+        "-Werror=gnu-alignof-expression",
+        "-Werror=ignored-qualifiers",
+        "-Werror=implicit-fallthrough",
+        "-Werror=pragma-pack",
+        "-Werror=pragma-pack-suspicious-include",
+        "-Werror=sizeof-array-div",
+        "-Werror=string-plus-int",
+        "-Werror=unreachable-code-loop-increment",
+    ],
+    cppflags: [
+        "-Werror=date-time",
+        "-Werror=gnu-alignof-expression",
+        "-Werror=ignored-qualifiers",
+        "-Werror=implicit-fallthrough",
+        "-Werror=pragma-pack",
+        "-Werror=pragma-pack-suspicious-include",
+        "-Werror=sizeof-array-div",
+        "-Werror=string-plus-int",
+        "-Werror=unreachable-code-loop-increment",
+    ],
+}
+
+cc_defaults {
+    name: "_trial_soong_cpp",
+    vendor: true,
+    host_supported: true,
+    cppflags: [
+        "-D_LIBCPP_ENABLE_THREAD_SAFETY_ANNOTATIONS",
     ],
 }
 

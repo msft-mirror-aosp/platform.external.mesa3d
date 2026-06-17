@@ -19,6 +19,8 @@ cc_defaults {
     vendor: true,
     cflags: select((arch(), os()), {
         ("arm64", "android"): [
+            "-DXXH_FORCE_ALIGN_CHECK=0",
+            "-DXXH_FORCE_MEMORY_ACCESS=0",
             "-fvisibility=hidden",
         ],
         (default, default): [],
@@ -30,6 +32,8 @@ cc_defaults {
     vendor: true,
     cppflags: select((arch(), os()), {
         ("arm64", "android"): [
+            "-DXXH_FORCE_ALIGN_CHECK=0",
+            "-DXXH_FORCE_MEMORY_ACCESS=0",
             "-fvisibility=hidden",
         ],
         (default, default): [],
@@ -42,6 +46,7 @@ cc_library_static {
     c_std: "c11",
     cpp_std: "c++17",
     defaults: [
+        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -52,11 +57,14 @@ cc_library_static {
     ],
     header_libs: select((arch(), os()), {
         ("arm64", "android"): [
+            "hwvulkan_headers",
             "inc_compiler",
             "inc_freedreno",
             "inc_include",
             "inc_nir",
             "inc_src",
+            "inc_util",
+            "inc_util_c11",
         ],
         (default, default): [],
     }),
@@ -94,6 +102,7 @@ cc_library_static {
         "nir_intrinsics_indices.h",
         "nir_opcodes.h",
         "ocmem.xml.h",
+        "shader_stats.h",
         "u_format_gen.h",
     ],
     srcs: select((arch(), os()), {
@@ -115,6 +124,19 @@ cc_library_static {
             "mesa_util",
             "mesa_util_c11",
             "mesa_util_simd",
+        ],
+        (default, default): [],
+    }),
+    shared_libs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "libcutils",
+            "libdrm",
+            "libhardware",
+            "liblog",
+            "libnativewindow",
+            "libsync",
+            "libz",
+            "libzstd",
         ],
         (default, default): [],
     }),

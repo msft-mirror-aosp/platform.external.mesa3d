@@ -43,20 +43,6 @@ python_binary_host {
 }
 
 python_binary_host {
-    name: "ir3_nir_opt_algebraic_late_py_binary",
-    main: "ir3_nir_opt_algebraic_late.py",
-    srcs: [
-        ":nir_algebraic.py",
-        ":nir_opcodes.py",
-        "ir3_nir_opt_algebraic_late.py",
-    ],
-    libs: [
-        "mako",
-        "pyyaml",
-    ],
-}
-
-python_binary_host {
     name: "ir3_nir_trig_py_binary",
     main: "ir3_nir_trig.py",
     srcs: [
@@ -122,18 +108,6 @@ genrule {
     ],
     cmd: "$(location ir3_nir_imul_py_binary) -p $(genDir)/src/compiler/nir/ > " +
         "$(location ir3_nir_imul.c)",
-}
-
-genrule {
-    name: "ir3_nir_opt_algebraic_late.c",
-    out: [
-        "ir3_nir_opt_algebraic_late.c",
-    ],
-    tools: [
-        "ir3_nir_opt_algebraic_late_py_binary",
-    ],
-    cmd: "$(location ir3_nir_opt_algebraic_late_py_binary) -p " +
-        "$(genDir)/src/compiler/nir/ > $(location ir3_nir_opt_algebraic_late.c)",
 }
 
 genrule {
@@ -234,6 +208,7 @@ cc_library_static {
     c_std: "c11",
     cpp_std: "c++17",
     defaults: [
+        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -275,7 +250,6 @@ cc_library_static {
             ":ir3_lexer.c",
             ":ir3_nir_branch_and_or_not.c",
             ":ir3_nir_imul.c",
-            ":ir3_nir_opt_algebraic_late.c",
             ":ir3_nir_trig.c",
             ":ir3_nir_triop_bitwise.c",
             ":ir3_parser.ch_impl",
