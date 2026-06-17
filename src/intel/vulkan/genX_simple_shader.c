@@ -44,6 +44,7 @@ genX(emit_simpler_shader_init_fragment)(struct anv_simple_shader *state)
 
    struct anv_batch *batch = state->batch;
    struct anv_device *device = state->device;
+   const struct anv_instance *instance = device->physical->instance;
    const struct brw_fs_prog_data *prog_data =
       brw_fs_prog_data_const(state->kernel->prog_data);
 
@@ -88,7 +89,7 @@ genX(emit_simpler_shader_init_fragment)(struct anv_simple_shader *state)
        * distribution.
        */
       vf.GeometryDistributionEnable =
-         device->physical->instance->enable_vf_distribution;
+         instance->drirc.debug.vf_distribution;
 #endif
    }
    anv_batch_emit(batch, GENX(3DSTATE_VF_SGVS), sgvs) {
@@ -273,7 +274,7 @@ genX(emit_simpler_shader_init_fragment)(struct anv_simple_shader *state)
    anv_batch_emit(batch, GENX(3DSTATE_PRIMITIVE_REPLICATION), pr);
 #endif
 
-   if (!device->physical->instance->disable_push_constant_alloc) {
+   if (!instance->drirc.perf.disable_push_const_alloc) {
       VkShaderStageFlags push_stages =
          genX(push_constant_alloc_stages)(VK_SHADER_STAGE_FRAGMENT_BIT);
       genX(batch_emit_push_constants_alloc)(batch, device, push_stages);
@@ -357,6 +358,9 @@ genX(emit_simpler_shader_init_fragment)(struct anv_simple_shader *state)
       BITSET_SET(hw_state->emit_dirty, ANV_GFX_STATE_MESH_CONTROL);
       BITSET_SET(hw_state->emit_dirty, ANV_GFX_STATE_TASK_CONTROL);
    }
+
+   /* Add the flagged instructions as emitted */
+   BITSET_OR(hw_state->emitted, hw_state->emitted, hw_state->emit_dirty);
 
    /* Update urb config after simple shader. */
    memcpy(&state->cmd_buffer->state.gfx.urb_cfg, &urb_cfg,
@@ -448,14 +452,14 @@ genX(simple_shader_push_state_address)(struct anv_simple_shader *state,
 {
    if (state->kernel->stage == MESA_SHADER_FRAGMENT) {
       return anv_state_pool_state_address(
-         &state->device->dynamic_state_pool, push_state);
+         anv_device_get_dynamic_state_pool(state->device), push_state);
    } else {
 #if GFX_VERx10 >= 125
       return anv_state_pool_state_address(
-         &state->device->general_state_pool, push_state);
+         anv_device_get_general_state_pool(state->device), push_state);
 #else
       return anv_state_pool_state_address(
-         &state->device->dynamic_state_pool, push_state);
+         anv_device_get_dynamic_state_pool(state->device), push_state);
 #endif
    }
 }
@@ -469,7 +473,7 @@ genX(emit_simple_shader_dispatch)(struct anv_simple_shader *state,
    struct anv_device *device = state->device;
    struct anv_batch *batch = state->batch;
    struct anv_address push_addr =
-      anv_state_pool_state_address(&device->dynamic_state_pool, push_state);
+      anv_state_pool_state_address(anv_device_get_dynamic_state_pool(device), push_state);
 
    if (state->kernel->stage == MESA_SHADER_FRAGMENT) {
       /* At the moment we require a command buffer associated with this
@@ -493,7 +497,7 @@ genX(emit_simple_shader_dispatch)(struct anv_simple_shader *state,
       vertices[6] = x0; vertices[7] = y0; vertices[8] = z; /* v2 */
 
       struct anv_address vs_data_address =
-         anv_state_pool_state_address(&device->dynamic_state_pool, vs_data_state);
+         anv_state_pool_state_address(anv_device_get_dynamic_state_pool(device), vs_data_state);
       uint32_t *dw = anv_batch_emitn(batch,
                                      1 + GENX(VERTEX_BUFFER_STATE_length),
                                      GENX(3DSTATE_VERTEX_BUFFERS));

@@ -13,12 +13,12 @@ endif
 #===============#
 # Configuration #
 #===============#
-gfxstream_guest_args = cpp_msvc_compat_args + ['-D_FILE_OFFSET_BITS=64']
+gfxstream_guest_args = cpp_msvc_compat_args + soong_compat_cpp_args + ['-D_FILE_OFFSET_BITS=64']
 
 # Our internal guest build
 if host_machine.system() == 'windows'
     gfxstream_guest_args += '-DWINDOWS_GUEST_BUILD'
-elif host_machine.system() != 'fuchsia' and host_machine.system() != 'android' and not with_platform_android and not with_gfxstream_emulated_android
+elif host_machine.system() != 'fuchsia' and not with_platform_android and not with_gfxstream_emulated_android
     gfxstream_guest_args += '-DLINUX_GUEST_BUILD'
 endif
 

@@ -701,6 +701,8 @@ validate_intrinsic_instr(nir_intrinsic_instr *instr, validate_state *state)
 
          switch (format) {
          case PIPE_FORMAT_R32_FLOAT:
+         case PIPE_FORMAT_R16G16_FLOAT:
+         case PIPE_FORMAT_R16G16B16A16_FLOAT:
             allowed = is_float || op == nir_atomic_op_xchg;
             break;
          case PIPE_FORMAT_R16_FLOAT:
@@ -718,8 +720,13 @@ validate_intrinsic_instr(nir_intrinsic_instr *instr, validate_state *state)
          }
 
          validate_assert(state, allowed);
+         const struct util_format_description *fmt_desc =
+            util_format_description(format);
          validate_assert(state, instr->def.bit_size ==
-                                   util_format_get_blocksizebits(format));
+                                fmt_desc->channel[0].size);
+         validate_assert(state,
+                         instr->num_components >= 1 &&
+                         instr->num_components <= 4);
       }
       break;
    }
@@ -745,6 +752,28 @@ validate_intrinsic_instr(nir_intrinsic_instr *instr, validate_state *state)
       }
       break;
 
+   case nir_intrinsic_load_deref_transpose_amd: {
+      nir_deref_instr *src = nir_src_as_deref(instr->src[0]);
+      assert(src);
+      unsigned disallow_access = ACCESS_ATOMIC | ACCESS_SKIP_HELPERS | ACCESS_SMEM_AMD;
+      validate_assert(state, !(nir_intrinsic_access(instr) & disallow_access));
+      validate_assert(state, glsl_type_is_scalar(src->type));
+      validate_assert(state, instr->num_components == 8 || instr->num_components == 4);
+      dest_bit_size = glsl_get_bit_size(src->type);
+      src_bit_sizes[0] = 64;
+      break;
+   }
+
+   case nir_intrinsic_load_global_transpose_amd:
+   case nir_intrinsic_load_global_tr_amd: {
+      unsigned disallow_access = ACCESS_ATOMIC | ACCESS_SKIP_HELPERS | ACCESS_SMEM_AMD;
+      validate_assert(state, !(nir_intrinsic_access(instr) & disallow_access));
+      validate_assert(state, instr->num_components == 8 || instr->num_components == 4);
+      src_bit_sizes[0] = 64;
+      src_bit_sizes[1] = 32;
+      break;
+   }
+
    case nir_intrinsic_global_atomic_nv:
    case nir_intrinsic_global_atomic_swap_nv:
    case nir_intrinsic_shared_atomic_nv:
@@ -761,9 +790,11 @@ validate_intrinsic_instr(nir_intrinsic_instr *instr, validate_state *state)
    case nir_intrinsic_vild_nv: {
       int base = nir_intrinsic_base(instr);
       nir_src src = *nir_get_io_offset_src(instr);
+      nir_src *uniform_src = nir_get_io_uniform_offset_src(instr);
       unsigned const_bits = nir_get_io_base_size_nv(instr);
 
-      if (nir_src_is_const(src) && nir_src_as_int(src) == 0) {
+      if (nir_src_is_const(src) && nir_src_as_int(src) == 0 &&
+          (!uniform_src || (nir_src_is_const(*uniform_src) && nir_src_as_int(*uniform_src) == 0))) {
          validate_assert(state, base >= 0 && base < BITFIELD_MASK(const_bits));
       } else {
          int32_t max = BITFIELD_MASK(const_bits - 1);
@@ -771,8 +802,11 @@ validate_intrinsic_instr(nir_intrinsic_instr *instr, validate_state *state)
          validate_assert(state, base >= min && base < max);
       }
 
+      if (uniform_src)
+         validate_assert(state, uniform_src->ssa->bit_size >= src.ssa->bit_size);
+
       if (instr->intrinsic == nir_intrinsic_load_global_nv) {
-         validate_assert(state, instr->src[1].ssa->bit_size == 1);
+         validate_assert(state, instr->src[2].ssa->bit_size == 1);
       }
 
       break;
@@ -1244,6 +1278,7 @@ validate_jump_instr(nir_jump_instr *instr, validate_state *state)
    switch (instr->type) {
    case nir_jump_return:
    case nir_jump_halt:
+   case nir_jump_abort:
       validate_assert(state, block->successors[0] == state->impl->end_block);
       validate_assert(state, block->successors[1] == NULL);
       validate_assert(state, instr->target == NULL);
@@ -1512,6 +1547,7 @@ validate_block(nir_block *block, validate_state *state)
 {
    validate_assert(state, block->cf_node.parent == state->parent_node);
 
+   validate_assert(state, block->impl == state->impl);
    state->block = block;
 
    exec_list_validate(&block->instr_list);
@@ -2300,6 +2336,29 @@ validate_function(nir_function *func, validate_state *state)
 }
 
 static void
+validate_float_mul_add(nir_float_muladd_support muladd_support, validate_state *state)
+{
+   if (muladd_support & nir_float_muladd_support_fuse) {
+      validate_assert(state, muladd_support &
+         (nir_float_muladd_support_has_ffma | nir_float_muladd_support_has_fmad));
+   }
+
+   if (muladd_support & nir_float_muladd_support_prefers_split)
+      validate_assert(state, muladd_support & nir_float_muladd_support_has_ffma);
+}
+
+static void
+validate_options(const nir_shader_compiler_options *options, validate_state *state)
+{
+   if (!options)
+      return;
+
+   validate_float_mul_add(options->float_mul_add16, state);
+   validate_float_mul_add(options->float_mul_add32, state);
+   validate_float_mul_add(options->float_mul_add64, state);
+}
+
+static void
 init_validate_state(validate_state *state)
 {
    state->mem_ctx = ralloc_context(NULL);
@@ -2402,6 +2461,8 @@ nir_validate_shader(nir_shader *shader, const char *when)
    if (shader->info.stage == MESA_SHADER_COMPUTE)
       valid_modes |= nir_var_mem_node_payload |
                      nir_var_mem_node_payload_in;
+
+   validate_options(shader->options, &state);
 
    exec_list_validate(&shader->variables);
    nir_foreach_variable_in_shader(var, shader)

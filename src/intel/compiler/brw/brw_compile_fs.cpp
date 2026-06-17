@@ -7,7 +7,6 @@
 #include "brw_shader.h"
 #include "brw_analysis.h"
 #include "brw_builder.h"
-#include "brw_generator.h"
 #include "brw_nir.h"
 #include "brw_cfg.h"
 #include "brw_private.h"
@@ -58,7 +57,6 @@ brw_emit_single_fb_write(brw_shader &s, const brw_builder &bld,
 static void
 brw_do_emit_fb_writes(brw_shader &s, int nr_color_regions, bool replicate_alpha)
 {
-   struct brw_fs_prog_data *prog_data = brw_fs_prog_data(s.prog_data);
    const brw_builder bld = brw_builder(&s);
 
    brw_fb_write_inst *write = NULL;
@@ -89,15 +87,15 @@ brw_do_emit_fb_writes(brw_shader &s, int nr_color_regions, bool replicate_alpha)
    }
 
    if (write == NULL) {
-      struct brw_fs_prog_key *key = (brw_fs_prog_key*) s.key;
-      /* Disable null_rt if any non color output is written or if
-       * alpha_to_coverage can be enabled. Since the alpha_to_coverage bit is
-       * coming from the BLEND_STATE structure and the HW will avoid reading
-       * it if null_rt is enabled.
+      struct brw_fs_prog_data *prog_data = brw_fs_prog_data(s.prog_data);
+      /* Enable null_rt if the shader doesn't write any relevant output.
        */
       const bool use_null_rt =
-         key->alpha_to_coverage == INTEL_NEVER &&
-         !prog_data->uses_omask;
+         prog_data->alpha_to_coverage == INTEL_NEVER &&
+         !prog_data->uses_omask &&
+         (s.nir->info.outputs_written &
+          (BITFIELD64_BIT(FRAG_RESULT_DEPTH) |
+           BITFIELD64_BIT(FRAG_RESULT_STENCIL))) == 0;
 
       /* Even if there's no color buffers enabled, we still need to send alpha
        * out the pipeline to our null renderbuffer to support alpha-testing,
@@ -533,7 +531,7 @@ brw_emit_repclear_shader(brw_shader &s)
       write->header_size = i == 0 ? 0 : 2;
       write->mlen = 1 + write->header_size;
 
-      write->sfid = BRW_SFID_RENDER_CACHE;
+      write->sfid = GEN_SFID_RENDER_CACHE;
       write->src[SEND_SRC_DESC] = brw_imm_ud(
          brw_fb_write_desc(
             s.devinfo, i,
@@ -565,6 +563,7 @@ calculate_urb_setup(const struct intel_device_info *devinfo,
                     const struct brw_fs_prog_key *key,
                     struct brw_fs_prog_data *prog_data,
                     nir_shader *nir,
+                    const struct intel_vue_map *prev_stage_vue_map,
                     const struct brw_mue_map *mue_map,
                     int *per_primitive_offsets)
 {
@@ -616,9 +615,12 @@ calculate_urb_setup(const struct intel_device_info *devinfo,
          first_read_offset = per_primitive_stride = 0;
       }
    } else {
-      brw_compute_vue_map(devinfo, &vue_map, inputs_read,
-                          key->base.vue_layout,
-                          1 /* pos_slots, TODO */);
+      if (prev_stage_vue_map) {
+         memcpy(&vue_map, prev_stage_vue_map, sizeof(vue_map));
+      } else {
+         brw_compute_vue_map(devinfo, &vue_map, inputs_read,
+                             key->base.vue_layout, 1 /* pos_slots */);
+      }
       brw_compute_per_primitive_map(per_primitive_offsets,
                                     &per_primitive_stride,
                                     &first_read_offset,
@@ -679,13 +681,15 @@ calculate_urb_setup(const struct intel_device_info *devinfo,
          }
       }
 
+      int last_slot = first_slot;
       for (int slot = first_slot; slot < vue_map.num_slots; slot++) {
          int varying = vue_map.slot_to_varying[slot];
          if (varying > 0 && (inputs_read & BITFIELD64_BIT(varying))) {
             prog_data->urb_setup[varying] = slot - first_slot;
+            last_slot = slot;
          }
       }
-      urb_next = vue_map.num_slots - first_slot;
+      urb_next = last_slot - first_slot + 1;
    }
 
    prog_data->num_varying_inputs = urb_next;
@@ -826,6 +830,7 @@ brw_nir_populate_fs_prog_data(nir_shader *shader,
                               const struct intel_device_info *devinfo,
                               const struct brw_fs_prog_key *key,
                               struct brw_fs_prog_data *prog_data,
+                              const struct intel_vue_map *prev_stage_vue_map,
                               const struct brw_mue_map *mue_map,
                               int *per_primitive_offsets)
 {
@@ -858,11 +863,13 @@ brw_nir_populate_fs_prog_data(nir_shader *shader,
    prog_data->persample_dispatch = MIN2(prog_data->persample_dispatch,
                                         key->multisample_fbo);
 
-   /* Currently only the Vulkan API allows alpha_to_coverage to be dynamic. If
-    * persample_dispatch & multisample_fbo are not dynamic, Anv should be able
-    * to definitively tell whether alpha_to_coverage is on or off.
+   /* Gate alpha to coverage with the draw buffer 0 being written.
     */
-   prog_data->alpha_to_coverage = key->alpha_to_coverage;
+   prog_data->alpha_to_coverage =
+      (shader->info.outputs_written &
+       (BITFIELD64_BIT(FRAG_RESULT_COLOR) |
+        BITFIELD64_BIT(FRAG_RESULT_DATA0))) != 0 ?
+      key->alpha_to_coverage : INTEL_NEVER;
 
    assert(devinfo->verx10 >= 125 || key->mesh_input == INTEL_NEVER);
    prog_data->mesh_input = key->mesh_input;
@@ -1001,7 +1008,8 @@ brw_nir_populate_fs_prog_data(nir_shader *shader,
       (BITSET_TEST(shader->info.system_values_read, SYSTEM_VALUE_FRAG_COORD_Z) &&
        prog_data->coarse_pixel_dispatch != INTEL_NEVER);
 
-   calculate_urb_setup(devinfo, key, prog_data, shader, mue_map, per_primitive_offsets);
+   calculate_urb_setup(devinfo, key, prog_data, shader, prev_stage_vue_map,
+                       mue_map, per_primitive_offsets);
    brw_compute_flat_inputs(prog_data, shader);
 }
 
@@ -1448,8 +1456,10 @@ brw_compile_fs(const struct brw_compiler *compiler,
                struct brw_compile_fs_params *params)
 {
    struct nir_shader *nir = params->base.nir;
-   const struct brw_fs_prog_key *key = params->key;
-   struct brw_fs_prog_data *prog_data = params->prog_data;
+   const struct brw_fs_prog_key *key =
+      (const struct brw_fs_prog_key *)params->base.key;
+   struct brw_fs_prog_data *prog_data =
+      (struct brw_fs_prog_data *)params->base.prog_data;
    bool allow_spilling = params->allow_spilling;
    const bool debug_enabled =
       brw_should_print_shader(nir, params->base.debug_flag ?
@@ -1508,7 +1518,7 @@ brw_compile_fs(const struct brw_compiler *compiler,
    memset(per_primitive_offsets, -1, sizeof(per_primitive_offsets));
 
    brw_nir_populate_fs_prog_data(nir, compiler->devinfo, key, prog_data,
-                                 params->mue_map,
+                                 params->vue_map, params->mue_map,
                                  per_primitive_offsets);
 
    /* From the SKL PRM, Volume 7, "Alpha Coverage":
@@ -1854,52 +1864,50 @@ brw_compile_fs(const struct brw_compiler *compiler,
    if (reqd_dispatch_width == 16)
       v8.reset();
 
-   brw_generator g(compiler, &params->base, &prog_data->base,
-                  MESA_SHADER_FRAGMENT);
+   brw_to_binary_params to_binary_params = {
+      .compiler = compiler,
+      .params = &params->base,
+      .prog_data = &prog_data->base,
+   };
 
-   if (unlikely(debug_enabled)) {
-      g.enable_debug(ralloc_asprintf(params->base.mem_ctx,
-                                     "%s fragment shader %s",
-                                     nir->info.label ?
-                                        nir->info.label : "unnamed",
-                                     nir->info.name));
-   }
-
-   struct genisa_stats *stats = params->base.stats;
    uint32_t max_dispatch_width = 0;
+   unsigned num_variants = 0;
 
    if (vmulti) {
       prog_data->dispatch_multi = vmulti->dispatch_width;
       prog_data->max_polygons = vmulti->max_polygons;
-      g.generate_code(*vmulti, stats);
-      stats = stats ? stats + 1 : NULL;
+      to_binary_params.shaders[num_variants++] = vmulti.get();
       max_dispatch_width = vmulti->dispatch_width;
    } else if (v8) {
       prog_data->dispatch_8 = true;
-      g.generate_code(*v8, stats);
-      stats = stats ? stats + 1 : NULL;
+      to_binary_params.shaders[num_variants++] = v8.get();
       max_dispatch_width = 8;
    }
 
    if (v16) {
       prog_data->dispatch_16 = true;
-      prog_data->prog_offset_16 = g.generate_code(*v16, stats);
-      stats = stats ? stats + 1 : NULL;
+      to_binary_params.shaders[num_variants++] = v16.get();
       max_dispatch_width = 16;
    }
 
    if (v32) {
       prog_data->dispatch_32 = true;
-      prog_data->prog_offset_32 = g.generate_code(*v32, stats);
-      stats = stats ? stats + 1 : NULL;
+      to_binary_params.shaders[num_variants++] = v32.get();
       max_dispatch_width = 32;
    }
 
-   for (struct genisa_stats *s = params->base.stats; s != NULL && s != stats; s++)
-      s->max_dispatch_width = max_dispatch_width;
+   const unsigned *assembly = brw_to_binary(&to_binary_params);
 
-   g.add_const_data(nir->constant_data, nir->constant_data_size);
-   return g.get_assembly();
+   if (v16)
+      prog_data->prog_offset_16 = v16->start_offset;
+   if (v32)
+      prog_data->prog_offset_32 = v32->start_offset;
+
+   /* Override per-variant max_dispatch_width to make reports more useful. */
+   for (unsigned i = 0; i < num_variants && params->base.stats; i++)
+      params->base.stats[i].max_dispatch_width = max_dispatch_width;
+
+   return assembly;
 }
 
 extern "C" void

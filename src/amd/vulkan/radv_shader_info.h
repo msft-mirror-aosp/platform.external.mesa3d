@@ -186,7 +186,6 @@ struct radv_shader_info {
       bool early_fragment_test : 1;
       bool post_depth_coverage : 1;
       uint8_t reads_frag_coord_mask;
-      uint8_t reads_sample_pos_mask;
       uint8_t depth_layout;
       bool reads_sample_mask_in : 1;
       bool reads_front_face : 1;
@@ -214,6 +213,8 @@ struct radv_shader_info {
       bool load_rasterization_prim : 1;
       bool force_sample_iter_shading_rate : 1;
       bool allow_flat_shading : 1;
+      bool selects_frag_coord_xy_dynamically : 1;
+      bool selects_sample_mask_in_dynamically : 1;
 
       bool has_epilog : 1;
    } ps;
@@ -263,6 +264,7 @@ struct radv_shader_regs {
    uint32_t pgm_rsrc1;
    uint32_t pgm_rsrc2;
    uint32_t pgm_rsrc3;
+   uint32_t pgm_rsrc4;
 
    union {
       struct {
@@ -301,6 +303,7 @@ struct radv_shader_regs {
          uint32_t spi_ps_in_control;
          uint32_t spi_shader_z_format;
          uint32_t spi_gs_out_config_ps;
+         uint32_t spi_shader_pgm_rsrc4_ps;
          uint32_t pa_sc_hisz_control;
       } ps;
 
@@ -316,7 +319,7 @@ struct radv_shader_regs {
    uint32_t vgt_gs_max_vert_out;
    uint32_t vgt_gs_onchip_cntl;
    uint32_t spi_shader_pgm_rsrc3_gs;
-   uint32_t spi_shader_pgm_rsrc4_gs;
+   uint32_t spi_shader_pgm_rsrc4_gs_hs;
    uint32_t ge_pc_alloc;
    uint32_t pa_cl_vs_out_cntl;
    uint32_t spi_vs_out_config;

@@ -987,10 +987,12 @@ nir_get_io_offset_src_number(const nir_intrinsic_instr *instr)
    case nir_intrinsic_load_push_constant:
    case nir_intrinsic_load_kernel_input:
    case nir_intrinsic_load_global:
+   case nir_intrinsic_load_global_intel:
    case nir_intrinsic_load_global_2x32:
    case nir_intrinsic_load_global_constant:
    case nir_intrinsic_load_global_etna:
    case nir_intrinsic_load_global_nv:
+   case nir_intrinsic_load_global_transpose_amd:
    case nir_intrinsic_load_scratch:
    case nir_intrinsic_load_scratch_nv:
    case nir_intrinsic_load_scratch_intel:
@@ -1019,6 +1021,7 @@ nir_get_io_offset_src_number(const nir_intrinsic_instr *instr)
    case nir_intrinsic_load_push_data_intel:
    case nir_intrinsic_vild_nv:
    case nir_intrinsic_load_shader_indirect_data_intel:
+   case nir_intrinsic_cmat_load_shared_nv:
       return 0;
    case nir_intrinsic_load_ubo:
    case nir_intrinsic_load_ubo_vec4:
@@ -1030,6 +1033,7 @@ nir_get_io_offset_src_number(const nir_intrinsic_instr *instr)
    case nir_intrinsic_load_per_primitive_output:
    case nir_intrinsic_load_interpolated_input:
    case nir_intrinsic_load_global_amd:
+   case nir_intrinsic_load_global_tr_amd:
    case nir_intrinsic_load_global_bounded:
    case nir_intrinsic_load_global_constant_offset:
    case nir_intrinsic_load_global_constant_bounded:
@@ -1040,6 +1044,7 @@ nir_get_io_offset_src_number(const nir_intrinsic_instr *instr)
    case nir_intrinsic_store_shared_nv:
    case nir_intrinsic_store_task_payload:
    case nir_intrinsic_store_global:
+   case nir_intrinsic_store_global_intel:
    case nir_intrinsic_store_global_2x32:
    case nir_intrinsic_store_global_etna:
    case nir_intrinsic_store_global_nv:
@@ -1109,6 +1114,39 @@ nir_get_io_offset_src(nir_intrinsic_instr *instr)
    case nir_intrinsic_image_heap_##name
 
 /**
+ * Return the uniform offset source number for a load/store intrinsic or -1 if there's no offset.
+ */
+int
+nir_get_io_uniform_offset_src_number(const nir_intrinsic_instr *instr)
+{
+   switch (instr->intrinsic) {
+   case nir_intrinsic_cmat_load_shared_nv:
+   case nir_intrinsic_global_atomic_nv:
+   case nir_intrinsic_load_global_nv:
+   case nir_intrinsic_load_scratch_nv:
+   case nir_intrinsic_load_shared_nv:
+   case nir_intrinsic_shared_atomic_nv:
+      return 1;
+   case nir_intrinsic_store_global_nv:
+   case nir_intrinsic_store_scratch_nv:
+   case nir_intrinsic_store_shared_nv:
+      return 2;
+   default:
+      return -1;
+   }
+}
+
+/**
+ * Return the uniform offset source for a load/store intrinsic.
+ */
+nir_src *
+nir_get_io_uniform_offset_src(nir_intrinsic_instr *instr)
+{
+   const int idx = nir_get_io_uniform_offset_src_number(instr);
+   return idx >= 0 ? &instr->src[idx] : NULL;
+}
+
+/**
  * Return the index or handle source number for a load/store intrinsic or -1
  * if there's no index or handle.
  */
@@ -1127,6 +1165,7 @@ nir_get_io_index_src_number(const nir_intrinsic_instr *instr)
    case nir_intrinsic_load_per_primitive_output:
    case nir_intrinsic_load_interpolated_input:
    case nir_intrinsic_load_global_amd:
+   case nir_intrinsic_load_global_tr_amd:
    case nir_intrinsic_global_atomic_amd:
    case nir_intrinsic_global_atomic_swap_amd:
    case nir_intrinsic_ldc_nv:
@@ -1137,6 +1176,7 @@ nir_get_io_index_src_number(const nir_intrinsic_instr *instr)
    case nir_intrinsic_load_ssbo_uniform_block_intel:
    case nir_intrinsic_ssbo_atomic:
    case nir_intrinsic_ssbo_atomic_swap:
+   case nir_intrinsic_load_ssbo_address:
    IMG_CASE(load):
    IMG_CASE(store):
    IMG_CASE(sparse_load):
@@ -1176,6 +1216,7 @@ nir_get_io_data_src_number(const nir_intrinsic_instr *intr)
    case nir_intrinsic_store_pixel_local:
    case nir_intrinsic_store_per_vertex_output:
    case nir_intrinsic_store_per_primitive_output:
+   case nir_intrinsic_store_per_view_output:
    case nir_intrinsic_store_ssbo:
    case nir_intrinsic_store_ssbo_block_intel:
    case nir_intrinsic_store_ssbo_intel:
@@ -1186,6 +1227,7 @@ nir_get_io_data_src_number(const nir_intrinsic_instr *intr)
    case nir_intrinsic_store_shared_nv:
    case nir_intrinsic_store_task_payload:
    case nir_intrinsic_store_global:
+   case nir_intrinsic_store_global_intel:
    case nir_intrinsic_store_global_block_intel:
    case nir_intrinsic_store_global_amd:
    case nir_intrinsic_store_global_2x32:

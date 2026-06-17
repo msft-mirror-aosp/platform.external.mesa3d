@@ -80,8 +80,11 @@ lp_build_gather_resident(struct lp_build_context *bld,
    LLVMValueRef residency =
       dynamic_state->residency(gallivm, resources_type, resources_ptr, 0, NULL);
 
+   uint64_t residency_granularity = 64;
+   os_get_page_size(&residency_granularity);
+
    LLVMValueRef tile_size_log2 =
-      lp_build_const_int_vec(gallivm, type, util_logbase2(64 * 1024));
+      lp_build_const_int_vec(gallivm, type, util_logbase2(residency_granularity));
    LLVMValueRef tile_index = LLVMBuildLShr(builder, offset, tile_size_log2, "");
 
    LLVMValueRef dword_bitsize_log2 =
@@ -221,6 +224,13 @@ lp_build_sample_texel_soa(struct lp_build_sample_context *bld,
          if (use_border)
             real_offset = lp_build_andnot(&bld->int_coord_bld, real_offset, use_border);
       }
+
+      LLVMValueRef base_offset =
+         bld->dynamic_state->base_offset(bld->gallivm, bld->resources_type,
+                                         bld->resources_ptr, 0, NULL);
+      base_offset = lp_build_broadcast_scalar(&bld->int_coord_bld, base_offset);
+
+      real_offset = LLVMBuildAdd(bld->gallivm->builder, base_offset, real_offset, "");
 
       lp_build_gather_resident(&bld->float_vec_bld, bld->dynamic_state,
                                bld->resources_type, bld->resources_ptr,
@@ -2959,10 +2969,35 @@ lp_build_fetch_texel(struct lp_build_sample_context *bld,
 
       first_level = lp_build_broadcast_scalar(&bld->leveli_bld, first_level);
       last_level = lp_build_broadcast_scalar(&bld->leveli_bld, last_level);
+
+      LLVMValueRef requested_level = ilevel;
       lp_build_nearest_mip_level(bld,
                                  first_level, last_level,
                                  ilevel, &ilevel,
                                  out_of_bound_ret_zero ? &out_of_bounds : NULL);
+
+      /* The Vulkan spec defines an OpImageFetch with LOD below the view's
+       * minLodInteger as reading zero.
+       * Since view_min_lod is view-relative, clamp against its floor.
+       */
+      if (out_of_bound_ret_zero &&
+          bld->static_texture_state->apply_view_min_lod &&
+          bld->dynamic_state->view_min_lod) {
+         LLVMValueRef vml =
+            bld->dynamic_state->view_min_lod(bld->gallivm, bld->resources_type,
+                                             bld->resources_ptr, texture_unit, NULL);
+         LLVMValueRef min_level =
+            lp_build_broadcast_scalar(&bld->leveli_bld,
+                                      lp_build_ifloor(&bld->float_bld, vml));
+         LLVMValueRef below = lp_build_cmp(&bld->leveli_bld, PIPE_FUNC_LESS,
+                                           requested_level, min_level);
+         if (bld->num_mips == 1)
+            below = lp_build_broadcast_scalar(&bld->int_coord_bld, below);
+         else if (bld->num_mips != bld->coord_bld.type.length)
+            below = lp_build_unpack_broadcast_aos_scalars(bld->gallivm,
+                       bld->leveli_bld.type, bld->int_coord_bld.type, below);
+         out_of_bounds = lp_build_or(int_coord_bld, out_of_bounds, below);
+      }
    } else {
       assert(bld->num_mips == 1);
       if (bld->static_texture_state->target != PIPE_BUFFER) {
@@ -3057,9 +3092,16 @@ lp_build_fetch_texel(struct lp_build_sample_context *bld,
    }
 
    if (bld->residency) {
+      LLVMValueRef base_offset =
+         bld->dynamic_state->base_offset(bld->gallivm, bld->resources_type,
+                                         bld->resources_ptr, 0, NULL);
+      base_offset = lp_build_broadcast_scalar(&bld->int_coord_bld, base_offset);
+
+      LLVMValueRef full_offset = LLVMBuildAdd(bld->gallivm->builder, base_offset, offset, "");
+
       lp_build_gather_resident(&bld->float_vec_bld, bld->dynamic_state,
                                bld->resources_type, bld->resources_ptr,
-                               offset, &bld->resident);
+                               full_offset, &bld->resident);
    }
 
    offset = lp_build_andnot(int_coord_bld, offset, out_of_bounds);

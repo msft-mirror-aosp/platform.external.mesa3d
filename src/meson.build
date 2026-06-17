@@ -154,7 +154,7 @@ if with_egl
   subdir('egl')
 endif
 if with_gallium
-  if with_glx == 'dri' or with_platform_x11 or with_platform_xcb
+  if with_glx == 'dri' or with_platform_x11
     subdir('gallium/targets/dril')
   endif
 endif
@@ -176,5 +176,11 @@ if with_glx != 'disabled' and not with_glvnd
     variables : ['glx_tls=yes'],
   )
 endif
+
+# Used by bin/drm-shim.py to calculate paths
+devenv.prepend(
+  'DRM_SHIM_PATH',
+  meson.project_build_root()
+)
 
 subdir('tool')

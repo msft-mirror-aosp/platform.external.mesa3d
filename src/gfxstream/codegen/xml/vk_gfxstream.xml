@@ -65,7 +65,6 @@ specific entries.
             <member><type>uint64_t</type>                    <name>id</name></member>
         </type>
 
-
         <!-- b/519606352: removes `optional` from `pUserData` to avoid a backwards incompatible guest to host protocol change. -->
         <type category="struct" name="VkDeviceDeviceMemoryReportCreateInfoEXT" allowduplicate="true" structextends="VkDeviceCreateInfo">
             <member values="VK_STRUCTURE_TYPE_DEVICE_DEVICE_MEMORY_REPORT_CREATE_INFO_EXT"><type>VkStructureType</type> <name>sType</name></member>

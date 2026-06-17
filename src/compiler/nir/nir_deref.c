@@ -198,6 +198,7 @@ nir_deref_instr_has_complex_use(nir_deref_instr *deref,
          nir_intrinsic_instr *use_intrin = nir_instr_as_intrinsic(use_instr);
          switch (use_intrin->intrinsic) {
          case nir_intrinsic_load_deref:
+         case nir_intrinsic_load_deref_transpose_amd:
             assert(use_src == &use_intrin->src[0]);
             continue;
 
@@ -229,7 +230,8 @@ nir_deref_instr_has_complex_use(nir_deref_instr *deref,
 
          case nir_intrinsic_deref_atomic:
          case nir_intrinsic_deref_atomic_swap:
-            if (opts & nir_deref_instr_has_complex_use_allow_atomics)
+            if (use_src == &use_intrin->src[0] &&
+                (opts & nir_deref_instr_has_complex_use_allow_atomics))
                continue;
             return true;
 
@@ -833,7 +835,7 @@ nir_rematerialize_deref_in_use_blocks(nir_deref_instr *instr)
       return true;
 
    struct rematerialize_deref_state state = {
-      .builder = nir_builder_create(nir_cf_node_get_function(&instr->instr.block->cf_node)),
+      .builder = nir_builder_create(instr->instr.block->impl)
    };
 
    nir_foreach_use_safe(use, &instr->def) {
@@ -1535,6 +1537,8 @@ nir_opt_deref_impl(nir_function_impl *impl)
             case nir_intrinsic_load_deref:
                if (opt_load_vec_deref(&b, intrin))
                   progress = true;
+               FALLTHROUGH;
+            case nir_intrinsic_load_deref_transpose_amd:
                if (opt_load_undef_deref(&b, intrin))
                   progress = true;
                break;

@@ -108,6 +108,8 @@ static const struct debug_control_bitset debug_control[] = {
    OPT1("bvh_tlas_ir_hdr",   DEBUG_BVH_TLAS_IR_HDR),
    OPT1("bvh_blas_ir_as",    DEBUG_BVH_BLAS_IR_AS),
    OPT1("bvh_tlas_ir_as",    DEBUG_BVH_TLAS_IR_AS),
+   OPT1("bvh_pcrel_map",     DEBUG_BVH_PCREL_MAP),
+   OPT1("bvh_update_as",     DEBUG_BVH_UPDATE_AS),
    OPT1("bvh_no_build",      DEBUG_BVH_NO_BUILD),
    OPT1("task",              DEBUG_TASK),
    OPT1("mesh",              DEBUG_MESH),
@@ -214,7 +216,7 @@ uint64_t intel_debug_batch_frame_stop = -1;
 
 uint32_t intel_debug_bkp_before_draw_count = 0;
 uint32_t intel_debug_bkp_after_draw_count = 0;
-uint32_t intel_shader_dump_filter = 0;
+uint64_t intel_shader_dump_filter = 0;
 
 uint32_t intel_debug_bkp_before_dispatch_count = 0;
 uint32_t intel_debug_bkp_after_dispatch_count = 0;
@@ -304,9 +306,14 @@ process_intel_debug_variable_once(void)
 }
 
 static const struct debug_named_value use_jay_options[] = {
-   { "vs", BITFIELD_BIT(MESA_SHADER_VERTEX),   "Use jay for vertex shaders"   },
-   { "fs", BITFIELD_BIT(MESA_SHADER_FRAGMENT), "Use jay for fragment shaders" },
-   { "cs", BITFIELD_BIT(MESA_SHADER_COMPUTE),  "Use jay for compute shaders"  },
+   { "vs",  BITFIELD_BIT(MESA_SHADER_VERTEX),    "Use jay for vertex shaders"   },
+   { "tes", BITFIELD_BIT(MESA_SHADER_TESS_EVAL), "Use jay for tessellation evaluation shaders" },
+   { "fs",  BITFIELD_BIT(MESA_SHADER_FRAGMENT),  "Use jay for fragment shaders" },
+   { "cs",  BITFIELD_BIT(MESA_SHADER_COMPUTE),   "Use jay for compute shaders"  },
+   { "all", BITFIELD_BIT(MESA_SHADER_VERTEX) |
+            BITFIELD_BIT(MESA_SHADER_TESS_EVAL) |
+            BITFIELD_BIT(MESA_SHADER_FRAGMENT) |
+            BITFIELD_BIT(MESA_SHADER_COMPUTE),   "Use jay for supported shader stages"  },
    DEBUG_NAMED_VALUE_END
 };
 

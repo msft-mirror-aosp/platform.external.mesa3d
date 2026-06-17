@@ -701,8 +701,15 @@ struct bo_export {
    struct list_head link;
 };
 
+enum zink_bo_type {
+   ZINK_BO_REAL,
+   ZINK_BO_SLAB,
+   ZINK_BO_SPARSE,
+};
+
 struct zink_bo {
-   struct pb_buffer base;
+   struct pb_buffer_lean base;
+   enum zink_bo_type type;
 
    union {
       struct {
@@ -749,7 +756,7 @@ struct zink_bo {
 };
 
 static inline struct zink_bo *
-zink_bo(struct pb_buffer *pbuf)
+zink_bo(struct pb_buffer_lean *pbuf)
 {
    return (struct zink_bo*)pbuf;
 }
@@ -881,7 +888,7 @@ struct zink_gfx_pipeline_state {
    uint32_t feedback_loop : 1;
    uint32_t feedback_loop_zs : 1;
    uint32_t rast_attachment_order : 1;
-   uint32_t custom_sample_locations : 1;
+   uint32_t pad : 1;
    uint32_t rp_state : 16;
    VkSampleMask sample_mask;
    uint32_t blend_id;
@@ -1435,8 +1442,7 @@ struct zink_screen {
 
    struct {
       struct pb_cache bo_cache;
-      struct pb_slabs bo_slabs[NUM_SLAB_ALLOCATORS];
-      unsigned min_alloc_size;
+      struct pb_slabs bo_slabs;
       uint32_t next_bo_unique_id;
    } pb;
    uint8_t heap_map[ZINK_HEAP_MAX][VK_MAX_MEMORY_TYPES];  // mapping from zink heaps to memory type indices
@@ -1839,6 +1845,7 @@ struct zink_context {
    struct zink_resource *needs_present;
 
    struct pipe_vertex_buffer vertex_buffers[PIPE_MAX_ATTRIBS];
+   unsigned vertex_buffers_count;
    bool vertex_buffers_dirty;
 
    struct zink_sampler_state *sampler_states[MESA_SHADER_MESH_STAGES][PIPE_MAX_SAMPLERS];
@@ -1851,6 +1858,7 @@ struct zink_context {
    float blend_constants[4];
 
    bool sample_locations_changed;
+   bool sample_locations_enabled;
    VkSampleLocationEXT vk_sample_locations[PIPE_MAX_SAMPLE_LOCATION_GRID_SIZE * PIPE_MAX_SAMPLE_LOCATION_GRID_SIZE];
    uint8_t sample_locations[2 * 4 * 8 * 16];
    unsigned num_sample_locations;

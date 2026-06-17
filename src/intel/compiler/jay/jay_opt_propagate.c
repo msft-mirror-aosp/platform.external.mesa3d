@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "compiler/gen/gen_enums.h"
 #include "util/bitset.h"
 #include "util/lut.h"
 #include "jay_builder.h"
@@ -21,7 +22,7 @@ static bool
 propagate_cmod(jay_function *func, jay_inst *I, jay_inst **defs)
 {
    enum jay_type cmp_type = I->type;
-   enum jay_conditional_mod cmod = I->conditional_mod;
+   gen_condition cmod = I->conditional_mod;
    jay_inst *def = NULL;
 
    /* TODO: Generalize cmod propagation */
@@ -34,7 +35,7 @@ propagate_cmod(jay_function *func, jay_inst *I, jay_inst **defs)
          def = defs[jay_base_index(I->src[s])];
 
          /* Canonicalize the cmod to have the zero second */
-         cmod = s == 1 ? jay_conditional_mod_swap_sources(cmod) : cmod;
+         cmod = s == 1 ? gen_condition_swap_sources(cmod) : cmod;
          break;
       }
    }
@@ -46,9 +47,9 @@ propagate_cmod(jay_function *func, jay_inst *I, jay_inst **defs)
    /* bfn bspec says "only zero(ze), greater-than(gt), and less-than(lt)
     * conditional modifiers are valid."
     */
-   if (def->op == JAY_OPCODE_BFN && !(cmod == JAY_CONDITIONAL_EQ ||
-                                      cmod == JAY_CONDITIONAL_GT ||
-                                      cmod == JAY_CONDITIONAL_LT)) {
+   if (def->op == JAY_OPCODE_BFN && !(cmod == GEN_CONDITION_EQ ||
+                                      cmod == GEN_CONDITION_GT ||
+                                      cmod == GEN_CONDITION_LT)) {
       return false;
    }
 
@@ -62,7 +63,7 @@ propagate_cmod(jay_function *func, jay_inst *I, jay_inst **defs)
 
    enum jay_type instr_type = def->type;
 
-   if (cmod == JAY_CONDITIONAL_NE || cmod == JAY_CONDITIONAL_EQ) {
+   if (cmod == GEN_CONDITION_NE || cmod == GEN_CONDITION_EQ) {
       cmp_type = canonicalize_for_bit_compare(cmp_type);
       instr_type = canonicalize_for_bit_compare(instr_type);
    }
@@ -121,6 +122,30 @@ propagate_not(jay_inst *I, unsigned s, jay_inst *mod)
    }
 }
 
+/**
+ * Fuse demote(cmp(x, y) != 0) to demote(x CMP y).
+ */
+static void
+fuse_demote(jay_inst *demote, jay_inst **defs)
+{
+   if (!(jay_is_ssa(demote->src[0]) &&
+         jay_is_zero(demote->src[1]) &&
+         demote->type == JAY_TYPE_U1 &&
+         demote->conditional_mod == GEN_CONDITION_NE)) {
+      return;
+   }
+
+   jay_inst *cmp = defs[jay_index(demote->src[0])];
+   if (cmp->op != JAY_OPCODE_CMP || cmp->predication) {
+      return;
+   }
+
+   demote->conditional_mod = cmp->conditional_mod;
+   demote->src[0] = cmp->src[0];
+   demote->src[1] = cmp->src[1];
+   demote->type = cmp->type;
+}
+
 static void
 propagate_forwards(jay_function *f)
 {
@@ -156,6 +181,11 @@ propagate_forwards(jay_function *f)
       if (I->op == JAY_OPCODE_PHI_SRC || I->op == JAY_OPCODE_SEND)
          continue;
 
+      /* We fuse demote forwards & upfront to avoid fighting cmod prop */
+      if (I->op == JAY_OPCODE_DEMOTE) {
+         fuse_demote(I, defs);
+      }
+
       jay_foreach_ssa_src(I, s) {
          /* Copy propagate whole vectors */
          jay_def src = I->src[s];
@@ -172,9 +202,11 @@ propagate_forwards(jay_function *f)
             /* Default values must have the same file as their dest, do not
              * propagate invalid there. Also don't propagate inverse-ballots.
              *
-             * For balloted flags, only source 0 can read ARF (i.e. ballotted
-             * flags). Furthermore, we may only propagate ballots locally as the
-             * ballot is implicitly execmask'd which changes throughout the CFG.
+             * Only source 0 can read ARF (i.e. ballotted flags). Furthermore,
+             * we may only propagate ballots locally as the ballot is implicitly
+             * execmask'd which changes throughout the CFG.
+             *
+             * ISA restrictions forbid 8-bit immediates, don't even try.
              */
             if ((I->src[s].file == def->src[0].file) ||
                 ((!jay_inst_has_default(I) ||
@@ -183,7 +215,10 @@ propagate_forwards(jay_function *f)
                  !(I->src[s].file == FLAG) &&
                  (!jay_is_flag(def->src[0]) ||
                   (s == 0 && def_block[jay_base_index(src)] == block->index)) &&
-                 !(jay_is_imm(def->src[0]) && I->src[s].negate))) {
+                 !(def->src[0].file == J_ARF && s != 0) &&
+                 !(jay_is_imm(def->src[0]) && I->src[s].negate) &&
+                 !(jay_is_imm(def->src[0]) &&
+                   jay_type_size_bits(jay_src_type(I, s)) == 8))) {
 
                jay_replace_src(&I->src[s], def->src[0]);
             }
@@ -274,7 +309,8 @@ local_fuse_flag_and_or(jay_function *f,
     * Currently we also bail on mixed FLAG/UFLAG cases for simplicity.
     */
    if (BITSET_TEST(defined, jay_index(other)) ||
-       use->src[0].file != use->src[1].file) {
+       use->src[0].file != use->src[1].file ||
+       use->dst.file != use->src[1].file) {
       return false;
    }
 
@@ -325,7 +361,8 @@ propagate_backwards(jay_function *f)
       if (!use || BITSET_TEST(multiple, jay_base_index(dst)))
          continue;
 
-      if (def_block[jay_base_index(use->dst)] == block->index &&
+      if (!jay_is_null(use->dst) &&
+          def_block[jay_base_index(use->dst)] == block->index &&
           local_fuse_flag_and_or(f, I, use, defined)) {
 
          jay_remove_instruction(use);
@@ -347,6 +384,8 @@ propagate_backwards(jay_function *f)
       if (use->type ==
              (flag ? JAY_TYPE_U1 : canonicalize_for_bit_compare(I->type)) &&
           I->op != JAY_OPCODE_PHI_DST &&
+          jay_is_null(I->cond_flag) &&
+          !I->predication &&
           use->op == JAY_OPCODE_MOV &&
           use->dst.file != J_ADDRESS &&
           (!jay_is_flag(use->dst) ||

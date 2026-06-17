@@ -54,7 +54,7 @@ static void si_dec_decode_bitstream(struct pipe_video_codec *decoder, struct pip
       }
 
       if (!vid->bs_size) {
-         buf = si_resource(pipe_buffer_create(vid->screen, 0, PIPE_USAGE_STAGING, total_bs_size));
+         buf = si_vid_create_buffer(vid->screen, PIPE_USAGE_STAGING, 0, total_bs_size);
          if (!buf) {
             ERROR("Can't create bitstream buffer!");
             return;
@@ -153,7 +153,7 @@ static struct si_resource *si_dec_get_emb_buffer(struct si_video_dec *vid)
    struct si_resource *emb_buffer = vid->emb_buffers[vid->cur_buffer];
 
    if (vid->dec->embedded_size && !emb_buffer) {
-      emb_buffer = si_resource(pipe_buffer_create(vid->screen, 0, PIPE_USAGE_DEFAULT, vid->dec->embedded_size));
+      emb_buffer = si_vid_create_buffer(vid->screen, PIPE_USAGE_DEFAULT, 0, vid->dec->embedded_size);
       vid->emb_buffers[vid->cur_buffer] = emb_buffer;
    }
 
@@ -186,8 +186,8 @@ static int si_dec_init_decoder(struct si_video_dec *vid, struct ac_video_dec_ses
    }
 
    if (vid->dec->session_size) {
-      vid->session_buffer = si_resource(pipe_buffer_create(vid->screen, 0, PIPE_USAGE_DEFAULT,
-                                                           vid->dec->session_size));
+      unsigned flags = vid->dec->init_session_buf ? 0 : PIPE_RESOURCE_FLAG_UNMAPPABLE;
+      vid->session_buffer = si_vid_create_buffer(vid->screen, PIPE_USAGE_DEFAULT, flags, vid->dec->session_size);
       if (!vid->session_buffer) {
          ret = -ENOMEM;
          goto err;
@@ -195,8 +195,9 @@ static int si_dec_init_decoder(struct si_video_dec *vid, struct ac_video_dec_ses
    }
 
    if (protected && vid->dec->session_tmz_size) {
-      vid->session_tmz_buffer = si_resource(pipe_buffer_create(vid->screen, PIPE_BIND_PROTECTED,
-                                                               PIPE_USAGE_DEFAULT, vid->dec->session_tmz_size));
+      vid->session_tmz_buffer = si_vid_create_buffer(vid->screen, PIPE_USAGE_DEFAULT,
+                                                     PIPE_RESOURCE_FLAG_UNMAPPABLE | PIPE_RESOURCE_FLAG_ENCRYPTED,
+                                                     vid->dec->session_tmz_size);
       if (!vid->session_tmz_buffer) {
          ret = -ENOMEM;
          goto err;
@@ -204,7 +205,8 @@ static int si_dec_init_decoder(struct si_video_dec *vid, struct ac_video_dec_ses
    }
 
    if (vid->dec->init_session_buf) {
-      struct si_resource *session_buf = protected ? vid->session_tmz_buffer : vid->session_buffer;
+      struct si_resource *session_buf = (protected && vid->dec->session_tmz_size) ?
+                                        vid->session_tmz_buffer : vid->session_buffer;
       void *ptr = vid->ws->buffer_map(vid->ws, session_buf->buf, NULL,
                                       PIPE_MAP_WRITE | RADEON_MAP_TEMPORARY);
       if (!ptr) {
@@ -304,6 +306,22 @@ static int si_dec_destroy_decoder(struct si_video_dec *vid)
    return ret;
 }
 
+static enum pipe_format dpb_format(struct si_video_dec *vid)
+{
+   assert(vid->dec->param.sub_sample == AC_VIDEO_SUBSAMPLE_420);
+
+   switch (vid->dec->param.max_bit_depth) {
+   case 8:
+      return PIPE_FORMAT_NV12;
+   case 10:
+      return PIPE_FORMAT_P010;
+   case 12:
+      return PIPE_FORMAT_P012;
+   default:
+      UNREACHABLE("invalid bit depth");
+   }
+}
+
 static enum ac_video_dec_tier select_tier(struct si_video_dec *vid, struct pipe_video_buffer *target)
 {
    struct si_screen *sscreen = (struct si_screen *)vid->screen;
@@ -384,8 +402,10 @@ static int decode_cmd_build(struct si_video_dec *vid, struct pipe_picture_desc *
 
    if (cmd->tier == AC_VIDEO_DEC_TIER0 && vid->dpb_size) {
       if (!vid->dpb_buffer) {
-         unsigned bind = pic->protected_playback ? PIPE_BIND_PROTECTED : 0;
-         vid->dpb_buffer = si_resource(pipe_buffer_create(vid->screen, bind, PIPE_USAGE_DEFAULT, vid->dpb_size));
+         unsigned flags = PIPE_RESOURCE_FLAG_UNMAPPABLE;
+         if (pic->protected_playback)
+            flags |= PIPE_RESOURCE_FLAG_ENCRYPTED;
+         vid->dpb_buffer = si_vid_create_buffer(vid->screen, PIPE_USAGE_DEFAULT, flags, vid->dpb_size);
          if (!vid->dpb_buffer)
             return -ENOMEM;
       }
@@ -405,7 +425,7 @@ static int decode_cmd_build(struct si_video_dec *vid, struct pipe_picture_desc *
          if (pic->protected_playback)
             bind |= PIPE_BIND_PROTECTED;
          vid->dpb_buffer = si_resource(vid->screen->resource_create(vid->screen, &(struct pipe_resource){
-            .format = cmd->decode_surface.format,
+            .format = dpb_format(vid),
             .target = PIPE_TEXTURE_2D_ARRAY,
             .width0 = align(vid->base.width, vid->dpb_alignment),
             .height0 = align(vid->base.height, vid->dpb_alignment),
@@ -457,7 +477,7 @@ static int decode_cmd_build(struct si_video_dec *vid, struct pipe_picture_desc *
             if (pic->protected_playback)
                bind |= PIPE_BIND_PROTECTED;
             ref = vid->screen->resource_create(vid->screen, &(struct pipe_resource){
-               .format = cmd->decode_surface.format,
+               .format = dpb_format(vid),
                .target = PIPE_TEXTURE_2D,
                .width0 = width,
                .height0 = height,

@@ -687,29 +687,31 @@ static VkResult pvr_setup_texture_state_words(
 {
    const struct pvr_image *image = vk_to_pvr_image(image_view->vk.image);
    const struct pvr_image_plane *plane = pvr_single_plane_const(image);
-   struct pvr_texture_state_info info = {
-      .format = image_view->vk.format,
-      .mem_layout = image->memlayout,
-      .type = image_view->vk.view_type,
-      .is_cube = image_view->vk.view_type == VK_IMAGE_VIEW_TYPE_CUBE ||
-                 image_view->vk.view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY,
-      .tex_state_type = PVR_TEXTURE_STATE_SAMPLE,
-      .extent = image_view->vk.extent,
-      .mip_levels = 1,
-      .sample_count = image_view->vk.image->samples,
-      .stride = plane->physical_extent.width,
-      .offset = plane->layer_size * view_index,
-      .addr = image->dev_addr,
-   };
-   const uint8_t *const swizzle = pvr_get_format_swizzle(info.format);
-   VkResult result;
 
-   memcpy(&info.swizzle, swizzle, sizeof(info.swizzle));
+   STATIC_ASSERT(sizeof(descriptor->image) ==
+                 sizeof(image_view->image_state[PVR_TEXTURE_STATE_SAMPLE]));
+   memcpy(&descriptor->image,
+          &image_view->image_state[PVR_TEXTURE_STATE_SAMPLE],
+          sizeof(descriptor->image));
 
-   /* TODO: Can we use image_view->texture_state instead of generating here? */
-   result = pvr_arch_pack_tex_state(device, &info, &descriptor->image);
-   if (result != VK_SUCCESS)
-      return result;
+   const struct ROGUE_TEXSTATE_IMAGE_WORD1 image_word1 = pvr_csb_unpack(
+      &descriptor->image.words[1],
+      TEXSTATE_IMAGE_WORD1);
+
+   pvr_csb_pack (&descriptor->image.words[1],
+                 TEXSTATE_IMAGE_WORD1,
+                 word1) {
+      word1 = image_word1;
+      word1.texaddr =
+         PVR_DEV_ADDR_OFFSET(word1.texaddr,
+                             plane->layer_size * view_index);
+   }
+
+   if (image_view->vk.view_type == VK_IMAGE_VIEW_TYPE_2D &&
+       image->vk.image_type == VK_IMAGE_TYPE_3D) {
+      descriptor->image.meta[PCO_IMAGE_META_Z_SLICE] =
+         fui(image_view->vk.base_array_layer);
+   }
 
    pvr_csb_pack (&descriptor->sampler.words[0],
                  TEXSTATE_SAMPLER_WORD0,
@@ -7992,29 +7994,45 @@ pvr_emit_dirty_ppp_state(struct pvr_cmd_buffer *const cmd_buffer,
 
    pvr_setup_isp_depth_bias_scissor_state(cmd_buffer);
 
+   /* Viewports are also abused to implement FRONT_AND_BACK culling */
    if (BITSET_TEST(dynamic_state->dirty, MESA_VK_DYNAMIC_VP_VIEWPORTS) ||
-       BITSET_TEST(dynamic_state->dirty, MESA_VK_DYNAMIC_VP_VIEWPORT_COUNT))
+       BITSET_TEST(dynamic_state->dirty, MESA_VK_DYNAMIC_VP_VIEWPORT_COUNT) ||
+       BITSET_TEST(dynamic_state->dirty,
+                   MESA_VK_DYNAMIC_IA_PRIMITIVE_TOPOLOGY) ||
+       BITSET_TEST(dynamic_state->dirty, MESA_VK_DYNAMIC_RS_CULL_MODE)) {
       pvr_setup_viewport(cmd_buffer);
+   }
 
    pvr_setup_ppp_control(cmd_buffer);
 
    /* The hardware doesn't have an explicit mode for this so we use a
-    * negative viewport to make sure all objects are culled out early.
+    * negative viewport to make sure all triangles are culled out early.
     */
-   if (dynamic_state->rs.cull_mode == VK_CULL_MODE_FRONT_AND_BACK) {
-      /* Shift the viewport out of the guard-band culling everything. */
-      const uint32_t negative_vp_val = fui(-2.0f);
+   switch (dynamic_state->ia.primitive_topology) {
+   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST:
+   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP:
+   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN:
+   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY:
+   case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY:
+      if (dynamic_state->rs.cull_mode == VK_CULL_MODE_FRONT_AND_BACK) {
+         /* Shift the viewport out of the guard-band culling everything. */
+         const uint32_t negative_vp_val = fui(-2.0f);
 
-      state->ppp_state.viewports[0].a0 = negative_vp_val;
-      state->ppp_state.viewports[0].m0 = 0;
-      state->ppp_state.viewports[0].a1 = negative_vp_val;
-      state->ppp_state.viewports[0].m1 = 0;
-      state->ppp_state.viewports[0].a2 = negative_vp_val;
-      state->ppp_state.viewports[0].m2 = 0;
+         state->ppp_state.viewports[0].a0 = negative_vp_val;
+         state->ppp_state.viewports[0].m0 = 0;
+         state->ppp_state.viewports[0].a1 = negative_vp_val;
+         state->ppp_state.viewports[0].m1 = 0;
+         state->ppp_state.viewports[0].a2 = negative_vp_val;
+         state->ppp_state.viewports[0].m2 = 0;
 
-      state->ppp_state.viewport_count = 1;
+         state->ppp_state.viewport_count = 1;
 
-      state->emit_header.pres_viewport = true;
+         state->emit_header.pres_viewport = true;
+      }
+      break;
+   default:
+      /* Points or lines shouldn't be culled out even in such case. */
+      break;
    }
 
    result = pvr_emit_ppp_state(cmd_buffer, sub_cmd);

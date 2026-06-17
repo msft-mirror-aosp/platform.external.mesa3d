@@ -72,10 +72,15 @@ assign_flag(struct flag_ra *ra,
    jay_def tmp = jay_alloc_def(ra->b, file, 1);
 
    unsigned num_flags = jay_num_regs(ra->b->shader, FLAG);
+   if (ra->b->shader->helpers_tracked) {
+      /* Helper tracking uses the last flag by definition */
+      num_flags--;
+   }
+
    tmp.reg = tie ? tie->reg : ballot ? 0 : ((ra->roundrobin++) % num_flags);
 
    /* Uniform access (via a UFLAG or an inverse-ballot) would clobber the zero
-    * for a ballot. We could refine this further but this should be ok for now.
+    * for a ballot. TODO: This needs to be reworked to get the flag back.
     */
    if (!ballot &&
        tmp.reg == 0 &&
@@ -84,6 +89,8 @@ assign_flag(struct flag_ra *ra,
       assert(!tie);
       tmp.reg = 1;
       ra->roundrobin++;
+
+      assert(num_flags >= 2); /* XXX: Not always true, FIXME */
    }
 
    if (jay_index(canonical) < ra->nr_vars) {
@@ -150,7 +157,7 @@ rewrite_sel_to_csel(jay_inst *I)
     */
    jay_def flag = I->src[2];
    I->op = JAY_OPCODE_CSEL;
-   I->conditional_mod = flag.negate ? JAY_CONDITIONAL_EQ : JAY_CONDITIONAL_NE;
+   I->conditional_mod = flag.negate ? GEN_CONDITION_EQ : GEN_CONDITION_NE;
    I->src[2] = canonicalize_flag(flag);
    I->src[2].negate = false;
    return true;
@@ -169,6 +176,7 @@ rewrite_without_flag(struct flag_ra *ra, jay_inst *I, unsigned s, bool in_flag)
    }
 
    if (I->op == JAY_OPCODE_SEL &&
+       s == 2 &&
        (!in_flag || ra->vars[jay_index(I->src[s])].free_canonical) &&
        !I->predication) {
 
@@ -191,6 +199,16 @@ assign_block(struct flag_ra *ra)
          I->op = JAY_OPCODE_MOV;
          I->type = JAY_TYPE_U32;
          I->dst = canonicalize_flag(I->dst);
+         continue;
+      } else if (I->op == JAY_OPCODE_SEND &&
+                 jay_send_skip_helpers(I) &&
+                 jay_is_no_mask(I)) {
+
+         /* jay_lower_helpers will clobber flag 0 to handle this case, see the
+          * logic there. Evict whatever was there.
+          */
+         ra->flag_to_global[0] = 0;
+         assert(!I->predication);
          continue;
       } else if (I->type == JAY_TYPE_U1) {
          /* Boolean logic turns into bitwise logic on the canonical form */
@@ -233,7 +251,8 @@ assign_block(struct flag_ra *ra)
 
          bool in_flag =
             ra->flag_to_global[ra->vars[index].flag] == index &&
-            ((file == UFLAG) ? ra->vars[index].uflag : ra->vars[index].simd);
+            ((file == UFLAG) ? ra->vars[index].uflag : ra->vars[index].simd) &&
+            (!ballot || ra->vars[index].flag == 0);
 
          /* If we don't actually need the flag, we're done. */
          if (rewrite_without_flag(ra, I, s, in_flag)) {
@@ -249,7 +268,7 @@ assign_block(struct flag_ra *ra)
             b->cursor = jay_before_inst(I);
             jay_def d = I->src[s];
             d.negate = false;
-            jay_CMP(b, JAY_TYPE_U32, JAY_CONDITIONAL_NE, tmp,
+            jay_CMP(b, JAY_TYPE_U32, GEN_CONDITION_NE, tmp,
                     canonicalize_flag(d), 0);
          }
 

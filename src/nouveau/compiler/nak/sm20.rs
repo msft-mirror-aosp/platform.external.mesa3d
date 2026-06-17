@@ -148,7 +148,9 @@ enum AluSrc {
 impl AluSrc {
     fn from_src(src: Option<&Src>) -> AluSrc {
         if let Some(src) = src {
-            assert!(src.src_swizzle.is_none());
+            assert!(
+                src.src_swizzle.is_none() || src.src_swizzle == SrcSwizzle::Yy
+            );
             // do not assert src_mod, can be encoded by opcode.
 
             match &src.src_ref {
@@ -299,7 +301,7 @@ impl SM20Encoder<'_> {
     }
 
     fn set_reg_src(&mut self, range: Range<usize>, src: &Src) {
-        assert!(src.src_swizzle.is_none());
+        assert!(src.src_swizzle.is_none() || src.src_swizzle == SrcSwizzle::Yy);
         self.set_reg_src_ref(range, &src.src_ref);
     }
 
@@ -2498,7 +2500,7 @@ impl SM20Op for OpAtom {
         e.set_field(5..9, op);
 
         let typ = match self.atom_type {
-            AtomType::F16x2 => panic!("Unsupported atomic type"),
+            AtomType::F16v2 => panic!("Unsupported atomic type"),
             // AtomType::U8 => 0x0_u8,
             // AtomType::I8 => 0x1_u8,
             // AtomType::U16 => 0x2_u8,

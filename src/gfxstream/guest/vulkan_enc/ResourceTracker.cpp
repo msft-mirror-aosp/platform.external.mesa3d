@@ -2236,10 +2236,7 @@ void ResourceTracker::on_vkGetPhysicalDeviceProperties2(void* context,
     VkPhysicalDeviceDriverProperties* driverProps =
         vk_find_struct(pProperties, PHYSICAL_DEVICE_DRIVER_PROPERTIES);
     if (driverProps) {
-#if DETECT_OS_ANDROID
-        //TODO(b/502904616): change with VK_DRIVER_ID_MESA_GFXSTREAM when the headers are updated
-        driverProps->driverID = VK_DRIVER_ID_MESA_LLVMPIPE;
-#endif
+        driverProps->driverID = VK_DRIVER_ID_MESA_GFXSTREAM;
         snprintf(driverProps->driverName, sizeof(driverProps->driverName), "gfxstream");
         snprintf(driverProps->driverInfo, sizeof(driverProps->driverInfo),
                  "Mesa " PACKAGE_VERSION MESA_GIT_SHA1);
@@ -4707,7 +4704,7 @@ VkResult ResourceTracker::on_vkCreateSampler(void* context, VkResult, VkDevice d
     VkSamplerCreateInfo localCreateInfo = vk_make_orphan_copy(*pCreateInfo);
 
     vk_struct_chain_iterator structChainIter = vk_make_chain_iterator(&localCreateInfo);
-#if defined(VK_USE_PLATFORM_ANDROID_KHR) || defined(VK_USE_PLATFORM_FUCHSIA)
+
     VkSamplerYcbcrConversionInfo localVkSamplerYcbcrConversionInfo;
     const VkSamplerYcbcrConversionInfo* samplerYcbcrConversionInfo =
         vk_find_struct_const(pCreateInfo, SAMPLER_YCBCR_CONVERSION_INFO);
@@ -4726,7 +4723,6 @@ VkResult ResourceTracker::on_vkCreateSampler(void* context, VkResult, VkDevice d
             vk_make_orphan_copy(*samplerCustomBorderColorCreateInfo);
         vk_append_struct(&structChainIter, &localVkSamplerCustomBorderColorCreateInfo);
     }
-#endif
 
     VkSamplerReductionModeCreateInfo localVkSamplerReductionModeCreateInfo;
     const VkSamplerReductionModeCreateInfo* samplerReductionModeCreateInfo =

@@ -9,14 +9,14 @@
  */
 
 #include "radv_queue.h"
+#include "tools/radv_debug_hang.h"
+#include "tools/radv_debug_nir.h"
+#include "tools/radv_rmv.h"
 #include "radv_buffer.h"
 #include "radv_cp_reg_shadowing.h"
 #include "radv_cs.h"
-#include "radv_debug.h"
-#include "radv_debug_nir.h"
 #include "radv_device_memory.h"
 #include "radv_image.h"
-#include "radv_rmv.h"
 #include "vk_semaphore.h"
 #include "vk_sync.h"
 
@@ -245,6 +245,7 @@ radv_set_ring_buffer(const struct radv_physical_device *pdev, struct radeon_wins
       .index_stride = index_stride,
       .add_tid = add_tid,
       .gfx10_oob_select = oob_select,
+      .has_desc_resource_level = pdev->info.compiler_info.has_desc_resource_level,
    };
 
    ac_build_buffer_descriptor(pdev->info.gfx_level, &ac_state, desc);
@@ -332,8 +333,9 @@ radv_fill_shader_rings(struct radv_device *device, uint32_t *desc, struct radeon
    if (ge_rings_bo) {
       assert(pdev->info.gfx_level >= GFX11);
 
-      ac_build_attr_ring_descriptor(pdev->info.gfx_level, radv_buffer_get_va(ge_rings_bo),
-                                    pdev->info.total_attribute_pos_prim_ring_size, 0, &desc[0]);
+      ac_build_attr_ring_descriptor(pdev->info.gfx_level, pdev->info.compiler_info.has_desc_resource_level,
+                                    radv_buffer_get_va(ge_rings_bo), pdev->info.total_attribute_pos_prim_ring_size, 0,
+                                    &desc[0]);
    }
 
    desc += 4;
@@ -657,9 +659,16 @@ radv_emit_compute(struct radv_device *device, struct radv_cmd_stream *cs, bool i
       ac_pm4_set_reg(pm4, R_00B844_COMPUTE_TMA_HI, tma_va >> 40);
    }
 
-   if (pdev->info.gfx_level >= GFX12)
-      ac_pm4_set_reg(pm4, R_00B8BC_COMPUTE_DISPATCH_INTERLEAVE,
-                     S_00B8BC_INTERLEAVE_1D(preamble_state.gfx11.compute_dispatch_interleave));
+   if (pdev->info.gfx_level >= GFX12) {
+      if (is_compute_queue) {
+         ac_pm4_set_reg(pm4, R_00B8BC_COMPUTE_DISPATCH_INTERLEAVE,
+                        S_00B8BC_INTERLEAVE_1D(preamble_state.gfx11.compute_dispatch_interleave));
+      } else {
+         ac_pm4_set_reg_custom(pm4, R_00B8BC_COMPUTE_DISPATCH_INTERLEAVE - SI_SH_REG_OFFSET,
+                               S_00B8BC_INTERLEAVE_1D(preamble_state.gfx11.compute_dispatch_interleave),
+                               PKT3_SET_SH_REG_INDEX, 2);
+      }
+   }
 
    ac_pm4_finalize(pm4);
    ac_pm4_emit_commands(cs->b, pm4);
@@ -718,19 +727,6 @@ radv_emit_graphics(struct radv_device *device, struct radv_cmd_stream *cs)
 
    if (pdev->info.gfx_level < GFX11)
       ac_pm4_set_reg(pm4, R_00B124_SPI_SHADER_PGM_HI_VS, S_00B124_MEM_BASE(pdev->info.address32_hi >> 8));
-
-   unsigned cu_mask_ps = pdev->info.gfx_level >= GFX10_3 ? ac_gfx103_get_cu_mask_ps(&pdev->info) : ~0u;
-
-   if (pdev->info.gfx_level >= GFX12) {
-      ac_pm4_set_reg(pm4, R_00B420_SPI_SHADER_PGM_RSRC4_HS, S_00B420_WAVE_LIMIT(0x3ff) | S_00B420_GLG_FORCE_DISABLE(1));
-      ac_pm4_set_reg(pm4, R_00B01C_SPI_SHADER_PGM_RSRC4_PS,
-                     S_00B01C_WAVE_LIMIT_GFX12(0x3FF) | S_00B01C_LDS_GROUP_SIZE_GFX12(1));
-   } else if (pdev->info.gfx_level >= GFX11) {
-      ac_pm4_set_reg_idx3(pm4, R_00B404_SPI_SHADER_PGM_RSRC4_HS,
-                          ac_apply_cu_en(S_00B404_CU_EN(0xffff), C_00B404_CU_EN, 16, &pdev->info));
-      ac_pm4_set_reg_idx3(pm4, R_00B004_SPI_SHADER_PGM_RSRC4_PS,
-                          ac_apply_cu_en(S_00B004_CU_EN(cu_mask_ps >> 16), C_00B004_CU_EN, 16, &pdev->info));
-   }
 
    if (pdev->info.gfx_level >= GFX10) {
       /* Vulkan doesn't support user edge flags and it also doesn't
@@ -1060,6 +1056,9 @@ radv_update_preamble_cs(struct radv_queue_state *queue, struct radv_device *devi
             radeon_end();
          }
 
+         if (mesh_scratch_ring_bo)
+            radv_cs_add_buffer(device->ws, cs->b, mesh_scratch_ring_bo);
+
          radv_emit_gs_ring_sizes(device, cs, esgs_ring_bo, needs->esgs_ring_size, gsvs_ring_bo, needs->gsvs_ring_size);
          radv_emit_tess_factor_ring(device, cs, tess_rings_bo);
          radv_emit_task_rings(device, cs, task_rings_bo, false);
@@ -1383,15 +1382,15 @@ radv_create_gang_wait_preambles_postambles(struct radv_queue *queue)
    if (r != VK_SUCCESS)
       goto fail;
 
-   radv_create_cmd_stream(device, ip, false, &leader_post_cs);
+   r = radv_create_cmd_stream(device, ip, false, &leader_post_cs);
    if (r != VK_SUCCESS)
       goto fail;
 
-   radv_create_cmd_stream(device, AMD_IP_COMPUTE, false, &ace_pre_cs);
+   r = radv_create_cmd_stream(device, AMD_IP_COMPUTE, false, &ace_pre_cs);
    if (r != VK_SUCCESS)
       goto fail;
 
-   radv_create_cmd_stream(device, AMD_IP_COMPUTE, false, &ace_post_cs);
+   r = radv_create_cmd_stream(device, AMD_IP_COMPUTE, false, &ace_post_cs);
    if (r != VK_SUCCESS)
       goto fail;
 
@@ -1789,7 +1788,7 @@ radv_queue_submit_normal(struct radv_queue *queue, struct vk_queue_submit *submi
 
    queue->last_shader_upload_seq = MAX2(queue->last_shader_upload_seq, shader_upload_seq);
 
-   radv_dump_printf_data(device, stderr);
+   radv_dump_printf_data(device, stderr, true);
 
 fail:
    free(cs_array);

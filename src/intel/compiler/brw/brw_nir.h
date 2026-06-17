@@ -126,12 +126,18 @@ brw_nir_fs_needs_null_rt(const struct intel_device_info *devinfo,
    /* Depth/Stencil needs a valid render target even if there is no color
     * output.
     */
-   if (nir->info.outputs_written & (BITFIELD_BIT(FRAG_RESULT_DEPTH) |
-                                    BITFIELD_BIT(FRAG_RESULT_STENCIL) |
+   if (nir->info.outputs_written & (BITFIELD64_BIT(FRAG_RESULT_DEPTH) |
+                                    BITFIELD64_BIT(FRAG_RESULT_STENCIL) |
                                     BITFIELD64_BIT(FRAG_RESULT_SAMPLE_MASK)))
       return true;
 
-   return alpha_to_coverage;
+   /* Alpha to coverage is only relevant on draw buffer 0 (or color which
+    * writes to all color outputs)
+    */
+   return alpha_to_coverage &&
+          (nir->info.outputs_written &
+           (BITFIELD64_BIT(FRAG_RESULT_COLOR) |
+            BITFIELD64_BIT(FRAG_RESULT_DATA0))) != 0;
 }
 
 void brw_preprocess_nir(const struct brw_compiler *compiler,
@@ -159,6 +165,9 @@ bool brw_nir_lower_fully_covered(nir_shader *nir);
 
 struct brw_lower_urb_cb_data {
    const struct intel_device_info *devinfo;
+
+   /** Input URB read length (returned by lowering) */
+   unsigned *push_input_read_length;
 
    /** Maximum amount of pushed data in bytes */
    unsigned max_push_bytes;
@@ -221,7 +230,8 @@ void brw_nir_lower_gs_inputs(nir_shader *nir,
                              unsigned *out_urb_read_length);
 void brw_nir_lower_tes_inputs(nir_shader *nir,
                               const struct intel_device_info *devinfo,
-                              const struct intel_vue_map *vue);
+                              const struct intel_vue_map *vue,
+                              unsigned *out_urb_read_length);
 void brw_nir_lower_fs_inputs(nir_shader *nir,
                              const struct intel_device_info *devinfo,
                              const struct brw_fs_prog_key *key);
@@ -305,9 +315,14 @@ bool brw_nir_limit_trig_input_range_workaround(nir_shader *nir);
 
 bool brw_nir_apply_sqrt_workarounds(nir_shader *nir);
 
+bool brw_nir_apply_sampler_undef_derivatives_workaround(nir_shader *nir);
+
 bool brw_nir_lower_fsign(nir_shader *nir);
 
 bool brw_nir_opt_fsat(nir_shader *);
+
+bool brw_nir_opt_systolic_vectorize(nir_shader *shader,
+                                    const struct intel_device_info *devinfo);
 
 void brw_nir_apply_key(struct brw_pass_tracker *pt,
                        const struct brw_base_prog_key *key,

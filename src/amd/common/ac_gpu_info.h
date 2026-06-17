@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "amd_family.h"
+#include "ac_video.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -202,8 +203,9 @@ struct ac_compiler_info {
    uint32_t has_cs_regalloc_hang_bug : 1;
    /* GFX6-GFX12, except GFX9: SMEM loads on NULL PRT page don't work. */
    uint32_t has_smem_with_null_prt_bug : 1;
+   uint32_t has_desc_resource_level : 1;
 
-   uint32_t reserved : 3;
+   uint32_t reserved : 2;
 };
 
 struct radeon_info {
@@ -297,6 +299,7 @@ struct radeon_info {
    bool needs_llvm_wait_wa; /* True if the chip needs to workarounds based on s_waitcnt_deptr but
                              * the LLVM version doesn't work with multiparts shaders.
                              */
+   bool has_smem_partial_oob_access_bug;
 
    /* Display features. */
    /* There are 2 display DCC codepaths, because display expects unaligned DCC. */
@@ -351,16 +354,7 @@ struct radeon_info {
    uint32_t vcn_enc_major_version;
    uint32_t vcn_enc_minor_version;
    uint32_t vcn_fw_revision;
-   struct video_caps_info {
-      struct video_codec_cap {
-         uint32_t valid;
-         uint32_t max_width;
-         uint32_t max_height;
-         uint32_t max_pixels_per_frame;
-         uint32_t max_level;
-         uint32_t pad;
-      } codec_info[8]; /* the number of available codecs */
-   } dec_caps, enc_caps;
+   struct ac_video_caps video_caps;
 
    enum vcn_version vcn_ip_version;
    enum sdma_version sdma_ip_version;
@@ -427,6 +421,7 @@ struct radeon_info {
    uint32_t scratch_wavesize_granularity;
    uint32_t max_scratch_waves;
    bool has_scratch_base_registers;
+   uint32_t instr_prefetch_distance;
 
    /* Pos, prim, and attribute rings. */
    uint32_t attribute_ring_size_per_se;   /* GFX11+ */

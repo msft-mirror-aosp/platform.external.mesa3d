@@ -420,12 +420,15 @@ ac_fill_compiler_info(struct radeon_info *info, const struct drm_amdgpu_info_dev
     *
     * Only GFX9 works as expected.
     */
-   out->has_smem_with_null_prt_bug = info->gfx_level <= GFX12 && info->gfx_level != GFX9;
+   out->has_smem_with_null_prt_bug = info->gfx_level <= GFX12 && info->gfx_level != GFX9 && info->family != CHIP_GFX1156;
 
    if (compat_mode && info->family == CHIP_REMBRANDT) {
       out->has_ngg_passthru_no_msg = false;
       out->has_vrs_frag_pos_z_bug = true;
    }
+
+   out->has_desc_resource_level = (info->gfx_level >= GFX10 && info->gfx_level < GFX11) ||
+                                  info->family == CHIP_GFX1156;
 }
 
 void
@@ -723,6 +726,7 @@ ac_identify_chip(struct radeon_info *info, const struct drm_amdgpu_info_device *
       case FAMILY_STX:
          identify_chip(STRIX1);
          identify_chip(STRIX_HALO);
+         identify_chip(GFX1156);
          identify_chip(KRACKAN1);
          identify_chip(GFX1153);
          break;
@@ -875,6 +879,9 @@ ac_identify_chip(struct radeon_info *info, const struct drm_amdgpu_info_device *
    case VPE_VERSION_VALUE(2, 0, 0):
       info->vpe_ip_version = VPE_2_0;
       break;
+   case VPE_VERSION_VALUE(2, 2, 0):
+      info->vpe_ip_version = VPE_2_2;
+      break;
    default:
       info->vpe_ip_version = VPE_UNKNOWN;
       break;
@@ -1024,6 +1031,14 @@ void ac_fill_bug_info(struct radeon_info *info)
    info->never_stop_sq_perf_counters = info->gfx_level == GFX10 ||
                                        info->gfx_level == GFX10_3;
    info->never_send_perfcounter_stop = info->gfx_level == GFX11;
+
+   /* A partially out-of-bounds SMEM load seems to hang if the out-of-bounds
+    * part is unmapped. This was observed on vega10, but not renoir or raven2.
+    * As far as I know, this bug isn't documented anywhere else.
+    */
+   info->has_smem_partial_oob_access_bug = info->gfx_level == GFX9 &&
+                                           info->family != CHIP_RENOIR &&
+                                           info->family != CHIP_RAVEN2;
 }
 
 void ac_fill_feature_info(struct radeon_info *info, const struct drm_amdgpu_info_device *device_info)
@@ -1554,11 +1569,6 @@ ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
       return AC_QUERY_GPU_INFO_FAIL;
    }
 
-   ac_drm_query_video_caps_info(dev, AMDGPU_INFO_VIDEO_CAPS_DECODE,
-                                sizeof(info->dec_caps), &(info->dec_caps));
-   ac_drm_query_video_caps_info(dev, AMDGPU_INFO_VIDEO_CAPS_ENCODE,
-                                sizeof(info->enc_caps), &(info->enc_caps));
-
    if (!ac_identify_chip(info, &device_info))
       return AC_QUERY_GPU_INFO_UNIMPLEMENTED_HW;
 
@@ -1583,6 +1593,8 @@ ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
    ac_fill_tess_info(info);
 
    ac_fill_compiler_info(info, &device_info, compiler_compat_mode);
+
+   ac_fill_video_info(info, dev);
 
    /* BIG_PAGE is supported since gfx10.3 and requires VRAM. VRAM is only guaranteed
     * with AMDGPU_GEM_CREATE_DISCARDABLE.
@@ -1609,6 +1621,9 @@ ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
 
    info->pcie_gen = device_info.pcie_gen;
    info->pcie_num_lanes = device_info.pcie_num_lanes;
+
+   info->instr_prefetch_distance = !info->has_graphics && info->family >= CHIP_MI200 ? 16 :
+                                    info->gfx_level >= GFX10 ? 3 : 0;
 
    /* Source: https://en.wikipedia.org/wiki/PCI_Express#History_and_revisions */
    switch (info->pcie_gen) {
@@ -1937,6 +1952,7 @@ void ac_print_gpu_info(FILE *f, const struct radeon_info *info, int fd)
    fprintf(f, "    has_set_sh_pairs = %i\n", info->has_set_sh_pairs);
    fprintf(f, "    has_set_sh_pairs_packed = %i\n", info->has_set_sh_pairs_packed);
    fprintf(f, "    has_set_uconfig_pairs = %i\n", info->has_set_uconfig_pairs);
+   fprintf(f, "    has_smem_partial_oob_access_bug = %i\n", info->has_smem_partial_oob_access_bug);
 
    if (info->gfx_level < GFX12) {
       fprintf(f, "Display features:\n");
@@ -2019,37 +2035,10 @@ void ac_print_gpu_info(FILE *f, const struct radeon_info *info, int fd)
    if (info->ip[AMD_IP_VCN_JPEG].num_queues)
       fprintf(f, "    jpeg_decode = %u\n", info->ip[AMD_IP_VCN_JPEG].num_instances);
 
-   if (info->ip[AMD_IP_VCN_DEC].num_queues || info->ip[AMD_IP_VCN_UNIFIED].num_queues
-       || info->ip[AMD_IP_VCE].num_queues || info->ip[AMD_IP_UVD].num_queues) {
-      char max_res_dec[64] = {0}, max_res_enc[64] = {0};
-      char codec_str[][8] = {
-         [AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_MPEG2] = "mpeg2",
-         [AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_MPEG4] = "mpeg4",
-         [AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_VC1] = "vc1",
-         [AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_MPEG4_AVC] = "h264",
-         [AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_HEVC] = "hevc",
-         [AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_JPEG] = "jpeg",
-         [AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_VP9] = "vp9",
-         [AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_AV1] = "av1",
-      };
-      fprintf(f, "    %-8s %-4s %-16s %-4s %-16s\n",
-              "codec", "dec", "max_resolution", "enc", "max_resolution");
-      for (unsigned i = 0; i < AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_COUNT; i++) {
-         if (info->dec_caps.codec_info[i].valid)
-            sprintf(max_res_dec, "%ux%u", info->dec_caps.codec_info[i].max_width,
-                    info->dec_caps.codec_info[i].max_height);
-         else
-            sprintf(max_res_dec, "%s", "-");
-         if (info->enc_caps.codec_info[i].valid)
-            sprintf(max_res_enc, "%ux%u", info->enc_caps.codec_info[i].max_width,
-                    info->enc_caps.codec_info[i].max_height);
-         else
-            sprintf(max_res_enc, "%s", "-");
-         fprintf(f, "    %-8s %-4s %-16s %-4s %-16s\n", codec_str[i],
-                 info->dec_caps.codec_info[i].valid ? "*" : "-", max_res_dec,
-                 info->enc_caps.codec_info[i].valid ? "*" : "-", max_res_enc);
-      }
-   }
+   if (info->ip[AMD_IP_VPE].num_queues)
+      fprintf(f, "    vpe = %u\n", info->ip[AMD_IP_VPE].num_instances);
+
+   ac_print_video_info(f, info);
 
    fprintf(f, "Kernel & winsys capabilities:\n");
    fprintf(f, "    drm = %i.%i.%i\n", info->drm_major, info->drm_minor, info->drm_patchlevel);

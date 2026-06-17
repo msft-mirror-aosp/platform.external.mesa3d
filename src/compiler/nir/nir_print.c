@@ -1299,6 +1299,14 @@ static const char *sampler_dim_name[] = {
 };
 
 static void
+print_cmat_description(struct glsl_cmat_description desc, print_state *state)
+{
+   FILE *fp = state->fp;
+   const struct glsl_type *t = glsl_cmat_type(&desc);
+   fprintf(fp, "%s", get_type_name(t, state));
+}
+
+static void
 print_intrinsic_instr(nir_intrinsic_instr *instr, print_state *state)
 {
    const nir_intrinsic_info *info = &nir_intrinsic_infos[instr->intrinsic];
@@ -1772,12 +1780,17 @@ print_intrinsic_instr(nir_intrinsic_instr *instr, print_state *state)
          break;
       }
 
-      case NIR_INTRINSIC_CMAT_DESC: {
-         struct glsl_cmat_description desc = nir_intrinsic_cmat_desc(instr);
-         const struct glsl_type *t = glsl_cmat_type(&desc);
-         fprintf(fp, "%s", get_type_name(t, state));
+      case NIR_INTRINSIC_CMAT_DESC:
+         print_cmat_description(nir_intrinsic_cmat_desc(instr), state);
          break;
-      }
+
+      case NIR_INTRINSIC_DST_CMAT_DESC:
+         print_cmat_description(nir_intrinsic_dst_cmat_desc(instr), state);
+         break;
+
+      case NIR_INTRINSIC_SRC_CMAT_DESC:
+         print_cmat_description(nir_intrinsic_src_cmat_desc(instr), state);
+         break;
 
       case NIR_INTRINSIC_CMAT_SIGNED_MASK: {
          fprintf(fp, "cmat_signed=");
@@ -1888,7 +1901,8 @@ print_intrinsic_instr(nir_intrinsic_instr *instr, print_state *state)
       if (instr->intrinsic == nir_intrinsic_load_uniform) {
          match = var->data.driver_location == nir_intrinsic_base(instr);
       } else {
-         match = nir_intrinsic_component(instr) >= var->data.location_frac &&
+         match = var->data.location == nir_intrinsic_io_semantics(instr).location &&
+                 nir_intrinsic_component(instr) >= var->data.location_frac &&
                  nir_intrinsic_component(instr) <
                     (var->data.location_frac + glsl_get_components(var->type));
       }
@@ -2272,6 +2286,10 @@ print_jump_instr(nir_jump_instr *instr, print_state *state)
       fprintf(fp, "halt");
       break;
 
+   case nir_jump_abort:
+      fprintf(fp, "abort");
+      break;
+
    case nir_jump_goto:
       fprintf(fp, "goto b%u",
               instr->target ? instr->target->index : -1);
@@ -2284,6 +2302,8 @@ print_jump_instr(nir_jump_instr *instr, print_state *state)
       fprintf(fp, " else b%u",
               instr->else_target ? instr->else_target->index : -1);
       break;
+   default:
+      UNREACHABLE("Unknown jump instruction");
    }
 }
 
@@ -3194,7 +3214,7 @@ nir_print_instr(const nir_instr *instr, FILE *fp)
       .def_prefix = "%",
    };
    if (instr->block) {
-      nir_function_impl *impl = nir_cf_node_get_function(&instr->block->cf_node);
+      nir_function_impl *impl = instr->block->impl;
       state.shader = impl->function->shader;
       state.divergence_valid = impl->valid_metadata & nir_metadata_divergence;
    }

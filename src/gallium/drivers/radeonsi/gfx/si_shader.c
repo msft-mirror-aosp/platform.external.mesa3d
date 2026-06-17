@@ -178,19 +178,12 @@ unsigned si_get_max_workgroup_size(const struct si_shader *shader)
 unsigned si_get_shader_prefetch_size(struct si_shader *shader)
 {
    struct si_screen *sscreen = shader->selector->screen;
+
    /* This excludes arrays of constants after instructions. */
-   unsigned exec_size =
-      ac_align_shader_binary_for_prefetch(&sscreen->info,
-                                          shader->complete_shader_binary_size);
+   return ac_get_instr_prefetch_size(sscreen->info.gfx_level,
+                                     sscreen->info.instr_prefetch_distance,
+                                     shader->complete_shader_binary_size);
 
-   /* INST_PREF_SIZE uses 128B granularity.
-    * - GFX11: max 128 * 63 = 8064
-    * - GFX12: max 128 * 255 = 32640
-    */
-   unsigned max_pref_size = shader->selector->screen->info.gfx_level >= GFX12 ? 255 : 63;
-   unsigned exec_size_gran128 = DIV_ROUND_UP(exec_size, 128);
-
-   return MIN2(max_pref_size, exec_size_gran128);
 }
 
 unsigned si_calculate_needed_lds_size(enum amd_gfx_level gfx_level, struct si_shader *shader)
@@ -690,7 +683,7 @@ static void si_preprocess_nir(struct si_nir_shader_ctx *ctx)
    if (nir->info.stage == MESA_SHADER_TASK) {
       NIR_PASS(progress, nir, ac_nir_lower_task_outputs_to_mem, false);
    } else if (nir->info.stage == MESA_SHADER_MESH) {
-      NIR_PASS(progress, nir, ac_nir_lower_mesh_inputs_to_mem);
+      NIR_PASS(progress, nir, ac_nir_lower_mesh_inputs_to_mem, true);
    }
 
    if (mesa_shader_stage_is_compute(nir->info.stage)) {
@@ -841,22 +834,35 @@ static void si_preprocess_nir(struct si_nir_shader_ctx *ctx)
          if (key->ps.mono.point_smoothing)
             NIR_PASS(progress, nir, nir_lower_point_smooth, true);
 
+         bool msaa_disabled = key->ps.part.prolog.force_persp_center_interp ||
+                              key->ps.part.prolog.force_linear_center_interp ||
+                              key->ps.part.prolog.force_samplemask_to_helper_invocation ||
+                              key->ps.mono.interpolate_at_sample_force_center;
+         bool sample_shading = key->ps.part.prolog.samplemask_log_ps_iter ||
+                               key->ps.part.prolog.force_persp_sample_interp ||
+                               key->ps.part.prolog.force_linear_sample_interp;
+         ac_nir_lower_sample_mask_in_options lower_sample_mask_in_options = {0};
+
+         /* samplemask_log_ps_iter is always 3 with maximum sample shading */
+         if (nir->info.fs.uses_sample_shading || key->ps.part.prolog.samplemask_log_ps_iter == 3) {
+            lower_sample_mask_in_options.behavior = ac_nir_lower_samplemask_sample_shading_max;
+         } else if (sample_shading) {
+            lower_sample_mask_in_options.behavior = ac_nir_lower_samplemask_sample_shading_partial;
+            lower_sample_mask_in_options.ps_iter_samples = 1 << key->ps.part.prolog.samplemask_log_ps_iter;
+         } else if (msaa_disabled) {
+            lower_sample_mask_in_options.behavior = ac_nir_lower_samplemask_1sample_no_vrs;
+         } else {
+            lower_sample_mask_in_options.behavior = ac_nir_lower_samplemask_unknown_states_no_sample_shading;
+         }
+
+         NIR_PASS(progress, nir, ac_nir_lower_sample_mask_in, &lower_sample_mask_in_options);
+
          /* This eliminates system values and unused shader output components. */
          ac_nir_lower_ps_early_options early_options = {
-            .msaa_disabled = key->ps.part.prolog.force_persp_center_interp ||
-                             key->ps.part.prolog.force_linear_center_interp ||
-                             key->ps.part.prolog.force_samplemask_to_helper_invocation ||
-                             key->ps.mono.interpolate_at_sample_force_center,
+            .msaa_disabled = msaa_disabled,
             .load_sample_positions_always_loads_current_ones = true,
             .force_front_face = key->ps.opt.force_front_face_input,
-            .optimize_frag_coord = true,
-            .frag_coord_is_center = true,
-            /* This does a lot of things. See the description in ac_nir_lower_ps_early_options. */
-            .ps_iter_samples = nir->info.fs.uses_sample_shading ? 8 :
-                                  key->ps.part.prolog.samplemask_log_ps_iter ?
-                                     (1 << key->ps.part.prolog.samplemask_log_ps_iter) :
-                                     (key->ps.part.prolog.force_persp_sample_interp ||
-                                      key->ps.part.prolog.force_linear_sample_interp ? 2 : 0),
+            .sample_shading = sample_shading,
 
             .fbfetch_is_1D = key->ps.mono.fbfetch_is_1D,
             .fbfetch_layered = key->ps.mono.fbfetch_layered,
@@ -888,10 +894,18 @@ static void si_preprocess_nir(struct si_nir_shader_ctx *ctx)
          if (key->ps.part.prolog.poly_stipple)
             NIR_PASS(progress, nir, si_nir_lower_polygon_stipple);
       } else {
+         ac_nir_lower_sample_mask_in_options lower_sample_mask_in_options = {0};
+
+         /* Sample shading with the sample mask used always uses monolithic shader compilation. */
+         if (nir->info.fs.uses_sample_shading)
+            lower_sample_mask_in_options.behavior = ac_nir_lower_samplemask_sample_shading_max;
+         else
+            lower_sample_mask_in_options.behavior = ac_nir_lower_samplemask_unknown_states_no_sample_shading;
+
+         NIR_PASS(progress, nir, ac_nir_lower_sample_mask_in, &lower_sample_mask_in_options);
+
          ac_nir_lower_ps_early_options early_options = {
-            .optimize_frag_coord = true,
-            .frag_coord_is_center = true,
-            .ps_iter_samples = nir->info.fs.uses_sample_shading ? 8 : 0,
+            .sample_shading = nir->info.fs.uses_sample_shading,
             .lower_color_inputs_to_load_color01 = true,
             .alpha_func = COMPARE_FUNC_ALWAYS,
             .spi_shader_col_format_hint = ~0,
@@ -959,9 +973,6 @@ static void si_postprocess_nir(struct si_nir_shader_ctx *ctx)
    bool progress = false;
 
    si_init_shader_args(shader, &ctx->args, &nir->info);
-
-   if (nir->info.stage == MESA_SHADER_FRAGMENT)
-      NIR_PASS(progress, nir, nir_lower_fragcoord_wtrans);
 
    NIR_PASS(progress, nir, ac_nir_lower_tex_coords,
             &(ac_nir_lower_tex_coords_options){
@@ -1756,8 +1767,6 @@ static void si_get_ps_prolog_key(struct si_shader *shader, union si_shader_part_
    key->ps_prolog.reserve_line_stipple_tex_ena =
       G_0286CC_LINE_STIPPLE_TEX_ENA(shader->config.spi_ps_input_addr); /* unused but may need to be reserved */
    key->ps_prolog.fragcoord_usage_mask =
-      G_0286CC_POS_X_FLOAT_ENA(shader->config.spi_ps_input_ena) |
-      (G_0286CC_POS_Y_FLOAT_ENA(shader->config.spi_ps_input_ena) << 1) |
       (G_0286CC_POS_Z_FLOAT_ENA(shader->config.spi_ps_input_ena) << 2) |
       (G_0286CC_POS_W_FLOAT_ENA(shader->config.spi_ps_input_ena) << 3);
    key->ps_prolog.uses_ancillary =

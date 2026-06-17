@@ -1371,6 +1371,7 @@ nir_visitor::visit(ir_call *ir)
 
          /* Atomic result */
          assert(ir->return_deref);
+         instr->num_components = 1;
          if (glsl_type_is_integer_64(ir->return_deref->type)) {
             nir_def_init(&instr->instr, &instr->def,
                          ir->return_deref->type->vector_elements, 64);
@@ -1438,6 +1439,7 @@ nir_visitor::visit(ir_call *ir)
          if (op == nir_intrinsic_image_deref_atomic ||
              op == nir_intrinsic_image_deref_atomic_swap) {
             nir_intrinsic_set_atomic_op(instr, atomic_op);
+            instr->num_components = 1;
          }
 
          instr->src[0] = nir_src_for_ssa(&deref->def);
@@ -2569,7 +2571,7 @@ nir_visitor::visit(ir_expression *ir)
 
    case ir_binop_ldexp: result = nir_ldexp(&b, srcs[0], srcs[1]); break;
    case ir_triop_fma:
-      result = nir_ffma(&b, srcs[0], srcs[1], srcs[2]);
+      result = nir_ffma_weak(&b, srcs[0], srcs[1], srcs[2]);
       break;
    case ir_triop_lrp:
       result = nir_flrp(&b, srcs[0], srcs[1], srcs[2]);
