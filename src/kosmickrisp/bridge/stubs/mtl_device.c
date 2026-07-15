@@ -35,6 +35,12 @@ mtl_device_get_architecture_name(mtl_device *dev, char buffer[256])
 {
 }
 
+uint32_t
+mtl_device_get_gpu_apple_family(mtl_device *dev)
+{
+   return 0u;
+}
+
 uint64_t
 mtl_device_get_registry_id(mtl_device *dev)
 {
@@ -84,6 +90,18 @@ mtl_device_get_gpu_timestamp(mtl_device *dev)
    return 0u;
 }
 
+uint64_t
+mtl_device_timestamp_frequency(mtl_device *dev)
+{
+   return 0u;
+}
+
+mtl_counter_heap *
+mtl_new_timestamp_counter_heap(mtl_device *dev, uint32_t count)
+{
+   return NULL;
+}
+
 /* Resource queries */
 void
 mtl_heap_buffer_size_and_align_with_length(mtl_device *device, uint64_t *size_B,
@@ -129,6 +147,18 @@ mtl_sparse_tile_count(mtl_device *device, struct kk_image_layout *layout,
 mtl_buffer *
 mtl_new_buffer_with_bytes_no_copy(mtl_device *device, void *ptr,
                                   uint64_t size_B)
+{
+   return NULL;
+}
+
+mtl_command_allocator *
+mtl_new_command_allocator(mtl_device *device)
+{
+   return NULL;
+}
+
+mtl_command_buffer *
+mtl_new_command_buffer(mtl_device *device)
 {
    return NULL;
 }

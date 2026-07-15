@@ -16,6 +16,8 @@ nvk_files = files(
   'nvk_cmd_meta.c',
   'nvk_cmd_pool.c',
   'nvk_cmd_pool.h',
+  'nvk_cubin.c',
+  'nvk_cubin.h',
   'nvk_debug.h',
   'nvk_descriptor_set.h',
   'nvk_descriptor_set.c',
@@ -121,7 +123,7 @@ nvkcl = custom_target(
 
 nvk_drirc = custom_target(
   'nvk_drirc',
-  input  : [files('nvk_drirc_gen.py'), drirc_gen, join_paths(dir_source_root, 'src/util/00-nvk-defaults.conf')],
+  input  : [files('nvk_drirc_gen.py'), drirc_gen, '00-nvk-defaults.conf'],
   output : ['nvk_drirc.c', 'nvk_drirc.h'],
   command : [
     prog_python, '@INPUT0@',
@@ -134,10 +136,12 @@ nvk_drirc = custom_target(
 
 nvk_deps = [
   dep_libdrm,
+  dep_elf,
   idep_nak,
   idep_nil,
   idep_nir,
   idep_mesautil,
+  idep_nouveau_cubin,
   idep_nouveau_mme,
   idep_nouveau_ws,
   idep_nvidia_headers,
@@ -148,6 +152,11 @@ nvk_deps = [
 ]
 
 nvk_flags = []
+
+nvk_build_id = get_option('nvk-build-id')
+if nvk_build_id != ''
+  nvk_flags += '-DNVK_BUILD_ID_OVERRIDE="' + nvk_build_id + '"'
+endif
 
 if with_platform_android
   nvk_files += files('nvk_android.c')

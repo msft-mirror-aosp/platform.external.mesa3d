@@ -116,6 +116,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
       .EXT_ycbcr_2plane_444_formats = true,
 
       /* Vulkan 1.4 */
+      .KHR_dynamic_rendering_local_read = true,
       .KHR_global_priority = true,
       .KHR_line_rasterization = true,
       .KHR_index_type_uint8 = true,
@@ -125,6 +126,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
       .KHR_map_memory2 = true,
       .KHR_push_descriptor = true,
       .KHR_shader_expect_assume = true,
+      .KHR_shader_float_controls2 = true,
       .KHR_shader_subgroup_rotate = true,
       .KHR_vertex_attribute_divisor = true,
       .EXT_global_priority = true,
@@ -324,6 +326,7 @@ kk_get_device_features(
 
       /* Vulkan 1.4 */
       .bresenhamLines = true,
+      .dynamicRenderingLocalRead = true,
       .globalPriorityQuery = true,
       .hostImageCopy = true,
       .indexTypeUint8 = true,
@@ -331,6 +334,7 @@ kk_get_device_features(
       .maintenance6 = true,
       .pipelineRobustness = true,
       .pushDescriptor = true,
+      .shaderFloatControls2 = true,
       .shaderSubgroupRotate = true,
       .shaderSubgroupRotateClustered = true,
       .vertexAttributeInstanceRateDivisor = true,
@@ -466,6 +470,12 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
    uint64_t os_page_size = 4096;
    os_get_page_size(&os_page_size);
 
+   // Queries the frequency of the GPU timestamp in ticks per second.
+   uint64_t timestamp_frequency =
+      mtl_device_timestamp_frequency(pdev->mtl_dev_handle);
+   float timestamp_period =
+      timestamp_frequency ? (1000000000.0f / (float)timestamp_frequency) : 1.0f;
+
    *properties = (struct vk_properties){
       .apiVersion = kk_get_vk_version(),
       .driverVersion = vk_get_driver_version(),
@@ -477,10 +487,10 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
       /* Vulkan 1.0 limits */
       /* Values taken from Apple7
          https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf */
-      .maxImageDimension1D = kk_image_max_dimension(VK_IMAGE_TYPE_2D),
-      .maxImageDimension2D = kk_image_max_dimension(VK_IMAGE_TYPE_2D),
-      .maxImageDimension3D = kk_image_max_dimension(VK_IMAGE_TYPE_3D),
-      .maxImageDimensionCube = 16384,
+      .maxImageDimension1D = kk_image_max_dimension(pdev, VK_IMAGE_TYPE_1D),
+      .maxImageDimension2D = kk_image_max_dimension(pdev, VK_IMAGE_TYPE_2D),
+      .maxImageDimension3D = kk_image_max_dimension(pdev, VK_IMAGE_TYPE_3D),
+      .maxImageDimensionCube = kk_image_max_dimension(pdev, VK_IMAGE_TYPE_2D),
       .maxImageArrayLayers = 2048,
       .maxTexelBufferElements = 16384 * 16384,
       .maxUniformBufferRange = 65536,
@@ -570,8 +580,8 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
       .sampledImageStencilSampleCounts = sample_counts,
       .storageImageSampleCounts = sample_counts,
       .maxSampleMaskWords = 1,
-      .timestampComputeAndGraphics = false,
-      .timestampPeriod = 1,
+      .timestampComputeAndGraphics = true,
+      .timestampPeriod = timestamp_period,
       .maxClipDistances = 8,
       .maxCullDistances = 8,
       .maxCombinedClipAndCullDistances = 8,
@@ -626,8 +636,8 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
       .conformanceVersion = (VkConformanceVersion){1, 4, 3, 2},
       .denormBehaviorIndependence = VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE,
       .roundingModeIndependence = VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE,
-      .shaderSignedZeroInfNanPreserveFloat16 = false,
-      .shaderSignedZeroInfNanPreserveFloat32 = false,
+      .shaderSignedZeroInfNanPreserveFloat16 = true,
+      .shaderSignedZeroInfNanPreserveFloat32 = true,
       .shaderSignedZeroInfNanPreserveFloat64 = false,
       .shaderDenormPreserveFloat16 = false,
       .shaderDenormPreserveFloat32 = false,
@@ -635,8 +645,8 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
       .shaderDenormFlushToZeroFloat16 = false,
       .shaderDenormFlushToZeroFloat32 = false,
       .shaderDenormFlushToZeroFloat64 = false,
-      .shaderRoundingModeRTEFloat16 = false,
-      .shaderRoundingModeRTEFloat32 = false,
+      .shaderRoundingModeRTEFloat16 = true,
+      .shaderRoundingModeRTEFloat32 = true,
       .shaderRoundingModeRTEFloat64 = false,
       .shaderRoundingModeRTZFloat16 = false,
       .shaderRoundingModeRTZFloat32 = false,
@@ -846,6 +856,7 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
       VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
       VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
       VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT,
+      VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ,
    };
 
    properties->pCopySrcLayouts = (VkImageLayout *)supported_layouts;
@@ -1009,6 +1020,8 @@ get_metal_limits(struct kk_physical_device *pdev)
       mtl_device_max_threadgroup_memory_length(pdev->mtl_dev_handle);
    pdev->info.max_buffer_size =
       mtl_device_max_buffer_length(pdev->mtl_dev_handle);
+   pdev->info.gpu_apple_family =
+      mtl_device_get_gpu_apple_family(pdev->mtl_dev_handle);
 
    pdev->supported_sample_counts = VK_SAMPLE_COUNT_1_BIT;
    for (uint32_t sample_count = VK_SAMPLE_COUNT_2_BIT;
@@ -1230,8 +1243,7 @@ kk_GetPhysicalDeviceQueueFamilyProperties2(
       {
          p->queueFamilyProperties.queueFlags = queue_family->queue_flags;
          p->queueFamilyProperties.queueCount = queue_family->queue_count;
-         p->queueFamilyProperties.timestampValidBits =
-            0; /* TODO_KOSMICKRISP Timestamp queries */
+         p->queueFamilyProperties.timestampValidBits = 64;
          p->queueFamilyProperties.minImageTransferGranularity =
             (VkExtent3D){1, 1, 1};
 

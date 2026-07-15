@@ -1508,6 +1508,18 @@ static inline pco_instr *pco_last_instr(pco_block *block)
 }
 
 /**
+ * \brief Returns whether an instruction is the last instruction in its block.
+ *
+ * \param[in] instr The instruction.
+ * \return True if the instruction is the last instruction in its block.
+ */
+static inline bool pco_is_last_instr(pco_instr *instr)
+{
+   pco_instr *last_instr = pco_last_instr(instr->parent_block);
+   return instr == last_instr;
+}
+
+/**
  * \brief Returns the next instruction.
  *
  * \param[in] instr The current instruction.
@@ -1821,6 +1833,7 @@ bool pco_nir_lower_variables(nir_shader *shader, bool inputs, bool outputs);
 bool pco_nir_lower_vk(nir_shader *shader, pco_data *data);
 bool pco_nir_pfo(nir_shader *shader, pco_fs_data *fs);
 bool pco_nir_point_size(nir_shader *shader);
+bool pco_nir_prop_access(nir_shader *shader);
 bool pco_nir_pvi(nir_shader *shader, pco_vs_data *vs);
 bool pco_opt(pco_shader *shader);
 bool pco_ra(pco_shader *shader);

@@ -344,11 +344,7 @@ llvmpipe_init_screen_caps(struct pipe_screen *screen)
    caps->pci_device =
    caps->pci_function = 0;
    caps->allow_mapped_buffers_during_execution = false;
-
-   /* Can't expose shareable shaders because the draw shaders reference the
-    * draw module's state, which is per-context.
-    */
-   caps->shareable_shaders = false;
+   caps->shareable_shaders = true;
    caps->max_gs_invocations = 32;
    caps->max_shader_buffer_size = LP_MAX_TGSI_SHADER_BUFFER_SIZE;
    caps->framebuffer_no_attachment = true;
@@ -394,6 +390,9 @@ llvmpipe_init_screen_caps(struct pipe_screen *screen)
 
    caps->shader_subgroup_supported_stages = BITFIELD_MASK(MESA_SHADER_MESH_STAGES);
    caps->shader_subgroup_supported_features = PIPE_SHADER_SUBGROUP_FEATURE_MASK;
+
+   /* We just pretend that every size is accelerated */
+   caps->hw_clear_buffer_sizes = ~0;
 
    caps->mesh_shader = true;
 
@@ -799,7 +798,14 @@ llvmpipe_destroy_screen(struct pipe_screen *_screen)
    if (screen->rast)
       lp_rast_destroy(screen->rast);
 
+   /* Setup variants live on a screen-wide list; FS/CS variants are
+    * destroyed with their CSOs. Must run before LLVMContext teardown.
+    */
+   llvmpipe_screen_destroy_setup_cache(screen);
+
    lp_jit_screen_cleanup(screen);
+
+   lp_context_destroy(&screen->llvm_context);
 
    disk_cache_destroy(screen->disk_shader_cache);
 
@@ -1088,6 +1094,15 @@ llvmpipe_create_screen(struct sw_winsys *winsys)
    (void) mtx_init(&screen->rast_mutex, mtx_plain);
 
    (void) mtx_init(&screen->late_mutex, mtx_plain);
+
+   /* Single LLVMContext per screen for shareable shaders; embedded mutex
+    * serializes compile paths that touch the LLVMContext.
+    */
+   lp_context_create_thread_safe(&screen->llvm_context);
+
+   llvmpipe_screen_init_fs_cache(screen);
+   llvmpipe_screen_init_setup_cache(screen);
+   llvmpipe_screen_init_cs_cache(screen);
 
    llvmpipe_init_shader_caps(&screen->base);
    llvmpipe_init_compute_caps(&screen->base);

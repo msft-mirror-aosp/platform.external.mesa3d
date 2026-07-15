@@ -140,6 +140,9 @@ public:
    /** Byte-offset for the next available spot in the scratch space buffer. */
    unsigned last_scratch;
 
+   /** Byte-offset for the next logical, non-reused spill slot. */
+   unsigned last_logical_scratch;
+
    brw_reg frag_depth;
    brw_reg frag_stencil;
    brw_reg sample_mask;
@@ -259,8 +262,9 @@ sample_mask_flag_subreg(const brw_shader &s)
 }
 
 inline brw_reg
-brw_dynamic_fs_config(const struct brw_fs_prog_data *fs_prog_data)
+brw_dynamic_fs_config(struct brw_fs_prog_data *fs_prog_data)
 {
+   fs_prog_data->uses_fs_config = true;
    return byte_offset(
       brw_uniform_reg(
          fs_prog_data->fs_config_param / REG_SIZE, BRW_TYPE_UD),
@@ -276,8 +280,8 @@ brw_dynamic_per_primitive_remap(const struct brw_fs_prog_data *fs_prog_data)
       fs_prog_data->per_primitive_remap_param % REG_SIZE);
 }
 
-enum intel_barycentric_mode brw_barycentric_mode(const struct brw_fs_prog_key *key,
-                                                 nir_intrinsic_instr *intr);
+enum intel_barycentric_mode
+brw_barycentric_mode(nir_intrinsic_instr *intr);
 
 uint32_t brw_fb_write_msg_control(const brw_inst *inst,
                                   const struct brw_fs_prog_data *prog_data);
@@ -366,6 +370,7 @@ bool brw_opt_cse_defs(brw_shader &s);
 bool brw_opt_dead_code_eliminate(brw_shader &s);
 bool brw_opt_eliminate_find_live_channel(brw_shader &s);
 bool brw_opt_fill_and_spill(brw_shader &s);
+bool brw_opt_predicate_logic(brw_shader &s);
 bool brw_opt_register_coalesce(brw_shader &s);
 bool brw_opt_remove_extra_rounding_modes(brw_shader &s);
 bool brw_opt_remove_redundant_halts(brw_shader &s);

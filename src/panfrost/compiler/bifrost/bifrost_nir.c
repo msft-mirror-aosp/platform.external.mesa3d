@@ -19,16 +19,11 @@
 #include "compiler.h"
 #include "../kraid/kraid.h"
 
-DEBUG_GET_ONCE_BOOL_OPTION(use_kraid, "PAN_USE_KRAID", false)
-
 static bool
-bi_use_kraid(void)
+bi_use_kraid(nir_shader *nir, uint64_t gpu_id)
 {
-#ifdef WITH_PANFROST_RUST
-   return debug_get_option_use_kraid();
-#else
-   return false;
-#endif
+   return pan_use_kraid(pan_arch(gpu_id), nir->info.stage,
+                        nir->info.internal);
 }
 
 /*
@@ -85,11 +80,14 @@ bi_lower_bit_size(const nir_instr *instr, void *data)
    case nir_instr_type_intrinsic: {
       nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
 
-      /* We only support ballot on 32-bit types. */
       switch (intr->intrinsic) {
       case nir_intrinsic_ballot:
       case nir_intrinsic_ballot_relaxed:
+         /* We only support ballot on 32-bit types. */
          return (nir_src_bit_size(intr->src[0]) == 32) ? 0 : 32;
+      case nir_intrinsic_read_invocation:
+         /* CLPER only supports 32-bit types. */
+         return (intr->def.bit_size < 32) ? 32 : 0;
       default:
          return 0;
       }
@@ -279,9 +277,10 @@ bi_optimize_loop(nir_shader *nir, uint64_t gpu_id, bool allow_copies)
 
 static void
 bi_optimize_late(nir_shader *nir, uint64_t gpu_id,
-                nir_variable_mode robust_modes)
+                nir_variable_mode robust_modes,
+                const struct pan_shader_info *info)
 {
-   NIR_PASS(_, nir, nir_opt_shrink_stores, true);
+   NIR_PASS(_, nir, nir_opt_shrink_stores, false /* shrink_image_store */);
    bi_optimize_loop(nir, gpu_id, false /* allow_copies */);
 
    NIR_PASS(_, nir, nir_opt_shrink_vectors, false);
@@ -310,9 +309,15 @@ bi_optimize_late(nir_shader *nir, uint64_t gpu_id,
 
    NIR_PASS(_, nir, nir_opt_load_store_vectorize, &vectorize_opts);
 
+   NIR_PASS(_, nir, pan_nir_fuse_io_cvt, gpu_id, &info->varyings.formats);
+
    /* nir_lower_pack can generate split operations, execute algebraic again to
     * handle them */
-   NIR_PASS(_, nir, nir_opt_algebraic);
+   bool algebraic_progress = true;
+   while (algebraic_progress) {
+      algebraic_progress = false;
+      NIR_PASS(algebraic_progress, nir, nir_opt_algebraic);
+   }
 
    /* This is only needed because we support iadd64 but not isub64.
     * nir_opt_algebraic lowers isub64 into iadd64 + ineg64 and since ineg64 is
@@ -351,7 +356,7 @@ bi_optimize_late(nir_shader *nir, uint64_t gpu_id,
    while (late_algebraic_progress) {
       late_algebraic_progress = false;
       NIR_PASS(late_algebraic_progress, nir, bifrost_nir_lower_algebraic_late,
-               pan_arch(gpu_id));
+               pan_arch(gpu_id), bi_use_kraid(nir, gpu_id));
       late_algebraic |= late_algebraic_progress;
    }
 
@@ -821,20 +826,13 @@ mem_access_size_align_cb(nir_intrinsic_op intrin, uint8_t bytes,
 
    /* Push constants require 32-bit loads. */
    if (intrin == nir_intrinsic_load_push_constant) {
-      if (align_mul >= 4) {
-         /* If align_mul is bigger than 4 we can use align_offset to find
-          * the exact number of words we need to read.
-          */
-         num_comps = DIV_ROUND_UP((align_offset % 4) + bytes, 4);
-      } else {
-         /* If bytes is aligned on 32-bit, the access might still cross one
-          * word at the beginning, and one word at the end. If bytes is not
-          * aligned on 32-bit, the extra two words should cover for both the
-          * size and offset mis-alignment.
-          */
-         num_comps = (bytes / 4) + 2;
-      }
-
+      /* We need to read also the "padding" sitting between the 4-byte boundary
+       * and the data we require, for align_mul >= 4 that is align_offset
+       * directly, otherwise we need to find the worst possible aligned address
+       */
+      unsigned pad = align_mul >= 4 ? (align_offset % 4) :
+                                      (align_offset + 4 - align_mul);
+      num_comps = DIV_ROUND_UP(pad + bytes, 4);
       bit_size = MAX2(bit_size, 32);
       required_align = 4;
    }
@@ -871,6 +869,9 @@ bifrost_postprocess_nir(nir_shader *nir,
 
    const uint64_t gpu_id = inputs->gpu_id;
    const unsigned gpu_arch = pan_arch(gpu_id);
+
+   if (gpu_arch >= 9)
+      NIR_PASS(_, nir, pan_nir_lower_image_64bit);
 
    NIR_PASS(_, nir, nir_lower_image_atomics_to_global, NULL, NULL);
 
@@ -962,7 +963,6 @@ bifrost_postprocess_nir(nir_shader *nir,
    NIR_PASS(_, nir, pan_nir_lower_tex, gpu_id);
    NIR_PASS(_, nir, pan_nir_lower_image, gpu_id);
 
-   NIR_PASS(_, nir, pan_nir_fuse_io_cvt, gpu_id, &info->varyings.formats);
    /* Our OpenCL compiler (src/panfrost/clc/pan_compile.c) has a very weird and
     * suboptimal optimization pipeline that results in a lot of unoptimized
     * memcpys and sparse scratch space.  That code is still being used for
@@ -1015,6 +1015,9 @@ bifrost_postprocess_nir(nir_shader *nir,
       .cb_data = (void *) &gpu_id,
    };
    NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes, &mem_size_options);
+
+   if (bi_use_kraid(nir, gpu_id))
+      NIR_PASS(_, nir, pan_nir_lower_mem_to_global);
 
    nir_lower_ssbo_options ssbo_opts = {
       .native_loads = gpu_arch >= 9,
@@ -1271,7 +1274,7 @@ bifrost_compile_shader_nir(nir_shader *nir,
 
    bifrost_init_debug_options();
 
-   bi_optimize_late(nir, inputs->gpu_id, inputs->robust_modes);
+   bi_optimize_late(nir, inputs->gpu_id, inputs->robust_modes, info);
 
    /* Lower constants to scalar but then immediately fold so we get minimum-
     * width vectors instead of scalars
@@ -1285,8 +1288,11 @@ bifrost_compile_shader_nir(nir_shader *nir,
 
    info->tls_size = nir->scratch_size;
    info->stage = nir->info.stage;
+   info->fau.max = PAN_MAX_PUSH;
+   info->fau.reserved = inputs->fau.reserved;
+   info->fau.count = inputs->fau.reserved;
 
-   if (bi_use_kraid()) {
+   if (bi_use_kraid(nir, gpu_id)) {
 #ifdef WITH_PANFROST_RUST
       kraid_compile_nir(nir, inputs, binary, info);
 #endif

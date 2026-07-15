@@ -92,10 +92,23 @@ nvk_init_debug_flags(struct nvk_instance *instance)
       { "edb_bview", NVK_DEBUG_FORCE_EDB_BVIEW },
       { "gart", NVK_DEBUG_FORCE_GART },
       { "coherent", NVK_DEBUG_FORCE_COHERENT },
+      { "no_compression", NVK_DEBUG_NO_COMPRESSION },
       { NULL, 0 },
    };
 
    instance->debug_flags = parse_debug_string(os_get_option("NVK_DEBUG"), flags);
+}
+
+static void
+nvk_init_experimental_flags(struct nvk_instance *instance)
+{
+   const struct debug_control flags[] = {
+      { "dlss", NVK_EXPERIMENTAL_DLSS },
+      { "dlss_backwards_compat", NVK_EXPERIMENTAL_DLSS_BACK_COMPAT },
+      { NULL, 0 },
+   };
+
+   instance->experimental_flags = parse_debug_string(os_get_option("NVK_EXPERIMENTAL"), flags);
 }
 
 static void
@@ -144,6 +157,7 @@ nvk_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
       goto fail_alloc;
 
    nvk_init_debug_flags(instance);
+   nvk_init_experimental_flags(instance);
    nvk_init_dri_options(instance);
 
    instance->vk.physical_devices.try_create_for_drm =

@@ -239,7 +239,7 @@ ac_fill_compiler_info(struct radeon_info *info, const struct drm_amdgpu_info_dev
 {
    /* We use ac_compiler_info for shader cache keys, so make sure there is no padding. */
    STATIC_ASSERT(sizeof(enum amd_gfx_level) == 4);
-   STATIC_ASSERT(sizeof(struct ac_compiler_info) == 56);
+   STATIC_ASSERT(sizeof(struct ac_compiler_info) == 60);
 
    struct ac_compiler_info *out = &info->compiler_info;
 
@@ -295,12 +295,16 @@ ac_fill_compiler_info(struct radeon_info *info, const struct drm_amdgpu_info_dev
          out->num_physical_wave64_vgprs_per_simd = 256;
       }
    }
-   if (info->gfx_level >= GFX10_3)
+   if (info->gfx_level >= GFX10_3) {
       out->wave64_vgpr_alloc_granularity = out->num_physical_wave64_vgprs_per_simd / 64;
-   else if (info->gfx_level == GFX9 && info->family >= CHIP_MI200)
+      out->wave64_vgpr_encode_granularity = 4;
+   } else if (info->gfx_level == GFX9 && info->family >= CHIP_MI200) {
       out->wave64_vgpr_alloc_granularity = 8;
-   else
+      out->wave64_vgpr_encode_granularity = 8;
+   } else {
       out->wave64_vgpr_alloc_granularity = 4;
+      out->wave64_vgpr_encode_granularity = 4;
+   }
    out->min_wave64_vgpr_alloc = out->wave64_vgpr_alloc_granularity;
    out->max_vgpr_alloc = 256;
 
@@ -557,6 +561,12 @@ ac_fill_memory_info(struct radeon_info *info, const struct drm_amdgpu_info_devic
 
    /* Set which chips have uncached device memory. */
    info->has_l2_uncached = info->gfx_level >= GFX9;
+
+   /* On GFX12, uncached reads and writes to the same address can execute out of order. That's
+    * OK for DRI_PRIME blits, but exposure via APIs should be disallowed if general shader access
+    * can occur. Alternatively, the shader compiler can add extra s_wait to enforce ordering.
+    */
+   info->has_out_of_order_uncached_l2 = info->gfx_level == GFX12;
 
    info->max_tcc_blocks = device_info->num_tcc_blocks;
    if (info->gfx_level >= GFX10) {
@@ -1071,7 +1081,6 @@ void ac_fill_feature_info(struct radeon_info *info, const struct drm_amdgpu_info
 
    info->has_gpuvm_fault_query = info->drm_minor >= 55;
    info->has_tmz_support = device_info->ids_flags & AMDGPU_IDS_FLAGS_TMZ;
-   info->uses_kernel_cu_mask = false; /* Not implemented in the kernel. */
 
    /* On GFX8, the TBA/TMA registers can be configured from the userspace.
     * On GFX9+, they are privileged registers and they need to be configured
@@ -1953,6 +1962,7 @@ void ac_print_gpu_info(FILE *f, const struct radeon_info *info, int fd)
    fprintf(f, "    has_set_sh_pairs_packed = %i\n", info->has_set_sh_pairs_packed);
    fprintf(f, "    has_set_uconfig_pairs = %i\n", info->has_set_uconfig_pairs);
    fprintf(f, "    has_smem_partial_oob_access_bug = %i\n", info->has_smem_partial_oob_access_bug);
+   fprintf(f, "    has_out_of_order_uncached_l2 = %i\n", info->has_out_of_order_uncached_l2);
 
    if (info->gfx_level < GFX12) {
       fprintf(f, "Display features:\n");
@@ -2059,7 +2069,6 @@ void ac_print_gpu_info(FILE *f, const struct radeon_info *info, int fd)
       }
    }
    fprintf(f, "    kernel_has_modifiers = %u\n", info->kernel_has_modifiers);
-   fprintf(f, "    uses_kernel_cu_mask = %u\n", info->uses_kernel_cu_mask);
 
    fprintf(f, "Shader core info:\n");
    for (unsigned i = 0; i < info->max_se; i++) {

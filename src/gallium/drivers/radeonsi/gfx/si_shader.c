@@ -217,13 +217,11 @@ unsigned si_calculate_needed_lds_size(enum amd_gfx_level gfx_level, struct si_sh
 unsigned si_shader_encode_vgprs(struct si_shader *shader)
 {
    struct radeon_info *info = &shader->selector->screen->info;
-   unsigned encode_granularity = !info->has_graphics && info->family >= CHIP_MI200 ? 8 : 4;
-
    assert(info->gfx_level >= GFX10 || shader->wave_size == 64);
-   if (shader->wave_size == 32)
-      encode_granularity *= 2;
 
-   return shader->config.num_vgprs / encode_granularity - 1;
+   return DIV_ROUND_UP(shader->config.num_vgprs,
+                       (info->compiler_info.wave64_vgpr_encode_granularity *
+                        (shader->wave_size == 32 ? 2 : 1))) - 1;
 }
 
 unsigned si_shader_encode_sgprs(struct si_shader *shader)
@@ -1172,7 +1170,7 @@ static void si_postprocess_nir(struct si_nir_shader_ctx *ctx)
 
    NIR_PASS(progress, nir, si_nir_lower_abi, shader, &ctx->args);
    /* Global access lowering must be called after lowering ABI which emits regular load_global intrinsics. */
-   NIR_PASS(progress, nir, ac_nir_lower_global_access);
+   NIR_PASS(progress, nir, ac_nir_lower_global_access, sel->screen->info.gfx_level);
    NIR_PASS(progress, nir, nir_lower_int64);
    NIR_PASS(progress, nir, nir_lower_fp16_casts, nir_lower_fp16_split_fp64);
 
@@ -1421,7 +1419,7 @@ si_nir_generate_gs_copy_shader(struct si_screen *sscreen,
                .use_llvm = !nir->info.use_aco_amd,
             });
 
-   NIR_PASS(_, nir, ac_nir_lower_global_access);
+   NIR_PASS(_, nir, ac_nir_lower_global_access, sscreen->info.gfx_level);
    NIR_PASS(_, nir, nir_lower_int64);
 
    si_nir_opts(gs_selector->screen, nir, false);

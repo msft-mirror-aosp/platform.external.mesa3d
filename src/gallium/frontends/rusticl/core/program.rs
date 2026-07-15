@@ -142,12 +142,19 @@ impl ProgramBuild {
                     continue;
                 }
 
-                let Some(build_result) =
-                    convert_spirv_to_nir(build, kernel_name, &args, &mut self.spec_constants, dev)
-                else {
-                    build.status = CL_BUILD_ERROR;
-                    build.log = c"Internal compilation error".to_owned();
-                    return;
+                let build_result = match convert_spirv_to_nir(
+                    build,
+                    kernel_name,
+                    &args,
+                    &mut self.spec_constants,
+                    dev,
+                ) {
+                    Ok(build_result) => build_result,
+                    Err(err) => {
+                        build.status = CL_BUILD_ERROR;
+                        build.log = c"Internal compilation error: ".concat(err);
+                        return;
+                    }
                 };
                 kernel_info_set.insert(build_result.kernel_info);
 
@@ -246,7 +253,7 @@ impl DeviceProgramBuild {
         kernel: &CStr,
         device: &Device,
         spec_constants: &mut HashMap<u32, Vec<u8>>,
-    ) -> Option<NirShader> {
+    ) -> Result<NirShader, &'static CStr> {
         assert_eq!(self.status, CL_BUILD_SUCCESS as cl_build_status);
 
         let mut spec_constants: Vec<_> = spec_constants
@@ -265,16 +272,21 @@ impl DeviceProgramBuild {
         };
 
         let mut log = Platform::dbg().program.then(Vec::new);
-        let nir = self.spirv.as_ref().unwrap().to_nir(
-            kernel,
-            device
-                .screen
-                .nir_shader_compiler_options(mesa_shader_stage::MESA_SHADER_COMPUTE),
-            device.spirv_to_nir_opts(),
-            &device.lib_clc,
-            &mut spec_constants,
-            log.as_mut(),
-        );
+        let nir = self
+            .spirv
+            .as_ref()
+            .unwrap()
+            .to_nir(
+                kernel,
+                device
+                    .screen
+                    .nir_shader_compiler_options(mesa_shader_stage::MESA_SHADER_COMPUTE),
+                device.spirv_to_nir_opts(),
+                &device.lib_clc,
+                &mut spec_constants,
+                log.as_mut(),
+            )
+            .ok_or(c"spirv_to_nir failed");
 
         if let Some(log) = log {
             for line in log {
@@ -749,7 +761,7 @@ impl Program {
     }
 
     pub fn build(
-        self: Arc<Self>,
+        self: &Arc<Self>,
         devices: Vec<&'static Device>,
         options: CompileOptions,
         callback: Option<ProgramCB>,
@@ -758,10 +770,10 @@ impl Program {
 
         // If the caller did not provide a callback, block until build finishes.
         if callback.is_none() {
-            self.context
+            Platform::get()
                 .worker_queue
                 .add_job_sync(create_build_closure(
-                    Arc::clone(&self),
+                    Arc::clone(self),
                     devices.clone(),
                     options,
                     callback,
@@ -776,8 +788,8 @@ impl Program {
                 return Err(CL_BUILD_PROGRAM_FAILURE);
             }
         } else {
-            self.context.worker_queue.add_job(create_build_closure(
-                Arc::clone(&self),
+            Platform::get().worker_queue.add_job(create_build_closure(
+                Arc::clone(self),
                 devices,
                 options,
                 callback,
@@ -887,7 +899,7 @@ impl Program {
         // If the caller did not provide a callback, block until compile
         // finishes.
         if callback.is_none() {
-            self.context
+            Platform::get()
                 .worker_queue
                 .add_job_sync(create_compile_closure(
                     Arc::clone(&self),
@@ -906,7 +918,7 @@ impl Program {
                 return Err(CL_COMPILE_PROGRAM_FAILURE);
             }
         } else {
-            self.context.worker_queue.add_job(create_compile_closure(
+            Platform::get().worker_queue.add_job(create_compile_closure(
                 Arc::clone(&self),
                 devices,
                 options,
@@ -962,8 +974,7 @@ impl Program {
         // If the caller did not provide a callback, block until compile
         // finishes.
         let status = if callback.is_none() {
-            program
-                .context
+            Platform::get()
                 .worker_queue
                 .add_job_sync(create_link_closure(
                     Arc::clone(&program),
@@ -982,7 +993,7 @@ impl Program {
                 CL_LINK_PROGRAM_FAILURE
             }
         } else {
-            program.context.worker_queue.add_job(create_link_closure(
+            Platform::get().worker_queue.add_job(create_link_closure(
                 Arc::clone(&program),
                 devices,
                 input_programs,

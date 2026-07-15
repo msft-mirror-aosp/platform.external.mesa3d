@@ -5,11 +5,7 @@
  */
 
 #include <ctype.h>
-#include "compiler/nir/nir.h"
-#include "ac_nir.h"
-#include "ac_shader_util.h"
 #include "si_pipe.h"
-#include "util/u_cpu_detect.h"
 #include "util/u_screen.h"
 #include <sys/utsname.h>
 #include "drm-uapi/drm.h"
@@ -183,4 +179,7 @@ void si_init_screen_caps(struct si_screen *sscreen)
    if (sscreen->info.has_timeline_syncobj &&
        !(sscreen->info.userq_ip_mask & BITFIELD_BIT(AMD_IP_GFX)))
       caps->max_timeline_semaphore_difference = UINT64_MAX;
+
+      /* Up to 16 bytes are accelerated */
+   caps->hw_clear_buffer_sizes = 1 | 2 | 4 | 8 | 16;
 }

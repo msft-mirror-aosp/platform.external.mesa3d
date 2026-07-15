@@ -84,8 +84,8 @@ lower_sample_mask_writes(nir_builder *b, nir_intrinsic_instr *intrin,
    b->cursor = nir_before_instr(&intrin->instr);
 
    nir_def *orig = nir_load_sample_mask(b);
-   nir_def *new = nir_b32csel(b, nir_load_multisampled_pan(b),
-                               intrin->src[0].ssa, orig);
+   nir_def *new =
+      nir_bcsel_pan(b, nir_load_multisampled_pan(b), intrin->src[0].ssa, orig);
    nir_src_rewrite(&intrin->src[0], new);
 
    return true;
@@ -198,11 +198,13 @@ panfrost_shader_compile(struct panfrost_screen *screen, const nir_shader *ir,
     * When we switch to pushing UBOs with a compute kernel (or CSF instructions)
     * we can relax this. */
    assert(s->info.first_ubo_is_default_ubo);
-   inputs.pushable_ubos = BITFIELD_BIT(0);
+   inputs.fau.pushable_ubos = BITFIELD_BIT(0);
 
    if (out->sysvals.sysval_count != 0) {
-      inputs.pushable_ubos |= BITFIELD_BIT(PAN_UBO_SYSVALS);
+      inputs.fau.pushable_ubos |= BITFIELD_BIT(PAN_UBO_SYSVALS);
    }
+
+   inputs.fau.promote_immediates = true;
 
    if (dev->arch >= 9) {
       /* Always enable this for GL, it avoids crashes when using unbound
@@ -463,7 +465,7 @@ panfrost_bind_fs_state(struct pipe_context *pctx, void *hwcso)
    panfrost_update_shader_variant(ctx, MESA_SHADER_VERTEX);
 }
 
-static int
+static unsigned
 glsl_type_size(const struct glsl_type *type, bool bindless)
 {
    return glsl_count_attribute_slots(type, false);

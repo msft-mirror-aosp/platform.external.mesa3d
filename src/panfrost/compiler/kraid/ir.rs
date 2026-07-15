@@ -3,6 +3,7 @@
 
 pub use crate::data_type::DataType;
 use crate::data_type::PartialDataType;
+use crate::debug::{DEBUG, DebugFlags};
 pub use crate::flow::FlowCtrl;
 pub use crate::model::Model;
 pub use crate::ops::Op;
@@ -11,9 +12,14 @@ pub use crate::ssa_value::{SSARef, SSAValue};
 pub use crate::swizzle::Swizzle;
 use crate::swizzle::*;
 use compiler::as_slice::*;
+use compiler::bitset::IntoBitIndex;
+use compiler::cfg::CFG;
+use compiler::enum_as_u8::*;
 use compiler::smallvec::*;
+use kraid_proc_macros::EnumAsU8;
 
 use std::fmt;
+use std::fmt::Write;
 use std::num::NonZeroU32;
 use std::ops::{Deref, DerefMut, Range};
 
@@ -26,6 +32,71 @@ pub struct SmallConstant {
 impl fmt::Display for SmallConstant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name)
+    }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SpecialFAU {
+    WarpId,
+    FramebufferSize,
+    ATestDatum,
+    Sample,
+    BlendDescriptor0,
+    BlendDescriptor1,
+    BlendDescriptor2,
+    BlendDescriptor3,
+    BlendDescriptor4,
+    BlendDescriptor5,
+    BlendDescriptor6,
+    BlendDescriptor7,
+    ThreadLocalPointer,
+    WorkgroupLocalPointer,
+    ResourceTablePointer,
+    LaneId,
+    CoreId,
+    ShaderOutput,
+    PrepassState,
+    Pc,
+}
+
+impl SpecialFAU {
+    pub fn blend_descriptor(n: u8) -> SpecialFAU {
+        assert!(n < 8);
+        // SAFETY:
+        //
+        // We use repr(u8) and Rust guarantees that implicit discriminants are
+        // assigned by incrementing by one for each enum variant.
+        unsafe { std::mem::transmute(SpecialFAU::BlendDescriptor0 as u8 + n) }
+    }
+}
+
+impl fmt::Display for SpecialFAU {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use SpecialFAU::*;
+        let name = match &self {
+            WarpId => "warp_id",
+            FramebufferSize => "framebuffer_size",
+            ATestDatum => "atest_datum",
+            Sample => "sample",
+            BlendDescriptor0 => "blend_descriptor0",
+            BlendDescriptor1 => "blend_descriptor1",
+            BlendDescriptor2 => "blend_descriptor2",
+            BlendDescriptor3 => "blend_descriptor3",
+            BlendDescriptor4 => "blend_descriptor4",
+            BlendDescriptor5 => "blend_descriptor5",
+            BlendDescriptor6 => "blend_descriptor6",
+            BlendDescriptor7 => "blend_descriptor7",
+            ThreadLocalPointer => "thread_local_pointer",
+            WorkgroupLocalPointer => "workgroup_local_pointer",
+            ResourceTablePointer => "resource_table_pointer",
+            LaneId => "lane_id",
+            CoreId => "core_id",
+            ShaderOutput => "shader_output",
+            PrepassState => "prepass_state",
+            Pc => "pc",
+        };
+        write!(f, "{name}")
     }
 }
 
@@ -50,7 +121,7 @@ pub enum FAUPage {
     SmallConst,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 pub struct FAURef {
     pub page: FAUPage,
 
@@ -61,8 +132,22 @@ pub struct FAURef {
     /// zero.
     pub idx: u16,
 
+    /// If this FAU is a special FAU, this provides the semantic label which
+    /// says what that FAU contains.  This is only for pretty printing and has
+    /// no meaning beyond that.
+    pub special: Option<SpecialFAU>,
+
     /// Load 64 bytes
     pub load64: bool,
+}
+
+impl PartialEq for FAURef {
+    fn eq(&self, other: &FAURef) -> bool {
+        // special is intentionally missing
+        self.page.eq(&other.page)
+            && self.idx.eq(&other.idx)
+            && self.load64.eq(&other.load64)
+    }
 }
 
 impl FAURef {
@@ -70,6 +155,7 @@ impl FAURef {
         FAURef {
             page: FAUPage::User,
             idx,
+            special: None,
             load64: false,
         }
     }
@@ -79,6 +165,7 @@ impl FAURef {
         FAURef {
             page: FAUPage::User,
             idx,
+            special: None,
             load64: true,
         }
     }
@@ -94,12 +181,16 @@ impl fmt::Display for FAURef {
         let idx = self.idx >> 1;
         let w = self.idx % 2;
 
-        match self.page {
-            FAUPage::User => write!(f, "u{idx}")?,
-            FAUPage::Special0 => write!(f, "s0:{idx}")?,
-            FAUPage::Special1 => write!(f, "s1:{idx}")?,
-            FAUPage::Special3 => write!(f, "s3:{idx}")?,
-            FAUPage::SmallConst => panic!("Already handled"),
+        if let Some(special) = self.special {
+            write!(f, "{special}")?;
+        } else {
+            match self.page {
+                FAUPage::User => write!(f, "u{idx}")?,
+                FAUPage::Special0 => write!(f, "s0:{idx}")?,
+                FAUPage::Special1 => write!(f, "s1:{idx}")?,
+                FAUPage::Special3 => write!(f, "s3:{idx}")?,
+                FAUPage::SmallConst => panic!("Already handled"),
+            }
         }
 
         if self.load64 {
@@ -126,8 +217,76 @@ impl From<&SmallConstant> for FAURef {
         FAURef {
             page: FAUPage::SmallConst,
             idx: sc.idx.into(),
+            special: None,
             load64: false,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PreloadReg {
+    /* Compute */
+    ///  0..16 -> local_id_0
+    /// 16..32 -> local_id_1
+    LocalId01,
+    ///  0..16 -> local_id_2
+    LocalId2,
+    WorkgroupId0,
+    WorkgroupId1,
+    WorkgroupId2,
+    GlobalId0,
+    GlobalId1,
+    GlobalId2,
+
+    /* Vertex */
+    InternalId,
+    VertexId,
+    InstanceId,
+    DrawId,
+    ViewId,
+
+    /* Fragment */
+    PrimitiveId,
+    PrimitiveFlags,
+    ///  0..16 -> position_x
+    /// 16..32 -> position_y
+    PositionXY,
+    ///  0..16 -> cumulative_coverage
+    CumulativeCoverage,
+    ///  0..16 -> rasterizer_coverage
+    /// 16..24 -> sample_id
+    /// 24..32 -> centroid_id
+    RasterizerSampleCentroid,
+    FrameArgLow,
+    FrameArgHigh,
+}
+
+impl fmt::Display for PreloadReg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use PreloadReg::*;
+        let name = match &self {
+            LocalId01 => "LOCAL_ID_01",
+            LocalId2 => "LOCAL_ID_2",
+            WorkgroupId0 => "WORKGROUP_ID_0",
+            WorkgroupId1 => "WORKGROUP_ID_1",
+            WorkgroupId2 => "WORKGROUP_ID_2",
+            GlobalId0 => "GLOBAL_ID_0",
+            GlobalId1 => "GLOBAL_ID_1",
+            GlobalId2 => "GLOBAL_ID_2",
+            InternalId => "INTERNAL_ID",
+            VertexId => "VERTEX_ID",
+            InstanceId => "INSTANCE_ID",
+            DrawId => "DRAW_ID",
+            ViewId => "VIEW_ID",
+            PrimitiveId => "PRIMITIVE_ID",
+            PrimitiveFlags => "PRIMITIVE_FLAGS",
+            PositionXY => "POSIZTION_XY",
+            CumulativeCoverage => "CUMULATIVE_COVERAGE",
+            RasterizerSampleCentroid => "RASTERIZER_COV_SAMPLE_ID_CENTROID_ID",
+            FrameArgLow => "FRAME_ARG_LO",
+            FrameArgHigh => "FRAME_ARG_HI",
+        };
+        write!(f, "{name}")
     }
 }
 
@@ -149,23 +308,95 @@ pub enum RegRange {
     Regs(u8),
 }
 
-#[derive(Clone, Copy, PartialEq)]
+impl RegRange {
+    #[inline]
+    fn byte_offset_count(&self) -> (u8, u8) {
+        match self {
+            RegRange::Byte0 => (0, 1),
+            RegRange::Byte1 => (1, 1),
+            RegRange::Byte2 => (2, 1),
+            RegRange::Byte3 => (3, 1),
+            RegRange::Half0 => (0, 2),
+            RegRange::Half1 => (2, 2),
+            RegRange::Regs(n) => (0, n * 4),
+        }
+    }
+
+    fn from_byte_offset_count(
+        offset: u8,
+        count: u8,
+    ) -> Result<RegRange, &'static str> {
+        match (offset, count) {
+            (0, 1) => Ok(RegRange::Byte0),
+            (1, 1) => Ok(RegRange::Byte1),
+            (2, 1) => Ok(RegRange::Byte2),
+            (3, 1) => Ok(RegRange::Byte3),
+            (0, 2) => Ok(RegRange::Half0),
+            (2, 2) => Ok(RegRange::Half1),
+            (0, _) => {
+                if count % 4 == 0 {
+                    Ok(RegRange::Regs(count / 4))
+                } else {
+                    Err("Misaligned register range")
+                }
+            }
+            _ => Err("Misaligned register range"),
+        }
+    }
+
+    pub fn byte_offset(&self) -> u8 {
+        self.byte_offset_count().0
+    }
+
+    pub fn bytes(&self) -> u8 {
+        self.byte_offset_count().1
+    }
+}
+
+impl From<RegRange> for Swizzle {
+    fn from(range: RegRange) -> Swizzle {
+        match range {
+            RegRange::Byte0 => Swizzle::B0000,
+            RegRange::Byte1 => Swizzle::B1111,
+            RegRange::Byte2 => Swizzle::B2222,
+            RegRange::Byte3 => Swizzle::B3333,
+            RegRange::Half0 => Swizzle::H00,
+            RegRange::Half1 => Swizzle::H11,
+            RegRange::Regs(_) => Swizzle::NONE,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct RegRef {
     pub idx: u8,
     pub range: RegRange,
+    /// Optional preload origin for pretty printing
+    pub preload: Option<PreloadReg>,
+}
+
+impl PartialEq for RegRef {
+    fn eq(&self, other: &RegRef) -> bool {
+        // preload is intentionally missing
+        self.idx.eq(&other.idx) && self.range.eq(&other.range)
+    }
 }
 
 impl fmt::Display for RegRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.preload {
+            Some(d) => write!(f, "{d}")?,
+            None => write!(f, "r{}", self.idx)?,
+        };
+
         match &self.range {
-            RegRange::Byte0 => write!(f, "r{}.b0", self.idx),
-            RegRange::Byte1 => write!(f, "r{}.b1", self.idx),
-            RegRange::Byte2 => write!(f, "r{}.b2", self.idx),
-            RegRange::Byte3 => write!(f, "r{}.b3", self.idx),
-            RegRange::Half0 => write!(f, "r{}.h0", self.idx),
-            RegRange::Half1 => write!(f, "r{}.h1", self.idx),
+            RegRange::Byte0 => write!(f, ".b0"),
+            RegRange::Byte1 => write!(f, ".b1"),
+            RegRange::Byte2 => write!(f, ".b2"),
+            RegRange::Byte3 => write!(f, ".b3"),
+            RegRange::Half0 => write!(f, ".h0"),
+            RegRange::Half1 => write!(f, ".h1"),
             RegRange::Regs(n) => {
-                write!(f, "r{}", self.idx)?;
                 if *n > 1 {
                     write!(f, "..{}", self.idx + n)?;
                 }
@@ -177,33 +408,42 @@ impl fmt::Display for RegRef {
 
 impl RegRef {
     pub fn bytes(&self) -> u8 {
-        match self.range {
-            RegRange::Byte0
-            | RegRange::Byte1
-            | RegRange::Byte2
-            | RegRange::Byte3 => 1,
-            RegRange::Half0 | RegRange::Half1 => 2,
-            RegRange::Regs(n) => n * 4,
-        }
+        self.range.bytes()
     }
 
-    pub fn byte_offset(&self) -> u8 {
-        match self.range {
-            RegRange::Byte0 | RegRange::Half0 | RegRange::Regs(_) => 0,
-            RegRange::Byte1 => 1,
-            RegRange::Byte2 | RegRange::Half1 => 2,
-            RegRange::Byte3 => 3,
-        }
+    pub fn byte_range(&self) -> Range<u16> {
+        let (offset, bytes) = self.range.byte_offset_count();
+        let b_start = u16::from(self.idx) * 4 + u16::from(offset);
+        b_start..(b_start + u16::from(bytes))
+    }
+
+    pub fn from_byte_range(range: Range<u16>) -> Result<RegRef, &'static str> {
+        let idx = (range.start / 4)
+            .try_into()
+            .map_err(|_| "Register range too large")?;
+        let range = RegRange::from_byte_offset_count(
+            (range.start % 4).try_into().unwrap(),
+            (range.end - range.start)
+                .try_into()
+                .map_err(|_| "Register range too large")?,
+        )?;
+        Ok(RegRef {
+            idx,
+            range,
+            preload: None,
+        })
     }
 
     pub fn word(mut self, word: u8) -> RegRef {
-        let RegRange::Regs(nregs) = self.range else {
-            panic!("RegRef::word() out of bounds");
-        };
-        assert!(word < nregs, "RegRef::word() out of bounds");
-        self.idx += word;
-        self.range = RegRange::Regs(1);
-        self
+        if let RegRange::Regs(nregs) = self.range {
+            assert!(word < nregs, "RegRef::word() out of bounds");
+            self.idx += word;
+            self.range = RegRange::Regs(1);
+            self
+        } else {
+            assert!(word == 0);
+            self
+        }
     }
 }
 
@@ -232,6 +472,13 @@ impl fmt::Display for SrcRef {
 
 impl SrcRef {
     pub fn as_ssa(&self) -> Option<&SSARef> {
+        match self {
+            SrcRef::SSA(ssa) => Some(ssa),
+            _ => None,
+        }
+    }
+
+    pub fn as_mut_ssa(&mut self) -> Option<&mut SSARef> {
         match self {
             SrcRef::SSA(ssa) => Some(ssa),
             _ => None,
@@ -423,6 +670,16 @@ impl SrcMod {
     }
 }
 
+/// An instruction source, consisting of a SrcRef referencing the actual data,
+/// a Swizzle which may shuffle the SrcRef data around, and a SrcMod which
+/// modifies the data before it is consumed by the instruction.
+///
+/// Logically, the swizzle is applied first and then the source modifier.  At
+/// the ISA level, it doesn't matter which is applied first because the ISA
+/// never allows incompatible source modifiers and swizzles so the source
+/// modifier can always be applied either before or after the swizzle without
+/// affecting everything.  Howver, because we represent a superset of the ISA,
+/// we need the order to be well-defined.
 #[derive(Clone)]
 pub struct Src {
     pub src_ref: SrcRef,
@@ -495,6 +752,15 @@ impl Src {
         Src::from(u32::from(u)).half(0)
     }
 
+    pub fn fneg_zero(bits: u8) -> Src {
+        let zero = match bits {
+            16 => Src::imm_u16(0),
+            32 => Src::from(0),
+            _ => panic!("Invalid float bit size"),
+        };
+        zero.fneg()
+    }
+
     pub fn modify(mut self, src_mod: SrcMod) -> Src {
         self.src_mod = self.src_mod.modify(src_mod);
         self
@@ -513,7 +779,36 @@ impl Src {
     }
 
     pub fn is_zero(&self) -> bool {
-        matches!(self.src_ref, SrcRef::Zero)
+        if matches!(self.src_mod, SrcMod::BNot) {
+            matches!(self.src_ref, SrcRef::Imm32(NonZeroU32::MAX))
+        } else {
+            matches!(self.src_ref, SrcRef::Zero)
+        }
+    }
+
+    pub fn is_fneg_zero(&self, src_type: DataType) -> bool {
+        match self.src_ref {
+            SrcRef::Zero => {
+                matches!(self.src_mod, SrcMod::FNeg | SrcMod::FNegAbs)
+            }
+            SrcRef::Imm32(imm) => {
+                if let Some(imm) = self.src_mod.fold_u32(src_type, imm.into()) {
+                    match src_type {
+                        DataType::F16 => (imm as u16) == 0x8000,
+                        DataType::V2F16 => imm == 0x80008000,
+                        DataType::F32 => imm == 0x80000000,
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            }
+            // We could possibly detect that an FAU is k0 but that requries
+            // digging into the small constant table in the model and it's
+            // generally not worth it.  We should just be using Zero when
+            // that's what we want.
+            _ => false,
+        }
     }
 
     pub fn replicates_byte(&self) -> bool {
@@ -543,9 +838,19 @@ impl Src {
 
 impl<T: Into<SrcRef>> From<T> for Src {
     fn from(src_ref: T) -> Src {
+        let src_ref = src_ref.into();
+        let swizzle = match &src_ref {
+            SrcRef::Zero | SrcRef::Imm32(_) | SrcRef::FAU(_) => Swizzle::NONE,
+            SrcRef::SSA(vec) => match vec.bytes() {
+                1 => Swizzle::B0000,
+                2 => Swizzle::H00,
+                _ => Swizzle::NONE,
+            },
+            SrcRef::Reg(reg) => reg.range.into(),
+        };
         Src {
-            src_ref: src_ref.into(),
-            swizzle: Default::default(),
+            src_ref,
+            swizzle,
             src_mod: Default::default(),
             last_use: false,
         }
@@ -591,6 +896,10 @@ impl DstRef {
         }
     }
 
+    pub fn is_none(&self) -> bool {
+        matches!(self, DstRef::None)
+    }
+
     pub fn bytes_written(&self) -> u8 {
         match self {
             DstRef::None => 0,
@@ -620,7 +929,8 @@ impl From<RegRef> for DstRef {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, EnumAsU8, Eq, Hash, PartialEq)]
 pub enum DstLanes {
     /// The destination is never written
     None,
@@ -648,6 +958,8 @@ pub enum DstLanes {
     H0,
     H1,
 }
+
+pub type DstLanesSet = U8EnumSet<DstLanes, 1>;
 
 impl fmt::Display for DstLanes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -681,6 +993,24 @@ impl From<RegRange> for DstLanes {
 }
 
 impl DstLanes {
+    pub const ALL_B: DstLanesSet = unsafe {
+        DstLanesSet::from_u8_array([
+            DstLanes::AnyB as u8,
+            DstLanes::B0 as u8,
+            DstLanes::B1 as u8,
+            DstLanes::B2 as u8,
+            DstLanes::B3 as u8,
+        ])
+    };
+
+    pub const ALL_H: DstLanesSet = unsafe {
+        DstLanesSet::from_u8_array([
+            DstLanes::AnyH as u8,
+            DstLanes::H0 as u8,
+            DstLanes::H1 as u8,
+        ])
+    };
+
     pub fn byte(byte: u8) -> DstLanes {
         match byte {
             0 => DstLanes::B0,
@@ -725,11 +1055,11 @@ impl DstLanes {
     }
 
     pub fn is_byte(&self) -> bool {
-        self.bytes(4) == 1
+        DstLanes::ALL_B.contains(*self)
     }
 
     pub fn is_half(&self) -> bool {
-        self.bytes(4) == 2
+        DstLanes::ALL_H.contains(*self)
     }
 
     pub fn u32_mask(&self) -> Option<u32> {
@@ -811,17 +1141,74 @@ impl<T: Into<DstRef>> From<T> for Dst {
     }
 }
 
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub struct Phi(u32);
+
+impl Phi {
+    fn new(idx: u32, bits: u8) -> Phi {
+        assert!(idx < (1 << 30));
+        let mut packed = idx;
+        assert!(8 <= bits && bits <= 64 && bits.is_power_of_two());
+        packed |= (bits.ilog2() - 3) << 30;
+        Phi(packed)
+    }
+
+    pub fn idx(&self) -> u32 {
+        self.0 & 0x3fffffff
+    }
+
+    pub fn bits(&self) -> u8 {
+        self.bytes() * 8
+    }
+
+    pub fn bytes(&self) -> u8 {
+        1 << (self.0 >> 30)
+    }
+}
+
+impl fmt::Display for Phi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let m = match self.bits() {
+            8 => ":b",
+            16 => ":h",
+            32 => ":w",
+            64 => ":q",
+            _ => panic!("Invalid SSA value bits"),
+        };
+        write!(f, "φ{}{m}", self.idx())
+    }
+}
+
+impl IntoBitIndex for Phi {
+    fn into_bit_index(self) -> usize {
+        // Indices are guaranteed unique by the allocator
+        self.idx().try_into().unwrap()
+    }
+}
+
+#[derive(Default)]
+pub struct PhiAllocator {
+    count: u32,
+}
+
+impl PhiAllocator {
+    /// Allocates an phi.
+    pub fn alloc(&mut self, bits: u8) -> Phi {
+        let idx = self.count;
+        self.count += 1;
+        Phi::new(idx, bits)
+    }
+}
+
 pub trait HasVariants {
     const VARIANTS: &'static [DataType];
 
     fn variant(&self) -> DataType;
 
-    fn is_valid_variant(&self) -> bool {
-        let v = self.variant();
-        Self::VARIANTS
-            .iter()
-            .find(|&&allowed| v == allowed)
-            .is_some()
+    fn set_variant(&mut self, variant: DataType);
+
+    fn is_valid_variant(variant: DataType) -> bool {
+        Self::VARIANTS.contains(&variant)
     }
 }
 
@@ -848,7 +1235,8 @@ pub trait Opcode:
     AsSlice<Src, Attr = PartialDataType> + AsSlice<Dst, Attr = PartialDataType>
 {
     fn variant(&self) -> Option<DataType>;
-    fn is_valid_variant(&self) -> bool;
+    fn set_variant(&mut self, data_type: DataType);
+    fn is_valid_variant(&self, data_type: DataType) -> bool;
 
     fn srcs(&self) -> &[Src] {
         self.as_slice()
@@ -865,7 +1253,7 @@ pub trait Opcode:
         }
     }
 
-    fn src_raw_types(&self) -> &[PartialDataType] {
+    fn raw_src_types(&self) -> &[PartialDataType] {
         AsSlice::<Src>::attrs(self)
     }
 
@@ -875,7 +1263,7 @@ pub trait Opcode:
     }
 
     fn srcs_raw_types(&self) -> impl Iterator<Item = (&Src, PartialDataType)> {
-        let t = self.src_raw_types().iter().cloned();
+        let t = self.raw_src_types().iter().cloned();
         self.srcs().iter().zip(t)
     }
 
@@ -900,6 +1288,26 @@ pub trait Opcode:
         }
     }
 
+    fn iter_ssa_uses(&self) -> impl Iterator<Item = &SSAValue> {
+        self.srcs().iter().flat_map(|src| {
+            if let SrcRef::SSA(vec) = &src.src_ref {
+                vec.iter()
+            } else {
+                (&[]).iter()
+            }
+        })
+    }
+
+    fn iter_ssa_defs(&self) -> impl Iterator<Item = &SSAValue> {
+        self.dsts().iter().flat_map(|dst| {
+            if let DstRef::SSA(vec) = &dst.dst_ref {
+                vec.iter()
+            } else {
+                (&[]).iter()
+            }
+        })
+    }
+
     fn fmt_src<'a>(&self, src: &'a Src) -> FmtSrc<'a> {
         FmtSrc {
             src,
@@ -922,7 +1330,7 @@ pub trait Opcode:
         }
     }
 
-    fn dst_raw_types(&self) -> &[PartialDataType] {
+    fn raw_dst_types(&self) -> &[PartialDataType] {
         AsSlice::<Dst>::attrs(self)
     }
 
@@ -932,7 +1340,7 @@ pub trait Opcode:
     }
 
     fn dsts_raw_types(&self) -> impl Iterator<Item = (&Dst, PartialDataType)> {
-        let t = self.dst_raw_types().iter().cloned();
+        let t = self.raw_dst_types().iter().cloned();
         self.dsts().iter().zip(t)
     }
 
@@ -970,7 +1378,11 @@ pub trait VirtualOpcode {
         false
     }
 
-    fn src_supports_imm32(&self, _src: &Src) -> bool {
+    fn src_is_64bit(&self, _src: &Src) -> bool {
+        false
+    }
+
+    fn src_supports_imm32(&self, _src: &Src, _imm: u32) -> bool {
         false
     }
 
@@ -978,12 +1390,16 @@ pub trait VirtualOpcode {
         swizzle == Swizzle::NONE
     }
 
+    fn src_supports_mod(&self, _src: &Src, src_mod: SrcMod) -> bool {
+        src_mod.is_none()
+    }
+
     fn dst_is_staging_reg(&self) -> bool {
         false
     }
 
-    fn dst_supports_lanes(&self, lanes: DstLanes) -> bool {
-        lanes == DstLanes::All
+    fn dst_supported_lanes(&self) -> DstLanesSet {
+        DstLanesSet::from_array([DstLanes::All])
     }
 }
 
@@ -1010,7 +1426,9 @@ impl DerefMut for Instr {
 impl<T: Into<Op>> From<T> for Instr {
     fn from(op: T) -> Instr {
         let op = op.into();
-        assert!(op.is_valid_variant());
+        if let Some(variant) = op.variant() {
+            assert!(op.is_valid_variant(variant));
+        }
         Instr {
             op,
             flow: Default::default(),
@@ -1072,10 +1490,22 @@ impl fmt::Display for BasicBlock {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ShaderInfo {
+    /// Number of registers used
+    pub registers_used: u8,
+    /// Thread local storage size, in bytes
+    pub tls_size: u32,
+    /// Bitset of preloaded registers
+    pub register_preload: u64,
+}
+
 pub struct Shader<'a> {
     pub model: &'a dyn Model,
     pub ssa_alloc: SSAValueAllocator,
-    pub blocks: Vec<BasicBlock>,
+    pub phi_alloc: PhiAllocator,
+    pub blocks: CFG<BasicBlock>,
+    pub info: ShaderInfo,
 }
 
 impl Shader<'_> {
@@ -1088,13 +1518,53 @@ impl Shader<'_> {
             b.map_instrs(|i| map(i, alloc));
         }
     }
+
+    pub fn run_pass(&mut self, name: &str, pass: impl FnOnce(&mut Self)) {
+        pass(self);
+        if DEBUG.contains(DebugFlags::PRINT) {
+            eprintln!("Kraid shader after {name}:\n{self}");
+        }
+        self.validate();
+    }
 }
 
 impl fmt::Display for Shader<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut buf = String::new();
         for b in &self.blocks {
-            write!(f, "{b}\n\n")?;
+            write!(buf, "{}\n\n", b.deref())?;
         }
+
+        // Pad to correct width
+        let max_eq = buf.lines().filter_map(|l| l.find('=')).max().unwrap_or(0);
+
+        for line in buf.lines() {
+            let line = line.trim_end();
+            if line.is_empty() {
+                writeln!(f)?;
+            } else if line.starts_with("__") {
+                writeln!(f, "{line}")?;
+            } else if let Some(pos) = line.find('=') {
+                writeln!(f, "{:pad$}{line}", "", pad = max_eq - pos)?;
+            } else {
+                writeln!(
+                    f,
+                    "{:pad$}{}",
+                    "",
+                    line.trim_start(),
+                    pad = max_eq + 2
+                )?;
+            }
+        }
+
         Ok(())
     }
 }
+
+macro_rules! pass {
+    ($s:ident . $method:ident ( $($args:tt)* )) => {
+        $s.run_pass(stringify!($method), |x| x.$method($($args)*))
+    };
+}
+
+pub(crate) use pass;

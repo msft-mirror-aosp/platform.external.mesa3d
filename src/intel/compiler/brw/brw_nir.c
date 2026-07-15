@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "brw_eu.h"
 #include "brw_nir.h"
 #include "brw_private.h"
 #include "brw_sampler.h"
@@ -99,7 +100,7 @@ intel_nir_lower_scratch(nir_shader *nir)
  * This method is useful to calculate how much register space is needed to
  * store a particular type.
  */
-int
+unsigned
 type_size_vec4(const struct glsl_type *type, bool bindless)
 {
    return glsl_count_attribute_slots(type, false);
@@ -1556,16 +1557,17 @@ generate_fs_config_state_bits(const struct brw_fs_prog_key *key,
    if (prog_data->provoking_vertex_last == comp_value)
       f |= INTEL_FS_CONFIG_PROVOKING_VERTEX_LAST;
 
-   if (prog_data->persample_dispatch == comp_value) {
-      f |= INTEL_FS_CONFIG_PERSAMPLE_DISPATCH |
-           INTEL_FS_CONFIG_PERSAMPLE_INTERP;
-   }
-
-   if (prog_data->coarse_pixel_dispatch == comp_value)
-      f |= INTEL_FS_CONFIG_COARSE_RT_WRITES;
-
    if (prog_data->conservative_raster == comp_value)
       f |= INTEL_FS_CONFIG_CONSERVATIVE_RASTER;
+
+   if (comp_value == INTEL_ALWAYS) {
+      if (prog_data->persample_dispatch)
+         f |= INTEL_FS_CONFIG_PERSAMPLE_DISPATCH;
+
+      if (prog_data->coarse_pixel_dispatch)
+         f |= INTEL_FS_CONFIG_COARSE_RT_WRITES;
+
+   }
 
    return f;
 }
@@ -1719,7 +1721,7 @@ brw_nir_lower_fs_inputs(nir_shader *nir,
          .lower_sample_mask_in = key->coarse_pixel == INTEL_NEVER,
       };
       NIR_PASS(_, nir, nir_lower_single_sampled, &lss_opts);
-   } else if (key->persample_interp == INTEL_ALWAYS) {
+   } else if (key->persample_interp) {
       NIR_PASS(_, nir, nir_shader_intrinsics_pass,
                lower_barycentric_per_sample,
                nir_metadata_control_flow,
@@ -1921,6 +1923,10 @@ brw_nir_optimize(brw_pass_tracker *pt)
    nir_shader *nir = pt->nir;
 
    pass_tracker_new_loop(pt);
+
+   OPT(nir_opt_uub, &(nir_opt_uub_options){});
+   OPT(nir_opt_fp_math_ctrl);
+
    do {
       pass_tracker_new_iteration(pt);
 
@@ -1987,7 +1993,11 @@ brw_nir_optimize(brw_pass_tracker *pt)
          LOOP_OPT_NOT_IDEMPOTENT(nir_opt_loop_unroll);
       }
       LOOP_OPT(nir_opt_remove_phis);
-      LOOP_OPT(nir_opt_gcm, false);
+      /* Don't hoist texture instructions out of large loops: it extends the
+       * texel results' live ranges across the whole loop and can spike
+       * register pressure enough to lower dispatch width or occupancy.
+       */
+      LOOP_OPT(nir_opt_gcm, false, false);
       LOOP_OPT(nir_opt_undef);
       LOOP_OPT(nir_lower_pack);
 
@@ -2913,6 +2923,8 @@ brw_vectorize_lower_mem_access(brw_pass_tracker *pt)
       options.robust_modes |= nir_var_mem_ubo;
    if (pt->key->robust_flags & BRW_ROBUSTNESS_SSBO)
       options.robust_modes |= nir_var_mem_ssbo;
+   if (pt->key->robust_flags & BRW_ROBUSTNESS_SLM)
+      options.robust_modes |= nir_var_mem_shared;
 
    OPT(nir_opt_load_store_vectorize, &options);
 
@@ -4141,6 +4153,26 @@ brw_nir_quick_pressure_estimate(nir_shader *nir,
       simd_estimate[i] = DIV_ROUND_UP(convergent_size, 8 << base_simd) +
                          divergent_size * (1 << (i - base_simd));
    }
+}
+
+/**
+ * Provide a rough estimate of the payload size of a vertex shader based on
+ * the amount of inputs.
+ *
+ * This could be improved checking whether packing is enabled and what
+ * components are read.
+ */
+unsigned
+brw_nir_vs_compute_payload_size(nir_shader *nir,
+                                const struct intel_device_info *devinfo)
+{
+   unsigned n = 2; /* payload registers we can't avoid */
+
+   u_foreach_bit64(b, nir->info.inputs_read) {
+      n += 4 * ((BITFIELD64_BIT(b) & nir->info.dual_slot_inputs) ? 2 : 1);
+   }
+
+   return REG_SIZE * reg_unit(devinfo) * n;
 }
 
 unsigned

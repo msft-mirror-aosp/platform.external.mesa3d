@@ -25,7 +25,7 @@ freedreno-a660 = { checksum = "e5020fcd5c57507918cca3c92a0a054f2449ea4616e4db4c7
 [[traces]]
 path = "angle/angle_trace_tests/candy_crush_soda_saga"
 [traces.devices]
-freedreno-a660 = { checksum = "7d730c79a98526c13a1fa3c9ac9b3b5f489241671190ab6246a67f4026bde1e3" }
+freedreno-a660 = { checksum = "0e22940a9c7402198e69655137f8b662ded30fd03998685ac38e51dcea79e3c9" }
 
 [[traces]]
 path = "angle/angle_trace_tests/free_fire"

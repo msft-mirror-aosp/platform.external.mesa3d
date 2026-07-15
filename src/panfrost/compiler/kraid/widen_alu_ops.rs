@@ -6,6 +6,11 @@ use crate::ir::*;
 use crate::ops::*;
 
 fn widen_op_pre_ra(b: &mut impl SSABuilder, op: &mut Op) {
+    if b.model().op_is_message(op) {
+        // Don't try to widen messages
+        return;
+    }
+
     assert!(op.dsts().len() <= 1);
     let Some((dst, dst_raw_type)) = op.dsts_raw_types().next() else {
         // We can only widen things with destinations
@@ -19,7 +24,7 @@ fn widen_op_pre_ra(b: &mut impl SSABuilder, op: &mut Op) {
     }
 
     // If we have a vectorized destination, we have a variant
-    let Some(mut variant) = op.variant() else {
+    let Some(variant) = op.variant() else {
         panic!("We can't widen if there's no variant");
     };
     let dst_type = dst_raw_type.specialize(variant);
@@ -52,22 +57,25 @@ fn widen_op_pre_ra(b: &mut impl SSABuilder, op: &mut Op) {
     while !b.model().op_is_supported(op) {
         new_comps *= 2;
         debug_assert!(dst_bits * new_comps <= 32);
-        variant = DataType::v(new_comps, variant.scalar_type());
-        match op {
-            Op::CSel(op) => op.cmp_type = variant,
-            Op::FAdd(op) => op.dst_type = variant,
-            Op::FCmp(op) => op.src_type = variant,
-            Op::IAdd(op) => op.dst_type = variant,
-            Op::IMul(op) => op.dst_type = variant,
-            Op::ICmp(op) => op.src_type = variant,
-            Op::ShiftLop(op) => op.dst_type = variant,
-            _ => panic!("Unsupported op"),
-        }
-        debug_assert!(op.is_valid_variant());
+        op.set_variant(DataType::v(new_comps, variant.scalar_type()));
     }
 }
 
 impl Shader<'_> {
+    /// This pass is expected to run immediately after NIR -> Kraid and widens
+    /// ALU ops out to a full 32 bits.  An `OR.i8 %x, %y`, for instance, will
+    /// get widened to an `OR.v4i8 %x.b0000 %y.b0000`.
+    ///
+    /// The result of a widened instruction is the same scalar bit size as the
+    /// original.  We set `DstLanes::AnyB` to tell the register allocator that
+    /// it can pick any byte for the byte destination because we've already
+    /// ensured (using a swizzle, in this case) that all lanes will generate
+    /// the same data.
+    ///
+    /// This lets us be a bit lazy in NIR -> Kraid and just focus on emitting
+    /// the ops we need.  From the perspective of NIR -> Kraid, widening is a
+    /// detail of register allocation more than anything.  Trying to get it
+    /// right as we translate from NIR is just madness.
     pub fn widen_alu_ops(&mut self) {
         let model = self.model;
         self.map_instrs(|mut instr, ssa_alloc| {
