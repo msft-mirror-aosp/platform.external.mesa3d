@@ -96,7 +96,7 @@ genrule {
         "vk_icd_py_binary",
     ],
     cmd: "$(location vk_icd_py_binary) --api-version 1.4 --xml $(location " +
-        ":vk_api_xml) --sizeof-pointer -1 --icd-lib-path $(genDir) " +
+        ":vk_api_xml) --sizeof-pointer 8 --icd-lib-path $(genDir) " +
         "--icd-filename libvulkan_freedreno.so --out $(location " +
         "freedreno_devenv_icd.aarch64.json)",
 }
@@ -107,7 +107,7 @@ genrule {
         "src/freedreno/vulkan/tu_drirc.h",
     ],
     srcs: [
-        ":00-turnip-defaults_conf",
+        "00-turnip-defaults.conf",
     ],
     tools: [
         "tu_drirc_py_binary",
@@ -120,7 +120,7 @@ genrule {
     cmd: "$(location tu_drirc_py_binary) --import-path $(genDir)/src/util " +
         "--drirc-src $(genDir)/src/freedreno/vulkan/tu_drirc.c --drirc-hdr " +
         "$(location src/freedreno/vulkan/tu_drirc.h) --validate $(location " +
-        ":00-turnip-defaults_conf)",
+        "00-turnip-defaults.conf)",
 }
 
 genrule {
@@ -129,7 +129,7 @@ genrule {
         "src/freedreno/vulkan/tu_drirc.c",
     ],
     srcs: [
-        ":00-turnip-defaults_conf",
+        "00-turnip-defaults.conf",
     ],
     tools: [
         "tu_drirc_py_binary",
@@ -137,7 +137,7 @@ genrule {
     cmd: "$(location tu_drirc_py_binary) --import-path $(genDir)/src/util " +
         "--drirc-src $(location src/freedreno/vulkan/tu_drirc.c) --drirc-hdr " +
         "$(genDir)/src/freedreno/vulkan/tu_drirc.h --validate $(location " +
-        ":00-turnip-defaults_conf)",
+        "00-turnip-defaults.conf)",
 }
 
 genrule {

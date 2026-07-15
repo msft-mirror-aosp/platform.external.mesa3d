@@ -90,7 +90,6 @@ cc_library_shared {
         (default, default, default): [],
     }),
     generated_headers: [
-        "gfxstream_guest_vk_autogen_headers",
         "gfxstream_vk_entrypoints_headers",
         "git_sha1.h",
         "shader_stats.h",
@@ -105,13 +104,12 @@ cc_library_shared {
         "vk_physical_device_features_headers",
         "vk_physical_device_properties_headers",
         "vk_struct_type_cast",
-        "vulkan_gfxstream_header",
         "wsi_entrypoints_headers",
     ],
     srcs: [
         ":files_lib_vulkan_enc",
+        ":files_lib_vulkan_enc_1",
         ":files_lib_vulkan_enc_android",
-        ":gfxstream_guest_vk_autogen_impl",
         ":gfxstream_vk_entrypoints_impl",
         "gfxstream_vk_cmd.cpp",
         "gfxstream_vk_device.cpp",

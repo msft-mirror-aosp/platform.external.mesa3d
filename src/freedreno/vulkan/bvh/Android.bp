@@ -23,9 +23,7 @@ genrule {
         ":vk_bvh_includes",
         ":vk_bvh_includes_1",
         "copy.comp",
-        "tu_build_helpers.h",
-        "tu_build_interface.h",
-        "tu_bvh.h",
+        "tu_bvh_defines.h",
     ],
     tools: [
         "glslangValidator",
@@ -69,9 +67,7 @@ genrule {
         ":vk_bvh_includes",
         ":vk_bvh_includes_1",
         "encode.comp",
-        "tu_build_helpers.h",
-        "tu_build_interface.h",
-        "tu_bvh.h",
+        "tu_bvh_defines.h",
     ],
     tools: [
         "glslangValidator",
@@ -115,9 +111,7 @@ genrule {
         ":vk_bvh_includes",
         ":vk_bvh_includes_1",
         "header.comp",
-        "tu_build_helpers.h",
-        "tu_build_interface.h",
-        "tu_bvh.h",
+        "tu_bvh_defines.h",
     ],
     tools: [
         "glslangValidator",

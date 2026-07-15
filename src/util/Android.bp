@@ -15,13 +15,6 @@ package {
 }
 
 filegroup {
-    name: "00-turnip-defaults_conf",
-    srcs: [
-        "00-turnip-defaults.conf",
-    ],
-}
-
-filegroup {
     name: "blend_h",
     srcs: [
         "blend.h",
@@ -90,6 +83,7 @@ genrule {
     ],
     srcs: [
         "00-mesa-defaults.conf",
+        ":files_drirc",
     ],
     tools: [
         "driconf_static_py_binary",
@@ -99,7 +93,7 @@ genrule {
         "src/util",
     ],
     cmd: "$(location driconf_static_py_binary) $(location 00-mesa-defaults.conf) " +
-        "$(location src/util/driconf_static.h)",
+        "$(location :files_drirc) $(location src/util/driconf_static.h)",
 }
 
 genrule {
@@ -337,6 +331,7 @@ cc_library_static {
         "u_qsort.cpp",
         "u_queue.c",
         "u_range_remap.c",
+        "u_shader_variant_cache.c",
         "u_string.c",
         "u_sync_provider.c",
         "u_thread.c",

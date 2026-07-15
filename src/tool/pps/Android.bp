@@ -123,6 +123,7 @@ cc_library_shared {
     ],
     header_libs: select((os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
         ("android", "true"): [
+            "inc_include",
             "inc_src",
             "include_pps",
         ],

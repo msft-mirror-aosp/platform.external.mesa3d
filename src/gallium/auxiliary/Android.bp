@@ -27,6 +27,19 @@ genrule {
 }
 
 genrule {
+    name: "lp_bld_nir_no_integer_algebraic.c",
+    out: [
+        "lp_bld_nir_no_integer_algebraic.c",
+    ],
+    tools: [
+        "lp_bld_nir_no_integer_algebraic_py_binary",
+    ],
+    cmd: "$(location lp_bld_nir_no_integer_algebraic_py_binary) -p " +
+        "$(genDir)/src/compiler/nir/ > $(location " +
+        "lp_bld_nir_no_integer_algebraic.c)",
+}
+
+genrule {
     name: "tr_util.ch_headers",
     out: [
         "src/gallium/auxiliary/tr_util.h",
@@ -292,6 +305,7 @@ cc_library_static {
         ":files_libgallium_7",
         ":files_libgallium_8",
         ":files_libgallium_9",
+        ":lp_bld_nir_no_integer_algebraic.c",
         ":tr_util.ch_impl",
         ":u_indices_gen.c",
         ":u_tracepoints.c",

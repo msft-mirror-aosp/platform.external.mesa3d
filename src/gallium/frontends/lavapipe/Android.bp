@@ -14,6 +14,66 @@ package {
     default_applicable_licenses: ["external_mesa3d_license"],
 }
 
+filegroup {
+    name: "files_drirc",
+    srcs: [
+        "00-lavapipe-defaults.conf",
+    ],
+}
+
+python_binary_host {
+    name: "lvp_drirc_py_binary",
+    main: "lvp_drirc_gen.py",
+    srcs: [
+        ":drirc_gen.py",
+        "lvp_drirc_gen.py",
+    ],
+    libs: [
+        "mako",
+        "pyyaml",
+    ],
+}
+
+genrule {
+    name: "lvp_drirc_headers",
+    out: [
+        "src/gallium/frontends/lavapipe/lvp_drirc.h",
+    ],
+    srcs: [
+        "00-lavapipe-defaults.conf",
+    ],
+    tools: [
+        "lvp_drirc_py_binary",
+    ],
+    export_include_dirs: [
+        "src",
+        "src/gallium",
+        "src/gallium/frontends",
+        "src/gallium/frontends/lavapipe",
+    ],
+    cmd: "$(location lvp_drirc_py_binary) --import-path $(genDir)/src/util " +
+        "--drirc-src $(genDir)/src/gallium/frontends/lavapipe/lvp_drirc.c " +
+        "--drirc-hdr $(location src/gallium/frontends/lavapipe/lvp_drirc.h) " +
+        "--validate $(location 00-lavapipe-defaults.conf)",
+}
+
+genrule {
+    name: "lvp_drirc_impl",
+    out: [
+        "src/gallium/frontends/lavapipe/lvp_drirc.c",
+    ],
+    srcs: [
+        "00-lavapipe-defaults.conf",
+    ],
+    tools: [
+        "lvp_drirc_py_binary",
+    ],
+    cmd: "$(location lvp_drirc_py_binary) --import-path $(genDir)/src/util " +
+        "--drirc-src $(location src/gallium/frontends/lavapipe/lvp_drirc.c) " +
+        "--drirc-hdr $(genDir)/src/gallium/frontends/lavapipe/lvp_drirc.h " +
+        "--validate $(location 00-lavapipe-defaults.conf)",
+}
+
 genrule {
     name: "lvp_entrypoints_headers",
     out: [
@@ -118,6 +178,7 @@ cc_library_static {
         "builtin_types.h",
         "git_sha1.h",
         "ir_expression_operation.h",
+        "lvp_drirc_headers",
         "lvp_entrypoints_headers",
         "nir_builder_opcodes.h",
         "nir_intrinsics.h",
@@ -139,6 +200,7 @@ cc_library_static {
     ],
     srcs: [
         ":liblvp_files",
+        ":lvp_drirc_impl",
         ":lvp_entrypoints_impl",
         "lvp_acceleration_structure.c",
         "lvp_cmd_buffer.c",
