@@ -289,3 +289,49 @@ cc_library_static {
         (default, default): [],
     }),
 }
+
+cc_binary {
+    name: "ir3-disasm",
+    vendor: true,
+    c_std: "c11",
+    cpp_std: "c++17",
+    enabled: false,
+    defaults: [
+        "aosp_mesa3d_c_link_args",
+        "aosp_mesa3d_c_project_args",
+        "aosp_mesa3d_cpp_link_args",
+        "aosp_mesa3d_cpp_project_args",
+    ],
+    header_libs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "inc_freedreno",
+            "inc_include",
+            "inc_src",
+            "inc_src_compiler_isaspec",
+            "inc_src_freedreno_isa",
+        ],
+        (default, default): [],
+    }),
+    generated_headers: [
+        "ir3-isa_headers",
+    ],
+    srcs: select((arch(), os()), {
+        ("arm64", "android"): [
+            ":ir3-isa_impl",
+            "ir3-disasm.c",
+        ],
+        (default, default): [],
+    }),
+    static_libs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "blake3",
+            "freedreno_common",
+            "ir3decode",
+            "isaspec",
+            "mesa_util",
+            "mesa_util_c11",
+            "mesa_util_simd",
+        ],
+        (default, default): [],
+    }),
+}

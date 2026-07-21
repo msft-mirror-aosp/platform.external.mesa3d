@@ -163,3 +163,58 @@ cc_library_shared {
         },
     },
 }
+
+cc_binary {
+    name: "pps-producer",
+    vendor: true,
+    c_std: "c11",
+    cpp_std: "c++17",
+    enabled: false,
+    defaults: [
+        "aosp_mesa3d_c_link_args",
+        "aosp_mesa3d_c_project_args",
+        "aosp_mesa3d_cpp_link_args",
+        "aosp_mesa3d_cpp_project_args",
+    ],
+    header_libs: select((os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
+        ("android", "true"): [
+            "inc_include",
+            "inc_src",
+            "include_pps",
+        ],
+        (default, default): [],
+    }),
+    srcs: select((os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
+        ("android", "true"): [
+            "pps_datasource.cc",
+            "pps_producer.cc",
+        ],
+        (default, default): [],
+    }),
+    static_libs: select((os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
+        ("android", "true"): [
+            "blake3",
+            "libperfetto_client_experimental",
+            "mesa_util",
+            "mesa_util_c11",
+            "mesa_util_simd",
+            "pps",
+        ],
+        (default, default): [],
+    }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
+        ("x86_64", "android", "true"): [
+            "mesa_util_clflush",
+            "mesa_util_clflushopt",
+        ],
+        ("x86", "android", "true"): [
+            "mesa_util_clflush",
+            "mesa_util_clflushopt",
+        ],
+        (default, default, default): [],
+    }),
+    target: {
+        android: {
+            relative_install_path: "hw",
+        },
+    },
+}

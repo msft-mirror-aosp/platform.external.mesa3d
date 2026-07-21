@@ -15,6 +15,54 @@ package {
 }
 
 cc_defaults {
+    name: "fd5_layout_c_flags",
+    vendor: true,
+    cflags: select((arch(), os()), {
+        ("arm64", "android"): [
+            "-DXXH_FORCE_ALIGN_CHECK=0",
+            "-DXXH_FORCE_MEMORY_ACCESS=0",
+        ],
+        (default, default): [],
+    }),
+}
+
+cc_defaults {
+    name: "fd5_layout_cpp_flags",
+    vendor: true,
+    cppflags: select((arch(), os()), {
+        ("arm64", "android"): [
+            "-DXXH_FORCE_ALIGN_CHECK=0",
+            "-DXXH_FORCE_MEMORY_ACCESS=0",
+        ],
+        (default, default): [],
+    }),
+}
+
+cc_defaults {
+    name: "fd6_layout_c_flags",
+    vendor: true,
+    cflags: select((arch(), os()), {
+        ("arm64", "android"): [
+            "-DXXH_FORCE_ALIGN_CHECK=0",
+            "-DXXH_FORCE_MEMORY_ACCESS=0",
+        ],
+        (default, default): [],
+    }),
+}
+
+cc_defaults {
+    name: "fd6_layout_cpp_flags",
+    vendor: true,
+    cppflags: select((arch(), os()), {
+        ("arm64", "android"): [
+            "-DXXH_FORCE_ALIGN_CHECK=0",
+            "-DXXH_FORCE_MEMORY_ACCESS=0",
+        ],
+        (default, default): [],
+    }),
+}
+
+cc_defaults {
     name: "freedreno_layout_c_flags",
     vendor: true,
     cflags: select((arch(), os()), {
@@ -121,6 +169,184 @@ cc_library_static {
         ("arm64", "android"): [
             "blake3",
             "freedreno_common",
+            "mesa_util",
+            "mesa_util_c11",
+            "mesa_util_simd",
+        ],
+        (default, default): [],
+    }),
+    shared_libs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "libcutils",
+            "libdrm",
+            "libhardware",
+            "liblog",
+            "libnativewindow",
+            "libsync",
+            "libz",
+            "libzstd",
+        ],
+        (default, default): [],
+    }),
+}
+
+cc_binary {
+    name: "fd5_layout",
+    vendor: true,
+    c_std: "c11",
+    cpp_std: "c++17",
+    enabled: false,
+    defaults: [
+        "aosp_mesa3d_c_link_args",
+        "aosp_mesa3d_c_project_args",
+        "aosp_mesa3d_cpp_link_args",
+        "aosp_mesa3d_cpp_project_args",
+        "fd5_layout_c_flags",
+        "fd5_layout_cpp_flags",
+    ],
+    header_libs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "hwvulkan_headers",
+            "inc_freedreno",
+            "inc_include",
+            "inc_src",
+            "inc_util",
+            "inc_util_c11",
+        ],
+        (default, default): [],
+    }),
+    generated_headers: [
+        "a2xx.xml.h",
+        "a2xx_perfcntrs.json.h",
+        "a3xx.xml.h",
+        "a4xx.xml.h",
+        "a5xx.xml.h",
+        "a5xx_perfcntrs.json.h",
+        "a6xx-pack.xml.h",
+        "a6xx.xml.h",
+        "a6xx_descriptors.xml.h",
+        "a6xx_enums.xml.h",
+        "a6xx_gmu.xml.h",
+        "a6xx_perfcntrs.json.h",
+        "a6xx_perfcntrs.xml.h",
+        "a7xx_enums.xml.h",
+        "a7xx_perfcntrs.json.h",
+        "a7xx_perfcntrs.xml.h",
+        "a8xx_descriptors.xml.h",
+        "a8xx_enums.xml.h",
+        "a8xx_perfcntrs.json.h",
+        "a8xx_perfcntrs.xml.h",
+        "adreno-pm4-pack.xml.h",
+        "adreno.xml.h",
+        "adreno_common.xml.h",
+        "adreno_control_regs.xml.h",
+        "adreno_pipe_regs.xml.h",
+        "adreno_pm4.xml.h",
+        "ocmem.xml.h",
+        "shader_stats.h",
+        "u_format_gen.h",
+    ],
+    srcs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "fd5_layout_test.c",
+            "fd_layout_test.c",
+        ],
+        (default, default): [],
+    }),
+    static_libs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "blake3",
+            "freedreno_common",
+            "freedreno_layout",
+            "mesa_util",
+            "mesa_util_c11",
+            "mesa_util_simd",
+        ],
+        (default, default): [],
+    }),
+    shared_libs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "libcutils",
+            "libdrm",
+            "libhardware",
+            "liblog",
+            "libnativewindow",
+            "libsync",
+            "libz",
+            "libzstd",
+        ],
+        (default, default): [],
+    }),
+}
+
+cc_binary {
+    name: "fd6_layout",
+    vendor: true,
+    c_std: "c11",
+    cpp_std: "c++17",
+    enabled: false,
+    defaults: [
+        "aosp_mesa3d_c_link_args",
+        "aosp_mesa3d_c_project_args",
+        "aosp_mesa3d_cpp_link_args",
+        "aosp_mesa3d_cpp_project_args",
+        "fd6_layout_c_flags",
+        "fd6_layout_cpp_flags",
+    ],
+    header_libs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "hwvulkan_headers",
+            "inc_freedreno",
+            "inc_include",
+            "inc_src",
+            "inc_util",
+            "inc_util_c11",
+        ],
+        (default, default): [],
+    }),
+    generated_headers: [
+        "a2xx.xml.h",
+        "a2xx_perfcntrs.json.h",
+        "a3xx.xml.h",
+        "a4xx.xml.h",
+        "a5xx.xml.h",
+        "a5xx_perfcntrs.json.h",
+        "a6xx-pack.xml.h",
+        "a6xx.xml.h",
+        "a6xx_descriptors.xml.h",
+        "a6xx_enums.xml.h",
+        "a6xx_gmu.xml.h",
+        "a6xx_perfcntrs.json.h",
+        "a6xx_perfcntrs.xml.h",
+        "a7xx_enums.xml.h",
+        "a7xx_perfcntrs.json.h",
+        "a7xx_perfcntrs.xml.h",
+        "a8xx_descriptors.xml.h",
+        "a8xx_enums.xml.h",
+        "a8xx_perfcntrs.json.h",
+        "a8xx_perfcntrs.xml.h",
+        "adreno-pm4-pack.xml.h",
+        "adreno.xml.h",
+        "adreno_common.xml.h",
+        "adreno_control_regs.xml.h",
+        "adreno_pipe_regs.xml.h",
+        "adreno_pm4.xml.h",
+        "ocmem.xml.h",
+        "shader_stats.h",
+        "u_format_gen.h",
+    ],
+    srcs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "fd6_layout_test.c",
+            "fd_layout_test.c",
+        ],
+        (default, default): [],
+    }),
+    static_libs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "blake3",
+            "freedreno_common",
+            "freedreno_layout",
             "mesa_util",
             "mesa_util_c11",
             "mesa_util_simd",
