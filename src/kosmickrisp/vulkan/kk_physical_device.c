@@ -34,7 +34,7 @@ kk_get_vk_version()
    if (version_override)
       return version_override;
 
-   return VK_MAKE_VERSION(1, 3, VK_HEADER_VERSION);
+   return VK_MAKE_VERSION(1, 4, VK_HEADER_VERSION);
 }
 
 static void
@@ -578,7 +578,7 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
       .sampledImageIntegerSampleCounts = sample_counts,
       .sampledImageDepthSampleCounts = sample_counts,
       .sampledImageStencilSampleCounts = sample_counts,
-      .storageImageSampleCounts = sample_counts,
+      .storageImageSampleCounts = VK_SAMPLE_COUNT_1_BIT,
       .maxSampleMaskWords = 1,
       .timestampComputeAndGraphics = true,
       .timestampPeriod = timestamp_period,
@@ -1022,6 +1022,15 @@ get_metal_limits(struct kk_physical_device *pdev)
       mtl_device_max_buffer_length(pdev->mtl_dev_handle);
    pdev->info.gpu_apple_family =
       mtl_device_get_gpu_apple_family(pdev->mtl_dev_handle);
+
+   /* See Metal Feature Set Tables. Note that for certain MSAA sample counts the
+    * tile size will actually be restricted to a width and/or height of 16, but
+    * we typically don't know the actual sample count when querying granularity
+    * or checking render area alignment. Use 32x32 always as a best effort
+    * optimal rendering area, which will also ensure proper alignment for 16
+    * wide/tall tiles chosen by Metal. */
+   pdev->info.rendering_tile_width = 32;
+   pdev->info.rendering_tile_height = 32;
 
    pdev->supported_sample_counts = VK_SAMPLE_COUNT_1_BIT;
    for (uint32_t sample_count = VK_SAMPLE_COUNT_2_BIT;

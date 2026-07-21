@@ -292,13 +292,6 @@ vn_device_fix_create_info(const struct vn_device *dev,
       }
 
       if (app_exts->ANDROID_native_buffer) {
-         /* see vn_QueueSignalReleaseImageANDROID */
-         if (!app_exts->KHR_external_fence_fd) {
-            assert(physical_dev->renderer_sync_fd.fence_exportable);
-            extra_exts[extra_count++] =
-               VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME;
-         }
-
          block_exts[block_count++] = VK_ANDROID_NATIVE_BUFFER_EXTENSION_NAME;
       }
 
@@ -334,6 +327,11 @@ vn_device_fix_create_info(const struct vn_device *dev,
        !app_exts->EXT_external_memory_acquire_unmodified && has_wsi) {
       extra_exts[extra_count++] =
          VK_EXT_EXTERNAL_MEMORY_ACQUIRE_UNMODIFIED_EXTENSION_NAME;
+   }
+
+   if (app_exts->KHR_external_fence_fd) {
+      /* see vn_physical_device_get_native_extensions */
+      block_exts[block_count++] = VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME;
    }
 
    if (app_exts->KHR_map_memory2) {
@@ -393,8 +391,7 @@ vn_device_feedback_pool_init(struct vn_device *dev)
    static const uint32_t pool_size = 4096;
    const VkAllocationCallbacks *alloc = &dev->base.vk.alloc;
 
-   if (VN_PERF(NO_EVENT_FEEDBACK) && VN_PERF(NO_FENCE_FEEDBACK) &&
-       VN_PERF(NO_SEMAPHORE_FEEDBACK))
+   if (VN_PERF(NO_EVENT_FEEDBACK) && VN_PERF(NO_SEMAPHORE_FEEDBACK))
       return VK_SUCCESS;
 
    return vn_feedback_pool_init(dev, &dev->feedback_pool, pool_size, alloc);
@@ -403,8 +400,7 @@ vn_device_feedback_pool_init(struct vn_device *dev)
 static inline void
 vn_device_feedback_pool_fini(struct vn_device *dev)
 {
-   if (VN_PERF(NO_EVENT_FEEDBACK) && VN_PERF(NO_FENCE_FEEDBACK) &&
-       VN_PERF(NO_SEMAPHORE_FEEDBACK))
+   if (VN_PERF(NO_EVENT_FEEDBACK) && VN_PERF(NO_SEMAPHORE_FEEDBACK))
       return;
 
    vn_feedback_pool_fini(&dev->feedback_pool);
@@ -542,9 +538,6 @@ vn_device_init(struct vn_device *dev,
     * cache is no longer up to date.
     */
    vn_device_update_shader_cache_id(dev);
-
-   dev->has_sync2 = physical_dev->renderer_version >= VK_API_VERSION_1_3 ||
-                    dev->base.vk.enabled_extensions.KHR_synchronization2;
 
    simple_mtx_init(&dev->mutex, mtx_plain);
    list_inithead(&dev->chains);

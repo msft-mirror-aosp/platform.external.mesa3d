@@ -180,7 +180,8 @@ intel_debug_flag_for_shader_stage(mesa_shader_stage stage)
    return flags[stage];
 }
 
-#define DEBUG_FS_SIMD  BITFIELD_MASK(DEBUG_CS_SIMD8)
+#define DEBUG_FS_SIMD  (DEBUG_FS_SIMD8   | DEBUG_FS_SIMD16  | DEBUG_FS_SIMD32 | \
+                        DEBUG_FS_SIMD2X8 | DEBUG_FS_SIMD4X8 | DEBUG_FS_SIMD2X16)
 #define DEBUG_CS_SIMD  (DEBUG_CS_SIMD8  | DEBUG_CS_SIMD16  | DEBUG_CS_SIMD32)
 #define DEBUG_TS_SIMD  (DEBUG_TS_SIMD8  | DEBUG_TS_SIMD16  | DEBUG_TS_SIMD32)
 #define DEBUG_MS_SIMD  (DEBUG_MS_SIMD8  | DEBUG_MS_SIMD16  | DEBUG_MS_SIMD32)
@@ -259,16 +260,16 @@ process_intel_debug_variable_once(void)
     * are allowed, except FS currently disables multipolygon modes by default.
     */
    intel_simd_overridden =
-      (intel_simd & DEBUG_FS_SIMD) ? (1 << MESA_SHADER_FRAGMENT) : 0 |
-      (intel_simd & DEBUG_CS_SIMD) ? (1 << MESA_SHADER_COMPUTE)  : 0 |
-      (intel_simd & DEBUG_TS_SIMD) ? (1 << MESA_SHADER_TASK)     : 0 |
-      (intel_simd & DEBUG_MS_SIMD) ? (1 << MESA_SHADER_MESH)     : 0 |
-      (intel_simd & DEBUG_RT_SIMD) ? (1 << MESA_SHADER_RAYGEN |
-                                      1 << MESA_SHADER_ANY_HIT |
-                                      1 << MESA_SHADER_CLOSEST_HIT |
-                                      1 << MESA_SHADER_MISS |
-                                      1 << MESA_SHADER_INTERSECTION |
-                                      1 << MESA_SHADER_CALLABLE) : 0;
+      ((intel_simd & DEBUG_FS_SIMD) ? (1 << MESA_SHADER_FRAGMENT) : 0) |
+      ((intel_simd & DEBUG_CS_SIMD) ? (1 << MESA_SHADER_COMPUTE)  : 0) |
+      ((intel_simd & DEBUG_TS_SIMD) ? (1 << MESA_SHADER_TASK)     : 0) |
+      ((intel_simd & DEBUG_MS_SIMD) ? (1 << MESA_SHADER_MESH)     : 0) |
+      ((intel_simd & DEBUG_RT_SIMD) ? (1 << MESA_SHADER_RAYGEN |
+                                       1 << MESA_SHADER_ANY_HIT |
+                                       1 << MESA_SHADER_CLOSEST_HIT |
+                                       1 << MESA_SHADER_MISS |
+                                       1 << MESA_SHADER_INTERSECTION |
+                                       1 << MESA_SHADER_CALLABLE) : 0);
 
    if (!(intel_simd & DEBUG_FS_SIMD))
       intel_simd |=   DEBUG_FS_SIMD8 | DEBUG_FS_SIMD16 | DEBUG_FS_SIMD32;
@@ -287,12 +288,16 @@ static const struct debug_named_value use_jay_options[] = {
    { "tcs", BITFIELD_BIT(MESA_SHADER_TESS_CTRL), "Use jay for tessellation control shaders" },
    { "tes", BITFIELD_BIT(MESA_SHADER_TESS_EVAL), "Use jay for tessellation evaluation shaders" },
    { "fs",  BITFIELD_BIT(MESA_SHADER_FRAGMENT),  "Use jay for fragment shaders" },
+   { "gs",  BITFIELD_BIT(MESA_SHADER_GEOMETRY),  "Use jay for geometry shaders" },
    { "cs",  BITFIELD_BIT(MESA_SHADER_COMPUTE),   "Use jay for compute shaders"  },
-   { "all", BITFIELD_BIT(MESA_SHADER_VERTEX) |
-            BITFIELD_BIT(MESA_SHADER_TESS_CTRL) |
-            BITFIELD_BIT(MESA_SHADER_TESS_EVAL) |
-            BITFIELD_BIT(MESA_SHADER_FRAGMENT) |
-            BITFIELD_BIT(MESA_SHADER_COMPUTE),   "Use jay for supported shader stages"  },
+   { "rgen",  BITFIELD_BIT(MESA_SHADER_RAYGEN),  "Use jay for raygen shaders"  },
+   { "ahit",  BITFIELD_BIT(MESA_SHADER_ANY_HIT), "Use jay for anyhit shaders"  },
+   { "chit",  BITFIELD_BIT(MESA_SHADER_CLOSEST_HIT),   "Use jay for closest hit shaders"  },
+   { "miss",  BITFIELD_BIT(MESA_SHADER_MISS),          "Use jay for miss shaders"  },
+   { "isec",  BITFIELD_BIT(MESA_SHADER_INTERSECTION),  "Use jay for intersection shaders"  },
+   { "call",  BITFIELD_BIT(MESA_SHADER_CALLABLE),      "Use jay for callable shaders"  },
+   { "all", ~(BITFIELD_BIT(MESA_SHADER_MESH) |
+              BITFIELD_BIT(MESA_SHADER_TASK)),         "Use jay for supported shader stages" },
    DEBUG_NAMED_VALUE_END
 };
 

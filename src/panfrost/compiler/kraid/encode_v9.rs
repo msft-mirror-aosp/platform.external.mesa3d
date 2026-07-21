@@ -992,12 +992,37 @@ impl V9Instr for OpFAdd {
     }
 }
 
+impl V9Instr for OpFAddLScale {
+    fn get_info(&self, arch: u8) -> Option<V9InstrInfo> {
+        V9InstrInfo::from_isa(
+            FaddLscale::get_info(FaddLscaleVariant::F32, arch),
+            src_map! {
+                src0: srcs[0],
+                src1: srcs[1],
+            },
+        )
+    }
+
+    fn encode(&self, e: V9Encoder) -> EncodedInstr {
+        e.encode(FaddLscale {
+            variant: FaddLscaleVariant::F32,
+            dst: op_encode_dst(self, &self.dst),
+            src0: op_encode_src(self, &self.srcs[0]),
+            src1: op_encode_src(self, &self.srcs[1]),
+            round: self.round.into(),
+            clamp: self.clamp.into(),
+            sticky: false.into(),
+        })
+    }
+}
+
 impl From<CmpResultType> for CmpResultTypeM {
     fn from(value: CmpResultType) -> Self {
         match value {
             CmpResultType::I1 => CmpResultTypeM::I1,
             CmpResultType::F1 => CmpResultTypeM::F1,
             CmpResultType::M1 => CmpResultTypeM::M1,
+            CmpResultType::C => CmpResultTypeM::C,
         }
     }
 }
@@ -1063,6 +1088,66 @@ impl V9Instr for OpFCmp {
     }
 }
 
+impl V9Instr for OpFCosTable {
+    fn get_info(&self, arch: u8) -> Option<V9InstrInfo> {
+        V9InstrInfo::from_isa(
+            FcosTable::get_info(FcosTableVariant::U6, arch),
+            src_map! {
+                src0: src,
+            },
+        )
+    }
+
+    fn encode(&self, e: V9Encoder) -> EncodedInstr {
+        e.encode(FcosTable {
+            variant: FcosTableVariant::U6,
+            dst: op_encode_dst(self, &self.dst),
+            src0: op_encode_src(self, &self.src),
+            offset: self.offset.into(),
+        })
+    }
+}
+
+impl V9Instr for OpFExp32 {
+    fn get_info(&self, arch: u8) -> Option<V9InstrInfo> {
+        V9InstrInfo::from_isa(
+            Fexp::get_info(FexpVariant::F32, arch),
+            src_map! {
+                src0: expx,
+                src1: expf,
+            },
+        )
+    }
+
+    fn encode(&self, e: V9Encoder) -> EncodedInstr {
+        e.encode(Fexp {
+            variant: FexpVariant::F32,
+            dst: op_encode_dst(self, &self.dst),
+            src0: Some(op_encode_src(self, &self.expx)),
+            src1: op_encode_src(self, &self.expf),
+        })
+    }
+}
+
+impl V9Instr for OpFLogD {
+    fn get_info(&self, arch: u8) -> Option<V9InstrInfo> {
+        V9InstrInfo::from_isa(
+            Flogd::get_info(FlogdVariant::F32, arch),
+            src_map! {
+                src0: src,
+            },
+        )
+    }
+
+    fn encode(&self, e: V9Encoder) -> EncodedInstr {
+        e.encode(Flogd {
+            variant: FlogdVariant::F32,
+            dst: op_encode_dst(self, &self.dst),
+            src0: op_encode_src(self, &self.src),
+        })
+    }
+}
+
 impl From<FlushNanMode> for FlushNanM {
     fn from(value: FlushNanMode) -> Self {
         match value {
@@ -1114,6 +1199,34 @@ impl V9Instr for OpFma {
             src0: op_encode_src(self, &self.srcs[0]),
             src1: op_encode_src(self, &self.srcs[1]),
             src2: op_encode_src(self, &self.srcs[2]),
+            clamp: self.clamp.into(),
+            round: self.round.into(),
+        })
+    }
+}
+
+impl V9Instr for OpFmaRScale {
+    fn get_info(&self, arch: u8) -> Option<V9InstrInfo> {
+        V9InstrInfo::from_isa(
+            FmaRscale::get_info(FmaRscaleVariant::F32, arch),
+            src_map! {
+                src0: srcs[0],
+                src1: srcs[1],
+                src2: srcs[2],
+                src3: scale,
+            },
+        )
+    }
+
+    fn encode(&self, e: V9Encoder) -> EncodedInstr {
+        e.encode(FmaRscale {
+            variant: FmaRscaleVariant::F32,
+            dst: op_encode_dst(self, &self.dst),
+            src0: op_encode_src(self, &self.srcs[0]),
+            src1: op_encode_src(self, &self.srcs[1]),
+            src2: op_encode_src(self, &self.srcs[2]),
+            src3: op_encode_src(self, &self.scale),
+            special: FmaRscaleSpecial32M::None,
             clamp: self.clamp.into(),
             round: self.round.into(),
         })
@@ -1308,6 +1421,26 @@ impl V9Instr for OpFRsq {
     }
 }
 
+impl V9Instr for OpFSinTable {
+    fn get_info(&self, arch: u8) -> Option<V9InstrInfo> {
+        V9InstrInfo::from_isa(
+            FsinTable::get_info(FsinTableVariant::U6, arch),
+            src_map! {
+                src0: src,
+            },
+        )
+    }
+
+    fn encode(&self, e: V9Encoder) -> EncodedInstr {
+        e.encode(FsinTable {
+            variant: FsinTableVariant::U6,
+            dst: op_encode_dst(self, &self.dst),
+            src0: op_encode_src(self, &self.src),
+            offset: self.offset.into(),
+        })
+    }
+}
+
 impl V9Instr for OpIAbs {
     fn get_info(&self, arch: u8) -> Option<V9InstrInfo> {
         V9InstrInfo::from_isa(
@@ -1424,6 +1557,30 @@ impl V9Instr for OpICmp {
                 result_type: self.res_type.into(),
             }),
         }
+    }
+}
+
+impl V9Instr for OpICmpMulti {
+    fn get_info(&self, arch: u8) -> Option<V9InstrInfo> {
+        V9InstrInfo::from_isa(
+            IcmpMulti::get_info(self.src_type, arch),
+            src_map! {
+                src0: srcs[0],
+                src1: srcs[1],
+            },
+        )
+    }
+
+    fn encode(&self, e: V9Encoder) -> EncodedInstr {
+        e.encode(IcmpMulti {
+            variant: self.src_type.try_into().unwrap(),
+            dst: op_encode_dst(self, &self.dst),
+            src0: op_encode_src(self, &self.srcs[0]),
+            src1: op_encode_src(self, &self.srcs[1]),
+            src2: op_encode_src(self, &self.accum),
+            cmpf: self.cmp_op.try_into().unwrap(),
+            result_type: self.res_type.into(),
+        })
     }
 }
 
@@ -2394,9 +2551,14 @@ macro_rules! v9_op_match_else {
             Op::F32ToF16($x) => $y,
             Op::F32ToI32($x) => $y,
             Op::FAdd($x) => $y,
+            Op::FAddLScale($x) => $y,
             Op::FCmp($x) => $y,
+            Op::FCosTable($x) => $y,
+            Op::FExp32($x) => $y,
+            Op::FLogD($x) => $y,
             Op::Flush($x) => $y,
             Op::Fma($x) => $y,
+            Op::FmaRScale($x) => $y,
             Op::FMax($x) => $y,
             Op::FMin($x) => $y,
             Op::FMul($x) => $y,
@@ -2405,9 +2567,11 @@ macro_rules! v9_op_match_else {
             Op::FrexpM($x) => $y,
             Op::FRound($x) => $y,
             Op::FRsq($x) => $y,
+            Op::FSinTable($x) => $y,
             Op::IAbs($x) => $y,
             Op::IAdd($x) => $y,
             Op::ICmp($x) => $y,
+            Op::ICmpMulti($x) => $y,
             Op::IDpAdd($x) => $y,
             Op::IMul($x) => $y,
             Op::ISub($x) => $y,

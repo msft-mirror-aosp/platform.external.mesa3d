@@ -35,9 +35,6 @@ src4 = ('src', 4)
 
 class Index(object):
     def __init__(self, c_data_type, name, size):
-        # 64bit non struct types are possible, but intrinsics set/get
-        # need to be updated for that.
-        assert "struct" in c_data_type or size == 1
         self.c_data_type = c_data_type
         self.name = name
         self.size = size
@@ -396,6 +393,9 @@ index("nir_preamble_class", "preamble_class")
 
 # Like nir_alu_instr::fp_math_ctrl, but for intrinsics
 index("unsigned", "fp_math_ctrl")
+
+# Whether to read multi component payload as vector elements
+index("bool", "vector_payload_intel")
 
 intrinsic("nop", flags=[CAN_ELIMINATE])
 
@@ -2691,7 +2691,8 @@ system_value("pixel_coord_intel", 1, bit_sizes=[32])
 
 # Read the attribute thread payload at a given byte offset
 # src[] = { offset }
-load("attribute_payload_intel", [1], flags=[CAN_ELIMINATE, CAN_REORDER])
+load("attribute_payload_intel", [1], indices=[VECTOR_PAYLOAD_INTEL],
+     flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # Populate the per-primitive payload at an offset
 # src[] = { value, offset }

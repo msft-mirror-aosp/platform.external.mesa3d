@@ -22,15 +22,13 @@ extern "C" {
 extern int jay_debug;
 
 bool jay_nir_lower_bool(nir_shader *nir);
-bool jay_nir_opt_sel_zero(nir_shader *nir);
 bool jay_nir_lower_fsign(nir_shader *nir);
 bool jay_nir_lower_bfloat_math(nir_shader *nir);
 
 void jay_populate_prog_data(const struct intel_device_info *devinfo,
                             nir_shader *nir,
                             union brw_any_prog_data *prog_data,
-                            union brw_any_prog_key *key,
-                            unsigned nr_packed_regs);
+                            union brw_any_prog_key *key);
 unsigned jay_process_nir(const struct intel_device_info *devinfo,
                          nir_shader *nir,
                          union brw_any_prog_data *prog_data,
@@ -81,8 +79,9 @@ void jay_opt_propagate_backwards(jay_shader *s);
 void jay_opt_dead_code(jay_shader *s);
 void jay_opt_predicate(jay_shader *s);
 
-void jay_schedule_pressure(jay_shader *s);
+void jay_schedule(jay_shader *s);
 
+void jay_lower_flags(jay_shader *s);
 void jay_lower_pre_ra(jay_shader *s);
 void jay_lower_post_ra(jay_shader *s);
 void jay_lower_helpers(jay_shader *s);

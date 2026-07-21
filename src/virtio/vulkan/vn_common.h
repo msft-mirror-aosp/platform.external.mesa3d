@@ -136,7 +136,6 @@ enum vn_perf {
    VN_PERF_NO_ASYNC_BUFFER_CREATE = 1ull << 1,
    VN_PERF_NO_ASYNC_QUEUE_SUBMIT = 1ull << 2,
    VN_PERF_NO_EVENT_FEEDBACK = 1ull << 3,
-   VN_PERF_NO_FENCE_FEEDBACK = 1ull << 4,
    VN_PERF_NO_CMD_BATCHING = 1ull << 6,
    VN_PERF_NO_SEMAPHORE_FEEDBACK = 1ull << 7,
    VN_PERF_NO_QUERY_FEEDBACK = 1ull << 8,
@@ -237,7 +236,6 @@ enum vn_relax_reason {
    VN_RELAX_REASON_RING_SEQNO,
    VN_RELAX_REASON_TLS_RING_SEQNO,
    VN_RELAX_REASON_RING_SPACE,
-   VN_RELAX_REASON_FENCE,
    VN_RELAX_REASON_SEMAPHORE,
    VN_RELAX_REASON_QUERY,
 };
@@ -392,6 +390,16 @@ vn_get_next_obj_id(void)
 
 uint32_t
 vn_extension_get_spec_version(const char *name);
+
+static inline int
+vn_timeout_to_poll_timeout(uint64_t timeout)
+{
+   const uint64_t ns_per_ms = 1000000;
+   const uint64_t ms = (timeout + ns_per_ms - 1) / ns_per_ms;
+   if (!ms && timeout)
+      return -1;
+   return ms <= INT_MAX ? ms : -1;
+}
 
 static inline void
 vn_watchdog_init(struct vn_watchdog *watchdog)

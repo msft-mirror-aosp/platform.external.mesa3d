@@ -275,13 +275,13 @@ push_temp(jay_builder *b,
    }
 
    unsigned r = avoid_regs[0] ? (avoid_regs[1] ? 2 : 1) : 0;
-
-   file = file == UGPR ? UACCUM : ACCUM;
-   *backing = jay_bare_reg(file, outer * 2);
+   jay_def new = def_from_reg(make_reg(file, r));
 
    /* Put accumulators down the float pipe - it's still a raw move. */
-   jay_def new = def_from_reg(r);
-   jay_MOV(b, *backing, new)->type = JAY_TYPE_F32;
+   *backing = jay_bare_reg(ACCUM, outer * 2);
+   jay_inst *mov = jay_MOV(b, *backing, new);
+   mov->type = JAY_TYPE_F32;
+   mov->uniform = file == UGPR;
    return new;
 }
 
@@ -289,7 +289,7 @@ static void
 pop_temp(jay_builder *b, jay_def temp, jay_def backing)
 {
    if (!jay_is_null(backing)) {
-      assert(backing.file == ACCUM || backing.file == UACCUM);
+      assert(backing.file == ACCUM);
       jay_MOV(b, temp, backing)->type = JAY_TYPE_F32;
    }
 }
@@ -328,7 +328,9 @@ mov(jay_builder *b, jay_def dst, jay_def src, struct jay_temp_regs temps)
       pop_temp(b, temp, backing);
    } else {
       jay_MOV(b, dst, src)->type =
-         (acc_src || acc_dst) ? JAY_TYPE_F32 : JAY_TYPE_U32;
+         (acc_src || acc_dst) ? JAY_TYPE_F32 :
+         dst.file == FLAG     ? JAY_TYPE_U | b->shader->dispatch_width :
+                                JAY_TYPE_U32;
    }
 }
 
@@ -664,11 +666,21 @@ pick_regs_from_block(jay_ra_state *ra,
       if (tied ? !may_tie : BITSET_TEST_COUNT(ra->pinned[file], r, size))
          continue;
 
-      /* Try to tie predicated default values, otherwise post-RA lowering needs
-       * to insert a predicated-MOV or SEL.
+      /* Try to tie predicated default values (and forcibly tie flags),
+       * otherwise post-RA lowering needs to insert a predicated-MOV or SEL.
        */
-      if (I->predication == JAY_PREDICATED_DEFAULT && !is_src)
-         cost += jay_inst_get_default(I)->reg != r;
+      if (I->predication && !is_src) {
+         if (var.file == FLAG && jay_inst_get_predicate(I)->reg != r) {
+            continue;
+         } else if (I->predication == JAY_PREDICATED_DEFAULT &&
+                    jay_inst_get_default(I)->reg != r) {
+            cost++;
+         }
+      }
+
+      /* Any move we can coalesce, we should */
+      if (I->op == JAY_OPCODE_MOV)
+         cost += !tied;
 
       /* If there are stricter alignment requirements later, model the cost of
        * inserting copies for that.
@@ -904,6 +916,10 @@ assign_regs_for_inst(jay_ra_state *ra, jay_inst *I)
       vars[nr_vars++] = &I->dst;
    }
 
+   if (!jay_is_null(I->cond_flag) && I->cond_flag.file < JAY_NUM_RA_FILES) {
+      vars[nr_vars++] = &I->cond_flag;
+   }
+
    /* Sort variables by size in descending order. We use insertion sort
     * because it is stable, adaptive, and faster than mergesort for small n.
     *
@@ -956,6 +972,7 @@ assign_regs_for_inst(jay_ra_state *ra, jay_inst *I)
 
          killed = true;
          for (unsigned i = 0; i < size; ++i) {
+            assert(lu + i < JAY_NUM_LAST_USE_BITS);
             if (jay_channel(I->src[s], i) == 0 ||
                 !BITSET_TEST(I->last_use, lu + i)) {
                killed = false;
@@ -1118,15 +1135,15 @@ local_ra(jay_ra_state *ra, jay_block *block)
       }
 
       /* Release registers for destinations that are immediately killed */
-      jay_foreach_index(I->dst, _, index) {
+      jay_foreach_dst_index(I, _, index) {
          if (BITSET_TEST(ra->b.func->dead_defs, index)) {
             release_reg(ra, current_reg(ra, index));
          }
       }
 
       if (jay_debug & JAY_DBG_PRINTDEMAND) {
-         printf("(RA) [G:%u\tU:%u] ", register_demand(ra, GPR),
-                register_demand(ra, UGPR));
+         printf("(RA) [G:%u\tU:%u\tF:%u] ", register_demand(ra, GPR),
+                register_demand(ra, UGPR), register_demand(ra, FLAG));
          jay_print_inst(stdout, I);
       }
    }
@@ -1281,6 +1298,9 @@ map_gpr_to_acc(jay_shader *shader, jay_def *x)
 static void
 jay_register_allocate_function(jay_function *f)
 {
+   /* TODO: Could do a simplified liveness analysis gathering only .kill */
+   jay_compute_liveness(f);
+
    jay_shader *shader = f->shader;
    jay_ra_state ra = { .b.shader = shader, .b.func = f };
    typed_memcpy(ra.num_regs, shader->num_regs, JAY_NUM_RA_FILES);

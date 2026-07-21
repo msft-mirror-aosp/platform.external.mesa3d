@@ -152,6 +152,27 @@ impl WordCopies<'_> {
             return;
         }
 
+        // Handle zero as a special case.  It'll never be supported as a swizzle
+        // by the HW op itself, so none of the cases below will work.  However,
+        // we can always use a Zero source.
+        if swizzle.is_zero() {
+            // Re-use the source's original swizzle because we don't know what
+            // a valid swizzle would be.
+            debug_assert!(self.model.op_src_supports_swizzle(
+                &instr.op,
+                src,
+                src.swizzle
+            ));
+            let new_src = Src {
+                src_ref: SrcRef::Zero,
+                swizzle: src.swizzle,
+                src_mod,
+                last_use: false,
+            };
+            instr.srcs_mut()[src_idx] = new_src;
+            return;
+        }
+
         if self.model.op_src_supports_swizzle(&instr.op, src, swizzle) {
             instr.srcs_mut()[src_idx] = new_src;
             return;
@@ -279,23 +300,12 @@ impl WordCopies<'_> {
                 return None;
             }
 
-            debug_assert!(src.swizzle.bytes_read(8) < (1 << 4));
-            let widen = if copy.src.swizzle.is_none() {
-                src.swizzle
-            } else if src.swizzle.is_byte_swizzle() {
-                // Byte swizzles can be composed directly
-                copy.src.swizzle.swizzle(src.swizzle)?
-            } else if src.swizzle == Swizzle::widen_s32(0) {
-                // Byte swizzles are sign-extended when used with a 64-bit
-                // source so if the 64-bit swizzle is widen_s32(0), we can
-                // just take the 32-bit swizzle verbatim
-                copy.src.swizzle
-            } else {
+            let Some(swizzle) = copy.src.swizzle.swizzle(src.swizzle) else {
                 return None;
             };
 
             let mut new_src = copy.src.clone();
-            new_src.swizzle = widen;
+            new_src.swizzle = swizzle;
             return Some(new_src);
         }
 
@@ -321,7 +331,7 @@ impl WordCopies<'_> {
         }
         let words = words;
 
-        // Check if it's justa 64-bit zero
+        // Check if it's just a 64-bit zero
         if words[1].is_zero() && words[0].is_zero() {
             return Some(0.into());
         }
@@ -728,6 +738,9 @@ impl ByteCopies<'_> {
         if !self.model.op_src_supports_swizzle(&instr.op, src, swizzle) {
             return;
         }
+
+        // This should have already been handled by the immediate case
+        debug_assert!(!swizzle.is_zero());
 
         let src = &mut instr.srcs_mut()[src_idx];
         src.src_ref = copy_src.src_ref;

@@ -17,6 +17,9 @@ enum vn_sync_type {
    /* device object */
    VN_SYNC_TYPE_DEVICE_ONLY,
 
+   /* renderer sync object */
+   VN_SYNC_TYPE_SYNC,
+
    /* payload is an imported sync file */
    VN_SYNC_TYPE_IMPORTED_SYNC_FD,
 };
@@ -24,8 +27,12 @@ enum vn_sync_type {
 struct vn_sync_payload {
    enum vn_sync_type type;
 
-   /* If type is VN_SYNC_TYPE_IMPORTED_SYNC_FD, fd is a sync file. */
-   int fd;
+   union {
+      /* If type is VN_SYNC_TYPE_SYNC, sync is non-NULL. */
+      struct vn_renderer_sync *sync;
+      /* If type is VN_SYNC_TYPE_IMPORTED_SYNC_FD, fd is a sync file. */
+      int fd;
+   };
 };
 
 /* For external fences and external semaphores submitted to be signaled. The
@@ -47,12 +54,6 @@ struct vn_fence {
 
    struct vn_sync_payload permanent;
    struct vn_sync_payload temporary;
-
-   uint64_t signal_counter;
-   struct vn_sync_feedback feedback;
-
-   bool is_external;
-   struct vn_sync_payload_external external_payload;
 };
 VK_DEFINE_NONDISP_HANDLE_CASTS(vn_fence,
                                base.vk,

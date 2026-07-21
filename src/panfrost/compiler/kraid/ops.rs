@@ -547,7 +547,8 @@ impl PerCompFoldable for OpCSel {
         let ca = f.get_src(&self.cmp_srcs[0]);
         let cb = f.get_src(&self.cmp_srcs[1]);
 
-        let res = if self.cmp_op.fold(self.cmp_type.scalar_type(), ca, cb) {
+        let c = self.cmp_op.fold_data(self.cmp_type.scalar_type(), ca, cb);
+        let res = if c {
             f.get_src(&self.sel_srcs[0])
         } else {
             f.get_src(&self.sel_srcs[1])
@@ -685,6 +686,33 @@ impl fmt::Display for OpFAdd {
     }
 }
 
+/// Fadd with log-friendly input
+/// src1 is scaled until it lies in the range [0.75, 1.5)
+#[repr(C)]
+#[derive(Clone, Opcode)]
+pub struct OpFAddLScale {
+    #[dst_type(F32)]
+    pub dst: Dst,
+    pub round: FRound,
+    pub clamp: FClamp,
+    #[src_type(F32)]
+    pub srcs: [Src; 2],
+}
+
+impl fmt::Display for OpFAddLScale {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} = FADD_LSCALE.f32{}{} {} {}",
+            &self.dst,
+            self.round,
+            self.clamp,
+            self.fmt_src(&self.srcs[0]),
+            self.fmt_src(&self.srcs[1]),
+        )
+    }
+}
+
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub enum CmpAccumOp {
     None,
@@ -717,6 +745,7 @@ pub enum CmpResultType {
     I1,
     F1,
     M1,
+    C,
 }
 
 impl fmt::Display for CmpResultType {
@@ -725,6 +754,7 @@ impl fmt::Display for CmpResultType {
             CmpResultType::I1 => write!(f, ".i1"),
             CmpResultType::F1 => write!(f, ".f1"),
             CmpResultType::M1 => write!(f, ".m1"),
+            CmpResultType::C => write!(f, ".c"),
         }
     }
 }
@@ -742,6 +772,7 @@ impl CmpResultType {
             }
             (CmpResultType::F1, _) => panic!("Invalid float length"),
             (CmpResultType::M1, _) => 0xFFFF_FFFF,
+            (CmpResultType::C, _) => panic!("Not a boolean result type"),
         }
     }
 }
@@ -773,53 +804,63 @@ impl fmt::Display for CmpOp {
     }
 }
 
-impl CmpOp {
-    /// Simulates a hardware comparison for a single scalar component
-    pub fn fold(self, scalar_type: DataType, a: u64, b: u64) -> bool {
-        assert!(scalar_type.comps() == 1);
-        macro_rules! cmp {
-            (float, $a:expr, $b:expr) => {{
-                let (a, b) = ($a, $b);
-                match self {
-                    CmpOp::Eq => a == b,
-                    CmpOp::Gt => a > b,
-                    CmpOp::Ge => a >= b,
-                    CmpOp::Ne => a != b,
-                    CmpOp::Lt => a < b,
-                    CmpOp::Le => a <= b,
-                    CmpOp::GtLt => (a < b) || (a > b),
-                    CmpOp::Total => a.total_cmp(&b) == Ordering::Less,
-                }
-            }};
-            (int, $a:expr, $b:expr) => {{
-                let (a, b) = ($a, $b);
-                match self {
-                    CmpOp::Eq => a == b,
-                    CmpOp::Gt => a > b,
-                    CmpOp::Ge => a >= b,
-                    CmpOp::Ne => a != b,
-                    CmpOp::Lt => a < b,
-                    CmpOp::Le => a <= b,
-                    _ => panic!("Invalid CmpOp for integer"),
-                }
-            }};
-        }
+fn cmp_data(data_type: DataType, a: u64, b: u64) -> Ordering {
+    match data_type {
+        DataType::S8 => (a as i8).cmp(&(b as i8)),
+        DataType::S16 => (a as i16).cmp(&(b as i16)),
+        DataType::S32 => (a as i32).cmp(&(b as i32)),
+        DataType::S64 => (a as i64).cmp(&(b as i64)),
+        DataType::U8 => (a as u8).cmp(&(b as u8)),
+        DataType::U16 => (a as u16).cmp(&(b as u16)),
+        DataType::U32 => (a as u32).cmp(&(b as u32)),
+        DataType::U64 => a.cmp(&b),
+        _ => panic!("Cannot compare {data_type} data"),
+    }
+}
 
-        match scalar_type {
-            DataType::U64 | DataType::U32 | DataType::U16 | DataType::U8 => {
-                cmp!(int, a, b)
-            }
-            DataType::S64 => cmp!(int, a as i64, b as i64),
-            DataType::S32 => cmp!(int, a as i32, b as i32),
-            DataType::S16 => cmp!(int, a as i16, b as i16),
-            DataType::S8 => cmp!(int, a as i8, b as i8),
-            DataType::F32 => {
-                cmp!(float, f32::from_bits(a as u32), f32::from_bits(b as u32))
-            }
-            DataType::F16 => {
-                cmp!(float, F16::from_bits(a as u16), F16::from_bits(b as u16))
-            }
-            _ => panic!("Invalid DataType"),
+fn partial_cmp_data(data_type: DataType, a: u64, b: u64) -> Option<Ordering> {
+    match data_type {
+        DataType::F16 => {
+            F16::from_bits(a as u16).partial_cmp(&F16::from_bits(b as u16))
+        }
+        DataType::F32 => {
+            f32::from_bits(a as u32).partial_cmp(&f32::from_bits(b as u32))
+        }
+        _ => Some(cmp_data(data_type, a, b)),
+    }
+}
+
+fn total_cmp_data(data_type: DataType, a: u64, b: u64) -> Ordering {
+    match data_type {
+        DataType::F16 => {
+            F16::from_bits(a as u16).total_cmp(&F16::from_bits(b as u16))
+        }
+        DataType::F32 => {
+            f32::from_bits(a as u32).total_cmp(&f32::from_bits(b as u32))
+        }
+        _ => panic!("Cannot total compare {data_type} data"),
+    }
+}
+
+impl CmpOp {
+    pub fn fold_ordering(self, ord: Option<Ordering>) -> bool {
+        match self {
+            CmpOp::Eq => ord.is_some_and(|ord| ord.is_eq()),
+            CmpOp::Gt => ord.is_some_and(|ord| ord.is_gt()),
+            CmpOp::Ge => ord.is_some_and(|ord| ord.is_ge()),
+            CmpOp::Ne => !ord.is_some_and(|ord| ord.is_eq()),
+            CmpOp::Lt => ord.is_some_and(|ord| ord.is_lt()),
+            CmpOp::Le => ord.is_some_and(|ord| ord.is_le()),
+            CmpOp::GtLt => ord.is_some_and(|ord| !ord.is_eq()),
+            CmpOp::Total => panic!("Cannot fold .total"),
+        }
+    }
+
+    pub fn fold_data(self, data_type: DataType, a: u64, b: u64) -> bool {
+        if matches!(self, CmpOp::Total) {
+            total_cmp_data(data_type, a, b).is_lt()
+        } else {
+            self.fold_ordering(partial_cmp_data(data_type, a, b))
         }
     }
 }
@@ -868,11 +909,80 @@ impl PerCompFoldable for OpFCmp {
         let cb = f.get_src(&self.srcs[1]);
         let accum = f.get_src(&self.accum);
 
-        let c = self.cmp_op.fold(self.src_type.scalar_type(), ca, cb);
+        let c = self.cmp_op.fold_data(self.src_type.scalar_type(), ca, cb);
         let c = self.accum_op.fold(c, accum != 0);
         let c = self.res_type.fold(c, self.src_type.bits());
 
         f.set_dst(&self.dst, c as u64);
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Opcode)]
+pub struct OpFCosTable {
+    #[dst_type(F32)]
+    pub dst: Dst,
+    #[src_type(U32)]
+    pub src: Src,
+
+    // If true, the hardware will substract a small value
+    // before the table lookup, for some reason (TODO: is this useful?)
+    pub offset: bool,
+}
+
+impl fmt::Display for OpFCosTable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} = FCOS_TABLE.u6{} {}",
+            &self.dst,
+            bool_as_mod_str!(self, offset),
+            self.fmt_src(&self.src),
+        )
+    }
+}
+
+/// Performs 2^x
+#[repr(C)]
+#[derive(Clone, Opcode)]
+pub struct OpFExp32 {
+    #[dst_type(F32)]
+    pub dst: Dst,
+
+    /// Exponent as a 8.24-bit fixed-point value
+    #[src_type(I32)]
+    pub expx: Src,
+    /// Original floating-point input, only used for NaN propagation
+    #[src_type(F32)]
+    pub expf: Src,
+}
+
+impl fmt::Display for OpFExp32 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} = FEXP.f32 {} {}",
+            &self.dst,
+            self.fmt_src(&self.expx),
+            self.fmt_src(&self.expf),
+        )
+    }
+}
+
+/// Performs log2(x) / (x-1)
+#[repr(C)]
+#[derive(Clone, Opcode)]
+pub struct OpFLogD {
+    #[dst_type(F32)]
+    pub dst: Dst,
+
+    #[src_type(F32)]
+    pub src: Src,
+}
+
+impl fmt::Display for OpFLogD {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} = FLOGD.f32 {}", &self.dst, self.fmt_src(&self.src))
     }
 }
 
@@ -948,6 +1058,36 @@ impl fmt::Display for OpFma {
             self.fmt_src(&self.srcs[0]),
             self.fmt_src(&self.srcs[1]),
             self.fmt_src(&self.srcs[2]),
+        )
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Opcode)]
+pub struct OpFmaRScale {
+    #[dst_type(F32)]
+    pub dst: Dst,
+    // Only supports NearestEven and TowardsZero
+    pub round: FRound,
+    pub clamp: FClamp,
+    #[src_type(F32)]
+    pub srcs: [Src; 3],
+    #[src_type(S32)]
+    pub scale: Src,
+}
+
+impl fmt::Display for OpFmaRScale {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} = FMA_RSCALE.f32{}{} {} {} {} {}",
+            &self.dst,
+            self.round,
+            self.clamp,
+            self.fmt_src(&self.srcs[0]),
+            self.fmt_src(&self.srcs[1]),
+            self.fmt_src(&self.srcs[2]),
+            self.fmt_src(&self.scale),
         )
     }
 }
@@ -1159,6 +1299,31 @@ impl fmt::Display for OpFRsq {
 
 #[repr(C)]
 #[derive(Clone, Opcode)]
+pub struct OpFSinTable {
+    #[dst_type(F32)]
+    pub dst: Dst,
+    #[src_type(U32)]
+    pub src: Src,
+
+    // If true, the hardware will substract a small value
+    // before the table lookup, for some reason (TODO: is this useful?)
+    pub offset: bool,
+}
+
+impl fmt::Display for OpFSinTable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} = FSIN_TABLE.u6{} {}",
+            &self.dst,
+            bool_as_mod_str!(self, offset),
+            self.fmt_src(&self.src),
+        )
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Opcode)]
 #[variants(dst_type in [
     S16, V2S16, S32
 ])]
@@ -1286,11 +1451,60 @@ impl PerCompFoldable for OpICmp {
         let cb = f.get_src(&self.srcs[1]);
         let accum = f.get_src(&self.accum);
 
-        let c = self.cmp_op.fold(self.src_type.scalar_type(), ca, cb);
+        let c = self.cmp_op.fold_data(self.src_type.scalar_type(), ca, cb);
         let c = self.accum_op.fold(c, accum != 0);
         let c = self.res_type.fold(c, self.src_type.bits());
 
         f.set_dst(&self.dst, c as u64);
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Opcode)]
+#[variants(src_type in [S32, U32])]
+pub struct OpICmpMulti {
+    pub dst: Dst,
+
+    pub src_type: DataType,
+    pub res_type: CmpResultType,
+    pub cmp_op: CmpOp,
+
+    pub srcs: [Src; 2],
+    #[src_type(S32)]
+    pub accum: Src,
+}
+
+impl fmt::Display for OpICmpMulti {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} = ICMP_MULTI.{}{}{} {} {} {}",
+            &self.dst,
+            self.src_type,
+            self.res_type,
+            self.cmp_op,
+            self.fmt_src(&self.srcs[0]),
+            self.fmt_src(&self.srcs[1]),
+            self.fmt_src(&self.accum),
+        )
+    }
+}
+
+impl PerCompFoldable for OpICmpMulti {
+    fn fold_comp(&self, _model: &dyn Model, f: &mut impl FoldDataView) {
+        let ca = f.get_src(&self.srcs[0]);
+        let cb = f.get_src(&self.srcs[1]);
+        let accum = f.get_src(&self.accum) as i32;
+
+        let ord = cmp_data(self.src_type, ca, cb).then(accum.cmp(&0));
+        let res = if matches!(self.res_type, CmpResultType::C) {
+            ord as i8 as u32
+        } else {
+            let c = self.cmp_op.fold_ordering(Some(ord));
+            self.res_type.fold(c, self.src_type.bits())
+        };
+
+        f.set_dst(&self.dst, res.into());
     }
 }
 
@@ -2478,6 +2692,15 @@ impl TexWriteMask {
         TexWriteMask(mask)
     }
 
+    pub fn comps(self) -> u8 {
+        self.0.count_ones() as u8
+    }
+
+    pub fn has_comp(self, c: u8) -> bool {
+        assert!(c < 4);
+        (self.0 & (1 << c)) != 0
+    }
+
     pub fn to_bits(self) -> u8 {
         self.0
     }
@@ -2729,9 +2952,14 @@ pub enum Op {
     F32ToF16(Box<OpF32ToF16>),
     F32ToI32(Box<OpF32ToI32>),
     FAdd(Box<OpFAdd>),
+    FAddLScale(Box<OpFAddLScale>),
     FCmp(Box<OpFCmp>),
+    FCosTable(Box<OpFCosTable>),
+    FExp32(Box<OpFExp32>),
+    FLogD(Box<OpFLogD>),
     Flush(Box<OpFlush>),
     Fma(Box<OpFma>),
+    FmaRScale(Box<OpFmaRScale>),
     FMax(Box<OpFMax>),
     FMin(Box<OpFMin>),
     FMul(Box<OpFMul>),
@@ -2740,9 +2968,11 @@ pub enum Op {
     FrexpM(Box<OpFrexpM>),
     FRound(Box<OpFRound>),
     FRsq(Box<OpFRsq>),
+    FSinTable(Box<OpFSinTable>),
     IAbs(Box<OpIAbs>),
     IAdd(Box<OpIAdd>),
     ICmp(Box<OpICmp>),
+    ICmpMulti(Box<OpICmpMulti>),
     IDpAdd(Box<OpIDpAdd>),
     IMul(Box<OpIMul>),
     ISub(Box<OpISub>),

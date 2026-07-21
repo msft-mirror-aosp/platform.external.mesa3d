@@ -17,9 +17,12 @@
 #include "vn_wsi.h"
 
 static void
-vn_sync_payload_release(UNUSED struct vn_device *dev,
+vn_sync_payload_release(struct vn_device *dev,
                         struct vn_sync_payload *payload)
 {
+   if (payload->type == VN_SYNC_TYPE_SYNC)
+      vn_renderer_sync_destroy(dev->renderer, payload->sync);
+
    if (payload->type == VN_SYNC_TYPE_IMPORTED_SYNC_FD && payload->fd >= 0)
       close(payload->fd);
 
@@ -31,14 +34,14 @@ vn_sync_payload_release(UNUSED struct vn_device *dev,
 static VkResult
 vn_fence_init_payloads(struct vn_device *dev,
                        struct vn_fence *fence,
-                       bool signaled,
-                       const VkAllocationCallbacks *alloc)
+                       bool signaled)
 {
-   fence->permanent.type = VN_SYNC_TYPE_DEVICE_ONLY;
    fence->temporary.type = VN_SYNC_TYPE_INVALID;
+   fence->permanent.type = VN_SYNC_TYPE_SYNC;
    fence->payload = &fence->permanent;
-
-   return VK_SUCCESS;
+   return vn_renderer_sync_create(dev->renderer, signaled,
+                                  VN_RENDERER_SYNC_BINARY,
+                                  &fence->payload->sync);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -61,35 +64,16 @@ vn_CreateFence(VkDevice device,
 
    vn_object_base_init(&fence->base, VK_OBJECT_TYPE_FENCE, &dev->base);
 
-   const struct VkExportFenceCreateInfo *export_info =
-      vk_find_struct_const(pCreateInfo->pNext, EXPORT_FENCE_CREATE_INFO);
-   fence->is_external = export_info && export_info->handleTypes;
-
-   result = vn_fence_init_payloads(dev, fence, signaled, alloc);
-   if (result != VK_SUCCESS)
-      goto out_object_base_fini;
-
-   if (!fence->is_external && !VN_PERF(NO_FENCE_FEEDBACK)) {
-      fence->signal_counter = signaled ? 0 : 1;
-      result = vn_sync_feedback_init(dev, &fence->feedback, 0);
-      if (result != VK_SUCCESS)
-         goto out_payloads_fini;
+   result = vn_fence_init_payloads(dev, fence, signaled);
+   if (result != VK_SUCCESS) {
+      vn_object_base_fini(&fence->base);
+      vk_free(alloc, fence);
+      return vn_error(dev->instance, result);
    }
 
    *pFence = vn_fence_to_handle(fence);
-   vn_async_vkCreateFence(dev->primary_ring, device, pCreateInfo, NULL,
-                          pFence);
 
    return VK_SUCCESS;
-
-out_payloads_fini:
-   vn_sync_payload_release(dev, &fence->permanent);
-   vn_sync_payload_release(dev, &fence->temporary);
-
-out_object_base_fini:
-   vn_object_base_fini(&fence->base);
-   vk_free(alloc, fence);
-   return vn_error(dev->instance, result);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -106,10 +90,6 @@ vn_DestroyFence(VkDevice device,
    if (!fence)
       return;
 
-   vn_async_vkDestroyFence(dev->primary_ring, device, _fence, NULL);
-
-   vn_sync_feedback_fini(dev, &fence->feedback);
-
    vn_sync_payload_release(dev, &fence->permanent);
    vn_sync_payload_release(dev, &fence->temporary);
 
@@ -122,129 +102,50 @@ vn_ResetFences(VkDevice device, uint32_t fenceCount, const VkFence *pFences)
 {
    VN_TRACE_FUNC();
    struct vn_device *dev = vn_device_from_handle(device);
-
-   vn_async_vkResetFences(dev->primary_ring, device, fenceCount, pFences);
+   VkResult result;
 
    for (uint32_t i = 0; i < fenceCount; i++) {
       struct vn_fence *fence = vn_fence_from_handle(pFences[i]);
-      struct vn_sync_payload *perm = &fence->permanent;
+
+      assert(fence->payload == &fence->permanent ||
+             fence->payload->type == VN_SYNC_TYPE_IMPORTED_SYNC_FD);
 
       vn_sync_payload_release(dev, &fence->temporary);
+      fence->payload = &fence->permanent;
 
-      assert(perm->type == VN_SYNC_TYPE_DEVICE_ONLY);
-      fence->payload = perm;
-
-      if (vn_sync_feedback_enabled(&fence->feedback)) {
-         vn_sync_feedback_try_resume(&fence->feedback,
-                                     fence->signal_counter++);
-      }
+      assert(fence->payload->type == VN_SYNC_TYPE_SYNC);
+      result = vn_renderer_sync_reset(dev->renderer, fence->payload->sync);
+      if (result != VK_SUCCESS)
+         return vn_error(dev->instance, result);
    }
 
    return VK_SUCCESS;
 }
 
-static VkResult
-vn_get_fence_status(VkDevice dev_handle,
-                    VkFence fence_handle,
-                    struct vn_relax_state *relax_state)
+VKAPI_ATTR VkResult VKAPI_CALL
+vn_GetFenceStatus(VkDevice device, VkFence _fence)
 {
-   struct vn_device *dev = vn_device_from_handle(dev_handle);
-   struct vn_fence *fence = vn_fence_from_handle(fence_handle);
+   VN_TRACE_FUNC();
+   struct vn_device *dev = vn_device_from_handle(device);
+   struct vn_fence *fence = vn_fence_from_handle(_fence);
    struct vn_sync_payload *payload = fence->payload;
-
    VkResult result;
-   switch (payload->type) {
-   case VN_SYNC_TYPE_DEVICE_ONLY:
-      if (vn_sync_feedback_pollable(&fence->feedback)) {
-         if (relax_state && vn_relax_warn(relax_state)) {
-            /* Upon vn_relax warn order, emit a synchronous vkGetFenceStatus
-             * to catch renderer device lost.
-             */
-            result = vn_call_vkGetFenceStatus(dev->primary_ring, dev_handle,
-                                              fence_handle);
-            if (result == VK_ERROR_DEVICE_LOST) {
-               vn_log(dev->instance, "aborting on ffb device lost");
-               abort();
-            }
-            if (result != VK_SUCCESS)
-               return result;
-         }
 
-         uint64_t counter = 0;
-         if (vn_sync_feedback_query(dev, &fence->feedback, &counter)) {
-            /* When fence feedback slot gets signaled, the real fence
-             * signal operation follows after but the signaling isr can be
-             * deferred or preempted. To avoid racing, we let the
-             * renderer wait for the fence. This also helps resolve
-             * synchronization validation errors, because the layer no
-             * longer sees any fence status checks and falsely believes the
-             * caller does not sync.
-             */
-            vn_async_vkWaitForFences(dev->primary_ring, dev_handle, 1,
-                                     &fence_handle, VK_TRUE, UINT64_MAX);
-         }
+   if (payload->type == VN_SYNC_TYPE_SYNC) {
+      uint64_t val;
+      result = vn_renderer_sync_read(dev->renderer, payload->sync, &val);
+      if (result == VK_SUCCESS)
+         result = val ? VK_SUCCESS : VK_NOT_READY;
+   } else {
+      assert(payload->type == VN_SYNC_TYPE_IMPORTED_SYNC_FD);
 
-         const bool signaled = counter == fence->signal_counter;
-         result = signaled ? VK_SUCCESS : VK_NOT_READY;
-      } else {
-         result = vn_call_vkGetFenceStatus(dev->primary_ring, dev_handle,
-                                           fence_handle);
-      }
-      break;
-   case VN_SYNC_TYPE_IMPORTED_SYNC_FD:
       if (payload->fd < 0 || sync_wait(payload->fd, 0) == 0)
          result = VK_SUCCESS;
       else
          result = errno == ETIME ? VK_NOT_READY : VK_ERROR_DEVICE_LOST;
-      break;
-   default:
-      UNREACHABLE("unexpected fence payload type");
-      break;
    }
 
-   return result;
-}
-
-VKAPI_ATTR VkResult VKAPI_CALL
-vn_GetFenceStatus(VkDevice device, VkFence fence)
-{
-   struct vn_device *dev = vn_device_from_handle(device);
-   VkResult result = vn_get_fence_status(device, fence, NULL);
    return vn_result(dev->instance, result);
-}
-
-static VkResult
-vn_find_first_signaled_fence(VkDevice device,
-                             const VkFence *fences,
-                             uint32_t count,
-                             struct vn_relax_state *relax_state)
-{
-   for (uint32_t i = 0; i < count; i++) {
-      VkResult result = vn_get_fence_status(device, fences[i], relax_state);
-      if (result == VK_SUCCESS || result < 0)
-         return result;
-   }
-   return VK_NOT_READY;
-}
-
-static VkResult
-vn_remove_signaled_fences(VkDevice device,
-                          VkFence *fences,
-                          uint32_t *count,
-                          struct vn_relax_state *relax_state)
-{
-   uint32_t cur = 0;
-   for (uint32_t i = 0; i < *count; i++) {
-      VkResult result = vn_get_fence_status(device, fences[i], relax_state);
-      if (result != VK_SUCCESS) {
-         if (result < 0)
-            return result;
-         fences[cur++] = fences[i];
-      }
-   }
-
-   *count = cur;
-   return cur ? VK_NOT_READY : VK_SUCCESS;
 }
 
 static VkResult
@@ -278,35 +179,53 @@ vn_WaitForFences(VkDevice device,
 {
    VN_TRACE_FUNC();
    struct vn_device *dev = vn_device_from_handle(device);
+   VkResult result = VK_SUCCESS;
 
-   const int64_t abs_timeout = os_time_get_absolute_timeout(timeout);
-   VkResult result = VK_NOT_READY;
-   if (fenceCount > 1 && waitAll) {
-      STACK_ARRAY(VkFence, fences, fenceCount);
-      typed_memcpy(fences, pFences, fenceCount);
+   if (fenceCount == 0)
+      return VK_SUCCESS;
 
-      struct vn_relax_state relax_state =
-         vn_relax_init(dev->instance, VN_RELAX_REASON_FENCE);
-      while (result == VK_NOT_READY) {
-         result = vn_remove_signaled_fences(device, fences, &fenceCount,
-                                            &relax_state);
-         result =
-            vn_update_sync_result(dev, result, abs_timeout, &relax_state);
+   STACK_ARRAY(struct vn_renderer_sync *, syncs, fenceCount);
+   STACK_ARRAY(uint64_t, sync_vals, fenceCount);
+
+   uint32_t sync_count = 0;
+   for (uint32_t i = 0; i < fenceCount; i++) {
+      VK_FROM_HANDLE(vn_fence, fence, pFences[i]);
+      struct vn_sync_payload *payload = fence->payload;
+
+      if (payload->type == VN_SYNC_TYPE_IMPORTED_SYNC_FD) {
+         const int poll_timeout = vn_timeout_to_poll_timeout(timeout);
+         if (payload->fd >= 0 && sync_wait(payload->fd, poll_timeout)) {
+            result = errno == ETIME ? VK_NOT_READY : VK_ERROR_DEVICE_LOST;
+            goto out_stack_arr_fini;
+         } else if (waitAll == VK_FALSE) {
+            goto out_stack_arr_fini;
+         }
+
+         continue;
       }
-      vn_relax_fini(&relax_state);
 
-      STACK_ARRAY_FINISH(fences);
-   } else {
-      struct vn_relax_state relax_state =
-         vn_relax_init(dev->instance, VN_RELAX_REASON_FENCE);
-      while (result == VK_NOT_READY) {
-         result = vn_find_first_signaled_fence(device, pFences, fenceCount,
-                                               &relax_state);
-         result =
-            vn_update_sync_result(dev, result, abs_timeout, &relax_state);
-      }
-      vn_relax_fini(&relax_state);
+      assert(payload->type == VN_SYNC_TYPE_SYNC);
+
+      syncs[sync_count] = payload->sync;
+      sync_vals[sync_count] = 1;
+      sync_count++;
    }
+
+   if (!sync_count)
+      goto out_stack_arr_fini;
+
+   const struct vn_renderer_wait wait = {
+      .wait_any = waitAll == VK_FALSE,
+      .timeout = timeout,
+      .syncs = syncs,
+      .sync_values = sync_vals,
+      .sync_count = sync_count,
+   };
+   result = vn_renderer_wait(dev->renderer, &wait);
+
+out_stack_arr_fini:
+   STACK_ARRAY_FINISH(sync_vals);
+   STACK_ARRAY_FINISH(syncs);
 
    return vn_result(dev->instance, result);
 }
@@ -397,22 +316,14 @@ vn_GetFenceFdKHR(VkDevice device,
    const bool sync_file =
       pGetFdInfo->handleType == VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT;
    struct vn_sync_payload *payload = fence->payload;
-   VkResult result;
 
    assert(sync_file);
-   assert(dev->physical_device->renderer_sync_fd.fence_exportable);
 
    int fd = -1;
-   if (payload->type == VN_SYNC_TYPE_DEVICE_ONLY) {
-      result = vn_create_sync_file(dev, &fence->external_payload, &fd);
-      if (result != VK_SUCCESS)
-         return vn_error(dev->instance, result);
-
-      vn_async_vkResetFenceResourceMESA(dev->primary_ring, device,
-                                        pGetFdInfo->fence);
-
-      vn_sync_payload_release(dev, &fence->temporary);
-      fence->payload = &fence->permanent;
+   if (payload->type == VN_SYNC_TYPE_SYNC) {
+      fd = vn_renderer_sync_export_syncobj(dev->renderer,
+                                           fence->payload->sync, sync_file);
+      vn_renderer_sync_reset(dev->renderer, fence->payload->sync);
    } else {
       assert(payload->type == VN_SYNC_TYPE_IMPORTED_SYNC_FD);
 
@@ -607,6 +518,9 @@ vn_get_semaphore_counter_value(VkDevice dev_handle,
 
          vn_async_vkWaitSemaphores(dev->primary_ring, dev_handle, &wait_info,
                                    UINT64_MAX);
+
+         /* Recycle idle cmds after async semaphore wait. */
+         vn_sync_feedback_cmd_recycle(dev, &sem->feedback);
       }
    } else {
       VkResult result = vn_call_vkGetSemaphoreCounterValue(

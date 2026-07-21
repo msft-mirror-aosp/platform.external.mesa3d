@@ -166,11 +166,19 @@ bool brw_nir_lower_fully_covered(nir_shader *nir);
 struct brw_lower_urb_cb_data {
    const struct intel_device_info *devinfo;
 
-   /** Input URB read length (returned by lowering) */
-   unsigned *push_input_read_length;
+   /* Maximum URB Read Length in 256-bit units (pairs of vec4 slots).
+    *
+    * Any inputs beyond this range will be loaded via URB read messages.
+    */
+   unsigned max_urb_read_length;
 
-   /** Maximum amount of pushed data in bytes */
-   unsigned max_push_bytes;
+   /** Input URB read length (returned by lowering) */
+   unsigned *out_urb_read_length;
+
+   /* True if push inputs are divergent (where each lane reads from a
+    * different URB entry, and so a vec4 in the URB takes up 4 registers).
+    */
+   bool vector_payload;
 
    /* If true, all access is guaranteed to be vec4 (128-bit) aligned.
     * offset and base are in units of 128-bit vec4 slots.
@@ -180,7 +188,10 @@ struct brw_lower_urb_cb_data {
     */
    bool vec4_access;
 
-   /** Map from VARYING_SLOT_* to a vec4 slot index */
+   /* Map from VARYING_SLOT_* to a vec4 slot index
+    *
+    * If NULL we're dealing gl_vert_attrib semantic.
+    */
    const int8_t *varying_to_slot;
 
    /** Stride in bytes between each vertex's worth of per-vertex varyings */
@@ -223,7 +234,12 @@ bool brw_nir_lower_deferred_urb_writes(nir_shader *nir,
 
 void brw_nir_opt_vectorize_urb(struct brw_pass_tracker *pt);
 
-void brw_nir_lower_vs_inputs(nir_shader *nir);
+void brw_nir_lower_vs_inputs(nir_shader *nir,
+                             const struct intel_device_info *devinfo,
+                             const struct brw_vs_prog_key *prog_key,
+                             struct brw_vs_prog_data *prog_data,
+                             unsigned *out_nr_packed_regs,
+                             unsigned *out_urb_read_length);
 void brw_nir_lower_gs_inputs(nir_shader *nir,
                              const struct intel_device_info *devinfo,
                              const struct intel_vue_map *vue_map,
@@ -452,12 +468,6 @@ bool
 brw_nir_frag_convert_attrs_prim_to_vert_indirect(struct nir_shader *nir,
                                                  const struct intel_device_info *devinfo,
                                                  struct brw_compile_fs_params *params);
-
-unsigned
-brw_nir_vs_compute_payload_size(nir_shader *nir,
-                                const struct intel_device_info *devinfo);
-unsigned
-brw_nir_pack_vs_input(nir_shader *nir, struct brw_vs_prog_data *prog_data);
 
 bool brw_nir_opt_divergent_atomics(nir_shader *shader, enum brw_divergent_atomics_flags flags);
 

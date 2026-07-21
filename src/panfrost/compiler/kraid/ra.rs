@@ -104,53 +104,62 @@ fn widen_lanes(lanes: DstLanes) -> DstLanes {
     }
 }
 
-struct RegAllocConstraint {
-    /// Number of bytes to allocate
-    bytes: u8,
+/// A register alignment constraint, specified as an 8-bit bitfield of possible
+/// offsets from an even register.  For registers which do not need to be even-
+/// aligned, they simply repeat the constraint in both halves of the u8.
+#[derive(Clone, Copy, Default)]
+struct RegAlignConstraint(u8);
 
-    /// Multiplicative alignment
-    align_mul: u8,
+impl RegAlignConstraint {
+    fn new() -> Self {
+        Default::default()
+    }
 
-    /// Bitfield of allowed offsets from the aligned multiple.  For each bit
-    /// index b in `align_offsets`, `N * align_mul + b` is a valid alignment.
-    align_offsets: u8,
-}
+    fn for_align(mul: u8, offset: u8) -> Self {
+        let mask = match mul {
+            1 => 0xff,
+            2 => 0x55 << offset,
+            4 => 0x11 << offset,
+            8 => 0x01 << offset,
+            _ => panic!("Invalid register alignment multiplier"),
+        };
+        RegAlignConstraint(mask)
+    }
 
-impl RegAllocConstraint {
-    /// Return an alignment pair (mul, offset) which every value which
+    fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    /// Return the maximal alignment pair (mul, offset) which every value which
     /// satisfies this constraint will also satisfy.
-    fn align(&self) -> (u8, u8) {
-        debug_assert!(self.align_mul.is_power_of_two());
-        debug_assert!(self.align_mul > 0);
-        debug_assert!(self.align_offsets != 0);
-        if self.align_offsets.is_power_of_two() {
-            return (self.align_mul, self.align_offsets.trailing_zeros() as u8);
-        }
-
-        // Non-trivial offsets require align_mul <= 8
-        debug_assert!(self.align_mul <= 8);
-        if self.align_mul < 8 {
-            debug_assert!(self.align_offsets < (1 << self.align_mul));
-        }
-
-        if self.align_offsets == 0b10001 {
-            (4, 0)
-        } else if self.align_offsets == 0b101 || self.align_offsets == 0b1010101
-        {
-            (2, 0)
+    fn max_align(&self) -> (u8, u8) {
+        assert!(!self.is_empty());
+        let first_log2 = self.0.trailing_zeros().try_into().unwrap();
+        if self.0 == (1_u8 << first_log2) {
+            (8, first_log2)
+        } else if (self.0 & !(0x11 << first_log2)) == 0 {
+            (4, first_log2 % 4)
+        } else if (self.0 & !(0x55 << first_log2)) == 0 {
+            (2, first_log2 % 2)
         } else {
             (1, 0)
         }
     }
 
     fn satisfied(&self, b: usize) -> bool {
-        let off = b % usize::from(self.align_mul);
-        if self.align_offsets == 1 {
-            off == 0
-        } else {
-            debug_assert!(self.align_mul <= 8);
-            self.align_offsets & (1 << off) != 0
-        }
+        (self.0 & (1 << (b % 8))) != 0
+    }
+}
+
+impl std::ops::BitAndAssign for RegAlignConstraint {
+    fn bitand_assign(&mut self, rhs: Self) {
+        self.0 &= rhs.0
+    }
+}
+
+impl std::ops::BitOrAssign for RegAlignConstraint {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0
     }
 }
 
@@ -361,20 +370,21 @@ impl LocalRegAlloc<'_> {
 
     fn find_unpinned_bytes(
         &self,
-        constraint: RegAllocConstraint,
+        bytes: u8,
+        align: RegAlignConstraint,
         cost: impl Fn(u16) -> u8,
     ) -> Option<u16> {
         let mut best = (u16::MAX, u8::MAX);
 
         // First, loop through unused registers in the hopes that one of them
         // ends up having cost 0
-        let (align_mul, align_offset) = constraint.align();
-        let max = usize::from(self.bytes_avail) - usize::from(constraint.bytes);
+        let (align_mul, align_offset) = align.max_align();
+        let max = usize::from(self.bytes_avail) - usize::from(bytes);
         let mut start = 0;
         loop {
             let b = self.find_aligned_unused_unpinned_range(
                 start,
-                usize::from(constraint.bytes),
+                usize::from(bytes),
                 usize::from(align_mul),
                 usize::from(align_offset),
             );
@@ -383,7 +393,7 @@ impl LocalRegAlloc<'_> {
             }
             start = b + usize::from(align_mul);
 
-            if !constraint.satisfied(b) {
+            if !align.satisfied(b) {
                 continue;
             }
 
@@ -402,7 +412,7 @@ impl LocalRegAlloc<'_> {
         loop {
             let b = self.pinned.find_aligned_unset_range(
                 start,
-                usize::from(constraint.bytes),
+                usize::from(bytes),
                 usize::from(align_mul),
                 usize::from(align_offset),
             );
@@ -411,7 +421,7 @@ impl LocalRegAlloc<'_> {
             }
             start = b + usize::from(align_mul);
 
-            if !constraint.satisfied(b) {
+            if !align.satisfied(b) {
                 continue;
             }
 
@@ -430,151 +440,41 @@ impl LocalRegAlloc<'_> {
     }
 
     fn choose_aligned_bytes(&self, bytes: u8) -> Range<u16> {
-        debug_assert!(bytes.is_power_of_two());
-        let c = RegAllocConstraint {
-            bytes,
-            align_mul: bytes,
-            align_offsets: 1,
-        };
+        let align = RegAlignConstraint::for_align(bytes, 0);
         let b = self
-            .find_unpinned_bytes(c, |_| 0)
+            .find_unpinned_bytes(bytes, align, |_| 0)
             .expect("Out of registers!");
         b..(b + u16::from(bytes))
     }
 
-    fn choose_src_bytes(&self, op: &Op, src: &Src) -> Range<u16> {
-        let vec = src.src_ref.as_ssa().unwrap();
-        let src_type = op.src_type(src);
-        let bytes = vec.bytes();
-
-        if src_type == DataType::SR {
-            assert!(src.swizzle.is_none());
-            assert!(bytes % 4 == 0);
-        }
-
-        let (align_mul, align_offsets) = if bytes > 4 {
-            // Valhall requires that 64-bit sources and staging registers
-            // reading more than a single register use an even register.
-            (8, 1 << 0)
-        } else if src_type == DataType::SR {
-            debug_assert!(bytes == 4);
-            (4, 1 << 0)
-        } else {
-            let swizzles: &[(u8, Swizzle)] = match bytes {
-                1 => &[
-                    (0, Swizzle::B0000),
-                    (1, Swizzle::B1111),
-                    (2, Swizzle::B2222),
-                    (3, Swizzle::B3333),
-                ],
-                2 => &[(0, Swizzle::H00), (2, Swizzle::H11)],
-                4 => {
-                    &[(0, Swizzle::NONE), (0, Swizzle::W00), (4, Swizzle::W11)]
-                }
-                _ => panic!("Invalid SSA value size"),
-            };
-            let mut offsets = 0;
-            for (b, s) in swizzles {
-                if let Some(s) = (*s).swizzle(src.swizzle) {
-                    if self.model.op_src_supports_swizzle(op, src, s) {
-                        offsets |= 1 << *b;
-                    }
-                }
-            }
-            assert!(offsets != 0, "Cannot find a valid swizzle");
-            if self.model.op_src_is_64bit(op, src) {
-                (8, offsets)
-            } else {
-                (4, offsets)
-            }
-        };
-
-        let c = RegAllocConstraint {
-            bytes,
-            align_mul,
-            align_offsets,
-        };
-
+    fn choose_src_bytes(
+        &self,
+        vec: &SSARef,
+        align: RegAlignConstraint,
+    ) -> Range<u16> {
         // Common case: Try to re-choose the old value
         if let Some(vec_bytes) = self.ssa_ref_bytes(vec) {
-            if c.satisfied(vec_bytes.start.into())
+            if align.satisfied(vec_bytes.start.into())
                 && self.bytes_are_unpinned(vec_bytes.clone())
             {
                 return vec_bytes;
             }
         }
 
-        let b = self.find_unpinned_bytes(c, |_| 0).unwrap();
+        let bytes = vec.bytes();
+        let b = self.find_unpinned_bytes(bytes, align, |_| 0).unwrap();
         b..(b + u16::from(bytes))
     }
 
-    fn choose_dst_bytes(&self, op: &Op, dst: &Dst) -> Range<u16> {
-        let supported_lanes = self.model.op_dst_supported_lanes(op);
-        let vec = dst.dst_ref.as_ssa().unwrap();
-        let bytes = vec.bytes();
-
-        let mut alloc_lanes = dst.lanes;
-        while !supported_lanes.contains(alloc_lanes) {
-            alloc_lanes = widen_lanes(alloc_lanes);
-        }
-        let alloc_bytes = alloc_lanes.bytes(bytes);
-
-        let (align_mul, align_offsets) = if bytes > 4 {
-            // Valhall requires that 64-bit destinations and staging registers
-            // writing more than a single register use an even register.
-            debug_assert_eq!(alloc_lanes, DstLanes::All);
-            (8, 1 << 0)
-        } else if self.model.op_dst_is_staging_reg(op) {
-            // Staging register writes respect lanes in the sense that
-            // that's where they put the data but they may not do
-            // partial writes correctly.
-            (4, 1 << 0)
-        } else if alloc_lanes == DstLanes::AnyB {
-            let mut offsets = 0;
-            for lanes in
-                [DstLanes::B0, DstLanes::B1, DstLanes::B2, DstLanes::B3]
-            {
-                if supported_lanes.contains(lanes) {
-                    let (align_mul, align_off) = lanes.align();
-                    debug_assert_eq!(align_mul, 4);
-                    offsets |= 1 << align_off;
-                }
-            }
-            (4, offsets)
-        } else if alloc_lanes == DstLanes::AnyH {
-            let mut offsets = 0;
-            for lanes in [DstLanes::H0, DstLanes::H1] {
-                if supported_lanes.contains(lanes) {
-                    let (align_mul, align_off) = lanes.align();
-                    debug_assert_eq!(align_mul, 4);
-                    offsets |= 1 << align_off;
-                }
-            }
-            (4, offsets)
-        } else {
-            let (align_mul, align_off) = alloc_lanes.align();
-            (align_mul, 1 << align_off)
-        };
-
-        let c = RegAllocConstraint {
-            bytes: alloc_bytes,
-            align_mul,
-            align_offsets,
-        };
-        let b = self.find_unpinned_bytes(c, |_| 0).unwrap();
-        let bytes = b..(b + u16::from(alloc_bytes));
-
-        // Sanity check the allocation against lanes
-        let lanes = DstLanes::from(self.reg_for_bytes(bytes.clone()).range);
-        match alloc_lanes {
-            DstLanes::All => debug_assert_eq!(lanes, DstLanes::All),
-            DstLanes::AnyB => debug_assert!(lanes.is_byte()),
-            DstLanes::AnyH => debug_assert!(lanes.is_half()),
-            _ => debug_assert_eq!(lanes, alloc_lanes),
-        }
-        debug_assert!(supported_lanes.contains(lanes));
-
-        bytes
+    fn choose_dst_bytes(
+        &self,
+        vec: &SSARef,
+        bytes: u8,
+        align: RegAlignConstraint,
+    ) -> Range<u16> {
+        debug_assert!(bytes >= vec.bytes());
+        let b = self.find_unpinned_bytes(bytes, align, |_| 0).unwrap();
+        b..(b + u16::from(bytes))
     }
 
     fn alloc_regs_instr(
@@ -584,213 +484,327 @@ impl LocalRegAlloc<'_> {
         pcopy: &mut ParallelCopy,
         bl: &impl BlockLiveness,
     ) {
+        // We use a bitmask for indices
+        assert!(instr.srcs().len() <= 8);
+        assert!(instr.dsts().len() <= 8);
+
         struct SrcDst {
             is_src: bool,
-            idx: u8,
+            mask: u8,
             bytes: u8,
-            duplicate: bool,
+            align: RegAlignConstraint,
+            vec: SSARef,
         }
 
-        let mut srcs_dsts = Vec::new();
+        struct Evicted {
+            is_src: bool,
+            bytes: Range<u16>,
+            idx: u32,
+        }
+
         let mut evicted = VecDeque::new();
+        let mut srcs_dsts: Vec<SrcDst> = Vec::new();
         for (i, src) in instr.srcs().iter().enumerate() {
-            if let SrcRef::SSA(vec) = &src.src_ref {
-                // Check for duplicates and don't add an SSARef to the
-                // assignment list twice.
-                let mut duplicate = false;
-                for j in 0..i {
-                    if instr.srcs()[j].src_ref == src.src_ref {
-                        duplicate = true;
-                        break;
+            let SrcRef::SSA(vec) = &src.src_ref else {
+                continue;
+            };
+
+            let src_type = instr.src_type(src);
+            let bytes = vec.bytes();
+
+            if src_type == DataType::SR {
+                assert!(src.swizzle.is_none());
+                assert!(bytes % 4 == 0);
+            }
+
+            let bytes = vec.bytes();
+            let align = if bytes > 4 {
+                // Valhall requires that 64-bit sources and staging registers
+                // reading more than a single register use an even register.
+                RegAlignConstraint::for_align(8, 0)
+            } else if src_type == DataType::SR {
+                debug_assert!(bytes == 4);
+                RegAlignConstraint::for_align(4, 0)
+            } else {
+                let swizzles: &[(u8, Swizzle)] = match bytes {
+                    1 => &[
+                        (0, Swizzle::B0000),
+                        (1, Swizzle::B1111),
+                        (2, Swizzle::B2222),
+                        (3, Swizzle::B3333),
+                    ],
+                    2 => &[(0, Swizzle::H00), (2, Swizzle::H11)],
+                    4 => &[
+                        (0, Swizzle::NONE),
+                        (0, Swizzle::W00),
+                        (4, Swizzle::W11),
+                    ],
+                    _ => panic!("Invalid SSA value size"),
+                };
+
+                let align_mul = if self.model.op_src_is_64bit(&instr.op, src) {
+                    8
+                } else {
+                    4
+                };
+
+                let mut align = RegAlignConstraint::new();
+                for &(b, s) in swizzles {
+                    let Some(s) = s.swizzle(src.swizzle) else {
+                        continue;
+                    };
+                    if self.model.op_src_supports_swizzle(&instr.op, src, s) {
+                        align |= RegAlignConstraint::for_align(align_mul, b);
                     }
                 }
+                align
+            };
 
-                if duplicate {
-                    // Duplicates are only allowed for scalars.
-                    assert_eq!(vec.comps(), 1);
-                } else {
-                    // Evict all the sources.  We'll re-allocate them below
-                    for ssa in vec {
-                        let ssa_bytes = self.ssa_bytes(ssa);
-                        evicted.push_back((ssa.idx(), ssa_bytes.clone()));
-                        self.free_bytes(ssa_bytes);
-                    }
+            let mut first_seen = true;
+            for src_dst in srcs_dsts.iter_mut() {
+                if &src_dst.vec == vec {
+                    first_seen = false;
+                    debug_assert!(src_dst.is_src);
+                    src_dst.mask |= 1 << i;
+                    debug_assert_eq!(src_dst.bytes, bytes);
+                    src_dst.align &= align;
+                    break;
+                }
+            }
+            if first_seen {
+                // This is the first time we've seen this SSA ref.  Evict it
+                // and add it to the list.  The evict handling at the end will
+                // ensure we copy it back into place.
+                for ssa in vec {
+                    let ssa_bytes = self.ssa_bytes(ssa);
+                    evicted.push_back(Evicted {
+                        is_src: true,
+                        bytes: ssa_bytes.clone(),
+                        idx: ssa.idx(),
+                    });
+                    self.free_bytes(ssa_bytes);
                 }
 
                 srcs_dsts.push(SrcDst {
                     is_src: true,
-                    idx: i.try_into().unwrap(),
-                    bytes: vec.bytes(),
-                    duplicate,
+                    mask: 1 << i,
+                    bytes,
+                    align,
+                    vec: vec.clone(),
                 });
             }
         }
 
         for (i, dst) in instr.dsts().iter().enumerate() {
-            if let DstRef::SSA(vec) = &dst.dst_ref {
-                srcs_dsts.push(SrcDst {
-                    is_src: false,
-                    idx: i.try_into().unwrap(),
-                    bytes: vec.bytes(),
-                    duplicate: false,
-                });
+            let DstRef::SSA(vec) = &dst.dst_ref else {
+                continue;
+            };
+
+            let supported_lanes = self.model.op_dst_supported_lanes(&instr.op);
+
+            let mut alloc_lanes = dst.lanes;
+            while !supported_lanes.contains(alloc_lanes) {
+                alloc_lanes = widen_lanes(alloc_lanes);
             }
+
+            let bytes = vec.bytes();
+            let align = if bytes > 4 {
+                // Valhall requires that 64-bit destinations and staging
+                // registers writing more than a single register use an even
+                // register.
+                debug_assert_eq!(alloc_lanes, DstLanes::All);
+                RegAlignConstraint::for_align(8, 0)
+            } else if self.model.op_dst_is_staging_reg(&instr.op) {
+                // Staging register writes respect lanes in the sense that
+                // that's where they put the data but they may not do
+                // partial writes correctly.
+                RegAlignConstraint::for_align(4, 0)
+            } else if alloc_lanes == DstLanes::AnyB {
+                let mut align = RegAlignConstraint::new();
+                for lanes in
+                    [DstLanes::B0, DstLanes::B1, DstLanes::B2, DstLanes::B3]
+                {
+                    if supported_lanes.contains(lanes) {
+                        let (align_mul, align_off) = lanes.align();
+                        debug_assert_eq!(align_mul, 4);
+                        align |= RegAlignConstraint::for_align(4, align_off);
+                    }
+                }
+                align
+            } else if alloc_lanes == DstLanes::AnyH {
+                let mut align = RegAlignConstraint::new();
+                for lanes in [DstLanes::H0, DstLanes::H1] {
+                    if supported_lanes.contains(lanes) {
+                        let (align_mul, align_off) = lanes.align();
+                        debug_assert_eq!(align_mul, 4);
+                        align |= RegAlignConstraint::for_align(4, align_off);
+                    }
+                }
+                align
+            } else {
+                let (align_mul, align_off) = alloc_lanes.align();
+                RegAlignConstraint::for_align(align_mul, align_off)
+            };
+
+            srcs_dsts.push(SrcDst {
+                is_src: false,
+                mask: 1 << i,
+                bytes: alloc_lanes.bytes(bytes),
+                align,
+                vec: vec.clone(),
+            });
         }
 
         // Sort by size in descending order.  sort_by_key() is guaranteed to be
         // stable so this also ensures that sources get processed first.
         srcs_dsts.sort_by_key(|a| std::cmp::Reverse(a.bytes));
 
-        let mut killed = Vec::new();
-        for src_dst in &mut srcs_dsts {
-            let idx = usize::from(src_dst.idx);
-            if src_dst.is_src {
-                let src = &instr.srcs()[idx];
-                let src_type = instr.src_type(&src);
-                let vec = src.src_ref.as_ssa().unwrap();
-
-                let bytes = if src_dst.duplicate {
-                    debug_assert_eq!(vec.comps(), 1);
-                    self.ssa_bytes(&vec[0])
-                } else {
-                    let bytes = self.choose_src_bytes(&instr.op, src);
-
-                    for b in bytes.clone() {
-                        if let Some(idx) = self.byte_idx(b) {
-                            let idx_bytes = self.idx_bytes(idx);
-                            evicted.push_back((idx, idx_bytes.clone()));
-                            self.free_bytes(idx_bytes);
-                        }
-                    }
-
-                    for (ssa, bytes) in iter_ssa_bytes(vec, bytes.clone()) {
-                        // Assign the SSA value to the byte range
-                        self.assign_ssa_bytes(ssa, bytes.clone());
-
-                        // Check if it's killed
-                        if !bl.is_live_after_ip(ssa, ip) {
-                            killed.push(bytes.clone());
-                        }
-                    }
-
-                    // Pin the byte range
-                    self.pin_bytes(bytes.clone());
-
-                    bytes
-                };
-
-                // Assign the source to the byte range
-                let mut reg = self.reg_for_bytes(bytes);
-                let mut swz = Swizzle::from(reg.range);
-                if src_type.bits() == 64 {
-                    let word = reg.idx & 1;
-                    if reg.range == RegRange::Regs(1) {
-                        reg.idx &= !1;
-                        swz = Swizzle::replicate_word(word);
-                        if word == 1 {
-                            reg.range = RegRange::Regs(2);
-                        }
-                    } else {
-                        debug_assert!(word == 0);
-                    }
-                }
-                let src = &mut instr.srcs_mut()[idx];
-                src.src_ref = reg.into();
-                src.swizzle = swz
-                    .swizzle(src.swizzle)
-                    .expect("16-bit and smaller sources have to swizzle");
+        for src_dst in &srcs_dsts {
+            let bytes = if src_dst.is_src {
+                self.choose_src_bytes(&src_dst.vec, src_dst.align)
             } else {
-                debug_assert!(!src_dst.duplicate);
-                let dst = &instr.dsts()[idx];
-                let vec = dst.dst_ref.as_ssa().unwrap();
-                let bytes = self.choose_dst_bytes(&instr.op, dst);
+                self.choose_dst_bytes(
+                    &src_dst.vec,
+                    src_dst.bytes,
+                    src_dst.align,
+                )
+            };
 
-                for b in bytes.clone() {
-                    if let Some(idx) = self.byte_idx(b) {
-                        let idx_bytes = self.idx_bytes(idx);
-                        evicted.push_back((idx, idx_bytes.clone()));
-                        self.free_bytes(idx_bytes);
-                    }
+            // Evict anything that currently lives in the selected range.
+            for b in bytes.clone() {
+                if let Some(idx) = self.byte_idx(b) {
+                    let idx_bytes = self.idx_bytes(idx);
+                    evicted.push_back(Evicted {
+                        is_src: false,
+                        bytes: idx_bytes.clone(),
+                        idx,
+                    });
+                    self.free_bytes(idx_bytes);
                 }
+            }
 
-                // In case when the SSA value is smaller than the region we
-                // just allocated, adjust accordingly.
+            // Pin the range
+            self.pin_bytes(bytes.clone());
+
+            // For destinations, we may allocate more space than needed by the
+            // SSARef.  This can happen if for instance, we have a byte SSARef
+            // but the instruction only supports half-word write masks.  In this
+            // case, we need to pin and evict the whole range because that's
+            // what the instruction will write but we only want to assign a
+            // subset of that range to the SSARef.
+            let ssa_bytes = if src_dst.is_src {
+                bytes.clone()
+            } else {
+                debug_assert!(src_dst.mask.is_power_of_two());
+                let i = usize::try_from(src_dst.mask.trailing_zeros()).unwrap();
+                let dst = &instr.dsts()[i];
+
                 let (dst_mul, dst_off) = dst.lanes.align();
                 let ssa_b = (bytes.start & !(u16::from(dst_mul) - 1))
                     | u16::from(dst_off);
-                let ssa_bytes = ssa_b..(ssa_b + u16::from(vec.bytes()));
+                let ssa_bytes = ssa_b..(ssa_b + u16::from(src_dst.vec.bytes()));
                 debug_assert!(bytes.start <= ssa_bytes.start);
                 debug_assert!(ssa_bytes.end <= bytes.end);
+                ssa_bytes
+            };
 
-                for (ssa, bytes) in iter_ssa_bytes(vec, ssa_bytes) {
-                    // Assign the SSA value to the (possibly narrowed) byte
-                    // range
-                    self.assign_ssa_bytes(ssa, bytes.clone());
+            for (ssa, bytes) in iter_ssa_bytes(&src_dst.vec, ssa_bytes) {
+                // Assign the SSA value to the byte range
+                self.assign_ssa_bytes(ssa, bytes.clone());
 
-                    // Check if it's immediately killed
-                    if !bl.is_live_after_ip(ssa, ip) {
-                        killed.push(bytes.clone());
-                    }
+                // Check if it's killed
+                if !bl.is_live_after_ip(ssa, ip) {
+                    self.free_bytes(bytes);
                 }
+            }
 
-                // Pin the whole (not narrowed) byte range
-                self.pin_bytes(bytes.clone());
+            if src_dst.is_src {
+                let mut mask = src_dst.mask;
+                while mask != 0 {
+                    let i = mask.trailing_zeros();
+                    mask &= !(1 << i);
+
+                    let i = usize::try_from(i).unwrap();
+                    let src = &instr.srcs()[i];
+
+                    let mut reg = self.reg_for_bytes(bytes.clone());
+                    let mut swz = Swizzle::from(reg.range);
+                    if self.model.op_src_is_64bit(&instr.op, src) {
+                        let word = reg.idx & 1;
+                        reg.idx &= !1;
+                        if src.swizzle.is_byte_swizzle() {
+                            assert!(word == 0);
+                            assert!(reg.range.bytes() <= 4);
+                        } else if reg.range == RegRange::Regs(1) {
+                            swz = Swizzle::replicate_word(word);
+                            if word == 1 {
+                                reg.range = RegRange::Regs(2);
+                            }
+                        } else {
+                            assert!(word == 0);
+                        }
+                    }
+
+                    let src = &mut instr.srcs_mut()[i];
+                    src.src_ref = reg.into();
+                    src.swizzle = swz
+                        .swizzle(src.swizzle)
+                        .expect("16-bit and smaller sources have to swizzle");
+                }
+            } else {
+                debug_assert!(src_dst.mask.is_power_of_two());
+                let i = usize::try_from(src_dst.mask.trailing_zeros()).unwrap();
 
                 // Assign the dst to the whole byte range
                 let reg = self.reg_for_bytes(bytes);
-                instr.dsts_mut()[idx] = reg.into();
+                instr.dsts_mut()[i] = reg.into();
             }
         }
 
         loop {
-            let Some((idx, bytes)) = evicted.pop_front() else {
+            let Some(e) = evicted.pop_front() else {
                 break;
             };
 
-            // First check to see if it's already been assigned
-            let mut dst_bytes = self.idx_bytes(idx);
-            if self.byte_idx(dst_bytes.start) == Some(idx) {
-                debug_assert_eq!(bytes.len(), dst_bytes.len());
-                for b in dst_bytes.clone() {
-                    debug_assert_eq!(self.byte_idx(b), Some(idx));
-                }
-                debug_assert!(self.bytes_are_pinned(dst_bytes.clone()));
-
-                // There's nothing to evict since the destination has already
-                // been assigned.  Just emit the copy.
+            let dst_bytes = if e.is_src {
+                // If it's a source, it's already been placed.  Just look it up.
+                let idx_bytes = self.idx_bytes(e.idx);
+                debug_assert_eq!(idx_bytes.len(), e.bytes.len());
+                idx_bytes
             } else {
-                let nr_bytes = bytes.len().try_into().unwrap();
-                dst_bytes = self.choose_aligned_bytes(nr_bytes);
+                let nr_bytes = e.bytes.len().try_into().unwrap();
+                let bytes = self.choose_aligned_bytes(nr_bytes);
 
                 // Evict anything that might happen to be in dst_bytes
-                for b in dst_bytes.clone() {
+                for b in bytes.clone() {
                     if let Some(idx) = self.byte_idx(b) {
                         let idx_bytes = self.idx_bytes(idx);
-                        evicted.push_back((idx, idx_bytes.clone()));
+                        evicted.push_back(Evicted {
+                            is_src: false,
+                            bytes: idx_bytes.clone(),
+                            idx,
+                        });
                         self.free_bytes(idx_bytes);
                     }
                 }
 
                 // Pin dst_bytes so we don't try to re-use it
-                self.pin_bytes(dst_bytes.clone());
+                self.pin_bytes(bytes.clone());
 
                 // Assign the evicted idx to the new location
-                self.assign_idx_bytes(idx, dst_bytes.clone());
-            }
+                self.assign_idx_bytes(e.idx, bytes.clone());
+
+                bytes
+            };
 
             pcopy.add_copy(
                 self.reg_for_bytes(dst_bytes),
-                self.reg_for_bytes(bytes).into(),
+                self.reg_for_bytes(e.bytes).into(),
             );
         }
 
         // Clean up by unpinning everything
         self.pinned.clear();
-
-        // Kill anything that is no longer live after this ip
-        for bytes in killed {
-            self.free_bytes(bytes);
-        }
     }
 }
 
@@ -911,12 +925,8 @@ impl GlobalRegAlloc<'_> {
             }
         }
 
-        let c = RegAllocConstraint {
-            bytes,
-            align_mul: bytes,
-            align_offsets: (1 << 0),
-        };
-        let b = self.local.find_unpinned_bytes(c, |b| {
+        let align = RegAlignConstraint::for_align(bytes, 0);
+        let b = self.local.find_unpinned_bytes(bytes, align, |b| {
             let bytes = b..(b + u16::from(bytes));
             let bytes = bytes.start.into()..bytes.end.into();
             debug_assert!(bytes.len() <= 8);

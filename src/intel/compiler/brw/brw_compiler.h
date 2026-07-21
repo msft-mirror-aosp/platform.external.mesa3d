@@ -74,6 +74,11 @@ struct brw_compiler {
    bool precise_trig;
 
    /**
+    * Whether to limit sin/cos inputs to [-2pi, 2pi] to improve accuracy.
+    */
+   bool limit_trig_input_range;
+
+   /**
     * Should DPAS instructions be lowered?
     *
     * This will be set for all platforms before Gfx12.5. It may also be set
@@ -109,14 +114,6 @@ struct brw_compiler {
     * in case the render thread hasn't responded within 2 minutes.
     */
    int spilling_rate;
-
-   /**
-    * Register file size
-    *
-    * Useful to calculate the amount of push data to deliver to a given
-    * shader.
-    */
-   unsigned register_file_size;
 
    /**
     * We perform a quick register pressure estimate at the NIR level before
@@ -231,16 +228,9 @@ struct brw_base_prog_key {
 
    enum intel_vue_layout vue_layout:2;
 
-   /**
-    * Apply workarounds for SIN and COS input range problems.
-    * This limits input range for SIN and COS to [-2p : 2p] to
-    * avoid precision issues.
-    */
-   bool limit_trig_input_range:1;
-
    enum brw_divergent_atomics_flags divergent_atomics_flags:2;
 
-   uint32_t padding:24;
+   uint32_t padding:25;
 };
 
 /**
@@ -302,7 +292,15 @@ struct brw_vs_prog_key {
     */
    bool no_vf_slot_compaction : 1;
 
-   uint32_t padding:30;
+   /** Percentage of the register file that should be used for the payload
+    *
+    * Limit the number of vector registers delivered to the payload by
+    * adjusting the VF input data delivered (it'll be fetch from the URB
+    * instead). Range [0, 100].
+    */
+   unsigned max_payload_percent : 8;
+
+   uint32_t padding:22;
 };
 
 /** The program key for Tessellation Control Shaders. */
@@ -404,7 +402,11 @@ struct brw_fs_prog_key {
 
    bool ignore_sample_mask_out:1;
    bool coarse_pixel:1;
-   unsigned pad:13;
+
+   /* Keep the SIMD32 variant even if the throughput model ties it. */
+   bool prefer_simd32:1;
+
+   unsigned pad:12;
 };
 
 static inline bool

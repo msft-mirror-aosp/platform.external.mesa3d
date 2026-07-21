@@ -46,10 +46,10 @@ list_partition(struct list_head *src,
 }
 
 /*
- * If the fragment shader halts, we need a halt target to run EOT. Try to pluck
- * out the last instruction and use it for EOT in the case where we are fully
- * halted. This breaks SSA dominance invariants but that's why this is a
- * post-RA, post-sched pass. Only SWSB has to deal with the resulting mess.
+ * We need the exit block to run EOT. Try to pluck out the last instruction and
+ * use it for EOT in the case where we are fully halted. This breaks SSA
+ * dominance invariants but that's why this is a post-RA, post-sched pass. Only
+ * SWSB has to deal with the resulting mess.
  *
  * If there is at least one lane that does not halt, the penultimate block will
  * execute filling out any registers required by the send. The only case where
@@ -67,10 +67,8 @@ list_partition(struct list_head *src,
  * a slight i-cache inflation and uglier asm.
  */
 static void
-insert_halt_target(jay_builder *b, struct ctx *ctx)
+setup_exit_block(jay_builder *b, struct ctx *ctx)
 {
-   jay_HALT_TARGET(b);
-
    jay_inst *send = jay_last_inst(jay_last_source_block(b->func));
    if ((send && send->op == JAY_OPCODE_SEND && jay_send_eot(send)) &&
        (jay_is_imm(send->src[0]) && jay_is_imm(send->src[1]))) {
@@ -177,18 +175,19 @@ process_block(struct ctx *ctx, jay_builder *b, jay_block *block)
             jay_block_add_successor(split, jay_last_block(b->func), GPR);
             return;
          }
-      } else if (I->op == JAY_OPCODE_HELPER_SEL) {
-         jay_SEL(b, JAY_TYPE_U32, I->dst, I->src[0], I->src[1],
-                 ctx->helper_flag);
+      } else if (I->op == JAY_OPCODE_IS_HELPER) {
+         jay_inst *mov = jay_MOV(b, I->dst, ctx->helper_flag);
+         mov->uniform = true;
+         mov->type = JAY_TYPE_U | b->shader->dispatch_width;
          jay_remove_instruction(I);
       } else if (I->op == JAY_OPCODE_SEND && jay_send_skip_helpers(I)) {
          if (jay_is_no_mask(I)) {
-            /* jay_assign_flags ensured this is free for us, see logic there */
-            jay_def t = jay_bare_reg(UFLAG, 0);
+            /* I->cond_flag has been reserved for our use */
             jay_inst *not = jay_NOT(b, jay_null(), ctx->helper_flag);
             not->type = JAY_TYPE_U | b->shader->dispatch_width;
-            jay_set_conditional_mod(b, not, t, GEN_CONDITION_NE);
-            jay_add_predicate(b, I, t);
+            not->uniform = true;
+            jay_set_conditional_mod(b, not, I->cond_flag, GEN_CONDITION_NE);
+            jay_add_predicate(b, I, I->cond_flag);
          } else {
             jay_add_predicate(b, I, jay_negate(ctx->helper_flag));
          }
@@ -214,8 +213,10 @@ jay_lower_helpers(jay_shader *shader)
       process_block(&ctx, &b, block);
    }
 
+   b.cursor = jay_after_block(exit_block);
    if (ctx.halted) {
-      b.cursor = jay_after_block(exit_block);
-      insert_halt_target(&b, &ctx);
+      jay_HALT_TARGET(&b);
    }
+
+   setup_exit_block(&b, &ctx);
 }

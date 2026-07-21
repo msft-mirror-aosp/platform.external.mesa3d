@@ -1,4 +1,6 @@
 use core::fmt;
+use std::f32::consts::{E, PI};
+use std::ops::Range;
 use std::sync::OnceLock;
 use std::{io, iter, slice};
 
@@ -202,11 +204,14 @@ impl<'a> TestShaderBuilder<'a> {
         };
         s.validate();
 
+        pass!(s.remat_constants());
         pass!(s.widen_alu_ops());
         pass!(s.legalize_src_swizzles());
+        pass!(s.opt_copy_prop());
         pass!(s.lower_mkvec_swz());
         pass!(s.opt_dce());
         pass!(s.lower_small_constants());
+        pass!(s.legalize());
         pass!(s.assign_registers());
         pass!(s.lower_copy());
         pass!(s.assign_message_slots());
@@ -366,6 +371,67 @@ fn test_copy_large() {
     assert_eq!(&data[..READ_SIZE], &data[READ_SIZE..]);
 }
 
+#[test]
+fn test_fadd_lscale() {
+    // The hardware docs tell that src1 is scaled to the range [0.5, 1.75)
+    // how is this scaled exactly?
+    // TODO: convert to Foldable test when we add proper float Foldables
+    let run = RunSingleton::get();
+    let shader = {
+        let mut b = TestShaderBuilder::new(&*run.model);
+        let data = b.ld_test_data(0, 32);
+
+        let res = b.alloc_ssa(32);
+        b.push_op(OpFAddLScale {
+            dst: res.into(),
+            round: FRound::NearestEven,
+            clamp: FClamp::None,
+            srcs: [Src::from(0).fneg(), data.into()],
+        });
+
+        b.st_test_data(4, res.into());
+        b.compile()
+    };
+
+    let case_fn = |c: f32| [c.to_bits(), 0];
+    let mut data = vec![
+        case_fn(1.0),
+        case_fn(-1.0),
+        case_fn(1.5),
+        case_fn(0.75),
+        case_fn(3.0),
+        case_fn(-3.0),
+        case_fn(0.0),
+        case_fn(-0.0),
+        case_fn(10.0),
+        case_fn(-10.0),
+        case_fn(-10.0),
+        case_fn(PI),
+        case_fn(-PI),
+        case_fn(f32::from_bits(1)), // Denormals
+        case_fn(f32::INFINITY),
+        case_fn(-f32::INFINITY),
+    ];
+
+    let case = shader.with_args(FAU_ONLY_ARGS, &mut data);
+    run.execute(case);
+
+    fn model(x: f32) -> f32 {
+        if !x.is_normal() {
+            return x;
+        }
+        // Force exponent to 0
+        let m = f32::from_bits((x.to_bits() & 0x807fffff) | 0x3f800000);
+        // Mantissa is (by construction) in [1.0, 2.0), half it if too large
+        if m.abs() >= 1.5 { m * 0.5 } else { m }
+    }
+
+    for data in &data {
+        let [input, res] = data.map(f32::from_bits);
+        assert_eq!(res, model(input), "Failed for {input}");
+    }
+}
+
 fn parse_folded(folded: &mut [u64], words: &[u32], types: DataTypeIter) {
     let mut offset = 0;
     for (comp, dtype) in folded.iter_mut().zip(types) {
@@ -400,14 +466,21 @@ pub fn test_foldable_op_with(
         let data = b.ld_test_data(offset_words * 4, words * 32);
         offset_words += u16::from(words);
 
-        let src_type_swizzle = match read_bits {
-            8 => Swizzle::replicate_byte(0),
-            16 => Swizzle::replicate_half(0),
-            _ => Swizzle::NONE,
+        let swiz_src = if src.swizzle.is_none() {
+            // We always load words.  If there's no swizzle, we need to at
+            // least trim it down to fit inside the source type.
+            let src_type_swizzle = match read_bits {
+                8 => Swizzle::replicate_byte(0),
+                16 => Swizzle::replicate_half(0),
+                _ => Swizzle::NONE,
+            };
+            Src::from(data).swizzle(src_type_swizzle)
+        } else {
+            Src::from(data).swizzle(src.swizzle)
         };
+        src.src_ref = swiz_src.src_ref;
+        src.swizzle = swiz_src.swizzle;
 
-        src.src_ref = data.into();
-        src.swizzle = src.swizzle.swizzle(src_type_swizzle).unwrap();
         word_bits.extend(iter::repeat_n(read_bits.min(32), words as usize));
     }
     let src_words = usize::from(offset_words);
@@ -767,6 +840,52 @@ fn test_op_icmp() {
 }
 
 #[test]
+fn test_op_icmp_multi() {
+    const DATA_TYPES: &'static [DataType] = &[DataType::S32, DataType::U32];
+
+    const CMP_OPS: &'static [CmpOp] = &[
+        CmpOp::Eq,
+        CmpOp::Gt,
+        CmpOp::Ge,
+        CmpOp::Ne,
+        CmpOp::Lt,
+        CmpOp::Le,
+    ];
+
+    const RES_TYPES: &'static [CmpResultType] = &[
+        CmpResultType::I1,
+        CmpResultType::F1,
+        CmpResultType::M1,
+        CmpResultType::C,
+    ];
+
+    let mut a = Acorn::new();
+    for &src_type in DATA_TYPES {
+        for &cmp_op in CMP_OPS {
+            for &res_type in RES_TYPES {
+                if res_type == CmpResultType::C && src_type == DataType::S32 {
+                    continue;
+                }
+
+                let op = OpICmpMulti {
+                    dst: DstRef::None.into(),
+                    src_type,
+                    res_type,
+                    cmp_op,
+                    srcs: [0.into(), 0.into()],
+                    accum: 0.into(),
+                };
+                // Accum should be 0, 1, or -1
+                test_foldable_op_with(op, |i| match i {
+                    2 => (a.get_u32() % 3) - 1,
+                    _ => a.get_u32(),
+                });
+            }
+        }
+    }
+}
+
+#[test]
 fn test_op_idpadd() {
     let model = RunSingleton::get().model.as_ref();
 
@@ -977,6 +1096,210 @@ fn test_op_shift_lop() {
                     }
                 }
             }
+        }
+    }
+}
+
+mod builder {
+    use super::*;
+
+    #[derive(Clone, Copy)]
+    enum FPrecision {
+        Ulp(u32),
+        Abs(f32),
+    }
+
+    fn ulp_dist(a: f32, b: f32) -> u32 {
+        let ulp_key = |x: f32| {
+            let sign_bit = 1 << 31;
+            let bits = x.to_bits();
+            if bits & sign_bit != 0 {
+                !bits
+            } else {
+                bits ^ sign_bit
+            }
+        };
+
+        ulp_key(a).abs_diff(ulp_key(b))
+    }
+
+    fn cmp_eq_f32(real: f32, expected: f32, prec: FPrecision) -> bool {
+        if real.is_nan() || expected.is_nan() {
+            return real.is_nan() && expected.is_nan();
+        }
+        match prec {
+            FPrecision::Ulp(ulps) => {
+                if (real - expected).abs() < f32::MIN_POSITIVE {
+                    return true; // ftz
+                }
+                ulp_dist(real, expected) < ulps
+            }
+            FPrecision::Abs(prec) => (real - expected).abs() < prec,
+        }
+    }
+
+    // `assert_feq!(expected, hardware, prec, "msg {..}")`
+    macro_rules! assert_feq {
+        ($expected:expr, $hardware:expr, $prec:expr, $($fmt:tt)+) => {{
+            if !cmp_eq_f32($expected, $hardware, $prec) {
+                panic!(
+                    "Test {} failed\nExpected: {}\nHardware: {}",
+                    format_args!($($fmt)+), $expected, $hardware
+                );
+            }
+        }};
+    }
+
+    fn sample_f32_range(rng: &mut Acorn, range: Range<f32>) -> f32 {
+        let t = (rng.get_u32() as f64 / u32::MAX as f64) as f32;
+        t * (range.end - range.start) + range.start
+    }
+
+    #[test]
+    fn test_fexp() {
+        // Vulkan Environment for SPIR-V requires an absolute precision of
+        // 3 + 2*|x| ULP
+        const BASE_RANGE: Range<f32> = 0.0..10.0;
+        const RANGE: Range<f32> = -150.0..150.0;
+
+        let run = RunSingleton::get();
+        let shader = {
+            let mut b = TestShaderBuilder::new(&*run.model);
+            let log2_base = b.ld_test_data(0, 32);
+            let input = b.ld_test_data(4, 32);
+
+            let dst = b.alloc_ssa(32);
+            b.fexp_32_to(dst.into(), input.into(), log2_base.into());
+            b.st_test_data(8, dst.into());
+
+            b.compile()
+        };
+
+        let mut rng = Acorn::new();
+        let exp_case =
+            |base: f32, num: f32| [base.log2().to_bits(), num.to_bits(), 0];
+        // Notable cases
+        let mut data = vec![
+            exp_case(1.0, 0.0),
+            exp_case(2.0, 0.0),
+            exp_case(2.0, 1.0),
+            exp_case(2.0, 2.0),
+            exp_case(4.0, 2.0),
+            exp_case(2.0, -1.0),
+            exp_case(2.0, -2.0),
+            exp_case(E, 2.0),
+        ];
+
+        for _ in 0..1000 {
+            let a = sample_f32_range(&mut rng, BASE_RANGE);
+            let b = sample_f32_range(&mut rng, RANGE);
+            data.push([a.to_bits(), b.to_bits(), 0]);
+        }
+
+        let case = shader.with_args(FAU_ONLY_ARGS, &mut data);
+        run.execute(case);
+        for arr in data {
+            let [base_log2, arg, res] = arr.map(f32::from_bits);
+            let comp = (base_log2 * arg).exp2();
+
+            let ulps = 3 + 2 * ((base_log2 * arg).abs() as u32);
+            let prec = FPrecision::Ulp(ulps);
+            assert_feq!(comp, res, prec, "fexp({base_log2}, {arg})");
+        }
+    }
+
+    #[test]
+    fn test_flog2() {
+        const RANGE: Range<f32> = -1000.0..1000.0;
+
+        let run = RunSingleton::get();
+        let shader = {
+            let mut b = TestShaderBuilder::new(&*run.model);
+            let input = b.ld_test_data(0, 32);
+
+            let dst = b.flog2_32(input.into());
+            b.st_test_data(4, dst.into());
+            b.compile()
+        };
+
+        let mut rng = Acorn::new();
+        let log_case = |arg: f32| [arg.to_bits(), 0];
+        // Notable cases
+        let mut data = vec![
+            log_case(0.5),
+            log_case(1.0),
+            log_case(2.0),
+            log_case(4.0),
+            log_case(E),
+            log_case(10.0),
+            log_case(-1.0),
+            log_case(f32::NAN),
+        ];
+
+        for _ in 0..1000 {
+            let x = sample_f32_range(&mut rng, RANGE);
+            data.push([x.to_bits(), 0]);
+        }
+
+        let case = shader.with_args(FAU_ONLY_ARGS, &mut data);
+        run.execute(case);
+        for arr in data {
+            let [input, comp] = arr.map(f32::from_bits);
+            let res = input.log2();
+
+            let prec = if (0.5..=2.0).contains(&input) {
+                FPrecision::Abs(2f32.powi(-21))
+            } else {
+                FPrecision::Ulp(3)
+            };
+            assert_feq!(comp, res, prec, "flog2({input})");
+        }
+    }
+
+    #[test]
+    fn test_sin_cos() {
+        // Vulkan Environment for SPIR-V requires an absolute precision of 2^-11
+        // in the range [-PI, PI]
+        const RANGE: Range<f32> = -PI..PI;
+        let prec = FPrecision::Abs(2f32.powi(-11));
+
+        let run = RunSingleton::get();
+        let shader = {
+            let mut b = TestShaderBuilder::new(&*run.model);
+            let input = b.ld_test_data(0, 32);
+
+            let sin = b.alloc_ssa(32);
+            let cos = b.alloc_ssa(32);
+            b.fsincos_32_to(sin.into(), input.clone().into(), false);
+            b.fsincos_32_to(cos.into(), input.into(), true);
+
+            b.st_test_data(4, sin.into());
+            b.st_test_data(8, cos.into());
+
+            b.compile()
+        };
+
+        let mut data = Vec::new();
+        let mut rng = Acorn::new();
+        // Notable cases
+        for c in [0f32, PI, PI / 2.0, PI / 4.0, 2.0 * PI, f32::NAN] {
+            data.push([c.to_bits(), 0, 0]);
+        }
+        for _ in 0..1000 {
+            let x = sample_f32_range(&mut rng, RANGE);
+            data.push([x.to_bits(), 0, 0]);
+        }
+
+        let case = shader.with_args(FAU_ONLY_ARGS, &mut data);
+        run.execute(case);
+        for arr in data {
+            let [input, csin, ccos] = arr.map(f32::from_bits);
+            // Rust doesn't specify a precision, but Kraid tests are almost surely
+            // built with glibc, that should offer more precision what what we need
+            let (esin, ecos) = input.sin_cos();
+
+            assert_feq!(esin, csin, prec, "sin({input})");
+            assert_feq!(ecos, ccos, prec, "cos({input})");
         }
     }
 }

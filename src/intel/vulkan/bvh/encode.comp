@@ -70,6 +70,18 @@ encode_leaf_node(uint32_t type, IR_NODE child, uint64_t dst_node, REF(anv_accel_
    switch (type) {
    case vk_ir_node_triangle: {
       vk_ir_triangle_node src = DEREF(REF(vk_ir_triangle_node)(src_node));
+
+      if (VK_TEST_BUILD_FLAG_HAS_QUADS) {
+         vk_ir_triangle_node_quad quad =
+            vk_ir_triangle_node_get_quad(REF(vk_ir_triangle_node)(src_node));
+         if (quad.triangle_id == VK_QUAD_TRIANGLE_ID_UNUSED) {
+            anv_encode_triangle(dst_node, src);
+         } else {
+            anv_encode_quad(dst_node, src, quad);
+         }
+         break;
+      }
+
       anv_encode_triangle(dst_node, src);
       break;
    }
@@ -188,11 +200,13 @@ encode_internal_node(uint32_t child, uint32_t child_block_offset_from_internal_n
          DEREF(dst_node).exp_z = exp_i8[2];
          DEREF(dst_node).node_mask = uint8_t(0xff);
          DEREF(dst_node).node_type = node_type;
+         DEREF(dst_node).pad = uint8_t(0);
 
-         /* Note: This is not a real field, it's unused byte padding, which is not
-          * required to be MBZ. We're just using it to store the child count.
-          */
-         DEREF(dst_node).child_count = uint8_t(child_count);
+         if (ANV_TEST_BUILD_FLAG_WRITE_LOOKUP_MAPS_FOR_UPDATE &&
+             args.parent_child_count_map != 0) {
+            DEREF(INDEX(uint8_t, args.parent_child_count_map, bvh_block_offset)) =
+               uint8_t(child_count);
+         }
       }
 
       child_aabb = conservative_aabb(child_aabb);
@@ -350,18 +364,7 @@ main()
       DEREF(args.header).ir_internal_node_count - 1 -
       min(global_id_hash, DEREF(args.header).ir_internal_node_count - 1);
 
-   uint32_t intermediate_leaf_node_size;
-   switch (args.geometry_type) {
-   case VK_GEOMETRY_TYPE_TRIANGLES_KHR:
-      intermediate_leaf_node_size = SIZEOF(vk_ir_triangle_node);
-      break;
-   case VK_GEOMETRY_TYPE_AABBS_KHR:
-      intermediate_leaf_node_size = SIZEOF(vk_ir_aabb_node);
-      break;
-   default: /* instances */
-      intermediate_leaf_node_size = SIZEOF(vk_ir_instance_node);
-      break;
-   }
+   uint32_t intermediate_leaf_node_size = vk_ir_node_size(args.geometry_type);
 
    /* Each invocation cluster encodes one internal node. */
    anv_cluster cluster;

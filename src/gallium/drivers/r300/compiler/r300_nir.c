@@ -218,6 +218,8 @@ r300_optimize_nir(struct nir_shader *s, struct r300_screen *screen)
                var->data.driver_location--;
             }
          }
+         assert(s->num_outputs > 0);
+         s->num_outputs--;
          NIR_PASS(_, s, nir_remove_dead_variables, nir_var_shader_out, NULL);
          fprintf(stderr, "r300: no HW support for clip vertex, expect misrendering.\n");
 #if !UTIL_ARCH_BIG_ENDIAN
@@ -342,6 +344,33 @@ r300_check_control_flow(nir_shader *s)
    return NULL;
 }
 
+bool
+r300_nir_lower_frontface(nir_shader *nir)
+{
+   nir_function_impl *impl = nir_shader_get_entrypoint(nir);
+   nir_builder b = nir_builder_create(impl);
+   b.cursor = nir_after_impl(impl);
+
+   /* Emit FACE as 1 for front-facing fragments and 0 for back-facing. */
+   nir_variable *color = nir_variable_create(nir, nir_var_shader_out,
+                                             glsl_vec4_type(),
+                                             "r300_frontface_color");
+   color->data.location = VARYING_SLOT_COL0;
+   color->data.driver_location = nir->num_outputs++;
+   color->data.interpolation = INTERP_MODE_NOPERSPECTIVE;
+   nir_store_var(&b, color, nir_imm_vec4(&b, 1, 1, 1, 1), 0xf);
+
+   nir_variable *bcolor = nir_variable_create(nir, nir_var_shader_out,
+                                              glsl_vec4_type(),
+                                              "r300_frontface_bcolor");
+   bcolor->data.location = VARYING_SLOT_BFC0;
+   bcolor->data.driver_location = nir->num_outputs++;
+   bcolor->data.interpolation = INTERP_MODE_NOPERSPECTIVE;
+   nir_store_var(&b, bcolor, nir_imm_zero(&b, 4, 32), 0xf);
+
+   return nir_progress(true, impl, nir_metadata_control_flow);
+}
+
 /* Add a generic output that mirrors gl_Position, is placed in the first free VAR slot
  * and used as WPOS by the r300 fragment shader.
  */
@@ -367,6 +396,7 @@ r300_nir_add_wpos(nir_shader *nir, nir_variable **wpos_var_out)
    nir_variable *wpos_var = nir_variable_create(nir, nir_var_shader_out,
                                                 glsl_vec4_type(), "r300_wpos");
    wpos_var->data.location = VARYING_SLOT_VAR0 + last_var + 1;
+   wpos_var->data.driver_location = nir->num_outputs++;
    wpos_var->data.interpolation = INTERP_MODE_SMOOTH;
 
    if (wpos_var_out)

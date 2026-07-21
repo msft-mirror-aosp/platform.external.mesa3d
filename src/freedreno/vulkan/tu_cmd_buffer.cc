@@ -4754,7 +4754,7 @@ tu_bind_descriptor_sets(struct tu_cmd_buffer *cmd,
       descriptors_state->set_iova[idx] = set ?
          (set->va | BINDLESS_DESCRIPTOR_64B) : 0;
 
-      if (cmd->device->physical_device->enable_ssbo_emulation)
+      if (cmd->device->physical_device->compiler_options.enable_ssbo_emulation)
          cmd->state.dirty |= TU_CMD_DIRTY_SHADER_CONSTS;
 
       if (!set)
@@ -4823,7 +4823,7 @@ tu_bind_descriptor_sets(struct tu_cmd_buffer *cmd,
                         va += desc_offset << offset_shift;
                         va += offset;
 
-                        if (cmd->device->physical_device->enable_ssbo_emulation) {
+                        if (cmd->device->physical_device->compiler_options.enable_ssbo_emulation) {
                            dst_desc[11] = va;
                            dst_desc[12] = va >> 32;
                         }
@@ -4930,7 +4930,7 @@ tu_set_descriptor_buffer_offsets(
           info->pOffsets[i]) |
          BINDLESS_DESCRIPTOR_64B;
 
-      if (cmd->device->physical_device->enable_ssbo_emulation ||
+      if (cmd->device->physical_device->compiler_options.enable_ssbo_emulation ||
           set_layout->has_inline_uniforms)
          cmd->state.dirty |= TU_CMD_DIRTY_SHADER_CONSTS;
    }
@@ -6215,6 +6215,10 @@ tu_restore_suspended_pass(struct tu_cmd_buffer *cmd,
    cmd->state.tiling = tu_framebuffer_get_tiling_config(cmd->state.framebuffer, cmd->device, cmd->state.pass,
                                                         cmd->state.gmem_layout, cmd->state.gmem_layout_divisor);
    cmd->state.lrz = suspended->state.suspended_pass.lrz;
+
+#ifdef HAVE_PERFETTO
+   cmd->vk.dynamic_graphics_state.vp = suspended->vk.dynamic_graphics_state.vp;
+#endif
 }
 
 /* Take the saved pre-chain in "secondary" and copy its commands to "cmd",
@@ -8484,12 +8488,13 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
                     ir3_tess_factor_stride(tes->variant->key.tessellation),
                  TU_TESS<CHIP>::PARAM_SIZE / (tcs->variant->output_size * 4))
             : 0;
-      /* convert from # of patches to draw count */
-      subdraw_size *= cmd->vk.dynamic_graphics_state.ts.patch_control_points;
 
       /* For gen8 tess_bo is sized for two draws, adjust subdraw size accordingly: */
       if (CHIP >= A8XX)
          subdraw_size /= 2;
+
+      /* convert from # of patches to draw count */
+      subdraw_size *= cmd->vk.dynamic_graphics_state.ts.patch_control_points;
 
       tu_cs_emit_pkt7(cs, CP_SET_SUBDRAW_SIZE, 1);
       tu_cs_emit(cs, subdraw_size);

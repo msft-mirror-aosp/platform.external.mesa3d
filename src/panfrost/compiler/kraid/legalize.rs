@@ -66,8 +66,8 @@ impl SSAValueSet {
 ///  1. For any vector source (SSARef::comps() > 1), all the SSAValues
 ///     referenced by the SSARef are unique.
 ///
-///  2. For any two vector sources, either they are identical or they have
-///     no SSAValues in common.
+///  2. For any two sources, either they are identical or they have no
+///     SSAValues in common.
 fn legalize_vec_srcs(
     b: &mut impl SSABuilder,
     instr: &mut Instr,
@@ -79,21 +79,23 @@ fn legalize_vec_srcs(
     let mut duplicates = [!0_usize; 4];
     debug_assert!(srcs.len() <= duplicates.len());
     for i in 0..srcs.len() {
-        if !srcs[i].src_ref.as_ssa().is_some_and(|ssa| ssa.comps() > 1) {
+        let (srcs_before_i, srcs_after_i) = srcs.split_at_mut(i);
+        let SrcRef::SSA(vec) = &mut srcs_after_i[0].src_ref else {
             continue;
-        }
+        };
 
-        for j in 0..i {
-            if srcs[i].src_ref == srcs[j].src_ref {
-                duplicates[i] = j;
-                break;
+        for (j, sb) in srcs_before_i.iter().enumerate() {
+            if let SrcRef::SSA(sb_vec) = &sb.src_ref {
+                if sb_vec == vec {
+                    duplicates[i] = j;
+                    break;
+                }
             }
         }
         if duplicates[i] != !0_usize {
             continue;
         }
 
-        let vec = srcs[i].src_ref.as_mut_ssa().unwrap();
         for ssa in vec {
             if !ssa_used.insert(*ssa) {
                 *ssa = b.copy_ssa(*ssa);

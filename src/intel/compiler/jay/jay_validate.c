@@ -194,7 +194,7 @@ validate_def(struct validate_state *validate,
       CHECK(!def.num_values_m1);
       CHECK(!def.negate);
       CHECK(!def.abs);
-   } else if (def.file == ACCUM || def.file == UACCUM || def.hi) {
+   } else if (def.file == ACCUM || def.hi) {
       CHECK(validate->post_ra);
    } else {
       CHECK(jay_base_index(def) != JAY_SENTINEL || validate->post_ra);
@@ -208,11 +208,10 @@ validate_def(struct validate_state *validate,
 
    CHECK(jay_num_values(def) == 1 || !jay_is_flag(def));
 
-   /* With some exceptions we cannot access GPRs from SIMD1 instructions */
-   CHECK((jay_is_null(def) ||
-          jay_is_uniform(def) ||
-          def.file == FLAG ||
-          jay_simd_width_logical(validate->func->shader, I) > 1) ||
+   /* With some exceptions we cannot access GPRs from uniform instructions */
+   CHECK(def.file != GPR ||
+         jay_is_null(def) ||
+         jay_simd_width_logical(validate->func->shader, I) > 1 ||
          I->op == JAY_OPCODE_SHUFFLE ||
          I->op == JAY_OPCODE_VECTOR_EXTRACT ||
          I->op == JAY_OPCODE_BROADCAST_IMM);
@@ -253,20 +252,25 @@ validate_inst(struct validate_state *validate, jay_inst *I)
     * required to ensure correctness with the lane masking.
     */
    CHECK(!I->broadcast_flag ||
-         (!jay_is_null(I->cond_flag) &&
-          jay_is_null(I->dst) &&
-          I->cond_flag.file == UFLAG &&
-          (I->op == JAY_OPCODE_CMP || I->op == JAY_OPCODE_MOV)));
+         (!jay_is_null(I->cond_flag) && jay_is_null(I->dst) && I->uniform));
 
    /* We cannot mix uniformness */
-   CHECK(I->cond_flag.file != UFLAG || I->dst.file != GPR);
-   CHECK(I->cond_flag.file != FLAG || I->dst.file != UGPR);
+   CHECK(!(!jay_is_null(I->dst) && I->dst.file == GPR && I->uniform));
+   CHECK(!(!jay_is_null(I->dst) &&
+           I->dst.file == UGPR &&
+           jay_num_values(I->dst) < 8 &&
+           !I->uniform));
+   CHECK(!(I->cond_flag.file == UFLAG && !I->uniform));
 
    /* Standard modifiers only allowed on some instructions */
    CHECK(!I->saturate || opinfo->sat);
    CHECK(!I->conditional_mod ||
          (I->op == JAY_OPCODE_CSEL || I->op == JAY_OPCODE_DEMOTE) ||
          (!jay_is_null(I->cond_flag) && opinfo->cmod));
+
+   /* We should not be clobbering multiple flags in SIMD16 with a mov.u32 */
+   CHECK(!(I->dst.file == FLAG && jay_type_size_bits(I->type) >
+                                     validate->func->shader->dispatch_width));
 
    unsigned num_srcs = I->num_srcs;
 
@@ -275,7 +279,8 @@ validate_inst(struct validate_state *validate, jay_inst *I)
 
       if (jay_inst_has_default(I)) {
          jay_def dst = jay_is_null(I->dst) ? I->cond_flag : I->dst;
-         CHECK(jay_inst_get_default(I)->file == dst.file);
+         CHECK(jay_normalize_uflag(jay_inst_get_default(I)->file) ==
+               jay_normalize_uflag(dst.file));
       }
 
       CHECK(jay_is_flag(*jay_inst_get_predicate(I)));
@@ -308,6 +313,15 @@ validate_inst(struct validate_state *validate, jay_inst *I)
 
       CHECK(!I->src[s].negate || jay_has_src_mods(I, s));
    }
+
+   CHECK(!I->zero_inactive || !jay_is_null(I->cond_flag));
+
+   /* Pure flag operations must be bitwise for our lowering to work */
+   CHECK(I->type != JAY_TYPE_U1 ||
+         (I->op == JAY_OPCODE_PHI_DST || I->op == JAY_OPCODE_UNDEF) ||
+         (I->op == JAY_OPCODE_MOV || I->op == JAY_OPCODE_NOT) ||
+         (I->op >= JAY_OPCODE_AND || I->op == JAY_OPCODE_XOR) ||
+         (I->op == JAY_OPCODE_DEMOTE || I->op == JAY_OPCODE_IS_HELPER));
 
    if (I->op == JAY_OPCODE_DPAS) {
       CHECK(jay_num_values(I->dst) == get_src_words(validate, I, 0));
