@@ -1587,6 +1587,8 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
       .cooperativeMatrixFlexibleDimensions = true,
       .cooperativeMatrixReductions = true,
       .cooperativeMatrixPerElementOperations = true,
+      .cooperativeMatrixTensorAddressing = true,
+      .cooperativeMatrixBlockLoads = true,
 
       /* VK_KHR_video_encode_av1 */
       .videoEncodeAV1 = true,

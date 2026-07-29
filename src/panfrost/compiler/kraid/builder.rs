@@ -57,6 +57,30 @@ pub trait Builder {
             srcs: [a, b],
         });
     }
+
+    fn load_tls_to(&mut self, dst: Dst, dst_type: DataType, offset: u16) {
+        let tls_ptr = SpecialFAU::ThreadLocalPointer;
+        let tls_ptr = self.model().fau().special(tls_ptr).unwrap();
+        self.push_op(OpLoad {
+            dst,
+            dst_type,
+            access: MemAccess::Force,
+            addr: tls_ptr.into(),
+            offset: offset.try_into().unwrap(),
+        });
+    }
+
+    fn store_tls(&mut self, offset: u16, src_type: DataType, src: Src) {
+        let tls_ptr = SpecialFAU::ThreadLocalPointer;
+        let tls_ptr = self.model().fau().special(tls_ptr).unwrap();
+        self.push_op(OpStore {
+            src_type,
+            access: MemAccess::Force,
+            data: src,
+            addr: tls_ptr.into(),
+            offset: offset.try_into().unwrap(),
+        });
+    }
 }
 
 pub trait SSABuilder: Builder + AllocSSA {
@@ -213,7 +237,10 @@ pub trait SSABuilder: Builder + AllocSSA {
         self.push_op(OpFExp32 {
             dst,
             expx: scale_fixp.into(),
-            expf: arg,
+            // The expf field is only used for NaN propagation.  By passing
+            // `scale` in here, we ensure that the result is NaN if either
+            // `arg` or `log2_base` are NaN.
+            expf: scale.into(),
         });
     }
 
@@ -406,7 +433,7 @@ impl<'a> Builder for SSAInstrBuilder<'a> {
 }
 
 impl AllocSSA for SSAInstrBuilder<'_> {
-    fn alloc_ssa(&mut self, bits: u8) -> SSAValue {
-        self.alloc.alloc_ssa(bits)
+    fn alloc_ssa_value(&mut self, bits: u8, is_mem: bool) -> SSAValue {
+        self.alloc.alloc_ssa_value(bits, is_mem)
     }
 }

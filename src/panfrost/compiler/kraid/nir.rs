@@ -7,6 +7,7 @@ use crate::builder::*;
 use crate::data_type::*;
 use crate::ir::*;
 use crate::ops::*;
+use crate::phi::PhiAllocator;
 use crate::ssa_value::SSAValueAllocator;
 use compiler::bindings::*;
 use compiler::cfg::*;
@@ -591,7 +592,7 @@ impl<'a> ShaderFromNir<'a> {
                     dst: dst.into(),
                     src_type: DataType::U32,
                     src: srcs(0),
-                    round: FRound::NearestEven,
+                    round: self.fround(alu.def.bit_size),
                 });
             }
             nir_op_f2u32 => {
@@ -641,7 +642,7 @@ impl<'a> ShaderFromNir<'a> {
                     dst: dst.into(),
                     src_type: DataType::S32,
                     src: srcs(0),
-                    round: FRound::NearestEven,
+                    round: self.fround(alu.def.bit_size),
                 });
             }
             nir_op_fabs => {
@@ -788,16 +789,30 @@ impl<'a> ShaderFromNir<'a> {
                     src: srcs(0),
                 });
             }
-            nir_op_fexp2 => {
-                // TODO: wire up fexp2.f16
-                assert!(alu.get_src(0).bit_size() == 32);
-                b.fexp_32_to(dst.into(), srcs(0), (1.0).into());
-            }
-            nir_op_flog2 => {
-                // TODO: wire up flog2.f16
-                assert!(alu.get_src(0).bit_size() == 32);
-                b.flog2_32_to(dst.into(), srcs(0));
-            }
+            nir_op_fexp2 => match alu.def.bit_size {
+                16 => {
+                    b.push_op(OpFExp16 {
+                        dst: dst.into(),
+                        expf: srcs(0),
+                    });
+                }
+                32 => {
+                    b.fexp_32_to(dst.into(), srcs(0), (1.0).into());
+                }
+                _ => panic!("Unhandled bit size for nir_op_fexp2"),
+            },
+            nir_op_flog2 => match alu.def.bit_size {
+                16 => {
+                    b.push_op(OpFLog16 {
+                        dst: dst.into(),
+                        src: srcs(0),
+                    });
+                }
+                32 => {
+                    b.flog2_32_to(dst.into(), srcs(0));
+                }
+                _ => panic!("Unhandled bit size for nir_op_flog2"),
+            },
             nir_op_fpow => {
                 assert!(alu.get_src(0).bit_size() == 32);
                 assert!(alu.get_src(1).bit_size() == 32);
@@ -863,6 +878,33 @@ impl<'a> ShaderFromNir<'a> {
                     propagate_nan: false,
                     clamp: FClamp::None,
                     srcs: [srcs(0), srcs(1)],
+                });
+            }
+            nir_op_fquantize2f16 => {
+                debug_assert!(alu.def.bit_size == 32);
+                debug_assert!(alu.def.num_components == 1);
+
+                let x16 = b.alloc_ssa(16);
+                b.push_op(OpF32ToF16 {
+                    dst: x16.into(),
+                    src: srcs(0),
+                    round: FRound::NearestEven,
+                    clamp: FClamp::None,
+                });
+
+                let flush16 = b.alloc_ssa(16);
+                b.push_op(OpFlush {
+                    dst: flush16.into(),
+                    src_type: DataType::F16,
+                    src: x16.into(),
+                    ftz: true,
+                    flush_inf: false,
+                    flush_nan: FlushNanMode::None,
+                });
+
+                b.push_op(OpF16ToF32 {
+                    dst: dst.into(),
+                    src: flush16.into(),
                 });
             }
             nir_op_fsin => {
@@ -1339,7 +1381,6 @@ impl<'a> ShaderFromNir<'a> {
                 });
             }
             nir_texop_gradient_pan => {
-                assert!(dst_type.total_bits() == 64);
                 let coord_mode = if flags.force_delta_enable() {
                     assert!(!flags.derivative_enable());
                     TexGradientCoordMode::ForceDelta
@@ -1350,9 +1391,11 @@ impl<'a> ShaderFromNir<'a> {
                 };
                 b.push_op(OpTexGradient {
                     dst: tmp.clone().into(),
+                    dst_type,
                     skip,
                     dim,
                     projection_enable: false,
+                    write_mask,
                     wide_indices,
                     coord_mode,
                     lod_bias_disable: flags.lod_bias_disable(),
@@ -1427,6 +1470,36 @@ impl<'a> ShaderFromNir<'a> {
                     }
                     _ => panic!("Unsupported barrier scope"),
                 }
+            }
+            nir_intrinsic_cubeface_pan => {
+                let x = self.get_src(&srcs[0]);
+                let y = self.get_src(&srcs[1]);
+                let z = self.get_src(&srcs[2]);
+                let dst = self.alloc_ssa(b, &intrin.def);
+                b.push_op(OpCubeFaceMax {
+                    dst: dst[0].into(),
+                    coords: [x.clone(), y.clone(), z.clone()],
+                });
+                b.push_op(OpCubeFaceIdx {
+                    dst: dst[1].into(),
+                    coords: [x.clone(), y.clone(), z.clone()],
+                });
+            }
+            nir_intrinsic_cube_ssel_pan | nir_intrinsic_cube_tsel_pan => {
+                let x = self.get_src(&srcs[0]);
+                let y = self.get_src(&srcs[1]);
+                let idx = self.get_src(&srcs[2]);
+                let dst = self.alloc_ssa(b, &intrin.def).into();
+                b.push_op(OpCubeSel {
+                    dst,
+                    coord: match intrin.intrinsic {
+                        nir_intrinsic_cube_ssel_pan => CubeSelCoord::S,
+                        nir_intrinsic_cube_tsel_pan => CubeSelCoord::T,
+                        _ => unreachable!(),
+                    },
+                    coords: [x, y],
+                    idx,
+                });
             }
             nir_intrinsic_global_atomic => {
                 let atom_op = match intrin.atomic_op() {
@@ -1632,6 +1705,19 @@ impl<'a> ShaderFromNir<'a> {
                     data,
                     lane,
                 });
+            }
+            nir_intrinsic_shader_clock => {
+                assert_eq!(intrin.def.bit_size * intrin.def.num_components, 64);
+                let dst = self.alloc_ssa(b, &intrin.def).into();
+                b.push_op(OpLdGClk {
+                    dst,
+                    source: match intrin.memory_scope() {
+                        SCOPE_SUBGROUP => GClkSource::CycleCounter,
+                        SCOPE_DEVICE => GClkSource::SystemTimestamp,
+                        _ => panic!("Invalid OpReadClock scope"),
+                    },
+                });
+                self.info.has_ld_gclk = true;
             }
             nir_intrinsic_store_global => {
                 let bits = srcs[0].bit_size() * srcs[0].num_components();

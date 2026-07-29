@@ -110,20 +110,21 @@ mtl_command_queue_commit(mtl_command_queue *queue,
 }
 
 void
+mtl_command_queue_wait_for_drawable(mtl_command_queue *queue, void *drawable)
+{
+   @autoreleasepool {
+      id<MTL4CommandQueue> q = (id<MTL4CommandQueue>)queue;
+      id<MTLDrawable> d = (id<MTLDrawable>)drawable;
+      [q waitForDrawable:d];
+   }
+}
+
+void
 mtl_command_queue_signal_drawable(mtl_command_queue *queue, void *drawable)
 {
    @autoreleasepool {
       id<MTL4CommandQueue> q = (id<MTL4CommandQueue>)queue;
       id<MTLDrawable> d = (id<MTLDrawable>)drawable;
       [q signalDrawable:d];
-   }
-}
-
-void
-mtl_drawable_present(void *drawable)
-{
-   @autoreleasepool {
-      id<MTLDrawable> d = (id<MTLDrawable>)drawable;
-      [d present];
    }
 }

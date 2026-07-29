@@ -384,14 +384,9 @@ virtgpu_sync_create_from_syncobj(struct vn_renderer *renderer,
 static VkResult
 virtgpu_sync_create(struct vn_renderer *renderer,
                     uint64_t initial_val,
-                    uint32_t flags,
                     struct vn_renderer_sync **out_sync)
 {
    struct virtgpu *gpu = (struct virtgpu *)renderer;
-
-   /* TODO */
-   if (flags & VN_RENDERER_SYNC_SHAREABLE)
-      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
 
    uint32_t syncobj_handle;
    if (renderer->info.has_timeline_sync) {
@@ -779,7 +774,7 @@ virtgpu_wait(struct vn_renderer *renderer,
    abs_timeout_ns = MIN2(abs_timeout_ns, (uint64_t)INT64_MAX);
 
    int ret;
-   if (gpu->base.info.has_timeline_sync) {
+   if (renderer->info.has_timeline_sync) {
       ret = gpu->sync->timeline_wait(
          gpu->sync, syncobj_handles, (uint64_t *)wait->sync_values,
          wait->sync_count, abs_timeout_ns, flags, NULL);
@@ -817,7 +812,7 @@ virtgpu_submit(struct vn_renderer *renderer,
       .command = (uintptr_t)batch->cs_data,
       .ring_idx = batch->ring_idx,
    };
-   if (gpu->base.info.has_timeline_sync) {
+   if (renderer->info.has_timeline_sync) {
       args.syncobj_stride = sizeof(struct drm_virtgpu_execbuffer_syncobj);
       args.num_out_syncobjs = batch->sync_count;
       args.out_syncobjs = (uintptr_t)out_syncobjs;
@@ -827,7 +822,7 @@ virtgpu_submit(struct vn_renderer *renderer,
 
    int ret = virtgpu_ioctl(gpu, DRM_IOCTL_VIRTGPU_EXECBUFFER, &args);
 
-   if (!gpu->base.info.has_timeline_sync && !ret && batch->sync_count) {
+   if (!renderer->info.has_timeline_sync && !ret && batch->sync_count) {
       for (uint32_t i = 0; i < batch->sync_count; i++) {
          ret = gpu->sync->import_sync_file(
             gpu->sync, batch->syncs[i]->syncobj_handle, args.fence_fd);
@@ -877,7 +872,8 @@ virtgpu_init_renderer_info(struct virtgpu *gpu)
    info->has_external_sync = true;
 
    assert(gpu->sync);
-   info->has_timeline_sync = !!gpu->sync->timeline_signal;
+   info->has_timeline_sync =
+      !VN_PERF(NO_TIMELINE_SYNC) && !!gpu->sync->timeline_signal;
 
    info->has_implicit_fencing = false;
 

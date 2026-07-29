@@ -218,6 +218,10 @@ anv_shader_init_uuid(struct anv_physical_device *device)
    blake3_hasher ctx;
    _mesa_blake3_init(&ctx);
 
+   _mesa_blake3_update(&ctx, device->driver_build_sha1,
+                       sizeof(device->driver_build_sha1));
+   brw_device_blake3_update(&ctx, &device->info);
+
    const bool always_bindless = !!ANV_DEBUG(BINDLESS);
    _mesa_blake3_update(&ctx, &always_bindless, sizeof(always_bindless));
 
@@ -263,6 +267,12 @@ anv_shader_init_uuid(struct anv_physical_device *device)
 
    const bool r11g11b10_wa = device->instance->drirc.debug.r11g11b10_atomic_swap_wa;
    _mesa_blake3_update(&ctx, &r11g11b10_wa, sizeof(r11g11b10_wa));
+
+   const bool emulate_active_thread_barriers = device->instance->drirc.debug.emulate_active_thread_barriers;
+   _mesa_blake3_update(&ctx, &emulate_active_thread_barriers, sizeof(emulate_active_thread_barriers));
+
+   const bool emulate_divergent_barriers = device->instance->drirc.debug.emulate_divergent_barriers;
+   _mesa_blake3_update(&ctx, &emulate_divergent_barriers, sizeof(emulate_divergent_barriers));
 
    uint8_t blake3[BLAKE3_KEY_LEN];
    _mesa_blake3_final(&ctx, blake3);
@@ -872,13 +882,26 @@ lookup_ycbcr_conversion(const void *_stage, uint32_t set,
 }
 
 static void
-anv_fixup_subgroup_size(struct anv_device *device, nir_shader *shader)
+anv_fixup_subgroup_size(struct anv_device *device,
+                        struct anv_shader_data *shader_data)
 {
+   nir_shader *shader = shader_data->info->nir;
    struct shader_info *info = &shader->info;
    const struct anv_instance *instance = device->physical->instance;
 
    if (!mesa_shader_stage_uses_workgroup(info->stage))
       return;
+
+   /* Force a tagged compute shader to SIMD32. Xe2+ only: pre-Xe2 has half the
+    * register file (128 vs 256 GRF) and could spill badly when forced wide.
+    */
+   if (shader_data->workaround != NULL &&
+       shader_data->workaround->force_xe2_simd32_cs &&
+       info->stage == MESA_SHADER_COMPUTE &&
+       device->info->ver >= 20) {
+      info->max_subgroup_size = BRW_SUBGROUP_SIZE;
+      info->min_subgroup_size = BRW_SUBGROUP_SIZE;
+   }
 
    unsigned local_size = info->workgroup_size[0] *
                          info->workgroup_size[1] *
@@ -1337,7 +1360,7 @@ anv_shader_lower_nir(struct anv_device *device,
 
    if (nir->info.stage == MESA_SHADER_COMPUTE &&
        nir->info.cs.has_cooperative_matrix) {
-      anv_fixup_subgroup_size(device, nir);
+      anv_fixup_subgroup_size(device, shader_data);
       NIR_PASS(_, nir, brw_nir_lower_cmat, nir->info.api_subgroup_size);
 
       /* Lowering of nir_instr_type_cmat_call will produce new
@@ -1543,6 +1566,11 @@ anv_shader_lower_nir(struct anv_device *device,
       NIR_PASS(_, nir, brw_nir_apply_sampler_undef_derivatives_workaround);
 
    if (mesa_shader_stage_uses_workgroup(nir->info.stage)) {
+      if (pdevice->instance->drirc.debug.emulate_divergent_barriers)
+         NIR_PASS(_, nir, brw_nir_lower_divergent_barriers, devinfo);
+      else if (pdevice->instance->drirc.debug.emulate_active_thread_barriers)
+         NIR_PASS(_, nir, brw_nir_lower_active_thread_barriers, devinfo);
+
       NIR_PASS(_, nir, nir_lower_vars_to_explicit_types,
                nir_var_mem_shared, shared_type_info);
 
@@ -2222,7 +2250,7 @@ anv_shader_compile(struct vk_device *vk_device,
 
       anv_shader_lower_nir(device, mem_ctx, state, shader_data);
 
-      anv_fixup_subgroup_size(device, shader_data->info->nir);
+      anv_fixup_subgroup_size(device, shader_data);
 
       anv_nir_apply_shader_workarounds(shader_data->info->nir);
    }
@@ -2306,7 +2334,8 @@ anv_shader_compile(struct vk_device *vk_device,
             anv_shader_compile_jay(devinfo, mem_ctx, nir, params, shader_data);
 
          shader_data->code = bin->kernel;
-         shader_data->stats[0] = bin->stats;
+         for (unsigned i = 0; i < 3; i++)
+            shader_data->stats[i] = bin->stats[i];
 
          if (mesa_shader_stage_uses_workgroup(nir->info.stage)) {
             struct brw_cs_prog_data *prog_data =

@@ -57,7 +57,7 @@ chirp(struct validate_state *validate, const char *fmt, ...)
    if (validate->I) {
       fprintf(stderr,
               "   invalid instruction in block %d: ", validate->block->index);
-      jay_print_inst(stderr, validate->I);
+      jay_print_inst(stderr, validate->block, validate->I, NULL);
    }
    fprintf(stderr, "   ");
    vfprintf(stderr, fmt, args);
@@ -139,7 +139,7 @@ get_src_words(struct validate_state *validate, jay_inst *I, unsigned s)
                adjust_width_for_type(simd_width, I->type) ||
             I->op == JAY_OPCODE_SEND);
 
-      return 1;
+      return elsize;
    } else if (I->src[s].file == UGPR && jay_num_values(I->src[s]) > elsize) {
       return adjust_width_for_type(simd_width, jay_src_type(I, s));
    } else {
@@ -304,7 +304,8 @@ validate_inst(struct validate_state *validate, jay_inst *I)
          unsigned expected = get_src_words(validate, I, s);
          unsigned words = jay_num_values(I->src[s]);
          if ((I->op != JAY_OPCODE_SEND || s < 2) &&
-             I->op != JAY_OPCODE_VECTOR_EXTRACT) {
+             I->op != JAY_OPCODE_VECTOR_EXTRACT &&
+             I->op != JAY_OPCODE_BROADCAST_IMM) {
             CHECK(expected == words);
          }
 
@@ -340,6 +341,10 @@ validate_inst(struct validate_state *validate, jay_inst *I)
       const unsigned pf = 1 << jay_slice_repack_factor_log2(I);
       CHECK(pf == 1 || pf == 2 || pf == 4);
       CHECK(jay_num_values(I->dst) == (unpack ? pf : 1));
+   } else if (I->op == JAY_OPCODE_BROADCAST_IMM) {
+      CHECK(jay_broadcast_imm_lane(I) <
+               validate->func->shader->dispatch_width &&
+            "jay_nir.c ensures this and codegen relies on it");
    }
 }
 

@@ -55,6 +55,7 @@ const struct nir_shader_compiler_options brw_scalar_nir_options = {
    .lower_pack_unorm_2x16 = true,
    .lower_pack_unorm_4x8 = true,
    .lower_pack_64_4x16 = true,
+   .lower_pack_64_2x32 = true,
    .lower_scmp = true,
    .lower_to_scalar = true,
    .lower_uadd_carry = true,
@@ -90,7 +91,14 @@ brw_compiler_create(void *mem_ctx, const struct intel_device_info *devinfo)
 
    brw_init_isa_info(&compiler->isa, devinfo);
 
-   brw_alloc_reg_sets(compiler);
+   compiler->threads_per_eu_min =
+      debug_get_unsigned_option("INTEL_THREADS_PER_EU_MIN", -1);
+   compiler->threads_per_eu_srchash =
+      debug_get_unsigned_option("INTEL_THREADS_PER_EU_SRCHASH", BRW_SRCHASH_EMPTY);
+
+   brw_alloc_reg_sets(compiler, 0);
+   if (compiler->threads_per_eu_min != -1 && compiler->threads_per_eu_min != 0)
+      brw_alloc_reg_sets(compiler, 1);
 
    compiler->precise_trig = debug_get_bool_option("INTEL_PRECISE_TRIG", false);
 

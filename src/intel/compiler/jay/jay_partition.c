@@ -52,17 +52,7 @@ analyze_per_inst(jay_shader *shader)
                local.ugpr += size;
             } else if (x.file == GPR && i >= 0) {
                enum jay_stride min_stride = jay_src_stride_minmax(I, i, false);
-               enum jay_stride max_stride = jay_src_stride_minmax(I, i, true);
-
-               /* We want to reduce fragmentation of the partition as much as
-                * possible, so assume if the destination didn't already force a
-                * non-32-bit stride, assume sources are 32-bit strided.
-                */
-               if (min_stride <= JAY_STRIDE_4 && JAY_STRIDE_4 <= max_stride) {
-                  local.gpr[JAY_STRIDE_4] += size;
-               } else {
-                  local.gpr[min_stride] += size;
-               }
+               local.gpr[min_stride] += size;
             } else if (x.file == GPR) {
                enum jay_stride min_stride = jay_dst_stride_minmax(I, false);
                local.gpr[min_stride] += size;
@@ -222,6 +212,12 @@ jay_partition_grf(jay_shader *shader)
       payload_4[1] = shader->prog_data->vue.urb_read_length * 8;
       payload_u[1] = shader->push_grfs;
       eot_4 = 16;
+   } else if (shader->stage == MESA_SHADER_TASK ||
+              shader->stage == MESA_SHADER_MESH) {
+      payload_u[0] = 3 * grf_per_gpr;
+      payload_4[0] = 2;
+      eot_4 = 16;
+      eot_u = 1;
    } else if (shader->stage == MESA_SHADER_TESS_CTRL) {
       payload_4[0] =
          1 +
@@ -302,17 +298,20 @@ jay_partition_grf(jay_shader *shader)
 
    jay_foreach_function(shader, f) {
       jay_compute_liveness(f);
+      jay_calculate_last_use(f);
       jay_calculate_register_demands(f);
 
       if (f->demand[FLAG] > flag_limit) {
          jay_spill(f, FLAG, flag_limit);
          jay_compute_liveness(f);
+         jay_calculate_last_use(f);
          jay_calculate_register_demands(f);
       }
 
       if (f->demand[UGPR] > ugpr_limit) {
          jay_spill(f, UGPR, ugpr_limit);
          jay_compute_liveness(f);
+         jay_calculate_last_use(f);
          jay_calculate_register_demands(f);
       }
 
@@ -495,6 +494,7 @@ jay_partition_grf(jay_shader *shader)
          jay_spill(f, GPR, limit);
          jay_validate(f->shader, "spilling");
          jay_compute_liveness(f);
+         jay_calculate_last_use(f);
          jay_calculate_register_demands(f);
       }
 

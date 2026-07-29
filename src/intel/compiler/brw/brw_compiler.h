@@ -42,6 +42,16 @@ struct brw_storage_format {
    uint32_t isl_formats[3];
 };
 
+struct brw_reg_set {
+   struct ra_regs *regs;
+
+   /**
+    * Array of the ra classes for the unaligned contiguous register
+    * block sizes used, indexed by register size.
+    */
+   struct ra_class *classes[REG_CLASS_COUNT];
+};
+
 struct brw_compiler {
    const struct intel_device_info *devinfo;
 
@@ -52,15 +62,8 @@ struct brw_compiler {
 
    struct brw_isa_info isa;
 
-   struct {
-      struct ra_regs *regs;
-
-      /**
-       * Array of the ra classes for the unaligned contiguous register
-       * block sizes used, indexed by register size.
-       */
-      struct ra_class *classes[REG_CLASS_COUNT];
-   } reg_set;
+   struct brw_reg_set reg_set;
+   struct brw_reg_set reg_set_debug;
 
    void (*shader_debug_log)(void *, unsigned *id, const char *str, ...) PRINTFLIKE(3, 4);
    void (*shader_perf_log)(void *, unsigned *id, const char *str, ...) PRINTFLIKE(3, 4);
@@ -135,6 +138,13 @@ struct brw_compiler {
     */
    uint32_t num_lowered_storage_formats;
    uint32_t *lowered_storage_formats;
+
+   /**
+    * Debug flag for forcing minimum number of threads per EU for shader.
+    * Can optionally only apply to shaders matching source hash.
+    */
+   uint32_t threads_per_eu_min;
+   uint64_t threads_per_eu_srchash;
 };
 
 #define brw_shader_debug_log(compiler, data, fmt, ... ) do {    \
@@ -471,8 +481,6 @@ struct brw_stage_prog_data {
     *
     *    (robust_ubo_ranges & (1 << j)) &&
     *    (i < push_reg_mask_param[j] * 16)
-    *
-    * brw_compiler::compact_params must be false if robust_ubo_ranges used
     */
    uint8_t robust_ubo_ranges;
    unsigned push_reg_mask_param;
@@ -1515,6 +1523,8 @@ brw_compute_sbe_per_primitive_urb_read(uint64_t inputs_read,
 
 #define BRW_TASK_MESH_PUSH_CONSTANTS_SIZE_DW \
    (BRW_TASK_MESH_INLINE_DATA_SIZE_DW - BRW_TASK_MESH_PUSH_CONSTANTS_START_DW)
+
+#define BRW_SRCHASH_EMPTY (uint64_t)-1
 
 /**
  * This enum is used as the base indice of the nir_load_topology_id_intel

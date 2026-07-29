@@ -246,7 +246,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_subgroup_id_shift_ir3:
    case nir_intrinsic_load_base_instance:
    case nir_intrinsic_load_base_vertex:
-   case nir_intrinsic_load_raw_vertex_offset_pan:
+   case nir_intrinsic_load_raw_vertex_offset:
    case nir_intrinsic_load_first_vertex:
    case nir_intrinsic_load_draw_id:
    case nir_intrinsic_load_is_indexed_draw:
@@ -364,6 +364,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_use_quad_pos_amd:
    case nir_intrinsic_load_ps_iter_mask_amd:
    case nir_intrinsic_load_use_sample_mask_in_amd:
+   case nir_intrinsic_load_front_face_select_amd:
    case nir_intrinsic_load_tcs_mem_attrib_stride:
    case nir_intrinsic_load_printf_buffer_address:
    case nir_intrinsic_load_printf_buffer_size:
@@ -393,10 +394,18 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_indirect_address_intel:
    case nir_intrinsic_load_alpha_to_coverage_enable_ir3:
    case nir_intrinsic_load_frag_shading_rate_intel:
+   case nir_intrinsic_load_sample_positions_intel:
    case nir_intrinsic_load_msaa_rate_intel:
    case nir_intrinsic_test_fs_config_intel:
+   case nir_intrinsic_select_active_intel:
+   case nir_intrinsic_read_handle_intel:
    case nir_intrinsic_load_ttmp_register_amd:
    case nir_intrinsic_load_scalar_arg_amd:
+   case nir_intrinsic_load_ro_sink_address_poly:
+   case nir_intrinsic_load_noperspective_varyings_pan:
+   case nir_intrinsic_load_multisampled_pan:
+   case nir_intrinsic_load_rt_conversion_pan:
+   case nir_intrinsic_subgroup_barrier_index_intel:
       is_divergent = false;
       break;
 
@@ -434,7 +443,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
       break;
 
    case nir_intrinsic_load_urb_input_handle_intel:
-      is_divergent = stage != MESA_SHADER_TESS_EVAL;
+      is_divergent = stage != MESA_SHADER_TESS_EVAL && stage != MESA_SHADER_MESH;
       break;
 
    case nir_intrinsic_decl_reg:
@@ -943,7 +952,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_sample_pos_or_center:
    case nir_intrinsic_load_vertex_id_zero_base:
    case nir_intrinsic_load_vertex_id:
-   case nir_intrinsic_load_raw_vertex_id_pan:
+   case nir_intrinsic_load_raw_vertex_id:
    case nir_intrinsic_load_local_invocation_id:
    case nir_intrinsic_load_local_invocation_index:
    case nir_intrinsic_load_global_invocation_id:
@@ -1064,6 +1073,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_dpas_intel:
    case nir_intrinsic_convert_cmat_intel:
    case nir_intrinsic_load_coverage_mask_intel:
+   case nir_intrinsic_gather_lanes_intel:
    case nir_intrinsic_isberd_nv:
    case nir_intrinsic_isbewr_nv:
    case nir_intrinsic_vild_nv:
@@ -1202,19 +1212,12 @@ visit_def(nir_def *def, struct divergence_state *state)
 static bool
 nir_variable_mode_is_uniform(nir_variable_mode mode)
 {
-   switch (mode) {
-   case nir_var_uniform:
-   case nir_var_mem_ubo:
-   case nir_var_mem_push_const:
-   case nir_var_mem_ssbo:
-   case nir_var_mem_shared:
-   case nir_var_mem_task_payload:
-   case nir_var_mem_global:
-   case nir_var_image:
-      return true;
-   default:
-      return false;
-   }
+   nir_variable_mode uniform_modes =
+      nir_var_uniform | nir_var_mem_ubo | nir_var_mem_push_const |
+      nir_var_mem_ssbo | nir_var_mem_shared | nir_var_mem_task_payload |
+      nir_var_mem_global | nir_var_mem_constant;
+
+   return (mode & ~uniform_modes) == 0;
 }
 
 static bool
@@ -1291,10 +1294,16 @@ visit_deref(nir_shader *shader, nir_deref_instr *deref,
    case nir_deref_type_array_wildcard:
       is_divergent |= src_divergent(deref->parent, state);
       break;
-   case nir_deref_type_cast:
-      is_divergent = !nir_variable_mode_is_uniform(deref->var->data.mode) ||
-                     src_divergent(deref->parent, state);
+   case nir_deref_type_cast: {
+      is_divergent = src_divergent(deref->parent, state);
+
+      nir_deref_instr *parent = nir_src_as_deref(deref->parent);
+      if (!parent) {
+         /* Check the mode because this might be a generic or private pointer. */
+         is_divergent |= !nir_variable_mode_is_uniform(deref->modes);
+      }
       break;
+   }
    }
 
    deref->def.divergent = is_divergent;

@@ -33,6 +33,7 @@
 #include "util/simple_mtx.h"
 #include "util/u_atomic.h"
 #include "util/u_math.h"
+#include "util/u_memset.h"
 #include "util/u_thread.h"
 #include "util/xmlconfig.h"
 #include "vk_alloc.h"
@@ -145,6 +146,7 @@ enum vn_perf {
    VN_PERF_NO_ASYNC_IMAGE_CREATE = 1ull << 12,
    VN_PERF_NO_ASYNC_IMAGE_FORMAT = 1ull << 13,
    VN_PERF_NO_ASYNC_PRESENT = 1ull << 14,
+   VN_PERF_NO_TIMELINE_SYNC = 1ull << 15,
 };
 
 typedef uint64_t vn_object_id;

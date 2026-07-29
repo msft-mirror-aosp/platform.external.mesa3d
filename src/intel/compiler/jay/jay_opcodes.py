@@ -159,8 +159,8 @@ op('preload', 0, 'u32',     0, ['unsigned reg'])
 op('deswizzle_odd', 2, 'f32', 0, ['bool src2_hi'])
 op('deswizzle_even', 1, 'f32', 0, ['bool src_hi'])
 
-# Return the UGPR[4] vector (0, 1, 2, 3, 4, 5, 6, 7) as packed 16-bit.
-op('lane_id_8', 0, 'u16')
+# Return the UGPR[4] vector base + (0, 1, 2, 3, 4, 5, 6, 7) as packed 16-bit.
+op('lane_id_8', 0, 'u16', 0, ['unsigned base'])
 
 # Build a GPR from two UGPR[16] ranges.
 op('zip_ugpr16', 2, 'u32')
@@ -242,10 +242,10 @@ op('dpas', 3, 'u32', 0, [
 op('slice_repack', 1, 'u32', 0, [
    'uint8_t factor_log2',
    'bool unpack',
-])
+   ])
 
-# Initialize helper invocations. Takes 16-bit halves of the dispatch mask.
-op('init_helpers', 2, 'u16', Props.NO_DEST)
+# Active lanes select source 0, inactive lanes select the constant value
+op('sel_active', 1, 'u32 u64', 0, ['uint64_t value'])
 
 # Compare the arguments and demote based on the result.
 op('demote', 2, 'u1 u16 u32 u64 s16 s32 s64 f16 f32 f64', Props.NEGATE | Props.NO_DEST)

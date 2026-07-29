@@ -50,6 +50,11 @@ static const struct debug_named_value jay_debug_options[] = {
 DEBUG_GET_ONCE_FLAGS_OPTION(jay_debug, "JAY_DEBUG", jay_debug_options, 0)
 int jay_debug = 0;
 
+typedef struct jay_task_mesh_payload {
+   jay_def local_invocation_ids;
+   jay_def inline_parameter;
+} jay_task_mesh_payload;
+
 typedef struct jay_vs_payload {
    /* "the maximum limit is 30 elements per vertex" (bspec 56124) */
    jay_def attributes[30 * 4];
@@ -88,6 +93,7 @@ typedef struct jay_fs_payload {
    jay_def config;
    jay_def coverage_mask;
    jay_def sample_pos;
+   jay_def sample_offsets[2];
    jay_def coefficients;
    jay_def *deltas;
 } jay_fs_payload;
@@ -134,6 +140,7 @@ struct nir_to_jay_state {
          jay_cs_payload cs;
          jay_fs_payload fs;
          jay_gs_payload gs;
+         jay_task_mesh_payload task_mesh;
       };
    } payload;
 };
@@ -355,8 +362,27 @@ jay_emit_alu(struct nir_to_jay_state *nj, nir_alu_instr *alu)
    jay_def src[NIR_ALU_MAX_INPUTS];
    for (unsigned i = 0; i < nir_op_infos[alu->op].num_inputs; i++) {
       unsigned len = nir_src_bit_size(alu->src[i].src) == 64 ? 2 : 1;
-      src[i] = jay_extract_range(nj_src(alu->src[i].src),
-                                 len * alu->src[i].swizzle[0], len);
+      jay_def chans[NIR_MAX_VEC_COMPONENTS];
+      unsigned nr_chans =
+         nir_op_is_vec_or_mov(alu->op) ? 1 : alu->def.num_components;
+      bool all_same = true;
+      for (unsigned c = 0; c < nr_chans; ++c) {
+         /* Optimize swizzles corresponding to dead channels */
+         if (c && !(nir_def_components_read(&alu->def) & BITFIELD_BIT(c))) {
+            chans[c] = jay_null();
+            continue;
+         }
+
+         chans[c] = jay_extract_range(nj_src(alu->src[i].src),
+                                      len * alu->src[i].swizzle[c], len);
+         all_same &= alu->src[i].swizzle[c] == alu->src[i].swizzle[0];
+      }
+
+      if (all_same && chans[0].file == UGPR) {
+         src[i] = chans[0];
+      } else {
+         src[i] = jay_collect_vectors(b, chans, nr_chans);
+      }
    }
 
    switch (alu->op) {
@@ -539,24 +565,9 @@ jay_emit_alu(struct nir_to_jay_state *nj, nir_alu_instr *alu)
    case nir_op_f2i8:
    case nir_op_f2u8:
    case nir_op_f2i8_sat:
-   case nir_op_f2u8_sat: {
-      enum jay_type src_type = jay_alu_source_type(alu, 0);
-
-      /* UGPR byte to float is not supported. Do it in 2 steps. */
-      if (jay_type_size_bits(src_type) == 8 &&
-          jay_base_type(type) == JAY_TYPE_F &&
-          dst.file == UGPR) {
-
-         enum jay_type integer = jay_type_rebase(type, jay_base_type(src_type));
-         jay_def tmp = jay_alloc_def(b, UGPR, 1);
-         jay_CVT(b, integer, tmp, src[0], src_type, JAY_ROUND, 0);
-         jay_CVT(b, type, dst, tmp, integer, JAY_ROUND, 0);
-      } else {
-         jay_CVT(b, type, dst, src[0], src_type, JAY_ROUND, 0);
-      }
-
+   case nir_op_f2u8_sat:
+      jay_CVT(b, type, dst, src[0], jay_alu_source_type(alu, 0), JAY_ROUND, 0);
       break;
-   }
 
    case nir_op_f2f16_rtne:
    case nir_op_f2f16_rtz:
@@ -830,19 +841,26 @@ translate_flush_type(nir_intrinsic_instr *intr)
 
 static void
 emit_lsc_fence(struct nir_to_jay_state *nj,
-               nir_intrinsic_instr *intr,
-               enum gen_sfid sfid)
+               enum gen_sfid sfid,
+               enum lsc_fence_scope scope,
+               enum lsc_flush_type flushtype)
+{
+   jay_def notif = jay_alloc_def(&nj->bld, UGPR, jay_ugpr_per_grf(nj->s));
+   uint32_t desc = lsc_fence_msg_desc(nj->s->devinfo, scope, flushtype, false);
+   jay_SEND(&nj->bld, .sfid = sfid, .msg_desc = desc, .srcs = &nj->payload.u0,
+            .nr_srcs = 1, .type = JAY_TYPE_U32, .uniform = true, .dst = notif);
+}
+
+static void
+emit_lsc_fence_from_intr(struct nir_to_jay_state *nj,
+                         nir_intrinsic_instr *intr,
+                         enum gen_sfid sfid)
 {
    bool device = nir_intrinsic_memory_scope(intr) >= SCOPE_QUEUE_FAMILY;
    enum lsc_fence_scope scope = device ? LSC_FENCE_TILE : LSC_FENCE_THREADGROUP;
    enum lsc_flush_type type =
       sfid == GEN_SFID_SLM ? LSC_FLUSH_TYPE_NONE : translate_flush_type(intr);
-
-   jay_def notif = jay_alloc_def(&nj->bld, UGPR, jay_ugpr_per_grf(nj->s));
-   uint32_t desc = lsc_fence_msg_desc(nj->s->devinfo, scope, type, false);
-
-   jay_SEND(&nj->bld, .sfid = sfid, .msg_desc = desc, .srcs = &nj->payload.u0,
-            .nr_srcs = 1, .type = JAY_TYPE_U32, .uniform = true, .dst = notif);
+   emit_lsc_fence(nj, sfid, scope, type);
 }
 
 static void
@@ -851,21 +869,21 @@ jay_emit_memory_barrier(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
    nir_variable_mode modes = nir_intrinsic_memory_modes(intr);
 
    if (modes & nir_var_image) {
-      emit_lsc_fence(nj, intr, GEN_SFID_TGM);
+      emit_lsc_fence_from_intr(nj, intr, GEN_SFID_TGM);
       assert(!nj->nir->info.use_lowered_image_to_global && "fix common code");
    }
 
    if (modes & (nir_var_mem_ssbo | nir_var_mem_global)) {
-      emit_lsc_fence(nj, intr, GEN_SFID_UGM);
+      emit_lsc_fence_from_intr(nj, intr, GEN_SFID_UGM);
    }
 
    if (modes & (nir_var_shader_out | nir_var_mem_task_payload)) {
-      emit_lsc_fence(nj, intr, GEN_SFID_URB);
+      emit_lsc_fence_from_intr(nj, intr, GEN_SFID_URB);
    }
 
    if ((modes & nir_var_mem_shared) &&
        !jay_workgroup_is_one_subgroup(&nj->bld, nj->nir)) {
-      emit_lsc_fence(nj, intr, GEN_SFID_SLM);
+      emit_lsc_fence_from_intr(nj, intr, GEN_SFID_SLM);
    }
 }
 
@@ -935,10 +953,23 @@ scalars_equal(nir_scalar a, nir_scalar b)
            nir_scalar_as_uint(a) == nir_scalar_as_uint(b));
 }
 
+static jay_def
+fb_src(jay_builder *b, enum jay_file payload_file, jay_def src)
+{
+   if (payload_file == GPR)
+      return jay_as_gpr(b, src);
+
+   assert(payload_file == UGPR);
+   jay_def uvec = jay_alloc_def(b, UGPR, b->shader->dispatch_width);
+   jay_MOV(b, uvec, src);
+   return uvec;
+}
+
 static void
 jay_emit_fb_write(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
 {
    jay_builder *b = &nj->bld;
+   const struct brw_fs_prog_data *prog_data = &nj->s->prog_data->fs;
    const struct intel_device_info *devinfo = b->shader->devinfo;
    jay_def colour = nj_src(intr->src[0]);
    jay_def dual_colour = jay_null();
@@ -946,13 +977,21 @@ jay_emit_fb_write(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
    jay_def omask = optional_src(intr->src[3]);
    jay_def depth = optional_src(intr->src[4]);
    jay_def stencil = optional_src(intr->src[5]);
-   const bool null_rt = ((signed) nir_intrinsic_target(intr)) < 0;
-   const int target = MAX2(((signed) nir_intrinsic_target(intr)), 0);
+
+   int target = MAX2(((signed) nir_intrinsic_target(intr)), 0);
    const bool last = !nir_instr_next(&intr->instr);
-   const bool coarse = nj->s->prog_data->fs.coarse_pixel_dispatch;
+   const bool coarse = prog_data->coarse_pixel_dispatch;
+
+   /* Enable null_rt if the shader doesn't write any relevant output. */
+   const bool null_rt = prog_data->alpha_to_coverage == INTEL_NEVER &&
+                        !prog_data->uses_omask &&
+                        !(nj->nir->info.outputs_written &
+                          (BITFIELD64_BIT(FRAG_RESULT_DEPTH) |
+                           BITFIELD64_BIT(FRAG_RESULT_STENCIL))) &&
+                        ((signed) nir_intrinsic_target(intr) < 0);
 
    /* The hardware freaks out if we give it an omask without multisampling. */
-   if (!b->shader->prog_data->fs.uses_omask) {
+   if (!prog_data->uses_omask) {
       omask = jay_null();
    }
 
@@ -963,7 +1002,7 @@ jay_emit_fb_write(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
                      nir_scalar_resolved(intr->src[0].ssa, 3)))
       src0_alpha = jay_null();
 
-   if (b->shader->prog_data->fs.dual_src_blend) {
+   if (prog_data->dual_src_blend) {
       assert(b->shader->dispatch_width == 16);
       dual_colour = nj_src(intr->src[1]);
       src0_alpha = jay_null();
@@ -989,11 +1028,31 @@ jay_emit_fb_write(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
 
    jay_def srcs[4 + 16 + 4 + 1 + 16];
 
+   /* The oMask and stencil sources are both stored as a single GRF with
+    * packed 16-bit or 8-bit data, which doesn't play nice with the GPR
+    * model in SIMD32, where each GPR is two GRFs.  So, we use UGPR vectors
+    * for those.
+    *
+    * Unfortunately, the message order is also awkward:
+    *
+    *    src0 alpha | oMask (UGPR) | colour | depth | stencil (UGPR)
+    *
+    * Since UGPRs and GPRs aren't from the same register partition, this
+    * means that we can't make all of these contiguous.  We can use split
+    * sends to switch files one time, but we can't do this more than once.
+    * In that case, we copy the whole payload to UGPRs.  Fortunately this
+    * is very unlikely to happen in practice.
+    */
+   enum jay_file pf = GPR;
+   if (!jay_is_null(omask) &&
+       (!jay_is_null(src0_alpha) || !jay_is_null(stencil)))
+      pf = UGPR;
+
    unsigned len = 0;
    int split = -1;
 
    if (!jay_is_null(src0_alpha))
-      srcs[len++] = jay_as_gpr(b, src0_alpha);
+      srcs[len++] = fb_src(b, pf, src0_alpha);
 
    if (!jay_is_null(omask)) {
       jay_def packed = jay_alloc_def(b, UGPR, b->shader->dispatch_width / 2);
@@ -1007,22 +1066,21 @@ jay_emit_fb_write(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
    }
 
    for (unsigned i = 0; i < 4; i++)
-      srcs[len++] = jay_as_gpr(b, jay_extract(colour, i));
+      srcs[len++] = fb_src(b, pf, jay_extract(colour, i));
 
    if (!jay_is_null(dual_colour)) {
       for (unsigned i = 0; i < 4; i++)
-         srcs[len++] = jay_as_gpr(b, jay_extract(dual_colour, i));
+         srcs[len++] = fb_src(b, pf, jay_extract(dual_colour, i));
    }
 
    if (!jay_is_null(depth))
-      srcs[len++] = jay_as_gpr(b, depth);
+      srcs[len++] = fb_src(b, pf, depth);
 
    if (!jay_is_null(stencil)) {
       jay_def packed = jay_alloc_def(b, UGPR, b->shader->dispatch_width / 4);
       jay_MOV(b, packed, stencil)->type = JAY_TYPE_U8;
 
       /* Split send before stencil due to file difference */
-      assert(split == -1 && "TODO: samplemask and stencil outputs together");
       split = len;
 
       for (unsigned i = 0; i < jay_num_values(packed); i++)
@@ -1031,7 +1089,7 @@ jay_emit_fb_write(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
 
    jay_SEND(b, .sfid = GEN_SFID_RENDER_CACHE, .check_tdr = true,
             .msg_desc = desc | (ex_desc << 32), .srcs = srcs, .nr_srcs = len,
-            .type = JAY_TYPE_U32, .eot = last, .split = split,
+            .type = JAY_TYPE_U32, .eot = last, .split = pf == GPR ? split : -1,
             .skip_helpers = true);
 }
 
@@ -1349,7 +1407,7 @@ jay_emit_mem_access(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
          .flat.base_offset = base_offset,
       };
       desc |=
-         ((uint64_t) gen_lsc_ex_desc_encode(devinfo, &gen_ex_desc, NULL) << 32);
+         ((uint64_t) gen_lsc_ex_desc_encode(devinfo, op, &gen_ex_desc, NULL) << 32);
    } else if (jay_is_null(bti_indirect)) {
       const gen_lsc_ex_desc gen_ex_desc = {
          .addr_type = LSC_ADDR_SURFTYPE_BTI,
@@ -1359,7 +1417,7 @@ jay_emit_mem_access(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
          },
       };
       desc |=
-         ((uint64_t) gen_lsc_ex_desc_encode(devinfo, &gen_ex_desc, NULL) << 32);
+         ((uint64_t) gen_lsc_ex_desc_encode(devinfo, op, &gen_ex_desc, NULL) << 32);
    } else if (!jay_is_null(bti_indirect)) {
       /* Non-uniform bindless handles are expected to be lowered to waterfall
        * loops in NIR, but we can sometimes get here with GPR bti_indirect due
@@ -1375,7 +1433,7 @@ jay_emit_mem_access(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
                .base_offset = base_offset,
             },
          };
-         gen_lsc_ex_desc_encode(devinfo, &gen_ex_desc, &ex_desc_imm);
+         gen_lsc_ex_desc_encode(devinfo, op, &gen_ex_desc, &ex_desc_imm);
       } else {
          /* TODO: Move the SHL to NIR for CSE? */
          assert(surf_type == LSC_ADDR_SURFTYPE_BTI);
@@ -1751,11 +1809,15 @@ lane_id(jay_builder *b)
 {
    jay_shader *s = b->shader;
    jay_def lid16 = jay_alloc_def(b, UGPR, s->dispatch_width / 2);
-   jay_LANE_ID_8(b, jay_extract_range(lid16, 0, 4));
+   jay_LANE_ID_8(b, jay_extract_range(lid16, 0, 4), 0);
 
-   for (unsigned i = 8; i < s->dispatch_width; i *= 2) {
-      jay_ADD(b, JAY_TYPE_U16, jay_extract_range(lid16, i / 2, i / 2),
-              jay_extract_range(lid16, 0, i / 2), i);
+   if (s->dispatch_width >= 16) {
+      jay_LANE_ID_8(b, jay_extract_range(lid16, 4, 4), 8);
+   }
+
+   if (s->dispatch_width == 32) {
+      jay_ADD(b, JAY_TYPE_U16, jay_extract_range(lid16, 8, 8),
+              jay_extract_range(lid16, 0, 8), 16);
    }
 
    jay_def lid = jay_alloc_def(b, GPR, 1);
@@ -1779,6 +1841,10 @@ jay_emit_intrinsic(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
       s->stage == MESA_SHADER_TESS_EVAL ? &nj->payload.tes : NULL;
    jay_gs_payload *gs =
       s->stage == MESA_SHADER_GEOMETRY ? &nj->payload.gs : NULL;
+   jay_task_mesh_payload *task_mesh =
+      s->stage == MESA_SHADER_TASK || s->stage == MESA_SHADER_MESH ?
+         &nj->payload.task_mesh :
+         NULL;
 
    const bool has_dest = nir_intrinsic_infos[intr->intrinsic].has_dest;
    jay_def dst = has_dest ? nj_def(&intr->def) : jay_null();
@@ -1830,7 +1896,7 @@ jay_emit_intrinsic(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
       break;
 
    case nir_intrinsic_load_inline_data_intel:
-      assert(cs && f->is_entrypoint && "todo: this needs ABI");
+      assert((cs || task_mesh) && f->is_entrypoint && "todo: this needs ABI");
       load_push_data(nj, intr, nj->payload.inline_data);
       break;
 
@@ -1854,7 +1920,7 @@ jay_emit_intrinsic(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
       }
 
       if (nir_intrinsic_execution_scope(intr) == SCOPE_WORKGROUP &&
-          ((cs && !jay_workgroup_is_one_subgroup(b, nj->nir)) ||
+          (((cs || task_mesh) && !jay_workgroup_is_one_subgroup(b, nj->nir)) ||
            (tcs && s->prog_data->tcs.instances != 1))) {
          jay_emit_signal_barrier(b, nj);
          s->prog_data->cs.uses_barrier = true;
@@ -1890,10 +1956,9 @@ jay_emit_intrinsic(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
       jay_MOV(b, dst, fs->coverage_mask);
       break;
 
-   case nir_intrinsic_load_subgroup_invocation: {
+   case nir_intrinsic_load_subgroup_invocation:
       jay_MOV(b, dst, lane_id(b));
       break;
-   }
 
    case nir_intrinsic_demote:
       jay_DEMOTE_u32(b, jay_null(), jay_null());
@@ -2045,6 +2110,11 @@ jay_emit_intrinsic(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
       }
       break;
 
+   case nir_intrinsic_load_sample_positions_intel:
+      assert(fs);
+      jay_copy(b, dst, jay_collect_vectors(b, fs->sample_offsets, 2));
+      break;
+
    case nir_intrinsic_load_tess_coord:
       assert(tes);
       jay_copy(b, dst, tes->tess_coord);
@@ -2114,8 +2184,13 @@ jay_emit_intrinsic(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
       break;
 
    case nir_intrinsic_load_urb_input_handle_intel:
-      assert(tes);
-      jay_MOV(b, dst, jay_extract(nj->payload.u0, 0));
+      if (tes) {
+         jay_MOV(b, dst, jay_extract(nj->payload.u0, 0));
+      } else if (nj->s->stage == MESA_SHADER_MESH) {
+         jay_MOV(b, dst, jay_extract(nj->payload.u0, 7));
+      } else {
+         jay_MOV(b, dst, nj->payload.urb_handle);
+      }
       break;
 
    case nir_intrinsic_load_urb_output_handle_intel:
@@ -2264,12 +2339,8 @@ jay_emit_intrinsic(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
       break;
    }
 
-   case nir_intrinsic_load_subgroup_size:
-      jay_MOV(b, dst, s->dispatch_width);
-      break;
-
    case nir_intrinsic_load_subgroup_id:
-      assert(cs && f->is_entrypoint && "todo: this needs ABI");
+      assert((cs || task_mesh) && f->is_entrypoint && "todo: this needs ABI");
       /* Subgroup ID in Thread Group is u0.2 bits 7:0 */
       jay_AND(b, JAY_TYPE_U32, dst, jay_extract(nj->payload.u0, 2), 0xFF);
       break;
@@ -2305,6 +2376,37 @@ jay_emit_intrinsic(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
       jay_QUAD_SWIZZLE(b, dst, nj_src(intr->src[0]),
                        JAY_QUAD_SWIZZLE_XXXX + nir_src_as_uint(intr->src[1]));
       break;
+
+   case nir_intrinsic_select_active_intel: {
+      uint64_t inactive_val = nir_intrinsic_inactive_value(intr);
+      unsigned nr = jay_num_values(dst) * jay_ugpr_per_gpr(b->shader);
+      dst.num_values_m1 = nr - 1;
+
+      jay_inst *I = jay_SEL_ACTIVE(b, dst, nj_src(intr->src[0]), inactive_val);
+      I->type = (intr->def.bit_size == 64) ? JAY_TYPE_U64 : JAY_TYPE_U32;
+      break;
+   }
+
+   case nir_intrinsic_read_handle_intel: {
+      unsigned width = DIV_ROUND_UP(intr->def.bit_size, 32);
+      unsigned base = nir_intrinsic_base(intr) * width;
+
+      jay_def x = nj_src(intr->src[0]);
+      x.num_values_m1 = (jay_num_values(x) * jay_ugpr_per_gpr(b->shader)) - 1;
+      jay_copy(b, dst, jay_extract_range(x, base, jay_num_values(dst)));
+      break;
+   }
+
+   case nir_intrinsic_gather_lanes_intel: {
+      jay_def x = nj_src(intr->src[0]);
+      if (b->shader->dispatch_width == 32) {
+         jay_MOV(b, dst, jay_collect_two(b, x, nj_src(intr->src[1])));
+      } else {
+         unsigned width = b->shader->dispatch_width * jay_num_values(dst);
+         jay_MOV(b, dst, jay_extract_range(x, 0, width));
+      }
+      break;
+   }
 
    case nir_intrinsic_load_topology_id_intel:
       jay_MOV(b, dst, jay_scalar(J_ARF, GEN_ARF_STATE));
@@ -2342,6 +2444,32 @@ jay_emit_intrinsic(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
    case nir_intrinsic_convert_cmat_intel:
       jay_emit_convert_cmat(nj, intr);
       break;
+
+   case nir_intrinsic_load_workgroup_index:
+      jay_MOV(b, dst, jay_extract(nj->payload.u0, 1));
+      break;
+
+   case nir_intrinsic_load_num_workgroups:
+      jay_SHR(b, JAY_TYPE_U32, jay_extract(dst, 0),
+              jay_extract(nj->payload.u0, 6), 16);
+      jay_AND(b, JAY_TYPE_U32, jay_extract(dst, 1),
+              jay_extract(nj->payload.u0, 4), 0xffff);
+      jay_SHR(b, JAY_TYPE_U32, jay_extract(dst, 2),
+              jay_extract(nj->payload.u0, 4), 16);
+      break;
+
+   case nir_intrinsic_load_draw_id:
+      assert(task_mesh);
+      jay_MOV(b, dst, jay_extract(nj->payload.u0, 3));
+      break;
+
+   case nir_intrinsic_load_local_invocation_index:
+   case nir_intrinsic_load_local_invocation_index_intel: {
+      jay_def inv_idx_u16 =
+         jay_extract_range(nj->payload.u1, 0, s->dispatch_width / 2);
+      jay_CVT(b, JAY_TYPE_U32, dst, inv_idx_u16, JAY_TYPE_U16, JAY_ROUND, 0);
+      break;
+   }
 
    default:
 #ifndef NDEBUG
@@ -3163,6 +3291,16 @@ jay_emit_cf_list(struct nir_to_jay_state *nj, struct exec_list *list)
 }
 
 static void
+jay_emit_task_mesh_fence_workaround(struct nir_to_jay_state *nj)
+{
+   if (nj->nir->info.stage == MESA_SHADER_MESH ||
+       nj->nir->info.stage == MESA_SHADER_TASK) {
+      /* HSD-22014129519 workaround */
+      emit_lsc_fence(nj, GEN_SFID_URB, LSC_FENCE_GPU, LSC_FLUSH_TYPE_NONE);
+   }
+}
+
+static void
 jay_emit_eot(struct nir_to_jay_state *nj)
 {
    jay_builder *b = &nj->bld;
@@ -3178,7 +3316,9 @@ jay_emit_eot(struct nir_to_jay_state *nj)
    }
 
    if (mesa_shader_stage_is_compute(nj->nir->info.stage) ||
-       mesa_shader_stage_is_rt(nj->nir->info.stage)) {
+       mesa_shader_stage_is_rt(nj->nir->info.stage) ||
+       nj->nir->info.stage == MESA_SHADER_MESH ||
+       nj->nir->info.stage == MESA_SHADER_TASK) {
       jay_def u0 = nj->payload.u0;
 
       /* Vectorized copy into the EOT register. Not necessary for correctness
@@ -3210,7 +3350,8 @@ jay_emit_eot(struct nir_to_jay_state *nj)
             .addr_type = LSC_ADDR_SURFTYPE_FLAT,
          };
          uint64_t ex_desc =
-            gen_lsc_ex_desc_encode(nj->devinfo, &gen_ex_desc, NULL);
+            gen_lsc_ex_desc_encode(nj->devinfo, LSC_OP_STORE, &gen_ex_desc,
+                                   NULL);
 
          uint64_t desc =
             (ex_desc << 32) |
@@ -3315,6 +3456,20 @@ setup_vertex_payload(struct nir_to_jay_state *nj, struct payload_builder *p)
       assert(i < ARRAY_SIZE(nj->payload.vs.attributes));
       nj->payload.vs.attributes[i] = read_payload(p, GPR);
    }
+}
+
+static void
+setup_task_mesh_payload(struct nir_to_jay_state *nj, struct payload_builder *p)
+{
+   nj->payload.u1 = read_vector_payload(p, UGPR, jay_ugpr_per_grf(nj->s));
+
+   for (unsigned i = 0; i < jay_ugpr_per_grf(nj->s); ++i) {
+      nj->payload.inline_data[i] = read_payload(p, UGPR);
+   }
+
+   nj->payload.urb_handle = jay_extract(nj->payload.u0, 8);
+
+   setup_payload_dispatch_start(nj, p);
 }
 
 static void
@@ -3526,6 +3681,12 @@ setup_fragment_payload(struct nir_to_jay_state *nj, struct payload_builder *p)
          jay_extract_range(fs->sample_pos, 0, nj->s->dispatch_width / 2);
    }
 
+   if (nj->s->prog_data->fs.uses_sample_offsets) {
+      jay_def t = read_vector_payload(p, UGPR, jay_ugpr_per_grf(nj->s));
+      fs->sample_offsets[0] = jay_extract_range(t, 0, 2);
+      fs->sample_offsets[1] = jay_extract_range(t, 4, 2);
+   }
+
    nj->s->payload_ugprs = p->offsets[UGPR];
 
    jay_def split[3] = { jay_null() };
@@ -3560,14 +3721,6 @@ setup_fragment_payload(struct nir_to_jay_state *nj, struct payload_builder *p)
             read_payload(p, UGPR);
          }
       }
-   }
-
-   /* INIT_HELPERS reads UGPRs but has no SSA write. Therefore to minimize
-    * pressure, we want to hoist it as much as possible.
-    */
-   if (nj->s->helpers_tracked) {
-      jay_INIT_HELPERS(b, jay_extract(nj->payload.u0, 15),
-                       payload_u1(nj, 15, 1));
    }
 
    for (unsigned i = 0; i < ARRAY_SIZE(split_gprs); ++i) {
@@ -3685,6 +3838,10 @@ jay_setup_payload(struct nir_to_jay_state *nj)
    case MESA_SHADER_VERTEX:
       setup_vertex_payload(nj, &p);
       break;
+   case MESA_SHADER_TASK:
+   case MESA_SHADER_MESH:
+      setup_task_mesh_payload(nj, &p);
+      break;
    case MESA_SHADER_TESS_CTRL:
       setup_tess_ctrl_payload(nj, &p);
       break;
@@ -3714,6 +3871,58 @@ jay_setup_payload(struct nir_to_jay_state *nj)
    }
 
    s->payload_gprs = p.offsets[GPR];
+
+   jay_def mask = nj->payload.push_data[s->prog_data->base.push_reg_mask_param];
+   unsigned simd = b->shader->dispatch_width;
+
+   /* To handle robustness, we need to zero some pushed data depending on a
+    * pushed length. We vectorize this with predication (SIMD32 SEL). The trick
+    * is the vectorized flag calculation using BFI1 directly to fill out the
+    * mask of present words, rather than needing a comparison and the lane ID.
+    * The other wrinkle is splitting up into multiple chunk for large ranges,
+    * since only the last-present chunk will follow the BFI1 mask, the others
+    * will be all zero or all one. That's just a bit of extra bookkeeping.
+    *
+    * See the definition of robust_ubo_ranges for more details.
+    */
+   u_foreach_bit(r, nj->s->prog_data->base.robust_ubo_ranges) {
+      unsigned sz_W = nj->s->prog_data->base.push_sizes[r] / 4;
+
+      jay_def limit_16B = jay_CVT_u32(b, mask, JAY_TYPE_U8, JAY_ROUND, r);
+      jay_def limit_4B = jay_SHL_u32(b, limit_16B, 2);
+      jay_def bitmask = jay_BFI1_u32(b, limit_4B, 0);
+
+      jay_def *push_data = nj->payload.push_data;
+      jay_def higher = jay_null();
+
+      for (unsigned i = 0; i < r; ++i) {
+         push_data += s->prog_data->base.push_sizes[i] / 4;
+      }
+
+      for (unsigned base = 0; base < sz_W; base += simd) {
+         unsigned n = MIN2(sz_W - base, simd);
+         unsigned shift = base % 32;
+
+         jay_def mask = shift ? jay_SHR_u32(b, bitmask, shift) : bitmask;
+         jay_def flag = jay_alloc_def(b, FLAG, 1);
+
+         if (!jay_is_null(higher)) {
+            mask = jay_SEL_u32(b, mask, 0, higher);
+         }
+
+         higher = jay_alloc_def(b, UFLAG, 1);
+         jay_CMP(b, JAY_TYPE_U32, GEN_CONDITION_GE, higher, limit_4B, base + n);
+         jay_SEL(b, JAY_TYPE_U | simd, flag, ~0, mask, higher);
+
+         jay_def dst = jay_alloc_def(b, UGPR, n);
+         jay_def src = jay_collect_vectors(b, &push_data[base], n);
+         jay_SEL(b, JAY_TYPE_U32, dst, src, 0, flag);
+
+         jay_foreach_comp(dst, c) {
+            push_data[base + c] = jay_extract(dst, c);
+         }
+      }
+   }
 }
 
 /*
@@ -3746,6 +3955,14 @@ jay_remove_unreachable_blocks(jay_function *func)
                   jay_foreach_successor(pred, succ, cfg) {
                      util_dynarray_delete_unordered(jay_predecessors(succ, cfg),
                                                     jay_block *, pred);
+
+                     /* If we are removing the backedge of a loop, the loop is
+                      * no longer a loop. Update to avoid validation issues.
+                      */
+                     if (succ->index <= pred->index) {
+                        assert(succ->physical_loop_header);
+                        succ->loop_header = false;
+                     }
                   }
 
                   jay_successors(pred, cfg)[0] = NULL;
@@ -3790,8 +4007,8 @@ jay_from_nir_function(const struct intel_device_info *devinfo,
    jay_block_add_successor(nj.current_block, nj.exit_block, GPR);
 
    list_addtail(&nj.exit_block->link, &f->blocks);
+   jay_emit_task_mesh_fence_workaround(&nj);
    jay_emit_eot(&nj);
-   jay_remove_unreachable_blocks(f);
    free(nj.zero_inactive);
 }
 
@@ -3812,15 +4029,25 @@ jay_gather_stats(const jay_shader *s, struct genisa_stats *stats)
    stats->spills = s->spills;
    stats->fills = s->fills;
    stats->sends -= (s->spills + s->fills);
+   stats->dispatch_width = s->dispatch_width;
 }
 
-struct jay_shader_bin *
-jay_compile(const struct intel_device_info *devinfo,
-            void *mem_ctx,
-            nir_shader *nir,
-            union brw_any_prog_data *prog_data,
-            union brw_any_prog_key *key,
-            debug_archiver *archiver)
+static unsigned
+simd_to_index(unsigned simd)
+{
+   assert(!(simd & ~(8 | 16 | 32)));
+   return util_logbase2(simd) - 3;
+}
+
+static struct jay_shader_bin *
+jay_compile_simd(const struct intel_device_info *devinfo,
+                 void *mem_ctx,
+                 nir_shader *nir,
+                 union brw_any_prog_data *prog_data,
+                 union brw_any_prog_key *key,
+                 debug_archiver *archiver,
+                 unsigned simd_width,
+                 bool bail_if_inefficient)
 {
    jay_debug = debug_get_option_jay_debug();
    bool debug =
@@ -3828,8 +4055,8 @@ jay_compile(const struct intel_device_info *devinfo,
       (!nir->info.internal || NIR_DEBUG(PRINT_INTERNAL));
 
    bool track_helpers = false;
-   unsigned simd_width =
-      jay_process_nir(devinfo, nir, prog_data, key, archiver, &track_helpers);
+   jay_process_nir_for_simd(devinfo, nir, simd_width, prog_data, key, archiver,
+                            &track_helpers);
 
    if (debug) {
       /* We can't use nir_print_shader since it reindexes SSA defs. */
@@ -3862,6 +4089,10 @@ jay_compile(const struct intel_device_info *devinfo,
       }
    }
 
+   jay_foreach_function(s, f) {
+      jay_remove_unreachable_blocks(f);
+   }
+
    jay_validate(s, "NIR->Jay translation");
 
    /* After each propagation pass, eliminate dead code. This ensures use counts
@@ -3877,7 +4108,7 @@ jay_compile(const struct intel_device_info *devinfo,
    }
 
    if (debug) {
-      fprintf(stdout, "Jay shader:\n\n");
+      fprintf(stdout, "Jay SIMD%u shader:\n\n", simd_width);
       jay_print(stdout, s);
    }
 
@@ -3891,6 +4122,22 @@ jay_compile(const struct intel_device_info *devinfo,
 
    JAY_PASS(s, jay_lower_pre_ra);
    JAY_PASS(s, jay_partition_grf);
+
+   /* If this compilation has triggered spilling or poor thread occupancy,
+    * and we have other SIMD options available, bail early and let the
+    * caller try again with a smaller SIMD option.
+    *
+    * XXX: add VRT occupancy check
+    */
+   if (bail_if_inefficient && s->num_regs[MEM] > 0) {
+      if (debug) {
+         fprintf(stdout,
+                 "Jay SIMD%u shader skipped due to num_regs[MEM] = %u > 0.\n",
+                 simd_width, s->num_regs[MEM]);
+      }
+      return NULL;
+   }
+
    JAY_PASS(s, jay_schedule);
 
    if (debug) {
@@ -3913,6 +4160,8 @@ jay_compile(const struct intel_device_info *devinfo,
    }
 
    if (!(jay_debug & JAY_DBG_NOOPT)) {
+      JAY_PASS(s, jay_opt_postra_vectorize);
+
       /* jay_assign_accumulators uses a conservative liveness analysis for
        * predication, so assign accumulators before predicating for better
        * results.
@@ -3942,8 +4191,11 @@ jay_compile(const struct intel_device_info *devinfo,
    assert(bin->kernel);
    ralloc_steal(mem_ctx, bin);
 
-   jay_gather_stats(s, &bin->stats);
-   bin->stats.code_size = bin->size;
+   struct genisa_stats *stats = &bin->stats[0];
+
+   jay_gather_stats(s, stats);
+   stats->code_size = bin->size;
+   stats->workgroup_memory_size = nir->info.shared_size;
 
    if (debug) {
       if (nir->info.label) {
@@ -3953,11 +4205,8 @@ jay_compile(const struct intel_device_info *devinfo,
       const char *shader_name =
          ralloc_asprintf(s, "%s SIMD%u", _mesa_shader_stage_to_abbrev(s->stage),
                          s->dispatch_width);
-      genisa_stats_fprintf(stdout, shader_name, &bin->stats);
+      genisa_stats_fprintf(stdout, shader_name, stats);
    }
-
-   bin->stats.workgroup_memory_size = nir->info.shared_size;
-   bin->stats.dispatch_width = simd_width;
 
    if (s->stage == MESA_SHADER_FRAGMENT) {
       if (simd_width == 8) {
@@ -3970,7 +4219,9 @@ jay_compile(const struct intel_device_info *devinfo,
          prog_data->fs.prog_offset_32 = 0;
       }
 
-   } else if (mesa_shader_stage_is_compute(s->stage)) {
+   } else if (mesa_shader_stage_is_compute(s->stage) ||
+              s->stage == MESA_SHADER_MESH ||
+              s->stage == MESA_SHADER_TASK) {
       unsigned i = simd_width == 8 ? 0 : simd_width == 16 ? 1 : 2;
       prog_data->cs.prog_offset[i] = 0;
       prog_data->cs.prog_mask = BITFIELD_BIT(i);
@@ -4010,5 +4261,144 @@ jay_compile(const struct intel_device_info *devinfo,
    prog_data->base.total_scratch = align(prog_data->base.total_scratch, 1024);
 
    ralloc_free(s);
+   return bin;
+}
+
+struct jay_shader_bin *
+jay_compile(const struct intel_device_info *devinfo,
+            void *mem_ctx,
+            nir_shader *nir,
+            union brw_any_prog_data *prog_data,
+            union brw_any_prog_key *key,
+            debug_archiver *archiver)
+{
+   jay_process_nir(devinfo, nir, prog_data, key, archiver);
+
+   unsigned modes = jay_select_simd(devinfo, nir);
+
+   if (util_bitcount(modes) == 1) {
+      return jay_compile_simd(devinfo, mem_ctx, nir, prog_data, key, archiver,
+                              modes, false);
+   }
+
+   nir_shader *orig_nir = nir;
+   const unsigned smallest = 1u << (ffs(modes) - 1);
+   const unsigned largest = 1u << (util_last_bit(modes) - 1);
+
+   struct jay_simd_variant {
+      struct jay_shader_bin *bin;
+      const struct intel_shader_reloc *relocs;
+      unsigned num_relocs;
+   } variants[3] = {};
+
+   /* Compile SIMD variants */
+   for (unsigned simd = largest; simd >= smallest; simd >>= 1) {
+      if (!(modes & simd))
+         continue;
+
+      struct jay_simd_variant *jv = &variants[simd_to_index(simd)];
+
+      nir = nir_shader_clone(mem_ctx, orig_nir);
+      nir->constant_data_size = 0;
+
+      if (nir->info.api_subgroup_size_draw_uniform) {
+         nir->info.max_subgroup_size = largest;
+         nir->info.min_subgroup_size = smallest;
+      }
+
+      jv->bin = jay_compile_simd(devinfo, mem_ctx, nir, prog_data, key,
+                                 archiver, simd, simd != smallest);
+      jv->relocs = prog_data->base.relocs;
+      jv->num_relocs = prog_data->base.num_relocs;
+
+      if (!jv->bin)
+         modes &= ~simd;
+
+      ralloc_free(nir);
+
+      /* Only fragment shaders can dispatch multiple SIMD widths, so stop
+       * compiling compute shaders once we've found a width that works without
+       * spilling. In the future we could consider more heuristics but for now
+       * this should suffice.
+       */
+      if (jv->bin && nir->info.stage != MESA_SHADER_FRAGMENT) {
+         break;
+      }
+   }
+
+   /* Merge into a single binary */
+   unsigned total_bin_size = 0;
+   unsigned total_num_relocs = 0;
+   for (unsigned i = 0; i < ARRAY_SIZE(variants); i++) {
+      if (variants[i].bin) {
+         /* Ensure shaders start at 64 byte boundary. */
+         total_bin_size = align(total_bin_size, 64);
+         total_bin_size += variants[i].bin->size;
+
+         total_num_relocs += variants[i].num_relocs;
+      }
+   }
+
+   if (orig_nir->constant_data_size > 0) {
+      total_bin_size = align(total_bin_size, 32) + orig_nir->constant_data_size;
+   }
+
+   struct jay_shader_bin *bin = rzalloc(mem_ctx, struct jay_shader_bin);
+   bin->kernel = rzalloc_size(mem_ctx, total_bin_size);
+   bin->size = total_bin_size;
+   prog_data->base.program_size = total_bin_size;
+
+   struct intel_shader_reloc *relocs = NULL;
+   if (total_num_relocs > 0) {
+      prog_data->base.relocs = relocs =
+         ralloc_array(mem_ctx, struct intel_shader_reloc, total_num_relocs);
+      prog_data->base.num_relocs = total_num_relocs;
+   }
+
+   uint8_t *kernel = (uint8_t *) bin->kernel;
+   unsigned offset = 0;
+   unsigned reloc_start = 0;
+   unsigned s = 0;
+   for (unsigned i = 0; i < ARRAY_SIZE(variants); i++) {
+      if (!variants[i].bin)
+         continue;
+
+      offset = align(offset, 64);
+      memcpy(kernel + offset, variants[i].bin->kernel, variants[i].bin->size);
+
+      for (unsigned r = 0; r < variants[i].num_relocs; r++) {
+         relocs[reloc_start + r] = variants[i].relocs[r];
+         relocs[reloc_start + r].offset += offset;
+      }
+
+      if (orig_nir->info.stage == MESA_SHADER_FRAGMENT) {
+         if (i == 1) {
+            prog_data->fs.prog_offset_16 = offset;
+         } else if (i == 2) {
+            prog_data->fs.prog_offset_32 = offset;
+         }
+      }
+      if (orig_nir->info.stage == MESA_SHADER_COMPUTE) {
+         prog_data->cs.prog_mask |= BITFIELD_BIT(i);
+      } else if (brw_shader_stage_is_bindless(orig_nir->info.stage)) {
+         prog_data->bs.simd_size = 8 << i;
+      }
+
+      offset += variants[i].bin->size;
+      reloc_start += variants[i].num_relocs;
+
+      bin->stats[s++] = variants[i].bin->stats[0];
+
+      ralloc_free(variants[i].bin);
+   }
+
+   if (orig_nir->constant_data_size) {
+      offset = align(offset, 32);
+      memcpy(kernel + offset, orig_nir->constant_data,
+             orig_nir->constant_data_size);
+      prog_data->base.const_data_offset = offset;
+      prog_data->base.const_data_size = orig_nir->constant_data_size;
+   }
+
    return bin;
 }

@@ -14,6 +14,7 @@ use crate::ssa_value::{AllocSSA, SSAValueAllocator};
 use crate::swizzle::AsmSwizzleWiden;
 use acorn::Acorn;
 use compiler::cfg::CFGBuilder;
+use compiler::float16::F16;
 use kraid_hw_runner::{HwError, InvocationInfo, TestRunner};
 use rustc_hash::FxBuildHasher;
 
@@ -30,6 +31,104 @@ struct RunSingleton {
 }
 
 static RUN_SINGLETON: OnceLock<RunSingleton> = OnceLock::new();
+
+/// Interesting f32 inputs.  Every entry is also used negated,
+static F32_CURATED: &[f32] = &[
+    // Trivial values
+    0.0,
+    1.0,
+    0.5,
+    2.0,
+    8.0,
+    32.0,
+    1.5,
+    2.5,
+    PI,
+    E,
+    // Specials
+    f32::INFINITY,
+    f32::NAN,
+    f32::from_bits(f32::NAN.to_bits() | 0x1),
+    f32::from_bits(f32::NAN.to_bits() | 0x535),
+    f32::from_bits(0x7FFFFFFF), // NaN, all payload bits set
+    f32::from_bits(0x7F800001), // signaling NaN
+    f32::from_bits(0x7FBFFFFF), // signaling NaN, all payload bits set
+    // ULP neighbours
+    f32::from_bits(0x3EFF_FFFF), // 0.5.next_down
+    f32::from_bits(0x3F7F_FFFF), // 1.0.next_down
+    f32::from_bits(0x3F80_0001), // 1.0.next_up
+    // Subnormals and the normal/subnormal boundary
+    f32::from_bits(0x0000_0001), // 0.0.next_up
+    f32::MIN_POSITIVE,
+    f32::from_bits(0x0080_0001), // MIN_POSITIVE.next_up
+    f32::from_bits(0x007F_FFFF), // MIN_POSITIVE.next_down
+    f32::EPSILON,
+    f32::MAX,
+    f32::from_bits(0x7F7F_FFFE), // MAX.next_down
+    // Mid-range exponents, to test product/sum subnormals
+    f32::from_bits(0x0D80_0000), // 2^-100
+    f32::from_bits(0x2000_0000), // 2^-63
+    f32::from_bits(0x5F00_0000), // 2^63
+    f32::from_bits(0x7180_0000), // 2^100
+    // Integer boundaries.
+    16777216.0,                  // 2^24
+    f32::from_bits(0x4EFF_FFFF), // 2147483520.0, 2^31.next_down
+    2147483648.0,                // 2^31
+    f32::from_bits(0x4F7F_FFFF), // 4294967040.0, 2^32.next_down
+    4294967296.0,                // 2^32
+    // f16 range boundaries
+    f32::from_bits(0x3300_0000), // 2^-25, rtne tie to +0
+    f32::from_bits(0x3300_0001), // 2^-25.next_up, rounds to f16 subnormal
+    f32::from_bits(0x3380_0000), // 2^-24, smallest f16 subnormal
+    f32::from_bits(0x3880_0000), // 2^-14, smallest f16 normal
+    f32::from_bits(0x3F80_1000), // 1.0 + 2^-11, rtne tie down to 1.0
+    f32::from_bits(0x3F80_3000), // 1.0 + 3*2^-11, rtne tie up
+    65504.0,                     // f16::MAX
+    65519.0,                     // f16::MAX.next_up rtne tie, rounds down
+    65520.0,                     // rounds to f16 infinity
+];
+
+/// Interesting f16 inputs.
+static F16_CURATED: &[F16] = &[
+    // Trivial values
+    F16::ZERO,
+    F16::from_bits(0x3C00), // 1.0
+    F16::from_bits(0x3800), // 0.5
+    F16::from_bits(0x4000), // 2.0
+    F16::from_bits(0x4800), // 8.0
+    F16::from_bits(0x5000), // 32.0
+    F16::from_bits(0x3E00), // 1.5
+    F16::from_bits(0x4100), // 2.5
+    F16::from_bits(0x4248), // PI
+    F16::from_bits(0x4170), // E
+    // Specials
+    F16::INFINITY,
+    F16::NAN,
+    F16::from_bits(0x7E01), // NaN with payload
+    F16::from_bits(0x7E35), // NaN with payload
+    F16::from_bits(0x7FFF), // NaN, all payload bits set
+    F16::from_bits(0x7C01), // signaling NaN
+    F16::from_bits(0x7DFF), // signaling NaN, all payload bits set
+    // ULP neighbours
+    F16::from_bits(0x37FF), // 0.5.next_down
+    F16::from_bits(0x3BFF), // 1.0.next_down
+    F16::from_bits(0x3C01), // 1.0.next_up
+    // Subnormals and the normal/subnormal boundary
+    F16::from_bits(0x0001), // smallest subnormal
+    F16::from_bits(0x0400), // exp=1
+    F16::from_bits(0x0401), // exp=1, man=1
+    F16::from_bits(0x03FF), // largest subnormal
+    F16::from_bits(0x1400), // f16::EPSILON
+    F16::MAX,
+    F16::from_bits(0x7bfe), // MAX.next_down
+    // Mid-range exponents, to test product/sum subnormals
+    F16::from_bits(0x1C00), // 2^-8
+    F16::from_bits(0x5C00), // 2^8
+    // Integer boundaries
+    F16::from_bits(0x6400), // 1024, 2^10
+    F16::from_bits(0x6800), // 2048, 2^11
+    F16::from_bits(0x6801), // 2050, (2049 is not representable)
+];
 
 impl RunSingleton {
     fn create() -> Result<RunSingleton, HwError> {
@@ -77,6 +176,125 @@ fn transmute_mut_slice_to_u8<T: Sized>(data: &mut [T]) -> &mut [u8] {
             data.as_mut_ptr() as *mut u8,
             data.len() * size_of::<T>(),
         )
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Precision {
+    Exact,
+    Ulp(u32),
+    Abs(f32),
+}
+
+fn f32_ulp_dist(a: f32, b: f32) -> u32 {
+    let ulp_key = |x: f32| {
+        let sign_bit = 1 << 31;
+        let bits = x.to_bits();
+        if bits & sign_bit != 0 {
+            !bits
+        } else {
+            bits ^ sign_bit
+        }
+    };
+
+    ulp_key(a).abs_diff(ulp_key(b))
+}
+
+fn f16_ulp_dist(a: F16, b: F16) -> u16 {
+    let ulp_key = |x: F16| {
+        let sign_bit = 1 << 15;
+        let bits = x.to_bits();
+        if bits & sign_bit != 0 {
+            !bits
+        } else {
+            bits ^ sign_bit
+        }
+    };
+
+    ulp_key(a).abs_diff(ulp_key(b))
+}
+
+fn cmp_eq_f32(real: f32, expected: f32, prec: Precision) -> bool {
+    if real.is_nan() || expected.is_nan() {
+        return real.is_nan() && expected.is_nan();
+    }
+    match prec {
+        Precision::Exact => real.to_bits() == expected.to_bits(),
+        Precision::Ulp(ulps) => {
+            if real.to_bits() == expected.to_bits() {
+                return true; // Also catches infs
+            }
+            f32_ulp_dist(real, expected) <= ulps
+        }
+        Precision::Abs(prec) => (real - expected).abs() < prec,
+    }
+}
+
+fn cmp_eq_f16(real: F16, expected: F16, prec: Precision) -> bool {
+    if real.is_nan() || expected.is_nan() {
+        return real.is_nan() && expected.is_nan();
+    }
+    match prec {
+        Precision::Exact => real.to_bits() == expected.to_bits(),
+        Precision::Ulp(ulps) => {
+            if real.to_bits() == expected.to_bits() {
+                return true; // Also catches infs
+            }
+            u32::from(f16_ulp_dist(real, expected)) <= ulps
+        }
+        Precision::Abs(prec) => f32::from((real - expected).abs()) < prec,
+    }
+}
+
+// `assert_f32_eq!(expected, hardware, prec, "msg {..}")`
+macro_rules! assert_f32_eq {
+    ($expected:expr, $hardware:expr, $prec:expr, $($fmt:tt)+) => {{
+        if !cmp_eq_f32($expected, $hardware, $prec) {
+            panic!(
+                "Test {} failed\nExpected: {}\nHardware: {}",
+                format_args!($($fmt)+), $expected, $hardware
+            );
+        }
+    }};
+}
+
+fn sample_f32_range(rng: &mut Acorn, range: Range<f32>) -> f32 {
+    let t = (rng.get_u32() as f64 / u32::MAX as f64) as f32;
+    t * (range.end - range.start) + range.start
+}
+
+fn sample_float_special(rng: &mut Acorn, bits: u8) -> u32 {
+    let ctrl = rng.get_u32();
+    // Throw random floats half of the time to check everything
+    if ctrl & 0b01 != 0 {
+        return rng.get_u32() & (u32::MAX >> (32 - bits));
+    }
+    let negate = ctrl & 0b10 != 0;
+
+    let x = rng.get_u32() as usize;
+    match bits {
+        16 => {
+            let v = F16_CURATED[x % F16_CURATED.len()];
+            let v = if negate { -v } else { v };
+            v.to_bits().into()
+        }
+        32 => {
+            let v = F32_CURATED[x % F32_CURATED.len()];
+            let v = if negate { -v } else { v };
+            v.to_bits()
+        }
+        _ => panic!("Unsupported float width"),
+    }
+}
+
+fn sample_datatype(rng: &mut Acorn, data_type: DataType) -> u32 {
+    match data_type {
+        DataType::F32 => sample_float_special(rng, 32),
+        DataType::F16 => sample_float_special(rng, 16),
+        DataType::V2F16 => {
+            sample_float_special(rng, 16) << 16 | sample_float_special(rng, 16)
+        }
+        _ => rng.get_u32(),
     }
 }
 
@@ -243,8 +461,8 @@ impl Builder for TestShaderBuilder<'_> {
 }
 
 impl AllocSSA for TestShaderBuilder<'_> {
-    fn alloc_ssa(&mut self, bits: u8) -> SSAValue {
-        self.ssa_alloc.alloc_ssa(bits)
+    fn alloc_ssa_value(&mut self, bits: u8, is_mem: bool) -> SSAValue {
+        self.ssa_alloc.alloc_ssa_value(bits, is_mem)
     }
 }
 
@@ -371,67 +589,6 @@ fn test_copy_large() {
     assert_eq!(&data[..READ_SIZE], &data[READ_SIZE..]);
 }
 
-#[test]
-fn test_fadd_lscale() {
-    // The hardware docs tell that src1 is scaled to the range [0.5, 1.75)
-    // how is this scaled exactly?
-    // TODO: convert to Foldable test when we add proper float Foldables
-    let run = RunSingleton::get();
-    let shader = {
-        let mut b = TestShaderBuilder::new(&*run.model);
-        let data = b.ld_test_data(0, 32);
-
-        let res = b.alloc_ssa(32);
-        b.push_op(OpFAddLScale {
-            dst: res.into(),
-            round: FRound::NearestEven,
-            clamp: FClamp::None,
-            srcs: [Src::from(0).fneg(), data.into()],
-        });
-
-        b.st_test_data(4, res.into());
-        b.compile()
-    };
-
-    let case_fn = |c: f32| [c.to_bits(), 0];
-    let mut data = vec![
-        case_fn(1.0),
-        case_fn(-1.0),
-        case_fn(1.5),
-        case_fn(0.75),
-        case_fn(3.0),
-        case_fn(-3.0),
-        case_fn(0.0),
-        case_fn(-0.0),
-        case_fn(10.0),
-        case_fn(-10.0),
-        case_fn(-10.0),
-        case_fn(PI),
-        case_fn(-PI),
-        case_fn(f32::from_bits(1)), // Denormals
-        case_fn(f32::INFINITY),
-        case_fn(-f32::INFINITY),
-    ];
-
-    let case = shader.with_args(FAU_ONLY_ARGS, &mut data);
-    run.execute(case);
-
-    fn model(x: f32) -> f32 {
-        if !x.is_normal() {
-            return x;
-        }
-        // Force exponent to 0
-        let m = f32::from_bits((x.to_bits() & 0x807fffff) | 0x3f800000);
-        // Mantissa is (by construction) in [1.0, 2.0), half it if too large
-        if m.abs() >= 1.5 { m * 0.5 } else { m }
-    }
-
-    for data in &data {
-        let [input, res] = data.map(f32::from_bits);
-        assert_eq!(res, model(input), "Failed for {input}");
-    }
-}
-
 fn parse_folded(folded: &mut [u64], words: &[u32], types: DataTypeIter) {
     let mut offset = 0;
     for (comp, dtype) in folded.iter_mut().zip(types) {
@@ -450,15 +607,83 @@ fn parse_folded(folded: &mut [u64], words: &[u32], types: DataTypeIter) {
     assert_eq!(offset, words.len());
 }
 
+fn folded_eq(
+    a: &[u64],
+    b: &[u64],
+    types: DataTypeIter,
+    precision: Precision,
+) -> bool {
+    a.iter()
+        .zip(b.iter())
+        .zip(types)
+        .all(|((a, b), dtype)| match dtype {
+            DataType::F32 => {
+                let a = f32::from_bits(*a as u32);
+                let b = f32::from_bits(*b as u32);
+                cmp_eq_f32(a, b, precision)
+            }
+            DataType::F16 => {
+                let a = F16::from_bits(*a as u16);
+                let b = F16::from_bits(*b as u16);
+                cmp_eq_f16(a, b, precision)
+            }
+            DataType::V2F16 => {
+                let a0 = F16::from_bits(*a as u16);
+                let b0 = F16::from_bits(*b as u16);
+                let a1 = F16::from_bits((*a >> 16) as u16);
+                let b1 = F16::from_bits((*b >> 16) as u16);
+                cmp_eq_f16(a0, b0, precision) && cmp_eq_f16(a1, b1, precision)
+            }
+            _ => a == b,
+        })
+}
+
+fn format_folded(data: &[u64], types: DataTypeIter) -> String {
+    use std::fmt::Write;
+    let mut s = "[".to_string();
+    for (i, (data, dtype)) in data.iter().zip(types).enumerate() {
+        if i != 0 {
+            write!(s, ", ").unwrap();
+        }
+        match dtype {
+            DataType::F32 => {
+                let f = f32::from_bits(*data as u32);
+                write!(s, "{f:?} (0x{:08x})", f.to_bits()).unwrap();
+            }
+            DataType::F16 => {
+                let f = F16::from_bits(*data as u16);
+                write!(s, "{f:?} (0x{:04x})", f.to_bits()).unwrap();
+            }
+            DataType::V2F16 => {
+                let x = F16::from_bits(*data as u16);
+                let y = F16::from_bits((*data >> 16) as u16);
+                write!(
+                    s,
+                    "[{x:?} (0x{:04x}), {y:?} (0x{:04x})]",
+                    x.to_bits(),
+                    y.to_bits()
+                )
+                .unwrap();
+            }
+            _ => {
+                write!(s, "{data}").unwrap();
+            }
+        }
+    }
+    s += "]";
+    s
+}
+
 pub fn test_foldable_op_with(
-    mut op: impl Foldable + Clone + Into<Op> + fmt::Display,
-    mut rand_u32: impl FnMut(usize) -> u32,
+    mut op: impl Foldable + Clone + Into<Op> + fmt::Debug,
+    precision: Precision,
+    mut rand_u32: impl FnMut(usize, DataType) -> u32,
 ) {
     let run = RunSingleton::get();
     let mut b = TestShaderBuilder::new(&*run.model);
 
     let mut offset_words = 0u16;
-    let mut word_bits = Vec::new();
+    let mut word_types = Vec::new();
 
     for (src, src_type) in op.srcs_types_mut() {
         let read_bits = src_type.total_bits();
@@ -481,7 +706,7 @@ pub fn test_foldable_op_with(
         src.src_ref = swiz_src.src_ref;
         src.swizzle = swiz_src.swizzle;
 
-        word_bits.extend(iter::repeat_n(read_bits.min(32), words as usize));
+        word_types.extend(iter::repeat_n(src_type, words as usize));
     }
     let src_words = usize::from(offset_words);
 
@@ -508,8 +733,7 @@ pub fn test_foldable_op_with(
             unreachable!(); // We set it as SSA before
         };
         b.st_test_data(offset_words * 4, ssa.clone());
-        assert!(ssa.bytes() % 4 == 0);
-        offset_words += u16::from(ssa.bytes() / 4);
+        offset_words += u16::from(ssa.bytes().div_ceil(4));
     }
     let total_words = usize::from(offset_words);
     let dst_words = total_words - src_words;
@@ -523,10 +747,11 @@ pub fn test_foldable_op_with(
     let invocations = src_words * src_words * 100;
     let mut data = Vec::with_capacity(invocations * (src_words + dst_words));
 
-    assert!(src_words == word_bits.len());
+    assert!(src_words == word_types.len());
     for _ in 0..invocations {
-        data.extend(word_bits.iter().enumerate().map(|(i, bits)| {
-            rand_u32(i) & (u32::MAX >> (u32::BITS - *bits as u32))
+        data.extend(word_types.iter().enumerate().map(|(i, &wtype)| {
+            let bits = wtype.total_bits().min(32) as u32;
+            rand_u32(i, wtype) & (u32::MAX >> (u32::BITS - bits))
         }));
         data.extend(iter::repeat_n(0, dst_words));
     }
@@ -558,19 +783,26 @@ pub fn test_foldable_op_with(
         };
         op.fold(&*run.model, &mut fold);
 
-        if hw_dst != fold_dst {
-            eprintln!("Foldable test data mismatch for {op}:");
-            eprintln!("| Input:    {:?}", &fold_src);
-            eprintln!("| Hardware: {:?}", &hw_dst);
-            eprintln!("| Folded:   {:?}", &fold_dst);
+        if !folded_eq(&hw_dst, &fold_dst, op.dst_types(), precision) {
+            let input_s = format_folded(&fold_src, op.src_types());
+            let hw_out_s = format_folded(&hw_dst, op.dst_types());
+            let fold_out_s = format_folded(&fold_dst, op.dst_types());
+            eprintln!("Foldable test data mismatch for {op:?}:");
+            eprintln!("| Input:    {input_s}");
+            eprintln!("| Hardware: {hw_out_s}");
+            eprintln!("| Folded:   {fold_out_s}");
             panic!("Folding test data mismatch");
         }
     }
 }
 
-pub fn test_foldable_op(op: impl Foldable + Clone + Into<Op> + fmt::Display) {
+pub fn test_foldable_op(
+    op: impl Foldable + Clone + Into<Op> + fmt::Debug,
+    precision: Precision,
+) {
     let mut a = Acorn::new();
-    test_foldable_op_with(op, |_| a.get_u32());
+    let rand_gen = |_, dt| sample_datatype(&mut a, dt);
+    test_foldable_op_with(op, precision, rand_gen);
 }
 
 #[test]
@@ -580,7 +812,7 @@ fn test_op_bitrev() {
         src: 0.into(),
     };
 
-    test_foldable_op(op);
+    test_foldable_op(op, Precision::Exact);
 }
 
 #[test]
@@ -614,7 +846,7 @@ fn test_op_clz() {
 
             let mut a = Acorn::new();
             let mut idx = 0usize;
-            test_foldable_op_with(op, |_| {
+            test_foldable_op_with(op, Precision::Exact, |_, _| {
                 let v = edge_cases
                     .get(idx)
                     .copied()
@@ -663,7 +895,155 @@ fn test_op_csel() {
                 cmp_srcs: [0.into(), 0.into()],
                 sel_srcs: [0.into(), 0.into()],
             };
-            test_foldable_op(op);
+            test_foldable_op(op, Precision::Exact);
+        }
+    }
+}
+
+#[test]
+fn test_op_cubefaceidx() {
+    let op = OpCubeFaceIdx {
+        dst: DstRef::None.into(),
+        coords: [0.into(), 0.into(), 0.into()],
+    };
+
+    test_foldable_op(op, Precision::Exact);
+}
+
+#[test]
+fn test_op_cubefacemax() {
+    let op = OpCubeFaceMax {
+        dst: DstRef::None.into(),
+        coords: [0.into(), 0.into(), 0.into()],
+    };
+
+    test_foldable_op(op, Precision::Ulp(1));
+}
+
+#[test]
+fn test_op_f16_to_f32() {
+    let op = OpF16ToF32 {
+        dst: DstRef::None.into(),
+        src: 0.into(),
+    };
+    test_foldable_op(op, Precision::Ulp(0));
+}
+
+#[test]
+fn test_op_f32_to_f16() {
+    const ROUND_MODES: &'static [FRound] = &[
+        FRound::NearestEven,
+        FRound::Up,
+        FRound::Down,
+        FRound::TowardsZero,
+    ];
+
+    const CLAMP_MODES: &'static [FClamp] = &[
+        FClamp::None,
+        FClamp::ZeroToInf,
+        FClamp::NegOneToOne,
+        FClamp::ZeroToOne,
+    ];
+    for &round in ROUND_MODES {
+        for &clamp in CLAMP_MODES {
+            let op = OpF32ToF16 {
+                dst: DstRef::None.into(),
+                src: 0.into(),
+                round,
+                clamp,
+            };
+            test_foldable_op(op, Precision::Ulp(0));
+        }
+    }
+}
+
+#[test]
+fn test_op_f32_to_i32() {
+    const DATA_TYPES: &'static [DataType] = &[DataType::S32, DataType::U32];
+
+    const ROUND_MODES: &'static [FRound] = &[
+        FRound::NearestEven,
+        FRound::Up,
+        FRound::Down,
+        FRound::TowardsZero,
+    ];
+
+    for &dst_type in DATA_TYPES {
+        for &round in ROUND_MODES {
+            let op = OpF32ToI32 {
+                dst: DstRef::None.into(),
+                src: 0.into(),
+                round,
+                dst_type,
+            };
+            test_foldable_op(op, Precision::Ulp(0));
+        }
+    }
+}
+
+#[test]
+fn test_op_fadd() {
+    const DATA_TYPES: &'static [DataType] = &[DataType::F32, DataType::V2F16];
+
+    const ROUND_MODES: &'static [FRound] = &[
+        FRound::NearestEven,
+        FRound::Up,
+        FRound::Down,
+        FRound::TowardsZero,
+    ];
+
+    const CLAMP_MODES: &'static [FClamp] = &[
+        FClamp::None,
+        FClamp::ZeroToInf,
+        FClamp::NegOneToOne,
+        FClamp::ZeroToOne,
+    ];
+
+    for &dst_type in DATA_TYPES {
+        for &round in ROUND_MODES {
+            for &clamp in CLAMP_MODES {
+                let op = OpFAdd {
+                    dst: DstRef::None.into(),
+                    dst_type,
+                    round,
+                    clamp,
+                    srcs: [0.into(), 0.into()],
+                };
+                // FRound is not emulated correctly
+                let ulps = if round == FRound::NearestEven { 0 } else { 1 };
+                test_foldable_op(op, Precision::Ulp(ulps));
+            }
+        }
+    }
+}
+
+#[test]
+fn test_op_fadd_lscale() {
+    const ROUND_MODES: &'static [FRound] = &[
+        FRound::NearestEven,
+        FRound::Up,
+        FRound::Down,
+        FRound::TowardsZero,
+    ];
+
+    const CLAMP_MODES: &'static [FClamp] = &[
+        FClamp::None,
+        FClamp::ZeroToInf,
+        FClamp::NegOneToOne,
+        FClamp::ZeroToOne,
+    ];
+
+    for &round in ROUND_MODES {
+        for &clamp in CLAMP_MODES {
+            let op = OpFAddLScale {
+                dst: DstRef::None.into(),
+                round,
+                clamp,
+                srcs: [0.into(), 0.into()],
+            };
+            // FRound is not emulated correctly
+            let ulps = if round == FRound::NearestEven { 0 } else { 1 };
+            test_foldable_op(op, Precision::Ulp(ulps));
         }
     }
 }
@@ -705,13 +1085,196 @@ fn test_op_fcmp() {
                     };
                     // Accum is always treated as a bool so let's use 0-1
                     // (otherwise it would always be true)
-                    test_foldable_op_with(op, |i| match i {
+                    let rng = |i, dt| match i {
                         2 => a.get_u32() % 2,
-                        _ => a.get_u32(),
-                    });
+                        _ => sample_datatype(&mut a, dt),
+                    };
+                    test_foldable_op_with(op, Precision::Exact, rng);
                 }
             }
         }
+    }
+}
+
+#[test]
+fn test_op_flush() {
+    const DATA_TYPES: &'static [DataType] = &[DataType::F32, DataType::V2F16];
+
+    const NAN_MODES: &'static [FlushNanMode] = &[
+        FlushNanMode::None,
+        FlushNanMode::FlushNan,
+        FlushNanMode::QuietNan,
+    ];
+
+    for &src_type in DATA_TYPES {
+        for ftz in [false, true] {
+            for flush_inf in [false, true] {
+                for &flush_nan in NAN_MODES {
+                    let op = OpFlush {
+                        dst: DstRef::None.into(),
+                        src_type,
+                        src: 0.into(),
+                        ftz,
+                        flush_inf,
+                        flush_nan,
+                    };
+                    test_foldable_op(op, Precision::Exact);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_op_fma() {
+    const DATA_TYPES: &'static [DataType] = &[DataType::F32, DataType::V2F16];
+
+    const ROUND_MODES: &'static [FRound] = &[
+        FRound::NearestEven,
+        FRound::Up,
+        FRound::Down,
+        FRound::TowardsZero,
+    ];
+
+    const CLAMP_MODES: &'static [FClamp] = &[
+        FClamp::None,
+        FClamp::ZeroToInf,
+        FClamp::NegOneToOne,
+        FClamp::ZeroToOne,
+    ];
+
+    for &dst_type in DATA_TYPES {
+        for &round in ROUND_MODES {
+            for &clamp in CLAMP_MODES {
+                let op = OpFma {
+                    dst: DstRef::None.into(),
+                    dst_type,
+                    round,
+                    clamp,
+                    srcs: [0.into(), 0.into(), 0.into()],
+                };
+                // FRound is not emulated correctly, F16 has double-rounding issues
+                test_foldable_op(op, Precision::Ulp(1));
+            }
+        }
+    }
+}
+
+#[test]
+fn test_op_fmin() {
+    const DATA_TYPES: &'static [DataType] = &[DataType::F32, DataType::V2F16];
+
+    const CLAMP_MODES: &'static [FClamp] = &[
+        FClamp::None,
+        FClamp::ZeroToInf,
+        FClamp::NegOneToOne,
+        FClamp::ZeroToOne,
+    ];
+
+    for &dst_type in DATA_TYPES {
+        for propagate_nan in [false, true] {
+            for &clamp in CLAMP_MODES {
+                let op = OpFMin {
+                    dst: DstRef::None.into(),
+                    dst_type,
+                    clamp,
+                    propagate_nan,
+                    srcs: [0.into(), 0.into()],
+                };
+                test_foldable_op(op, Precision::Ulp(0));
+            }
+        }
+    }
+}
+
+#[test]
+fn test_op_fmul() {
+    const DATA_TYPES: &'static [DataType] = &[DataType::F32, DataType::V2F16];
+
+    for &dst_type in DATA_TYPES {
+        let op = OpFMul {
+            dst: DstRef::None.into(),
+            dst_type,
+            srcs: [0.into(), 0.into()],
+        };
+        test_foldable_op(op, Precision::Ulp(0));
+    }
+}
+
+#[test]
+fn test_op_fmax() {
+    const DATA_TYPES: &'static [DataType] = &[DataType::F32, DataType::V2F16];
+
+    const CLAMP_MODES: &'static [FClamp] = &[
+        FClamp::None,
+        FClamp::ZeroToInf,
+        FClamp::NegOneToOne,
+        FClamp::ZeroToOne,
+    ];
+
+    for &dst_type in DATA_TYPES {
+        for propagate_nan in [false, true] {
+            for &clamp in CLAMP_MODES {
+                let op = OpFMax {
+                    dst: DstRef::None.into(),
+                    dst_type,
+                    clamp,
+                    propagate_nan,
+                    srcs: [0.into(), 0.into()],
+                };
+                test_foldable_op(op, Precision::Ulp(0));
+            }
+        }
+    }
+}
+
+#[test]
+fn test_op_frcp() {
+    const DATA_TYPES: &'static [DataType] = &[DataType::F32, DataType::F16];
+
+    for &dst_type in DATA_TYPES {
+        let op = OpFRcp {
+            dst: DstRef::None.into(),
+            dst_type,
+            src: 0.into(),
+        };
+        // The docs only guarantee a maximum error strictly below 1 ulp
+        test_foldable_op(op, Precision::Ulp(1));
+    }
+}
+
+#[test]
+fn test_op_fround() {
+    const ROUND_MODES: &'static [FRound] = &[
+        FRound::NearestEven,
+        FRound::Up,
+        FRound::Down,
+        FRound::TowardsZero,
+        FRound::NearestValue,
+    ];
+
+    for &round in ROUND_MODES {
+        let op = OpFRound {
+            dst: DstRef::None.into(),
+            round,
+            src: 0.into(),
+        };
+        test_foldable_op(op, Precision::Ulp(0));
+    }
+}
+
+#[test]
+fn test_op_frsq() {
+    const DATA_TYPES: &'static [DataType] = &[DataType::F32, DataType::F16];
+
+    for &dst_type in DATA_TYPES {
+        let op = OpFRsq {
+            dst: DstRef::None.into(),
+            dst_type,
+            src: 0.into(),
+        };
+        // Hardware has 1 ULP precision, but we have double-rounding issues
+        test_foldable_op(op, Precision::Ulp(2));
     }
 }
 
@@ -737,7 +1300,7 @@ fn test_op_iabs() {
                 src: Src::from(0).swizzle(src0_swizzle),
                 dst_type,
             };
-            test_foldable_op(op);
+            test_foldable_op(op, Precision::Exact);
         }
     }
 }
@@ -783,7 +1346,7 @@ fn test_op_iadd() {
                     dst_type,
                     saturate,
                 };
-                test_foldable_op(op);
+                test_foldable_op(op, Precision::Exact);
             }
         }
     }
@@ -829,10 +1392,11 @@ fn test_op_icmp() {
                     };
                     // Accum is always treated as a bool so let's use 0-1
                     // (otherwise it would always be true)
-                    test_foldable_op_with(op, |i| match i {
+                    let rng = |i, dt| match i {
                         2 => a.get_u32() % 2,
-                        _ => a.get_u32(),
-                    });
+                        _ => sample_datatype(&mut a, dt),
+                    };
+                    test_foldable_op_with(op, Precision::Exact, rng);
                 }
             }
         }
@@ -876,10 +1440,11 @@ fn test_op_icmp_multi() {
                     accum: 0.into(),
                 };
                 // Accum should be 0, 1, or -1
-                test_foldable_op_with(op, |i| match i {
+                let rng = |i, dt| match i {
                     2 => (a.get_u32() % 3) - 1,
-                    _ => a.get_u32(),
-                });
+                    _ => sample_datatype(&mut a, dt),
+                };
+                test_foldable_op_with(op, Precision::Exact, rng);
             }
         }
     }
@@ -900,7 +1465,7 @@ fn test_op_idpadd() {
             srcs: [0.into(), 0.into()],
             accum: 0.into(),
         };
-        test_foldable_op(op);
+        test_foldable_op(op, Precision::Exact);
     }
 
     for &src0_type in SRC_TYPES {
@@ -919,7 +1484,7 @@ fn test_op_idpadd() {
                     srcs: [0.into(), 0.into()],
                     accum: 0.into(),
                 };
-                test_foldable_op(op);
+                test_foldable_op(op, Precision::Exact);
             }
         }
     }
@@ -959,7 +1524,7 @@ fn test_op_imul() {
                     dst_type,
                     saturate,
                 };
-                test_foldable_op(op);
+                test_foldable_op(op, Precision::Exact);
             }
         }
     }
@@ -1006,7 +1571,7 @@ fn test_op_isub() {
                     dst_type,
                     saturate,
                 };
-                test_foldable_op(op);
+                test_foldable_op(op, Precision::Exact);
             }
         }
     }
@@ -1032,7 +1597,7 @@ fn test_op_mux() {
                 src1: 0.into(),
                 sel: 0.into(),
             };
-            test_foldable_op(op);
+            test_foldable_op(op, Precision::Exact);
         }
     }
 }
@@ -1044,7 +1609,7 @@ fn test_op_popcount() {
         src: 0.into(),
     };
 
-    test_foldable_op(op);
+    test_foldable_op(op, Precision::Exact);
 }
 
 #[test]
@@ -1092,7 +1657,7 @@ fn test_op_shift_lop() {
                             shift: 0.into(),
                             src2: 0.into(),
                         };
-                        test_foldable_op(op);
+                        test_foldable_op(op, Precision::Exact);
                     }
                 }
             }
@@ -1102,58 +1667,6 @@ fn test_op_shift_lop() {
 
 mod builder {
     use super::*;
-
-    #[derive(Clone, Copy)]
-    enum FPrecision {
-        Ulp(u32),
-        Abs(f32),
-    }
-
-    fn ulp_dist(a: f32, b: f32) -> u32 {
-        let ulp_key = |x: f32| {
-            let sign_bit = 1 << 31;
-            let bits = x.to_bits();
-            if bits & sign_bit != 0 {
-                !bits
-            } else {
-                bits ^ sign_bit
-            }
-        };
-
-        ulp_key(a).abs_diff(ulp_key(b))
-    }
-
-    fn cmp_eq_f32(real: f32, expected: f32, prec: FPrecision) -> bool {
-        if real.is_nan() || expected.is_nan() {
-            return real.is_nan() && expected.is_nan();
-        }
-        match prec {
-            FPrecision::Ulp(ulps) => {
-                if (real - expected).abs() < f32::MIN_POSITIVE {
-                    return true; // ftz
-                }
-                ulp_dist(real, expected) < ulps
-            }
-            FPrecision::Abs(prec) => (real - expected).abs() < prec,
-        }
-    }
-
-    // `assert_feq!(expected, hardware, prec, "msg {..}")`
-    macro_rules! assert_feq {
-        ($expected:expr, $hardware:expr, $prec:expr, $($fmt:tt)+) => {{
-            if !cmp_eq_f32($expected, $hardware, $prec) {
-                panic!(
-                    "Test {} failed\nExpected: {}\nHardware: {}",
-                    format_args!($($fmt)+), $expected, $hardware
-                );
-            }
-        }};
-    }
-
-    fn sample_f32_range(rng: &mut Acorn, range: Range<f32>) -> f32 {
-        let t = (rng.get_u32() as f64 / u32::MAX as f64) as f32;
-        t * (range.end - range.start) + range.start
-    }
 
     #[test]
     fn test_fexp() {
@@ -1200,11 +1713,11 @@ mod builder {
         run.execute(case);
         for arr in data {
             let [base_log2, arg, res] = arr.map(f32::from_bits);
-            let comp = (base_log2 * arg).exp2();
+            let comp = (base_log2 * arg).exp2().flush_subnormals();
 
             let ulps = 3 + 2 * ((base_log2 * arg).abs() as u32);
-            let prec = FPrecision::Ulp(ulps);
-            assert_feq!(comp, res, prec, "fexp({base_log2}, {arg})");
+            let prec = Precision::Ulp(ulps);
+            assert_f32_eq!(comp, res, prec, "fexp({base_log2}, {arg})");
         }
     }
 
@@ -1248,11 +1761,11 @@ mod builder {
             let res = input.log2();
 
             let prec = if (0.5..=2.0).contains(&input) {
-                FPrecision::Abs(2f32.powi(-21))
+                Precision::Abs(2f32.powi(-21))
             } else {
-                FPrecision::Ulp(3)
+                Precision::Ulp(3)
             };
-            assert_feq!(comp, res, prec, "flog2({input})");
+            assert_f32_eq!(comp, res, prec, "flog2({input})");
         }
     }
 
@@ -1261,7 +1774,7 @@ mod builder {
         // Vulkan Environment for SPIR-V requires an absolute precision of 2^-11
         // in the range [-PI, PI]
         const RANGE: Range<f32> = -PI..PI;
-        let prec = FPrecision::Abs(2f32.powi(-11));
+        let prec = Precision::Abs(2f32.powi(-11));
 
         let run = RunSingleton::get();
         let shader = {
@@ -1298,8 +1811,8 @@ mod builder {
             // built with glibc, that should offer more precision what what we need
             let (esin, ecos) = input.sin_cos();
 
-            assert_feq!(esin, csin, prec, "sin({input})");
-            assert_feq!(ecos, ccos, prec, "cos({input})");
+            assert_f32_eq!(esin, csin, prec, "sin({input})");
+            assert_f32_eq!(ecos, ccos, prec, "cos({input})");
         }
     }
 }

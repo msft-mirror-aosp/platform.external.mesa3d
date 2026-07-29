@@ -1020,6 +1020,18 @@ brw_nir_should_vectorize_urb(unsigned align_mul, unsigned align_offset,
                              nir_intrinsic_instr *high,
                              void *data)
 {
+   brw_pass_tracker *pt = data;
+
+   /* Jay does not yet SIMD split SENDs, so we cannot SIMD split illegal 
+    * SIMD32x8 SENDs in Jay, like BRW does. Instead we just limit URB
+    * vectorization to x4 here. 
+    */
+   if (
+      intel_use_jay(pt->compiler->devinfo, pt->nir->info.stage) && 
+      pt->dispatch_width == 32 && num_components > 4) {
+      return false;
+   }
+
    if (bit_size != 32 || num_components > 8)
       return false;
 
@@ -1061,6 +1073,7 @@ brw_nir_opt_vectorize_urb(brw_pass_tracker *pt)
       .round_up_components =
          devinfo->ver >= 20 ? lsc_urb_round_up_components :
                               vec4_urb_round_up_components,
+      .cb_data = pt
    };
    BRW_NIR_PASS(nir_opt_load_store_vectorize, &options);
 }
@@ -1847,6 +1860,9 @@ generate_fs_config_state_bits(const struct brw_fs_prog_key *key,
    if (prog_data->conservative_raster == comp_value)
       f |= INTEL_FS_CONFIG_CONSERVATIVE_RASTER;
 
+   if (key->mesh_input == comp_value)
+      f |= INTEL_FS_CONFIG_PER_PRIMITIVE_REMAPPING;
+
    if (comp_value == INTEL_ALWAYS) {
       if (prog_data->persample_dispatch)
          f |= INTEL_FS_CONFIG_PERSAMPLE_DISPATCH;
@@ -2482,6 +2498,7 @@ brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir,
                    const struct brw_nir_compiler_opts *opts)
 {
    const struct intel_device_info *devinfo = compiler->devinfo;
+   bool jay = intel_use_jay(devinfo, nir->info.stage);
 
    /* TODO: This is part of the "pre-processing" before the shader is fed to
     * brw_compile_* functions, so there's no debug archiver available yet.
@@ -2493,6 +2510,16 @@ brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir,
    }, *pt = &pt_;
 
    nir_validate_ssa_dominance(nir, "before brw_preprocess_nir");
+
+   /* Geometry stages run at a fixed SIMD width, and raytracing shaders
+    * currently run at that same narrower width (see brw_compile_bs.cpp).
+    */
+   if (nir->info.stage <= MESA_SHADER_GEOMETRY ||
+       mesa_shader_stage_is_rt(nir->info.stage)) {
+      const unsigned simd = brw_geometry_stage_dispatch_width(devinfo);
+      nir->info.min_subgroup_size = simd;
+      nir->info.max_subgroup_size = simd;
+   }
 
    OPT(nir_lower_frexp);
 
@@ -2545,11 +2572,14 @@ brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir,
 
    OPT(nir_lower_flrp, lower_flrp, false /* always_precise */);
 
-   struct nir_opt_16bit_tex_image_options options = {
-      .rounding_mode = nir_rounding_mode_undef,
-      .opt_tex_dest_types = nir_type_float | nir_type_int | nir_type_uint,
-   };
-   OPT(nir_opt_16bit_tex_image, &options);
+   /* Needs more work to enable for Jay, see corresponding TODO there */
+   if (!jay) {
+      struct nir_opt_16bit_tex_image_options options = {
+         .rounding_mode = nir_rounding_mode_undef,
+         .opt_tex_dest_types = nir_type_float | nir_type_int | nir_type_uint,
+      };
+      OPT(nir_opt_16bit_tex_image, &options);
+   }
 
    /* Anv delays the initialization of softfp64, so we may not have
     * softfp64 set here. The full lowering will happen during the post-process
@@ -2584,8 +2614,6 @@ brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir,
    };
    OPT(nir_lower_compute_system_values, &lower_csv_options);
 
-   bool jay = intel_use_jay(devinfo, nir->info.stage);
-
    const nir_lower_subgroups_options subgroups_options = {
       .subgroup_size = brw_nir_api_subgroup_size(nir, 0),
       .ballot_bit_size = 32,
@@ -2596,9 +2624,8 @@ brw_preprocess_nir(const struct brw_compiler *compiler, nir_shader *nir,
       .lower_elect = !jay,
       .lower_inverse_ballot = !jay,
       .lower_rotate_to_shuffle = true,
-      .lower_subgroup_masks = jay,
-      /* TODO: Optimize reduces. Or don't. I'm not your Mom. */
-      .lower_reduce = jay,
+      .lower_subgroup_masks = true,
+      .lower_boolean_reduce = jay,
       .lower_vote = jay,
       .lower_vote_feq = jay,
       .lower_vote_ieq = jay,
@@ -3060,52 +3087,117 @@ get_mem_access_size_align(nir_intrinsic_op intrin, uint8_t bytes,
    const bool is_scratch = intrin == nir_intrinsic_load_scratch ||
                            intrin == nir_intrinsic_store_scratch;
 
-   if (align < 4 || bytes < 4) {
-      /* Choose a byte, word, or dword */
-      bytes = MIN2(bytes, 4);
-      if (bytes == 3)
-         bytes = (is_load && align >= 4) ? 4 : 2;
+   /* On older platforms, we have URB messages routing through HDC with LSC
+    * support in place. So make sure to use older code path for URB accesses.
+    */
+   const bool urb_access =
+      (intrin == nir_intrinsic_load_task_payload ||
+       intrin == nir_intrinsic_store_task_payload ||
+       intrin == nir_intrinsic_load_urb_lsc_intel ||
+       intrin == nir_intrinsic_store_urb_lsc_intel ||
+       intrin == nir_intrinsic_load_urb_vec4_intel ||
+       intrin == nir_intrinsic_store_urb_vec4_intel);
+   const bool via_lsc = urb_access ? devinfo->ver >= 20 : devinfo->has_lsc;
 
-      /* Ensure we split into aligned pieces. We cannot blindly turn an i8vec4
-       * into i32 due to the alignment requirements. It might be possible to
-       * relax this later, though.
+   if (via_lsc) {
+      /* Data size:           D64
+       * Address alignment:   8
+       * Vector size allowed: 2/3/4/8
        */
-      bytes = MIN2(bytes, align);
+      if (align == 8 && bit_size == 64 && bytes >= 8) {
+         bytes = MIN2(bytes, 64);
+         uint32_t comps = bytes / 8;
 
-      if (is_scratch) {
-         /* The way scratch address swizzling works in the back-end, it
-          * happens at a DWORD granularity so we can't have a single load
-          * or store cross a DWORD boundary.
-          */
-         if ((align_offset % 4) + bytes > MIN2(align_mul, 4))
-            bytes = MIN2(align_mul, 4) - (align_offset % 4);
+         /* We would need to SIMD split for dvec3+ */
+         comps = MIN2(comps, 2);
 
-         /* Must be a power of two */
-         if (bytes == 3)
-            bytes = 2;
+         return (nir_mem_access_size_align) {
+            .bit_size = 64,
+            .num_components = comps,
+            .align = 8,
+            .shift = nir_mem_access_shift_method_scalar,
+         };
       }
 
-      return (nir_mem_access_size_align) {
-         .bit_size = bytes * 8,
-         .num_components = 1,
-         .align = MIN2(align, 4),
-         .shift = nir_mem_access_shift_method_scalar,
-      };
-   } else {
-      bytes = MIN2(bytes, 16);
+      if (align < 4 || bytes < 8) {
+         /* Data size:           D8D32,D16D32,D32,D64
+          * Address alignment:   1
+          * Vector size allowed: 1
+          *
+          * When we have bytes 3 or greater than 4 and less than 8, for load,
+          * we can overfetch data but for store, we have only respect what HW
+          * allow us to write at once. For example, for 3 bytes store, we split
+          * it into 2 and next iteration of pass will take care of 1 byte.
+          */
+         bytes = MIN2(bytes, 8);
+         if (bytes == 3)
+            bytes = (is_load && align >= 4) ? 4 : 2;
+         if (bytes > 4 && bytes < 8)
+            bytes = (is_load && align >= 8) ? 8 : 4;
 
-      /* With UGM LSC dataport, we don't need to lower 64bit data access into
-       * two 32bit single vector access since it supports direct 64bit data
-       * operation.
-       */
-      if (devinfo->has_lsc && align == 8 && bit_size == 64 && !is_scratch) {
          return (nir_mem_access_size_align) {
-            .bit_size = bit_size,
-            .num_components = bytes / 8,
-            .align = bit_size / 8,
+            .bit_size = bytes * 8,
+            .num_components = 1,
+            .align = 1,
             .shift = nir_mem_access_shift_method_scalar,
          };
       } else {
+         /* Data size:           D32
+          * Address alignment:   4
+          * Vector size allowed: 2/3/4/8
+          */
+         bytes = MIN2(bytes, 32);
+         uint32_t comps = bytes / 4;
+
+         /* Reject V5/V6/V7 components and clamp it to supported size. */
+         if (comps > 4 && comps < 8)
+            comps = is_load ? 8 : 4;
+
+         /* We would need to SIMD split for vec8+ (vec16+ on Xe2+) */
+         comps = MIN2(devinfo->ver >= 20 ? 8 : 4, comps);
+
+         return (nir_mem_access_size_align) {
+            .bit_size = 32,
+            .num_components = is_scratch ? 1 : comps,
+            .align = 4,
+            .shift = nir_mem_access_shift_method_scalar,
+         };
+      }
+   } else {
+      if (align < 4 || bytes < 4) {
+         /* Choose a byte, word, or dword */
+         bytes = MIN2(bytes, 4);
+         if (bytes == 3)
+            bytes = (is_load && align >= 4) ? 4 : 2;
+
+         /* Ensure we split into aligned pieces. We cannot blindly turn an i8vec4
+          * into i32 due to the alignment requirements. It might be possible to
+          * relax this later, though.
+          */
+         bytes = MIN2(bytes, align);
+
+         if (is_scratch) {
+            /* The way scratch address swizzling works in the back-end, it
+             * happens at a DWORD granularity so we can't have a single load
+             * or store cross a DWORD boundary.
+             */
+            if ((align_offset % 4) + bytes > MIN2(align_mul, 4))
+               bytes = MIN2(align_mul, 4) - (align_offset % 4);
+
+            /* Must be a power of two */
+            if (bytes == 3)
+               bytes = 2;
+         }
+
+         return (nir_mem_access_size_align) {
+            .bit_size = bytes * 8,
+            .num_components = 1,
+            .align = MIN2(align, 4),
+            .shift = nir_mem_access_shift_method_scalar,
+         };
+      } else {
+         bytes = MIN2(bytes, 16);
+
          return (nir_mem_access_size_align) {
             .bit_size = 32,
             .num_components = is_scratch ? 1 :
@@ -3456,7 +3548,7 @@ flag_fused_eu_disable_instr(nir_builder *b, nir_instr *instr, void *data)
    }
 }
 
-static void
+void
 brw_nir_lower_int64(brw_pass_tracker *pt)
 {
    /* Potentially perform this optimization pass twice because it can create
@@ -3545,8 +3637,11 @@ brw_postprocess_nir_opts(brw_pass_tracker *pt)
    if (devinfo->ver >= 30)
       NIR_PASS(_, nir, brw_nir_lower_sample_index_in_coord);
 
-   if (mesa_shader_stage_can_set_fragment_shading_rate(nir->info.stage))
-      NIR_PASS(_, nir, intel_nir_lower_shading_rate_output);
+   /* for jay mesh shaders we do this earlier */
+   if (!(jay && nir->info.stage == MESA_SHADER_MESH)) {
+      if (mesa_shader_stage_can_set_fragment_shading_rate(nir->info.stage))
+         NIR_PASS(_, nir, intel_nir_lower_shading_rate_output);
+   }
 
    OPT(brw_nir_tag_speculative_access);
 
@@ -3623,7 +3718,8 @@ brw_postprocess_nir_opts(brw_pass_tracker *pt)
       OPT(nir_opt_peephole_select, &peephole_select_options);
    }
 
-   OPT(brw_nir_opt_systolic_vectorize, devinfo);
+   if (OPT(brw_nir_opt_systolic_vectorize, devinfo))
+      OPT(nir_lower_vars_to_ssa);
 
    OPT(brw_nir_lower_fsign);
    OPT(brw_nir_opt_fsat);
@@ -3646,15 +3742,19 @@ brw_postprocess_nir_opts(brw_pass_tracker *pt)
    OPT(nir_opt_move, move_all);
    OPT(nir_opt_dead_cf);
 
-   static const nir_lower_subgroups_options subgroups_options = {
+   const nir_lower_subgroups_options subgroups_options = {
       .ballot_bit_size = 32,
       .ballot_components = 1,
-      .lower_elect = true,
+      .lower_elect = !jay,
       .lower_subgroup_masks = true,
+      .lower_boolean_reduce = jay,
+      .lower_vote = jay,
+      .lower_vote_feq = jay,
+      .lower_vote_ieq = jay,
+      .lower_boolean_shuffle = jay,
    };
 
-   if (!intel_use_jay(devinfo, pt->nir->info.stage) &&
-       OPT(nir_opt_uniform_atomics, false))
+   if (OPT(nir_opt_uniform_atomics, false))
       OPT(nir_lower_subgroups, &subgroups_options);
 
    if (pt->key->divergent_atomics_flags)

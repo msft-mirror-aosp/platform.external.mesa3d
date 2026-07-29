@@ -77,6 +77,12 @@ def declare_options(android_version):
         B("anv_xe2_r11g11b10_atomic_swap_wa", True,
           "Enable workaround for apps using atomic swaps on R11G11B10 images",
           c_name="r11g11b10_atomic_swap_wa"),
+        B("anv_emulate_active_thread_barriers", True,
+          "Emulates Xe2+ active thread barriers on Gfx125 and below",
+          c_name="emulate_active_thread_barriers"),
+        B("anv_emulate_divergent_barriers", False,
+          "Temporary workaround for a broken shader in some recent RE engine games",
+          c_name="emulate_divergent_barriers"),
 
         # Workaround various driver
         B("always_flush_cache", False,
@@ -150,6 +156,8 @@ def declare_options(android_version):
         B("brw_prefer_simd32_fs", False,
           "Keep this fragment shader's SIMD32 variant even if the throughput "
           "model ties it"),
+        B("anv_xe2_force_simd32_cs", False,
+          "Force this compute shader to dispatch at SIMD32 (Xe2+ only)"),
     ]
 
     perf_options = [
@@ -168,6 +176,10 @@ def declare_options(android_version):
         I("query_copy_with_shader_threshold", 6, 0, 0x7fffffff,
           "Query threshold count above which query copies are executed with a shader",
           c_name="query_copy_with_shader_threshold"),
+
+        B("anv_enable_alloc_oversubscription", True,
+          "Allow the optional alignment of allocation sizes to large page sizes",
+          c_name="alloc_oversubscription"),
 
         B("anv_disable_push_constant_alloc", True,
           "Disable push constant space allocations",

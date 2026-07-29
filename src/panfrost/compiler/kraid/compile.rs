@@ -151,6 +151,7 @@ fn write_back_info(src: &ShaderInfo, dst: &mut pan_shader_info) {
     dst.work_reg_count = src.registers_used.into();
     dst.tls_size = src.tls_size;
     dst.preload = src.register_preload;
+    dst.has_shader_clk_instr = src.has_ld_gclk;
 }
 
 #[unsafe(no_mangle)]
@@ -177,7 +178,8 @@ pub extern "C" fn kraid_compile_nir(
     pass!(s.opt_dce());
     pass!(s.lower_small_constants());
     pass!(s.legalize());
-    pass!(s.assign_registers());
+    // Shader::assign_registers() uses pass!() internally
+    s.assign_registers();
     pass!(s.lower_copy());
     pass!(s.assign_message_slots());
 
