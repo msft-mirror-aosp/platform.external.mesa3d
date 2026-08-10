@@ -156,7 +156,6 @@ spec@ext_transform_feedback@tessellation triangle_strip monochrome,Fail
 spec@ext_transform_feedback@tessellation triangle_strip smooth,Fail
 spec@ext_transform_feedback@tessellation triangle_strip wireframe,Fail
 spec@glsl-1.20@execution@fs-underflow-mul-compare-zero,Fail
-spec@glsl-1.30@execution@clipping@fs-clip-distance-interpolated,Crash
 spec@glsl-1.30@execution@interpolation@interpolation-noperspective-gl_backcolor-flat-distance,Fail
 spec@glsl-1.30@execution@interpolation@interpolation-noperspective-gl_backcolor-flat-fixed,Fail
 spec@glsl-1.30@execution@interpolation@interpolation-noperspective-gl_backcolor-flat-none,Fail
@@ -285,6 +284,10 @@ afbcp-spec@arb_texture_view@tex-view,Fail
 KHR-GLES31.core.draw_indirect.advanced-twoPass-transformFeedback-arrays,Fail
 spec@!opengl 1.1@large-tex,Fail
 spec@arb_texture_view@tex-view,Fail
+spec@arb_framebuffer_object@framebuffer-blit-oblong tall,Fail
+spec@ext_yuv_target@execution@rgb_2_yuv,Fail
+spec@arb_framebuffer_object@framebuffer-blit-oblong wide,Fail
+spec@ext_yuv_target@execution@yuv_2_rgb,Fail
 spec@glsl-1.30@execution@glsl-packed-back-color,Fail
 
 # OpenCL (rusticl) failures
@@ -296,20 +299,10 @@ program@execute@builtin@builtin-float-nextafter-1.0.generated@nextafter float16,
 program@execute@builtin@builtin-float-nextafter-1.0.generated@nextafter float2,Fail
 program@execute@builtin@builtin-float-nextafter-1.0.generated@nextafter float4,Fail
 program@execute@builtin@builtin-float-nextafter-1.0.generated@nextafter float8,Fail
-program@execute@global-offset,Fail
-program@execute@global-offset@3d- input dependent,Fail
 program@execute@vector-conversion,Fail
 
 # OpenCL-CTS quick profile
-Compiler@unload_repeated,Fail
-Compiler@unload_compile_unload_link,Fail
-Compiler@unload_build_unload_create_kernel,Fail
-Compiler@unload_build_threaded,Fail
-Compiler,Fail
 Images (clFillImage max size)@1D,Fail
-# Caused by the outdated SPIR-V LLVM Translator in the test image
-Basic@work_item_functions_out_of_range,Fail
-Basic,Crash
 Images (clCopyImage max size),Fail
 Images (clCopyImage max size)@2D,Fail
 Images (clCopyImage max size)@2Darrayto2D,Fail
@@ -318,9 +311,8 @@ Images (clCopyImage max size)@2Dto2Darray,Fail
 Images (clCopyImage max size)@2Dto3D,Fail
 Images (clCopyImage max size)@3Dto2D,Fail
 Images (clCopyImage max size)@3Dto2Darray,Fail
-Math@ilogb,Fail
-Math,Crash
-Relationals,Crash
-Images (API Info),Fail
-Images (API Info)@1Darray,Fail
-Images (API Info)@2D,Fail
+
+# Failing after updating SPIR-V LLVM Translator in the test image
+Basic@get_enqueued_local_size,Fail
+Basic@get_global_linear_id,Fail
+Basic@get_local_linear_id,Fail

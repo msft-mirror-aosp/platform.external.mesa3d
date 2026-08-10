@@ -19,6 +19,7 @@
 #include "bvh/anv_bvh_defines.h"
 #include "vk_acceleration_structure.h"
 #include "radix_sort/radix_sort_u64.h"
+#include "radix_sort/radix_sort_u96.h"
 #include "radix_sort/common/vk/barrier.h"
 
 #include "vk_common_entrypoints.h"
@@ -357,6 +358,9 @@ anv_get_build_config(VkDevice _device, struct vk_acceleration_structure_build_st
 
    VkGeometryTypeKHR geometry_type = vk_get_as_geometry_type(state->build_info);
    state->config.late_pair_compression = geometry_type == VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+
+   state->config.u64_keys =
+      state->build_info->type == VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
 }
 
 static void
@@ -428,6 +432,13 @@ anv_encode_as(VkCommandBuffer commandBuffer, struct vk_device *vk_device, struct
    VK_FROM_HANDLE(anv_cmd_buffer, cmd_buffer, commandBuffer);
 
    trace_intel_begin_as_encode(&cmd_buffer->trace);
+
+   /* TODO: Current encode.comp spilling a lot. Once we flip the swtich to Jay,
+    * let's set the subgroup size to 32 on Xe2+.
+    */
+   struct anv_device *device = cmd_buffer->device;
+   device->accel_struct_build.build_args.subgroup_size =
+      device->info->ver >= 20 ? 16 : 8;
 
    anv_bvh_build_bind_pipeline(commandBuffer, ANV_OBJECT_KEY_BVH_ENCODE, encode_spv, sizeof(encode_spv),
                                sizeof(struct encode_args), build_flags);
@@ -631,6 +642,7 @@ anv_update_as(VkCommandBuffer commandBuffer, struct vk_device *vk_device,
                                update_spv, sizeof(update_spv),
                                sizeof(struct update_args), build_flags);
 
+   bool barrier_needed = false;
    for (uint32_t i = 0; i < build_count; i++) {
       struct vk_acceleration_structure_build_state *state = &states[i];
       if (state->config.internal_type != VK_INTERNAL_BUILD_TYPE_UPDATE)
@@ -650,10 +662,25 @@ anv_update_as(VkCommandBuffer commandBuffer, struct vk_device *vk_device,
          struct anv_address dst_addr =
             anv_address_from_u64(vk_acceleration_structure_get_va(dst));
 
-         assert(src->size == dst->size);
-         anv_cmd_copy_addr(cmd_buffer, src_addr, dst_addr, src->size);
-         vk_barrier_compute_w_to_compute_r(commandBuffer);
+         assert(bvh_layout.size <= src->size);
+         assert(bvh_layout.size <= dst->size);
+         anv_cmd_copy_addr(cmd_buffer, src_addr, dst_addr, bvh_layout.size);
+         barrier_needed = true;
       }
+   }
+
+   if (barrier_needed)
+      vk_barrier_compute_w_to_compute_r(commandBuffer);
+
+   for (uint32_t i = 0; i < build_count; i++) {
+      struct vk_acceleration_structure_build_state *state = &states[i];
+      if (state->config.internal_type != VK_INTERNAL_BUILD_TYPE_UPDATE)
+         continue;
+
+      VK_FROM_HANDLE(vk_acceleration_structure, dst, state->build_info->dstAccelerationStructure);
+
+      struct bvh_layout bvh_layout;
+      get_bvh_layout(state, &bvh_layout);
 
       struct update_scratch_layout update_layout;
       anv_get_update_scratch_layout(device, state, &update_layout);
@@ -729,7 +756,8 @@ anv_encode(VkCommandBuffer commandBuffer, struct vk_device *device, struct vk_me
           !flushed_cp_after_init_update_scratch)
          vk_barrier_compute_w_to_compute_r(commandBuffer);
 
-      vk_build_stage(anv_update_as, commandBuffer, device, meta, args, states, build_count, 0, true);
+      vk_build_stage(anv_update_as, commandBuffer, device, meta, args, states, build_count,
+                     VK_BUILD_FLAG_HAS_QUADS, true);
    }
 
    if (!has_build)
@@ -763,10 +791,10 @@ anv_device_init_accel_struct_build_state(struct anv_device *device)
    VkResult result = VK_SUCCESS;
    simple_mtx_lock(&device->accel_struct_build.mutex);
 
-   if (device->accel_struct_build.radix_sort)
+   if (device->accel_struct_build.radix_sort_64)
       goto exit;
 
-   const struct radix_sort_vk_target_config radix_sort_config = {
+   const struct radix_sort_vk_target_config radix_sort_config64 = {
       .keyval_dwords = 2,
       .init = { .workgroup_size_log2 = 8, },
       .fill = { .workgroup_size_log2 = 8, .block_rows = 8 },
@@ -786,10 +814,35 @@ anv_device_init_accel_struct_build_state(struct anv_device *device)
       },
    };
 
-   device->accel_struct_build.radix_sort =
+   const struct radix_sort_vk_target_config radix_sort_config96 = {
+      .keyval_dwords = 3,
+      .init = { .workgroup_size_log2 = 8, },
+      .fill = { .workgroup_size_log2 = 8, .block_rows = 8 },
+      .histogram = {
+         .workgroup_size_log2 = 8,
+         .subgroup_size_log2 = device->info->ver >= 20 ? 5 : 4,
+         .block_rows = 14,
+      },
+      .prefix = {
+         .workgroup_size_log2 = 8,
+         .subgroup_size_log2 = device->info->ver >= 20 ? 5 : 4,
+      },
+      .scatter = {
+         .workgroup_size_log2 = 8,
+         .subgroup_size_log2 = device->info->ver >= 20 ? 4 : 3,
+         .block_rows = 14,
+      },
+   };
+
+   device->accel_struct_build.radix_sort_64 =
       vk_create_radix_sort_u64(anv_device_to_handle(device),
                                &device->vk.alloc,
-                               VK_NULL_HANDLE, radix_sort_config);
+                               VK_NULL_HANDLE, radix_sort_config64);
+
+   device->accel_struct_build.radix_sort_96 =
+      vk_create_radix_sort_u96(anv_device_to_handle(device),
+                               &device->vk.alloc,
+                               VK_NULL_HANDLE, radix_sort_config96);
 
    device->vk.as_build_ops = &anv_build_ops;
    device->vk.write_buffer_cp = anv_cmd_write_buffer_cp;
@@ -801,8 +854,9 @@ anv_device_init_accel_struct_build_state(struct anv_device *device)
       (struct vk_acceleration_structure_build_args) {
          .emit_markers = u_trace_enabled(&device->ds.trace_context),
          .has_update = true,
-         .subgroup_size = device->info->ver >= 20 ? 16 : 8,
-         .radix_sort_64 = device->accel_struct_build.radix_sort,
+         .subgroup_size = device->info->ver >= 20 ? 32 : 16,
+         .radix_sort_64 = device->accel_struct_build.radix_sort_64,
+         .radix_sort_96 = device->accel_struct_build.radix_sort_96,
          /* See struct anv_accel_struct_header from anv_bvh_defines.h
           */
          .bvh_bounds_offset = 0,

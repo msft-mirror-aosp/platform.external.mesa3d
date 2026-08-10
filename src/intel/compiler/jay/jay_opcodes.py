@@ -69,6 +69,8 @@ op('xor', 2, 'u1 u16 u32', Props.NEGATE | Props.CMOD | Props.COMMUTATIVE)
 
 op('add',   2, 'u32 s32 u64 s64 f32 f64 f16 bf16 u16 s16',
    Props.SAT | Props.CMOD | Props.COMMUTATIVE | Props.NEGATE)
+op('add_rtne',   2, 'f32 f64',
+   Props.SAT | Props.CMOD | Props.COMMUTATIVE | Props.NEGATE)
 op('add3',  3, 'u32 s32 u64 s64 u16 s16', Props.SAT |
    Props.CMOD | Props.COMMUTATIVE | Props.NEGATE)
 op('asr',   2, 's32 s64 s16', Props.CMOD | Props.NEGATE0)
@@ -130,6 +132,7 @@ op('shr', 2, 'u32 u64 u16 s16 s32 s64', Props.CMOD | Props.NEGATE0)
 op('quad_swizzle', 1, 'u1 u32', 0, ['enum jay_quad_swizzle swizzle'])
 op('sync', 1, 'u32', Props.NO_DEST, ['enum tgl_sync_function op'])
 op('schedule_barrier', 0, None, Props.NO_DEST)
+op('check_tdr', 0, None, Props.NO_DEST)
 
 for n in ['brd', 'illegal', 'goto', 'join', 'if', 'else',
           'endif', 'while', 'break', 'cont', 'call', 'calla', 'jmpi', 'ret',

@@ -654,16 +654,22 @@ intrinsic("masked_swizzle_amd", src_comp=[0], dest_comp=0, bit_sizes=src0,
           indices=[SWIZZLE_MASK, FETCH_INACTIVE],
           flags=SUBGROUP_FLAGS)
 intrinsic("write_invocation_amd", src_comp=[0, 0, 1], dest_comp=0, bit_sizes=src0,
-          flags=[CAN_ELIMINATE])
+          flags=SUBGROUP_FLAGS)
 # src = [ mask, addition ]
 intrinsic("mbcnt_amd", src_comp=[1, 1], dest_comp=1, bit_sizes=[32], flags=[CAN_REORDER, CAN_ELIMINATE])
 # Compiled to v_permlane16_b32. src = [ value, lanesel_lo, lanesel_hi ]
-intrinsic("lane_permute_16_amd", src_comp=[1, 1, 1], dest_comp=1, bit_sizes=src0, flags=[CAN_ELIMINATE])
+intrinsic("lane_permute_16_amd", src_comp=[1, 1, 1], dest_comp=1, bit_sizes=src0, flags=SUBGROUP_FLAGS)
+# Compiled to v_permlanex16_b32. src = [ value, lanesel_lo, lanesel_hi ]
+intrinsic("lane_permute_x16_amd", src_comp=[1, 1, 1], dest_comp=1, bit_sizes=src0, flags=SUBGROUP_FLAGS)
 # subgroup shuffle up/down with cluster size 16.
 # base in [-15, -1]: DPP_ROW_SR
 # base in [  1, 15]: DPP_ROW_SL, otherwise invalid.
 # Returns zero for invocations that try to read out of bounds
-intrinsic("dpp16_shift_amd", src_comp=[0], dest_comp=0, bit_sizes=src0, indices=[BASE], flags=[CAN_ELIMINATE])
+intrinsic("dpp16_shift_amd", src_comp=[0], dest_comp=0, bit_sizes=src0, indices=[BASE], flags=SUBGROUP_FLAGS)
+
+# Like quad_swizzle_amd, but in groups of 8
+intrinsic("dpp8_swizzle_amd", src_comp=[0], dest_comp=0, bit_sizes=src0,
+          indices=[SWIZZLE_MASK], flags=SUBGROUP_FLAGS)
 
 # Basic Geometry Shader intrinsics.
 #
@@ -1713,11 +1719,9 @@ intrinsic("prefetch_ubo_ir3", [1], flags=[CAN_REORDER])
 
 intrinsic("resbase_ir3", src_comp=[1], dest_comp=2, flags=[CAN_ELIMINATE, CAN_REORDER])
 
-# Panfrost-specific intrinsic for loading vertex attributes. Takes explicit
-# vertex and instance IDs which we need in order to implement vertex attribute
-# divisor with non-zero base instance on v9+.
-# src[] = { vertex_id, instance_id, offset }
-load("attribute_pan", [1, 1, 1], [BASE, COMPONENT, DEST_TYPE, IO_SEMANTICS], [CAN_ELIMINATE, CAN_REORDER])
+# This maps directly to Mali's LOAD_ATTR[_IMM] instructions
+# src[] = { vertex_id, instance_id, handle }
+load("attr_pan", [1, 1, 1], [DEST_TYPE, IO_SEMANTICS], [CAN_ELIMINATE, CAN_REORDER])
 
 # src[] = { idx, bary }
 load("var_pan", [1, 2], [DEST_TYPE, IO_SEMANTICS], [CAN_ELIMINATE, CAN_REORDER])
@@ -1747,6 +1751,14 @@ intrinsic("load_shader_output_pan", dest_comp=1, src_comp=[], bit_sizes=[32],
 # vertex ID in the index buffer range covered by the draw
 system_value("raw_vertex_id", 1)
 system_value("raw_vertex_offset", 1)
+
+# 4x4 cooperative matrix multiply-accumulate (MMUL). The matrices are spread
+# across the subgroup with one element (or packed group) per lane, so each
+# source is one 32-bit register per lane: src0 = A, src1 = B, src2 = C,
+# result = A * B + C. src_type is the multiplicand (A/B) type and selects the
+# MMUL variant: float32 -> f32, float16 -> v2f16, int8 -> v4s8, uint8 -> v4u8.
+intrinsic("cmat_muladd_pan", src_comp=[1, 1, 1], dest_comp=1, bit_sizes=[32],
+          indices=[SRC_TYPE], flags=SUBGROUP_FLAGS)
 
 # Intrinsics used by the Midgard/Bifrost blend pipeline. These are defined
 # within a blend shader to read/write the raw value from the tile buffer,
@@ -3269,3 +3281,9 @@ intrinsic("load_sampler_handle_kk", [1], 1, [],
 image("fence_kk")
 # Store clip distance to vertex output.
 store("clip_distance_kk", [], [BASE])
+# System value indicating whether to emulate depth clamp.
+system_value("is_depth_clamp_emulated_kk", 1, bit_sizes=[1])
+# System value indicating whether to emulate the viewport Z transform.
+system_value("is_viewport_z_transform_emulated_kk", 1, bit_sizes=[1])
+# Loads the viewport Z range for a given viewport index.
+load("viewport_z_range_kk", [1], [], [CAN_ELIMINATE, CAN_REORDER])

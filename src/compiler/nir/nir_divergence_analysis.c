@@ -478,12 +478,6 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
       if (options & nir_divergence_across_subgroups)
          is_divergent = true;
       break;
-   case nir_intrinsic_load_attribute_pan:
-      assert(stage == MESA_SHADER_VERTEX);
-      is_divergent = src_divergent(instr->src[0], state) ||
-                     src_divergent(instr->src[1], state) ||
-                     src_divergent(instr->src[2], state);
-      break;
    case nir_intrinsic_load_per_vertex_input:
       is_divergent = src_divergent(instr->src[0], state) ||
                      src_divergent(instr->src[1], state);
@@ -599,6 +593,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
          UNREACHABLE("Invalid stage for load_primitive_tess_level_*");
       break;
 
+   case nir_intrinsic_load_shared_base_ptr:
    case nir_intrinsic_load_workgroup_index:
    case nir_intrinsic_load_workgroup_id:
       assert(mesa_shader_stage_uses_workgroup(stage) || stage == MESA_SHADER_TESS_CTRL);
@@ -775,6 +770,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_quad_swap_horizontal:
    case nir_intrinsic_quad_swap_vertical:
    case nir_intrinsic_quad_swap_diagonal:
+   case nir_intrinsic_dpp8_swizzle_amd:
    case nir_intrinsic_quad_vote_any:
    case nir_intrinsic_quad_vote_all:
    case nir_intrinsic_load_shared2_amd:
@@ -813,6 +809,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_input_attachment_target_pan:
    case nir_intrinsic_load_input_attachment_conv_pan:
    case nir_intrinsic_load_global_cvt_pan:
+   case nir_intrinsic_load_attr_pan:
    case nir_intrinsic_lea_attr_pan:
    case nir_intrinsic_lea_buf_pan:
    case nir_intrinsic_cubeface_pan:
@@ -866,6 +863,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_texture_handle_kk:
    case nir_intrinsic_load_depth_texture_kk:
    case nir_intrinsic_load_sampler_handle_kk:
+   case nir_intrinsic_load_viewport_z_range_kk:
    case nir_intrinsic_load_texture_scale:
    case nir_intrinsic_load_inline_data_intel:
    case nir_intrinsic_resource_intel: {
@@ -1029,6 +1027,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_write_invocation_amd:
    case nir_intrinsic_mbcnt_amd:
    case nir_intrinsic_lane_permute_16_amd:
+   case nir_intrinsic_lane_permute_x16_amd:
    case nir_intrinsic_dpp16_shift_amd:
    case nir_intrinsic_elect:
    case nir_intrinsic_elect_any_ir3:
@@ -1070,6 +1069,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_ray_triangle_vertex_positions:
    case nir_intrinsic_cmat_extract:
    case nir_intrinsic_cmat_muladd_amd:
+   case nir_intrinsic_cmat_muladd_pan:
    case nir_intrinsic_dpas_intel:
    case nir_intrinsic_convert_cmat_intel:
    case nir_intrinsic_load_coverage_mask_intel:

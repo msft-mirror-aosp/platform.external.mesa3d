@@ -728,6 +728,7 @@ add_gpus([
     ], A6xxGPUInfo(
         CHIP.A6XX, # NOT a mistake!
         [a6xx_base, a6xx_gen1_low, GPUProps(
+            reg_size_vec4 = 64,
             has_cp_reg_write = False,
             has_gmem_fast_clear = True,
             sysmem_per_ccu_depth_cache_size = 8 * 1024, # ??????
@@ -832,6 +833,9 @@ a7xx_base = GPUProps(
         round_robin_errata = True,
         max_texel_buffer_range_elements = 1 << 27,
         max_storage_buffer_range_bytes = 1 << 27,
+
+        alias_mova_quirk = True,
+        alias_predication_quirk = True,
     )
 
 a7xx_gen1 = GPUProps(
@@ -989,6 +993,25 @@ a740_raw_magic_regs = [
         [A6XXRegs.REG_A6XX_VPC_DBG_ECO_CNTL,  0x02000000],
         [A6XXRegs.REG_A6XX_UCHE_UNKNOWN_0E12, 0],
     ]
+
+add_gpus([
+        GPUId(chip_id=0x43020100, name="Adreno (TM) 722"),
+        GPUId(chip_id=0xffff43020100, name="Adreno (TM) 722"),
+    ], A6xxGPUInfo(
+        CHIP.A7XX,
+        [a7xx_base, a7xx_gen1],
+        num_ccu = 1,
+        tile_align_w = 64,
+        tile_align_h = 16,
+        tile_max_w = 1024,
+        tile_max_h = 1024,
+        num_vsc_pipes = 32,
+        cs_shared_mem_size = 32 * 1024,
+        wave_granularity = 2,
+        fibers_per_sp = 128 * 2 * 16,
+        magic_regs = a730_magic_regs,
+        raw_magic_regs = a730_raw_magic_regs,
+    ))
 
 add_gpus([
         # These are named as Adreno730v3 or Adreno725v1.
@@ -1277,6 +1300,7 @@ a8xx_base = GPUProps(
         round_robin_errata = False,
         max_texel_buffer_range_elements = (1 << 29) - 1,
         max_storage_buffer_range_bytes = (1 << 31) - 1,
+        alias_mova_quirk = False,
     )
 
 # For a8xx, the chicken bit and most other non-ctx reg

@@ -510,9 +510,11 @@ preprocess_rt_sequences(struct anv_cmd_buffer *cmd_buffer,
       },
 #if GFX_VERx10 >= 300
       .CallStackHandler   = anv_shader_internal_get_handler(
+         device->info,
          device->rt_trivial_return, 0),
 #else
       .CallStackHandler   = anv_shader_internal_get_bsr(
+         device->info,
          device->rt_trivial_return, 0),
 #endif
       .AsyncRTStackSize   = rt_state->scratch.layout.ray_stack_stride / 64,
@@ -552,7 +554,9 @@ preprocess_rt_sequences(struct anv_cmd_buffer *cmd_buffer,
             .ThreadPreemption = false,
 #endif
 #if GFX_VER >= 30
-            .RegistersPerThread = ptl_register_blocks(cs_prog_data->base.grf_used),
+            .RegistersPerThread =
+               intel_register_blocks(device->info,
+                                     cs_prog_data->base.grf_used),
 #endif
          },
       },
@@ -1017,7 +1021,7 @@ void genX(CmdExecuteGeneratedCommandsEXT)(
 
       genX(flush_pipeline_select_gpgpu)(cmd_buffer, false);
 
-      genX(flush_descriptor_buffers)(cmd_buffer, bind_state, ANV_RT_STAGE_BITS);
+      genX(flush_binding_mode)(cmd_buffer, bind_state, ANV_RT_STAGE_BITS);
 
       genX(cmd_buffer_apply_pipe_flushes)(cmd_buffer);
 

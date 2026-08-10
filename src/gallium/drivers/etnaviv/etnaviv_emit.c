@@ -91,11 +91,15 @@ etna_stall(struct etna_cmd_stream *stream, uint32_t from, uint32_t to)
    etna_coalsence_emit_reloc(stream, &coalesce, VIVS_##state_name, src_value)
 
 #define ETNA_3D_CONTEXT_SIZE  (400) /* keep this number above "Total state updates (fixed)" from gen_weave_state tool */
+#define ETNA_RESET_GPU_STATE_SIZE (128) /* keep this number above the number of words etna_reset_gpu_state() emits */
 
-static unsigned
-required_stream_size(struct etna_context *ctx)
+void
+etna_reserve_emit_space(struct etna_context *ctx)
 {
-   unsigned size = ETNA_3D_CONTEXT_SIZE;
+   size_t size = ETNA_3D_CONTEXT_SIZE;
+
+   if (ctx->needs_gpu_state_reset)
+      size += ETNA_RESET_GPU_STATE_SIZE;
 
    /* stall + flush */
    size += 2 + 4;
@@ -108,8 +112,10 @@ required_stream_size(struct etna_context *ctx)
    size += ctx->shader.fs->uniforms.count * 2;
 
    /* shader */
-   size += ctx->shader_state.vs_inst_mem_size + 1;
-   size += ctx->shader_state.ps_inst_mem_size + 1;
+   if (!ctx->shader_state.VS_INST_ADDR.bo)
+      size += ctx->shader_state.vs_inst_mem_size + 1;
+   if (!ctx->shader_state.PS_INST_ADDR.bo)
+      size += ctx->shader_state.ps_inst_mem_size + 1;
 
    /* DRAW_INDEXED_PRIMITIVES command */
    size += 6;
@@ -117,7 +123,7 @@ required_stream_size(struct etna_context *ctx)
    /* reserve for alignment etc. */
    size += 64;
 
-   return size;
+   etna_cmd_stream_reserve(ctx->stream, size);
 }
 
 /* Emit state that only exists on HALTI5+ */
@@ -249,11 +255,6 @@ etna_emit_state(struct etna_context *ctx)
        !ctx->dirty_sampler_views &&
        likely(!DBG_ENABLED(ETNA_DBG_CFLUSH_ALL)))
       return;
-
-   /* Pre-reserve the command buffer space which we are likely to need.
-    * This must cover all the state emitted below, and the following
-    * draw command. */
-   etna_cmd_stream_reserve(stream, required_stream_size(ctx));
 
    uint32_t dirty = ctx->dirty;
 
@@ -440,8 +441,8 @@ etna_emit_state(struct etna_context *ctx)
    if (unlikely(dirty & (ETNA_DIRTY_SCISSOR_CLIP))) {
       /*00C00*/ EMIT_STATE_FIXP(SE_SCISSOR_LEFT, ctx->clipping.minx << 16);
       /*00C04*/ EMIT_STATE_FIXP(SE_SCISSOR_TOP, ctx->clipping.miny << 16);
-      /*00C08*/ EMIT_STATE_FIXP(SE_SCISSOR_RIGHT, (ctx->clipping.maxx << 16) + ETNA_SE_SCISSOR_MARGIN_RIGHT);
-      /*00C0C*/ EMIT_STATE_FIXP(SE_SCISSOR_BOTTOM, (ctx->clipping.maxy << 16) + ETNA_SE_SCISSOR_MARGIN_BOTTOM);
+      /*00C08*/ EMIT_STATE_FIXP(SE_SCISSOR_RIGHT, MIN2((ctx->clipping.maxx << 16) + ETNA_SE_SCISSOR_MARGIN_RIGHT, ETNA_SE_FIXP_MAX));
+      /*00C0C*/ EMIT_STATE_FIXP(SE_SCISSOR_BOTTOM, MIN2((ctx->clipping.maxy << 16) + ETNA_SE_SCISSOR_MARGIN_BOTTOM, ETNA_SE_FIXP_MAX));
    }
    if (unlikely(dirty & (ETNA_DIRTY_RASTERIZER))) {
       /*00C10*/ EMIT_STATE(SE_DEPTH_SCALE, etna_rasterizer_state(ctx->rasterizer)->SE_DEPTH_SCALE);
@@ -642,11 +643,14 @@ etna_emit_state(struct etna_context *ctx)
 
          /*1C008*/ EMIT_STATE_RELOC(TFB_CONTEXT_BUFFER, &context_buffer);
 
-         for (int i = 0; i < 4; i++) {
+         for (int i = 0; i < ctx->streamout.num_targets; i++)
             /*1C040*/ EMIT_STATE_RELOC(TFB_BUFFER_ADDR(i), &ctx->streamout.TFB_BUFFER_ADDR[i]);
+
+         for (int i = 0; i < ctx->streamout.num_targets; i++)
             /*1C080*/ EMIT_STATE(TFB_BUFFER_SIZE(i), ctx->streamout.TFB_BUFFER_SIZE[i]);
+
+         for (int i = 0; i < ctx->streamout.num_targets; i++)
             /*1C0C0*/ EMIT_STATE(TFB_BUFFER_STRIDE(i), ctx->streamout.TFB_BUFFER_STRIDE[i]);
-         }
 
          for (int i = 0; i < 4; i++) {
             /*1C100*/ EMIT_STATE(TFB_DESCRIPTOR_COUNT(i), ctx->streamout.TFB_DESCRIPTOR_COUNT[i]);
