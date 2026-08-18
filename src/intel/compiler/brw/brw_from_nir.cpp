@@ -2583,7 +2583,7 @@ emit_gs_vertex(nir_to_brw_state &ntb, const nir_src &vertex_count_nir_src,
        * effect of any call to EndPrimitive() that the shader may have
        * made before outputting its first vertex.
        */
-      abld.exec_all().MOV(s.control_data_bits, brw_imm_ud(0u));
+      abld.MOV(s.control_data_bits, brw_imm_ud(0u));
       abld.emit(BRW_OPCODE_ENDIF);
    }
 
@@ -4065,7 +4065,9 @@ static bool
 can_use_instruction_offset(enum lsc_addr_surface_type binding_type, int32_t offset)
 {
    const unsigned max_bits = brw_max_immediate_offset_bits(binding_type);
-   return offset >= u_intN_min(max_bits) && offset <= u_intN_max(max_bits);
+   return offset % 4 == 0 &&
+          offset >= u_intN_min(max_bits) &&
+          offset <= u_intN_max(max_bits);
 }
 
 static brw_reg
@@ -5232,6 +5234,10 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
 
    case nir_intrinsic_load_ubo: {
       s.prog_data->has_ubo_pull = true;
+      if (devinfo->has_lsc) {
+         brw_from_nir_emit_memory_access(ntb, bld, xbld, instr);
+         break;
+      }
 
       bool no_mask_handle = false;
 
@@ -5761,6 +5767,7 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
       srcs[MEMORY_LOGICAL_ADDRESS] = get_nir_src(ntb, instr->src[1], 0);
       break;
 
+   case nir_intrinsic_load_ubo:
    case nir_intrinsic_load_ubo_uniform_block_intel:
       mode = MEMORY_MODE_CONSTANT;
       FALLTHROUGH;

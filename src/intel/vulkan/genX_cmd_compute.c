@@ -72,7 +72,8 @@ genX(cmd_buffer_ensure_cfe_state)(struct anv_cmd_buffer *cmd_buffer,
 #endif
 
 #if GFX_VER >= 30
-      cfe.DynamicStackIDControl = true;
+      cfe.DynamicStackIDControl =
+         cmd_buffer->device->physical->instance->drirc.perf.dynamic_stack_id_control;
 #endif
 
       cfe.OverDispatchControl = 2; /* 50% overdispatch */
@@ -557,7 +558,7 @@ emit_indirect_compute_walker(struct anv_cmd_buffer *cmd_buffer,
 
    struct anv_bind_point_state *bind_state = comp_state->base;
    uint64_t push_addr64 = anv_address_physical(
-      anv_state_pool_state_address(anv_device_get_general_state_pool(cmd_buffer->device),
+      anv_state_pool_state_address(anv_device_get_dynamic_state_pool(cmd_buffer->device),
                                    bind_state->push_constants_state));
    struct compute_walker_inline_params_val inline_value = {
       .bind_map = &comp_state->shader->bind_map,
@@ -617,7 +618,7 @@ emit_compute_walker(struct anv_cmd_buffer *cmd_buffer,
    compute_update_async_threads_limit(cmd_buffer, prog_data, &dispatch);
 
    uint64_t push_addr64 = anv_address_physical(
-      anv_state_pool_state_address(anv_device_get_general_state_pool(cmd_buffer->device),
+      anv_state_pool_state_address(anv_device_get_dynamic_state_pool(cmd_buffer->device),
                                    bind_state->push_constants_state));
    struct compute_walker_inline_params_val inline_value = {
       .bind_map = &comp_state->shader->bind_map,
@@ -847,8 +848,8 @@ genX(cmd_dispatch_unaligned)(
 
    /* RT shaders have Y and Z local size set to 1 always. */
    assert(prog_data->local_size[1] == 1 && prog_data->local_size[2] == 1);
-   /* RT shaders dispatched with group Y and Z set to 1 always. */
-   assert(groupCountY == 1 && groupCountZ == 1);
+   /* RT shaders dispatched with group Z set to 1 always. */
+   assert(groupCountZ == 1);
 
    anv_measure_snapshot(cmd_buffer,
                         INTEL_SNAPSHOT_COMPUTE,

@@ -882,3 +882,25 @@ kk_apply_attachment_store_ops(struct kk_cmd_buffer *cmd, bool force_store)
       mtl_render_set_stencil_store_action(encoder, store_action);
    }
 }
+
+/* VK_AMD_buffer_marker */
+
+VKAPI_ATTR void VKAPI_CALL
+kk_CmdWriteMarkerToMemoryAMD(VkCommandBuffer commandBuffer,
+                             const VkMemoryMarkerInfoAMD *pInfo)
+{
+   VK_FROM_HANDLE(kk_cmd_buffer, cmd_buffer, commandBuffer);
+   struct libkk_imm_write write;
+
+   /* If we are not in a render, we can just insert a cheap barrier */
+   if (!cmd_buffer->gfx.encoder) {
+      mtl_barrier_after_encoder_stages(cs_get_compute(cmd_buffer, true),
+                                       MTL_STAGE_DISPATCH | MTL_STAGE_BLIT,
+                                       MTL_STAGE_DISPATCH | MTL_STAGE_BLIT);
+   } else
+      cs_end(cmd_buffer);
+
+   write.value = pInfo->marker;
+   write.address = pInfo->dstRange.address;
+   kk_cmd_write(cmd_buffer, write);
+}

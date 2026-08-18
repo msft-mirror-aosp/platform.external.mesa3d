@@ -39,6 +39,9 @@
 
 #include "util/perf/u_trace.h"
 
+#include "perf/intel_perf.h"
+#include "perf/intel_perf_metrics_library.h"
+
 /** \file anv_batch_chain.c
  *
  * This file contains functions related to anv_cmd_buffer as a data
@@ -773,20 +776,6 @@ anv_cmd_buffer_alloc_dynamic_state(struct anv_cmd_buffer *cmd_buffer,
       return ANV_STATE_NULL;
    struct anv_state state =
       anv_state_stream_alloc(&cmd_buffer->dynamic_state_stream,
-                             size, alignment);
-   if (state.map == NULL)
-      anv_batch_set_error(&cmd_buffer->batch, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-   return state;
-}
-
-struct anv_state
-anv_cmd_buffer_alloc_general_state(struct anv_cmd_buffer *cmd_buffer,
-                                   uint32_t size, uint32_t alignment)
-{
-   if (size == 0)
-      return ANV_STATE_NULL;
-   struct anv_state state =
-      anv_state_stream_alloc(&cmd_buffer->general_state_stream,
                              size, alignment);
    if (state.map == NULL)
       anv_batch_set_error(&cmd_buffer->batch, VK_ERROR_OUT_OF_DEVICE_MEMORY);
@@ -1643,6 +1632,13 @@ anv_queue_submit(struct vk_queue *vk_queue,
       &utrace_submit);
    if (result != VK_SUCCESS)
       return result;
+
+   if (device->physical->perf && device->physical->perf->use_metrics_library && queue->metrics_library_configuration) {
+      if (!intel_perf_metrics_library_activate_configuration(device->physical->perf,
+                                                             queue->metrics_library_configuration)) {
+         return VK_ERROR_UNKNOWN;
+      }
+   }
 
    uint64_t start_ts = intel_ds_begin_submit(&queue->ds);
 

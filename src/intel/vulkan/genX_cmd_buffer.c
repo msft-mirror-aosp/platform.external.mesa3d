@@ -41,6 +41,9 @@
 #include "genX_mi_builder.h"
 #include "genX_cmd_draw_generated_flush.h"
 
+#include "perf/intel_perf.h"
+#include "perf/intel_perf_metrics_library.h"
+
 static void emit_pipe_control(struct anv_batch *batch,
                               const struct intel_device_info *devinfo,
                               uint32_t current_pipeline,
@@ -3503,11 +3506,13 @@ genX(flush_binding_mode)(struct anv_cmd_buffer *cmd_buffer,
          genX(cmd_buffer_emit_state_base_address)(cmd_buffer);
          sba_emitted_changed = true;
       }
+      cmd_buffer->state.descriptor_buffers.dirty = false;
 #else
       if (cmd_buffer->state.current_binding_mode != ANV_SHADER_BINDING_MODE_BUFFER ||
           cmd_buffer->state.descriptor_buffers.dirty) {
          genX(cmd_buffer_emit_state_base_address)(cmd_buffer);
          sba_emitted_changed = true;
+         cmd_buffer->state.descriptor_buffers.dirty = false;
       }
 #endif
       break;
@@ -3518,11 +3523,13 @@ genX(flush_binding_mode)(struct anv_cmd_buffer *cmd_buffer,
          genX(cmd_buffer_emit_state_base_address)(cmd_buffer);
          sba_emitted_changed = true;
       }
+      cmd_buffer->state.descriptor_heap.dirty = false;
 #else
       if (cmd_buffer->state.current_binding_mode != ANV_SHADER_BINDING_MODE_HEAP ||
           cmd_buffer->state.descriptor_heap.dirty) {
          genX(cmd_buffer_emit_state_base_address)(cmd_buffer);
          sba_emitted_changed = true;
+         cmd_buffer->state.descriptor_heap.dirty = false;
       }
 #endif
       break;
@@ -3543,10 +3550,7 @@ genX(flush_binding_mode)(struct anv_cmd_buffer *cmd_buffer,
    } while (0)
 
    switch (cmd_buffer->state.current_binding_mode) {
-   case ANV_SHADER_BINDING_MODE_HEAP:
-      if (!sba_emitted_changed && !cmd_buffer->state.descriptor_heap.dirty)
-         break;
-
+   case ANV_SHADER_BINDING_MODE_HEAP: {
 #if GFX_VERx10 < 125
       struct anv_device *device = cmd_buffer->device;
       UPDATE_PUSH(push->heap.surfaces_offset,
@@ -3569,12 +3573,11 @@ genX(flush_binding_mode)(struct anv_cmd_buffer *cmd_buffer,
          cmd_buffer->state.push_constants_dirty |= active_stages;
          bind_state->push_constants_state = ANV_STATE_NULL;
       }
-      cmd_buffer->state.descriptor_heap.dirty = false;
       break;
+   }
 
    case ANV_SHADER_BINDING_MODE_BUFFER:
       if (sba_emitted_changed ||
-          cmd_buffer->state.descriptor_buffers.dirty ||
           (active_stages & cmd_buffer->state.descriptor_buffers.offsets_dirty) != 0) {
          for (uint32_t i = 0; i < bind_state->max_bound_descriptors; i++) {
             update_descriptor_set_surface_state(cmd_buffer, bind_state, i);
@@ -3604,7 +3607,6 @@ genX(flush_binding_mode)(struct anv_cmd_buffer *cmd_buffer,
          }
          cmd_buffer->state.descriptor_buffers.offsets_dirty &= ~active_stages;
       }
-      cmd_buffer->state.descriptor_buffers.dirty = false;
       break;
 
    case ANV_SHADER_BINDING_MODE_LEGACY:
@@ -4299,6 +4301,35 @@ end_command_buffer(struct anv_cmd_buffer *cmd_buffer,
       genX(cmd_buffer_apply_pipe_flushes)(cmd_buffer);
       anv_cmd_buffer_end_batch_buffer(cmd_buffer);
       return VK_SUCCESS;
+   }
+
+   /* Flush L1/L2 caches before ending the command buffer. Some applications
+    * like Llama.cpp seems to rely on this.
+    *
+    * The kernel driver should insert flushes at the end of the command buffer
+    * as well so it's a bit repetitive. Xe actually flushes the HDC (L2 data
+    * cache) but not the untyped cache (L1 data cache). There is a requirement
+    * in the documentation flush L1 if L2 is flushed too, so sounds like a bit
+    * of a kernel driver bug.
+    */
+   if (cmd_buffer->vk.level == VK_COMMAND_BUFFER_LEVEL_PRIMARY) {
+      if (anv_cmd_buffer_is_render_queue(cmd_buffer)) {
+         anv_add_pending_pipe_bits(cmd_buffer,
+                                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                   VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                                   ANV_PIPE_DEPTH_CACHE_FLUSH_BIT |
+                                   ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT,
+                                   "end render command buffer L1/L2 flush");
+      }
+      if (anv_cmd_buffer_is_render_or_compute_queue(cmd_buffer)) {
+         anv_add_pending_pipe_bits(cmd_buffer,
+                                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                   VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                                   ANV_PIPE_HDC_PIPELINE_FLUSH_BIT |
+                                   ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT,
+                                   "end render command buffer L1/L2 flush");
+      }
    }
 
    /* Flush any in-progress CCS/MCS operations in preparation for chaining. */
@@ -7486,7 +7517,24 @@ VkResult genX(CmdSetPerformanceStreamMarkerINTEL)(
     VkCommandBuffer                             commandBuffer,
     const VkPerformanceStreamMarkerInfoINTEL*   pMarkerInfo)
 {
-   /* TODO: Waiting on the register to write, might depend on generation. */
+   ANV_FROM_HANDLE(anv_cmd_buffer, cmd_buffer, commandBuffer);
+   bool success = false;
+   uint32_t cmds_size = 0;
+
+   if (intel_perf_metrics_library_get_stream_marker_cmds(
+          cmd_buffer->device->physical->perf, pMarkerInfo->marker,
+          NULL, &cmds_size)) {
+      void* cmds = anv_batch_emit_dwords(&cmd_buffer->batch, cmds_size);
+
+      success = cmds && intel_perf_metrics_library_get_stream_marker_cmds(
+         cmd_buffer->device->physical->perf, pMarkerInfo->marker,
+         cmds, &cmds_size);
+   }
+
+   if (!success) {
+      anv_batch_set_error(&cmd_buffer->batch, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+   }
 
    return VK_SUCCESS;
 }

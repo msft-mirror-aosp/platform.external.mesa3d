@@ -671,19 +671,20 @@ static bool
 want_hiz_wt_for_image(const struct intel_device_info *devinfo,
                       const struct anv_image *image)
 {
-   /* Gen12 only supports single-sampled while Gen20+ supports
-    * multi-sampled images.
+   /* Gfx12 only supports single-sampled write-through. In addition, most
+    * platforms afterwards show disabling MSAA HiZ write-through produces a
+    * performance uplift in some titles without regressing others.
+    * BMG G31 is an exception (see HSD 18044248478).
     */
-   if (devinfo->ver < 20 && image->vk.samples > 1)
+   if (image->vk.samples > 1 && !intel_device_info_is_bmg_g31(devinfo))
       return false;
 
    if ((image->vk.usage & (VK_IMAGE_USAGE_SAMPLED_BIT |
                            VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)) == 0)
       return false;
 
-   /* If this image has the maximum number of samples supported by
-    * running platform and will be used as a texture, put the HiZ surface
-    * in write-through mode so that we can sample from it.
+   /* If this image is single-sampled and will be used as a texture, put
+    * the HiZ surface in write-through mode so that we can sample from it.
     *
     * TODO: This is a heuristic trade-off; we haven't tuned it at all.
     */
@@ -954,7 +955,8 @@ add_video_buffers(struct anv_device *device,
    /* Doesn't work for av1 without provided profiles */
    if (!independent_profile) {
       for (unsigned i = 0; i < profile_list->profileCount; i++) {
-         if (profile_list->pProfiles[i].videoCodecOperation == VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR) {
+         if (profile_list->pProfiles[i].videoCodecOperation == VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR ||
+             profile_list->pProfiles[i].videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR) {
             ok = image_binding_grow(device, image, ANV_IMAGE_MEMORY_BINDING_PRIVATE,
                                     ANV_OFFSET_IMPLICIT, size, 4096, &image->av1_cdf_table);
          }
