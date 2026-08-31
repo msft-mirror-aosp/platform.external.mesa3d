@@ -71,7 +71,6 @@ cc_library_shared {
         "inc_util",
         "inc_util_c11",
         "inc_vulkan_enc",
-        "inc_vulkan_headers",
     ] + select(os(), {
         "android": [
             "hwvulkan_headers",

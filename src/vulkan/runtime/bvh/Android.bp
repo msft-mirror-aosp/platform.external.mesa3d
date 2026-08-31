@@ -53,14 +53,14 @@ genrule {
         "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location " +
         "hploc_internal.comp) --quiet '-P#extension GL_GOOGLE_include_directive " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 " +
-        ": require' '-P#extension " +
-        "GL_EXT_shader_explicit_arithmetic_types_float16 : require' " +
-        "'-P#extension GL_EXT_scalar_block_layout : require' '-P#extension " +
-        "GL_EXT_buffer_reference : require' '-P#extension " +
+        ": require' '-P#extension GL_EXT_control_flow_attributes : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : " +
+        "require' '-P#extension GL_EXT_scalar_block_layout : require' " +
+        "'-P#extension GL_EXT_buffer_reference : require' '-P#extension " +
         "GL_EXT_buffer_reference2 : require' '-P#extension " +
         "GL_KHR_memory_scope_semantics : require' '-P#extension " +
         "GL_KHR_shader_subgroup_arithmetic : require' '-P#extension " +
@@ -70,7 +70,8 @@ genrule {
         "GL_KHR_shader_subgroup_clustered : require' '-P#extension " +
         "GL_KHR_shader_subgroup_vote : require' '-P#extension " +
         "GL_EXT_shader_atomic_int64 : require' '-P#extension " +
-        "GL_EXT_spirv_intrinsics : require'",
+        "GL_EXT_spirv_intrinsics : require' '-P#extension " +
+        "GL_EXT_shared_memory_block : require'",
 }
 
 genrule {
@@ -101,14 +102,14 @@ genrule {
         "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/id_prefix_sum.spv.h) $(location " +
         "id_prefix_sum.comp) --quiet '-P#extension GL_GOOGLE_include_directive " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 " +
-        ": require' '-P#extension " +
-        "GL_EXT_shader_explicit_arithmetic_types_float16 : require' " +
-        "'-P#extension GL_EXT_scalar_block_layout : require' '-P#extension " +
-        "GL_EXT_buffer_reference : require' '-P#extension " +
+        ": require' '-P#extension GL_EXT_control_flow_attributes : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : " +
+        "require' '-P#extension GL_EXT_scalar_block_layout : require' " +
+        "'-P#extension GL_EXT_buffer_reference : require' '-P#extension " +
         "GL_EXT_buffer_reference2 : require' '-P#extension " +
         "GL_KHR_memory_scope_semantics : require' '-P#extension " +
         "GL_KHR_shader_subgroup_arithmetic : require' '-P#extension " +
@@ -118,7 +119,8 @@ genrule {
         "GL_KHR_shader_subgroup_clustered : require' '-P#extension " +
         "GL_KHR_shader_subgroup_vote : require' '-P#extension " +
         "GL_EXT_shader_atomic_int64 : require' '-P#extension " +
-        "GL_EXT_spirv_intrinsics : require'",
+        "GL_EXT_spirv_intrinsics : require' '-P#extension " +
+        "GL_EXT_shared_memory_block : require'",
 }
 
 genrule {
@@ -150,6 +152,7 @@ genrule {
         "$(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location " +
         "lbvh_generate_ir.comp) --quiet '-P#extension " +
         "GL_GOOGLE_include_directive : require' '-P#extension " +
+        "GL_EXT_control_flow_attributes : require' '-P#extension " +
         "GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension " +
         "GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension " +
         "GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension " +
@@ -166,7 +169,8 @@ genrule {
         "GL_KHR_shader_subgroup_clustered : require' '-P#extension " +
         "GL_KHR_shader_subgroup_vote : require' '-P#extension " +
         "GL_EXT_shader_atomic_int64 : require' '-P#extension " +
-        "GL_EXT_spirv_intrinsics : require'",
+        "GL_EXT_spirv_intrinsics : require' '-P#extension " +
+        "GL_EXT_shared_memory_block : require'",
 }
 
 genrule {
@@ -197,12 +201,13 @@ genrule {
         "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location " +
         "lbvh_main.comp) --quiet '-P#extension GL_GOOGLE_include_directive : " +
-        "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : " +
-        "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : " +
-        "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : " +
-        "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : " +
-        "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 " +
-        ": require' '-P#extension GL_EXT_scalar_block_layout : require' " +
+        "require' '-P#extension GL_EXT_control_flow_attributes : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : " +
+        "require' '-P#extension GL_EXT_scalar_block_layout : require' " +
         "'-P#extension GL_EXT_buffer_reference : require' '-P#extension " +
         "GL_EXT_buffer_reference2 : require' '-P#extension " +
         "GL_KHR_memory_scope_semantics : require' '-P#extension " +
@@ -213,7 +218,8 @@ genrule {
         "GL_KHR_shader_subgroup_clustered : require' '-P#extension " +
         "GL_KHR_shader_subgroup_vote : require' '-P#extension " +
         "GL_EXT_shader_atomic_int64 : require' '-P#extension " +
-        "GL_EXT_spirv_intrinsics : require'",
+        "GL_EXT_spirv_intrinsics : require' '-P#extension " +
+        "GL_EXT_shared_memory_block : require'",
 }
 
 genrule {
@@ -244,13 +250,14 @@ genrule {
         "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/leaf.spv.h) $(location leaf.comp) " +
         "--quiet '-P#extension GL_GOOGLE_include_directive : require' " +
-        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' " +
-        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' " +
-        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' " +
-        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' " +
-        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : " +
-        "require' '-P#extension GL_EXT_scalar_block_layout : require' " +
-        "'-P#extension GL_EXT_buffer_reference : require' '-P#extension " +
+        "'-P#extension GL_EXT_control_flow_attributes : require' '-P#extension " +
+        "GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension " +
+        "GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension " +
+        "GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension " +
+        "GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension " +
+        "GL_EXT_shader_explicit_arithmetic_types_float16 : require' " +
+        "'-P#extension GL_EXT_scalar_block_layout : require' '-P#extension " +
+        "GL_EXT_buffer_reference : require' '-P#extension " +
         "GL_EXT_buffer_reference2 : require' '-P#extension " +
         "GL_KHR_memory_scope_semantics : require' '-P#extension " +
         "GL_KHR_shader_subgroup_arithmetic : require' '-P#extension " +
@@ -260,18 +267,19 @@ genrule {
         "GL_KHR_shader_subgroup_clustered : require' '-P#extension " +
         "GL_KHR_shader_subgroup_vote : require' '-P#extension " +
         "GL_EXT_shader_atomic_int64 : require' '-P#extension " +
-        "GL_EXT_spirv_intrinsics : require'",
+        "GL_EXT_spirv_intrinsics : require' '-P#extension " +
+        "GL_EXT_shared_memory_block : require'",
 }
 
 genrule {
-    name: "morton.spv.h",
+    name: "morton_sort_32.spv.h",
     out: [
-        "src/vulkan/runtime/bvh/morton.spv.h",
+        "src/vulkan/runtime/bvh/morton_sort_32.spv.h",
     ],
     srcs: [
         ":vk_bvh_includes",
         "leaf.h",
-        "morton.comp",
+        "morton_sort.comp",
         "pair_triangles.h",
         "vk_bvh_defines.h",
         "vk_bvh_helpers.h",
@@ -289,14 +297,15 @@ genrule {
     cmd: "$(location glslangValidator) -V " +
         "-Iexternal/mesa3d/src/vulkan/runtime/bvh " +
         "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
-        "$(location src/vulkan/runtime/bvh/morton.spv.h) $(location " +
-        "morton.comp) --quiet '-P#extension GL_GOOGLE_include_directive : " +
-        "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : " +
-        "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : " +
-        "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : " +
-        "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : " +
-        "require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 " +
-        ": require' '-P#extension GL_EXT_scalar_block_layout : require' " +
+        "$(location src/vulkan/runtime/bvh/morton_sort_32.spv.h) $(location " +
+        "morton_sort.comp) --quiet '-P#extension GL_GOOGLE_include_directive : " +
+        "require' '-P#extension GL_EXT_control_flow_attributes : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : " +
+        "require' '-P#extension GL_EXT_scalar_block_layout : require' " +
         "'-P#extension GL_EXT_buffer_reference : require' '-P#extension " +
         "GL_EXT_buffer_reference2 : require' '-P#extension " +
         "GL_KHR_memory_scope_semantics : require' '-P#extension " +
@@ -307,7 +316,57 @@ genrule {
         "GL_KHR_shader_subgroup_clustered : require' '-P#extension " +
         "GL_KHR_shader_subgroup_vote : require' '-P#extension " +
         "GL_EXT_shader_atomic_int64 : require' '-P#extension " +
-        "GL_EXT_spirv_intrinsics : require'",
+        "GL_EXT_spirv_intrinsics : require' '-P#extension " +
+        "GL_EXT_shared_memory_block : require'",
+}
+
+genrule {
+    name: "morton_sort_64.spv.h",
+    out: [
+        "src/vulkan/runtime/bvh/morton_sort_64.spv.h",
+    ],
+    srcs: [
+        ":vk_bvh_includes",
+        "leaf.h",
+        "morton_sort.comp",
+        "pair_triangles.h",
+        "vk_bvh_defines.h",
+        "vk_bvh_helpers.h",
+        "vk_debug.h",
+    ],
+    tools: [
+        "glslangValidator",
+    ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/runtime",
+        "src/vulkan/runtime/bvh",
+    ],
+    cmd: "$(location glslangValidator) -V " +
+        "-Iexternal/mesa3d/src/vulkan/runtime/bvh " +
+        "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
+        "$(location src/vulkan/runtime/bvh/morton_sort_64.spv.h) $(location " +
+        "morton_sort.comp) --quiet '-P#extension GL_GOOGLE_include_directive : " +
+        "require' '-P#extension GL_EXT_control_flow_attributes : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : " +
+        "require' '-P#extension GL_EXT_scalar_block_layout : require' " +
+        "'-P#extension GL_EXT_buffer_reference : require' '-P#extension " +
+        "GL_EXT_buffer_reference2 : require' '-P#extension " +
+        "GL_KHR_memory_scope_semantics : require' '-P#extension " +
+        "GL_KHR_shader_subgroup_arithmetic : require' '-P#extension " +
+        "GL_KHR_shader_subgroup_basic : require' '-P#extension " +
+        "GL_KHR_shader_subgroup_shuffle : require' '-P#extension " +
+        "GL_KHR_shader_subgroup_ballot : require' '-P#extension " +
+        "GL_KHR_shader_subgroup_clustered : require' '-P#extension " +
+        "GL_KHR_shader_subgroup_vote : require' '-P#extension " +
+        "GL_EXT_shader_atomic_int64 : require' '-P#extension " +
+        "GL_EXT_spirv_intrinsics : require' '-P#extension " +
+        "GL_EXT_shared_memory_block : require' -DMORTON_SORT_KEY64=1",
 }
 
 genrule {
@@ -338,14 +397,14 @@ genrule {
         "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/pair_triangles.spv.h) $(location " +
         "pair_triangles.comp) --quiet '-P#extension GL_GOOGLE_include_directive " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 " +
-        ": require' '-P#extension " +
-        "GL_EXT_shader_explicit_arithmetic_types_float16 : require' " +
-        "'-P#extension GL_EXT_scalar_block_layout : require' '-P#extension " +
-        "GL_EXT_buffer_reference : require' '-P#extension " +
+        ": require' '-P#extension GL_EXT_control_flow_attributes : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : " +
+        "require' '-P#extension GL_EXT_scalar_block_layout : require' " +
+        "'-P#extension GL_EXT_buffer_reference : require' '-P#extension " +
         "GL_EXT_buffer_reference2 : require' '-P#extension " +
         "GL_KHR_memory_scope_semantics : require' '-P#extension " +
         "GL_KHR_shader_subgroup_arithmetic : require' '-P#extension " +
@@ -355,7 +414,8 @@ genrule {
         "GL_KHR_shader_subgroup_clustered : require' '-P#extension " +
         "GL_KHR_shader_subgroup_vote : require' '-P#extension " +
         "GL_EXT_shader_atomic_int64 : require' '-P#extension " +
-        "GL_EXT_spirv_intrinsics : require'",
+        "GL_EXT_spirv_intrinsics : require' '-P#extension " +
+        "GL_EXT_shared_memory_block : require'",
 }
 
 genrule {
@@ -386,14 +446,14 @@ genrule {
         "-Iexternal/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o " +
         "$(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location " +
         "ploc_internal.comp) --quiet '-P#extension GL_GOOGLE_include_directive " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 " +
-        ": require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 " +
-        ": require' '-P#extension " +
-        "GL_EXT_shader_explicit_arithmetic_types_float16 : require' " +
-        "'-P#extension GL_EXT_scalar_block_layout : require' '-P#extension " +
-        "GL_EXT_buffer_reference : require' '-P#extension " +
+        ": require' '-P#extension GL_EXT_control_flow_attributes : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' " +
+        "'-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : " +
+        "require' '-P#extension GL_EXT_scalar_block_layout : require' " +
+        "'-P#extension GL_EXT_buffer_reference : require' '-P#extension " +
         "GL_EXT_buffer_reference2 : require' '-P#extension " +
         "GL_KHR_memory_scope_semantics : require' '-P#extension " +
         "GL_KHR_shader_subgroup_arithmetic : require' '-P#extension " +
@@ -403,5 +463,6 @@ genrule {
         "GL_KHR_shader_subgroup_clustered : require' '-P#extension " +
         "GL_KHR_shader_subgroup_vote : require' '-P#extension " +
         "GL_EXT_shader_atomic_int64 : require' '-P#extension " +
-        "GL_EXT_spirv_intrinsics : require'",
+        "GL_EXT_spirv_intrinsics : require' '-P#extension " +
+        "GL_EXT_shared_memory_block : require'",
 }
