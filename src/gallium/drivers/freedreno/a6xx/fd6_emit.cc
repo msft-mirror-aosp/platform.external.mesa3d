@@ -291,8 +291,8 @@ build_prog_fb_rast(struct fd6_emit *emit) assert_dt
       .frag_writes_sampmask = fs->writes_smask && pfb->samples > 1,
       .frag_writes_stencilref = fs->writes_stencilref,
    ));
-   crb.add(A6XX_RB_PS_MRT_CNTL(.mrt = nr));
-   crb.add(A6XX_SP_PS_MRT_CNTL(.mrt = nr));
+   crb.add(A6XX_RB_PS_MRT_CNTL(.mrt = nr))
+      .add(A6XX_SP_PS_MRT_CNTL(.mrt = nr));
 
    unsigned mrt_components = 0;
    for (unsigned i = 0; i < pfb->nr_cbufs; i++) {
@@ -305,10 +305,17 @@ build_prog_fb_rast(struct fd6_emit *emit) assert_dt
    if (blend->use_dual_src_blend)
       mrt_components |= 0xf << 4;
 
+   /* For multi-planar YUV, the RB treats the chroma plane as a separate MRT,
+    * so enable its write mask even though the shader only outputs to MRT0.
+    */
+   if (blend->base.is_yuv)
+      mrt_components |= 0xf << 4;
+
    mrt_components &= prog->mrt_components;
 
    crb.add(A6XX_SP_PS_OUTPUT_MASK(.dword = mrt_components))
       .add(A6XX_RB_PS_OUTPUT_MASK(.dword = mrt_components));
+
 
    return crb;
 }
@@ -396,9 +403,15 @@ fd6_emit_streamout(fd_cs &cs, struct fd6_emit *emit) assert_dt
       if (so->reset & (1 << i)) {
          assert(so->offsets[i] == 0);
 
+         /* The counter in offset_bo is maintained by the hardware in the
+          * units of VPC_SO_FLUSH_BASE, which are dwords on a6xx and bytes on
+          * a7xx, while VPC_SO_BUFFER_OFFSET is bytes on both.  Seed each of
+          * them in its own units.
+          */
          fd_pkt7(cs, CP_MEM_WRITE, 3)
             .add(A5XX_CP_MEM_WRITE_ADDR(offset_bo))
-            .add(target->base.buffer_offset);
+            .add(CHIP == A6XX ? target->base.buffer_offset >> 2
+                              : target->base.buffer_offset);
 
          fd_pkt4(cs, 1)
             .add(VPC_SO_BUFFER_OFFSET(CHIP, i,target->base.buffer_offset));

@@ -118,6 +118,10 @@ struct kk_rendering_state {
    struct kk_attachment fsr_att;
 
    bool ms_bresenham_lines;
+   /* Barrier tracking to understand if we need to split render passes. */
+   bool write_available;
+   bool ds_write_available;
+   bool storage_write_available;
    bool sample_locations_enable;
    uint32_t sample_locations_count;
    VkSampleLocationEXT sample_locations[KK_MAX_SAMPLES];
@@ -394,4 +398,7 @@ void kk_dispatch_precomp(struct kk_cmd_buffer *cmd, struct kk_grid grid,
 
 void kk_cmd_write(struct kk_cmd_buffer *cmd, struct libkk_imm_write write);
 
+void kk_encoder_state_set_label(struct kk_encoder_state *state,
+                                const char *label);
+void kk_cmd_buffer_set_label(struct kk_cmd_buffer *cb, const char *label);
 #endif

@@ -240,11 +240,15 @@ tu6_lazy_init_vsc(struct tu_cmd_buffer *cmd)
    uint32_t vsc_draw_overflow = global->vsc_draw_overflow;
    uint32_t vsc_prim_overflow = global->vsc_prim_overflow;
 
-   if (vsc_draw_overflow >= dev->vsc_draw_strm_pitch)
+   if (vsc_draw_overflow >= dev->vsc_draw_strm_pitch) {
       dev->vsc_draw_strm_pitch = (dev->vsc_draw_strm_pitch - VSC_PAD) * 2 + VSC_PAD;
+      perf_debug(cmd->device, "VSC draw stream overflow, increasing pitch to %u", dev->vsc_draw_strm_pitch);
+   }
 
-   if (vsc_prim_overflow >= dev->vsc_prim_strm_pitch)
+   if (vsc_prim_overflow >= dev->vsc_prim_strm_pitch) {
       dev->vsc_prim_strm_pitch = (dev->vsc_prim_strm_pitch - VSC_PAD) * 2 + VSC_PAD;
+      perf_debug(cmd->device, "VSC prim stream overflow, increasing pitch to %u", dev->vsc_prim_strm_pitch);
+   }
 
    cmd->vsc_prim_strm_pitch = dev->vsc_prim_strm_pitch;
    cmd->vsc_draw_strm_pitch = dev->vsc_draw_strm_pitch;
@@ -1369,13 +1373,13 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
                      tu_autotune::rp_key_opt rp_key)
 {
    if (TU_DEBUG(SYSMEM)) {
-      cmd->state.rp.gmem_disable_reason = "TU_DEBUG(SYSMEM)";
+      cmd->state.rp.force_render_mode_reason = "TU_DEBUG(SYSMEM)";
       return true;
    }
 
    /* can't fit attachments into gmem */
    if (!cmd->state.tiling->possible) {
-      cmd->state.rp.gmem_disable_reason = "Can't fit attachments into gmem";
+      cmd->state.rp.force_render_mode_reason = "Can't fit attachments into gmem";
       return true;
    }
 
@@ -1384,23 +1388,23 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
       for (unsigned i = 0; i < tu_fdm_num_layers(cmd); i++) {
          if (cmd->state.render_areas[i].extent.width == 0 ||
              cmd->state.render_areas[i].extent.height == 0) {
-            cmd->state.rp.gmem_disable_reason = "Render area is empty";
+            cmd->state.rp.force_render_mode_reason = "Render area is empty";
             return true;
          }
       }
    } else if (cmd->state.render_areas[0].extent.width == 0 ||
               cmd->state.render_areas[0].extent.height == 0) {
-      cmd->state.rp.gmem_disable_reason = "Render area is empty";
+      cmd->state.rp.force_render_mode_reason = "Render area is empty";
       return true;
    }
 
    if (cmd->state.rp.has_tess) {
-      cmd->state.rp.gmem_disable_reason = "Uses tessellation shaders";
+      cmd->state.rp.force_render_mode_reason = "Uses tessellation shaders";
       return true;
    }
 
    if (cmd->state.rp.disable_gmem) {
-      /* gmem_disable_reason is set where disable_gmem is set. */
+      /* force_render_mode_reason is set where disable_gmem is set. */
       return true;
    }
 
@@ -1408,7 +1412,7 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
 
    /* XFB is incompatible with non-hw binning GMEM rendering, see use_hw_binning */
    if (cmd->state.rp.xfb_used && !vsc->binning_possible) {
-      cmd->state.rp.gmem_disable_reason =
+      cmd->state.rp.force_render_mode_reason =
          "XFB is incompatible with non-hw binning GMEM rendering";
       return true;
    }
@@ -1419,29 +1423,27 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
    if ((cmd->state.rp.has_prim_generated_query_in_rp ||
         cmd->state.prim_generated_query_running_before_rp) &&
        !vsc->binning_possible) {
-      cmd->state.rp.gmem_disable_reason =
+      cmd->state.rp.force_render_mode_reason =
          "QUERY_TYPE_PRIMITIVES_GENERATED is incompatible with non-hw binning GMEM rendering";
       return true;
    }
 
    if (TU_DEBUG(GMEM)) {
-      cmd->state.rp.gmem_disable_reason = "TU_DEBUG(GMEM)";
+      cmd->state.rp.force_render_mode_reason = "TU_DEBUG(GMEM)";
       return false;
    }
 
    /* This is a case where it's better to avoid GMEM, too many tiles but no HW binning possible. */
    if (!vsc->binning_possible && vsc->binning_useful) {
-      cmd->state.rp.gmem_disable_reason = "Too many tiles and HW binning is not possible";
+      cmd->state.rp.force_render_mode_reason =
+         "Too many tiles and HW binning is not possible";
       return true;
    }
 
    tu_autotune::render_mode optimal_mode =
       cmd->device->autotune->get_optimal_mode(cmd, rp_ctx, rp_key);
-   bool use_sysmem = optimal_mode == tu_autotune::render_mode::SYSMEM;
-   if (use_sysmem)
-      cmd->state.rp.gmem_disable_reason = "Autotune selected sysmem";
 
-   return use_sysmem;
+   return optimal_mode == tu_autotune::render_mode::SYSMEM;
 }
 
 /* Optimization: there is no reason to load gmem if there is no
@@ -3045,8 +3047,9 @@ tu_trace_end_render_pass(struct tu_cmd_buffer *cmd, bool gmem,
          : -1;
    trace_end_render_pass(
       &cmd->trace, &cmd->cs, gmem,
-      cmd->state.rp.gmem_disable_reason ? cmd->state.rp.gmem_disable_reason
-                                        : "",
+      cmd->state.rp.force_render_mode_reason
+         ? cmd->state.rp.force_render_mode_reason
+         : "",
       cmd->state.rp.drawcall_count, avg_per_sample_bandwidth,
       cmd->state.lrz.valid,
       cmd->state.rp.lrz_disable_reason ? cmd->state.rp.lrz_disable_reason
@@ -3869,6 +3872,9 @@ tu_emit_subsampled(struct tu_cmd_buffer *cmd,
 {
    struct tu_cs *cs = &cmd->cs;
 
+   if (cmd->state.rp.shared_viewport)
+      fdm_offsets = NULL;
+
    for (unsigned i = 0; i < cmd->state.pass->attachment_count; i++) {
       if (i != cmd->state.pass->fragment_density_map.attachment &&
           (cmd->state.pass->attachments[i].store ||
@@ -4482,8 +4488,8 @@ tu_BeginCommandBuffer(VkCommandBuffer commandBuffer,
       cmd_buffer->state.occlusion_query_may_be_running =
          pBeginInfo->pInheritanceInfo->occlusionQueryEnable;
 
-      vk_foreach_struct_const(ext, pBeginInfo->pInheritanceInfo) {
-         switch (ext->sType) {
+      vk_foreach_struct_const(sType, ext, pBeginInfo->pInheritanceInfo) {
+         switch (sType) {
          case VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_CONDITIONAL_RENDERING_INFO_EXT: {
             const VkCommandBufferInheritanceConditionalRenderingInfoEXT *cond_rend =
                (VkCommandBufferInheritanceConditionalRenderingInfoEXT *) ext;
@@ -5525,7 +5531,7 @@ tu_pipeline_update_rp_state(struct tu_cmd_state *cmd_state)
          cmd->device,
          "Disabling gmem due to VK_EXT_attachment_feedback_loop_layout");
       cmd_state->rp.disable_gmem = true;
-      cmd_state->rp.gmem_disable_reason =
+      cmd_state->rp.force_render_mode_reason =
          "VK_EXT_attachment_feedback_loop_layout may involve textures";
    }
 
@@ -6253,8 +6259,8 @@ tu_render_pass_state_merge(struct tu_render_pass_state *dst,
       dst->lrz_write_disabled_at_draw =
          dst->drawcall_count + src->lrz_write_disabled_at_draw;
    }
-   if (!dst->gmem_disable_reason && src->gmem_disable_reason) {
-      dst->gmem_disable_reason = src->gmem_disable_reason;
+   if (!dst->force_render_mode_reason && src->force_render_mode_reason) {
+      dst->force_render_mode_reason = src->force_render_mode_reason;
    }
 
    dst->drawcall_count += src->drawcall_count;
@@ -7136,9 +7142,10 @@ tu_CmdBeginRenderPass2(VkCommandBuffer commandBuffer,
                              &cmd->state.vk_mv,
                              pass, cmd->state.subpass);
    tu_renderpass_begin(cmd);
-   tu_emit_subpass_begin<CHIP>(cmd);
 
    cmd->patchpoints_ctx = ralloc_context(NULL);
+
+   tu_emit_subpass_begin<CHIP>(cmd);
 }
 TU_GENX(tu_CmdBeginRenderPass2);
 
@@ -8680,7 +8687,7 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
             cmd->device,
             "Disabling gmem due to VK_EXT_attachment_feedback_loop_layout");
          cmd->state.rp.disable_gmem = true;
-         cmd->state.rp.gmem_disable_reason =
+         cmd->state.rp.force_render_mode_reason =
             "MESA_VK_DYNAMIC_ATTACHMENT_FEEDBACK_LOOP_ENABLE";
       }
    }
@@ -9306,6 +9313,11 @@ tu_CmdDrawIndirectByteCountEXT(VkCommandBuffer commandBuffer,
        * the vertexStride should also be in units of dwords.
        */
       vertexStride = vertexStride >> 2;
+   } else {
+      /* On a6xx only the offset is shifted right by 2, so scale it up to
+       * match the byte counter and stride.
+       */
+      counterOffset = counterOffset << 2;
    }
    tu_cs_emit(cs, instanceCount);
    tu_cs_emit_qw(cs, vk_buffer_address(&buf->vk, counterBufferOffset));
@@ -10172,7 +10184,7 @@ tu_barrier(struct tu_cmd_buffer *cmd,
       if ((srcStage & ~framebuffer_space_stages) ||
           (dstStage & ~framebuffer_space_stages)) {
          cmd->state.rp.disable_gmem = true;
-         cmd->state.rp.gmem_disable_reason = "Non-framebuffer-space barrier";
+         cmd->state.rp.force_render_mode_reason = "Non-framebuffer-space barrier";
       }
    }
 

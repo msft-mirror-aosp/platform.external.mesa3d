@@ -99,7 +99,7 @@ radv_probe_video_decode(struct radv_physical_device *pdev)
 
    pdev->video_decode_enabled = false;
 
-   if (instance->debug_flags & RADV_DEBUG_NO_VIDEO)
+   if (RADV_DEBUG(instance, NO_VIDEO))
       return;
 
    /* WRITE_MEMORY is needed for SetEvent and is required to pass CTS */
@@ -194,11 +194,9 @@ radv_CreateVideoSessionKHR(VkDevice _device, const VkVideoSessionCreateInfoKHR *
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
    struct radv_video_session *vid =
-      vk_alloc2(&device->vk.alloc, pAllocator, sizeof(*vid), 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+      vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*vid), 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (!vid)
       return vk_error(instance, VK_ERROR_OUT_OF_HOST_MEMORY);
-
-   memset(vid, 0, sizeof(struct radv_video_session));
 
    VkResult result = vk_video_session_init(&device->vk, &vid->vk, pCreateInfo);
    if (result != VK_SUCCESS) {

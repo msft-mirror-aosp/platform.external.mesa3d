@@ -231,6 +231,7 @@ enum ENUM_PACKED opcode {
    SHADER_OPCODE_INT_REMAINDER,
    SHADER_OPCODE_SIN,
    SHADER_OPCODE_COS,
+   SHADER_OPCODE_TANH,
 
    /**
     * A generic "send" opcode.  The first two sources are the message
@@ -681,8 +682,6 @@ enum rt_logical_srcs {
    RT_LOGICAL_SRC_GLOBALS,
    /** Trace ray payloads */
    RT_LOGICAL_SRC_PAYLOADS,
-   /** Synchronous tracing (ray query) */
-   RT_LOGICAL_SRC_SYNCHRONOUS,
 
    RT_LOGICAL_NUM_SRCS
 };

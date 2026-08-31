@@ -4677,7 +4677,7 @@ pvr_dynamic_render_info_create(struct pvr_cmd_buffer *cmd_buffer,
          resolve_ds_attach->store_op = ds_attach->store_op;
          resolve_ds_attach->stencil_store_op = ds_attach->stencil_store_op;
          resolve_ds_attach->load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-         resolve_ds_attach->stencil_load_op = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+         resolve_ds_attach->stencil_load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 
          attach_idx++;
       }
@@ -4754,7 +4754,9 @@ void PVR_PER_ARCH(CmdBeginRendering)(VkCommandBuffer commandBuffer,
    bool resume, suspend;
    VkResult result;
 
-   /* TODO: Check not in renderpess? */
+   PVR_CHECK_COMMAND_BUFFER_BUILDING_STATE(cmd_buffer);
+
+   /* TODO: Check not in renderpass? */
 
    suspend = pRenderingInfo->flags & VK_RENDERING_SUSPENDING_BIT_KHR;
    resume = pRenderingInfo->flags & VK_RENDERING_RESUMING_BIT_KHR;
@@ -4882,6 +4884,8 @@ void PVR_PER_ARCH(CmdEndRendering)(VkCommandBuffer commandBuffer)
    VK_FROM_HANDLE(pvr_cmd_buffer, cmd_buffer, commandBuffer);
    struct pvr_cmd_buffer_state *state = &cmd_buffer->state;
    VkResult result;
+
+   PVR_CHECK_COMMAND_BUFFER_BUILDING_STATE(cmd_buffer);
 
    if (state->current_sub_cmd && state->current_sub_cmd->is_suspend) {
       return;
@@ -5788,6 +5792,12 @@ static VkResult pvr_setup_descriptor_mappings(
             if (cmd_buffer->vk.dynamic_graphics_state.ms
                    .alpha_to_coverage_enable)
                fs_meta |= BITFIELD_BIT(PVR_FS_META_ALPHA_TO_COVERAGE_OFFSET);
+
+            if (data->fs.uses.sample_shading &&
+                cmd_buffer->vk.dynamic_graphics_state.ms.rasterization_samples >
+                   VK_SAMPLE_COUNT_1_BIT) {
+               fs_meta |= BITFIELD_BIT(PVR_FS_META_SAMPLE_SHADING);
+            }
 
             struct pvr_suballoc_bo *fs_meta_bo;
             result = pvr_arch_cmd_buffer_upload_general(cmd_buffer,
@@ -7232,7 +7242,6 @@ setup_pds_fragment_program(struct pvr_cmd_buffer *const cmd_buffer,
       &pds_fragment_program_buffer[program->doutu_offset],
       &doutu_src);
 
-   /* TODO: VkPipelineMultisampleStateCreateInfo.sampleShadingEnable? */
    doutu_src.sample_rate = dynamic_state->ms.rasterization_samples >
                                  VK_SAMPLE_COUNT_1_BIT
                               ? ROGUE_PDSINST_DOUTU_SAMPLE_RATE_FULL

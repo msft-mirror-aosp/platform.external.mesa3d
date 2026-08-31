@@ -738,6 +738,7 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
    case nir_intrinsic_load_sample_id:
    case nir_intrinsic_load_sample_pos:
    case nir_intrinsic_load_sample_pos_or_center:
+   case nir_intrinsic_load_sample_pos_intel:
    case nir_intrinsic_load_sample_mask_in:
    case nir_intrinsic_load_helper_invocation:
    case nir_intrinsic_load_tess_coord:
@@ -951,6 +952,7 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
           instr->intrinsic == nir_intrinsic_bindless_image_samples ||
           instr->intrinsic == nir_intrinsic_get_ubo_size ||
           instr->intrinsic == nir_intrinsic_get_ssbo_size ||
+          instr->intrinsic == nir_intrinsic_load_ssbo_address ||
           instr->intrinsic == nir_intrinsic_image_heap_levels ||
           instr->intrinsic == nir_intrinsic_image_heap_size ||
           instr->intrinsic == nir_intrinsic_image_heap_samples)
@@ -1164,6 +1166,10 @@ nir_shader_gather_info(nir_shader *shader, nir_function_impl *entrypoint)
          const unsigned slots =
             glsl_count_attribute_slots(glsl_get_array_element(var->type), false);
          shader->info.per_view_outputs |= BITFIELD64_RANGE(var->data.location, slots);
+      }
+      if (var->data.yuv) {
+         assert(shader->info.stage == MESA_SHADER_FRAGMENT);
+         shader->info.fs.yuv_color = true;
       }
    }
 

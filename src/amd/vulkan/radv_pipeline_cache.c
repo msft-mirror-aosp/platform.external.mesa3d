@@ -251,7 +251,7 @@ radv_pipeline_cache_object_create(struct vk_device *device, unsigned num_shaders
    const size_t size =
       sizeof(struct radv_pipeline_cache_object) + (num_shaders * sizeof(struct radv_shader *)) + data_size;
 
-   struct radv_pipeline_cache_object *object = vk_alloc(&device->alloc, size, 8, VK_SYSTEM_ALLOCATION_SCOPE_CACHE);
+   struct radv_pipeline_cache_object *object = vk_zalloc(&device->alloc, size, 8, VK_SYSTEM_ALLOCATION_SCOPE_CACHE);
    if (!object)
       return NULL;
 
@@ -260,8 +260,6 @@ radv_pipeline_cache_object_create(struct vk_device *device, unsigned num_shaders
    object->data = &object->shaders[num_shaders];
    object->data_size = data_size;
    memcpy(object->blake3, hash, BLAKE3_KEY_LEN);
-   memset(object->shaders, 0, sizeof(object->shaders[0]) * num_shaders);
-   memset(object->data, 0, data_size);
 
    return object;
 }
@@ -347,7 +345,7 @@ radv_report_pso_cache_stats(struct radv_device *device, const struct radv_pipeli
    const struct radv_physical_device *pdev = radv_device_physical(device);
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
-   if (!(instance->debug_flags & RADV_DEBUG_PSO_CACHE_STATS))
+   if (!(RADV_DEBUG(instance, PSO_CACHE_STATS)))
       return;
 
    /* Only gather PSO cache stats for application pipelines. */

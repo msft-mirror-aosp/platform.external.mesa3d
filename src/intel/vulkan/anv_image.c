@@ -480,6 +480,24 @@ formats_ccs_e_compatible(const struct anv_physical_device *physical_device,
    if (!(create_flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT))
       return true;
 
+   /* On gfx12+, we specify the compression format independently from the
+    * surface format. So, even if the surface format changes, hardware is
+    * still able to determine how to access the CCS. However, it's not until
+    * gfx20+ that we support compression with the following formats:
+    *  - ISL_FORMAT_L8_UNORM_SRGB
+    *  - ISL_FORMAT_L8A8_UNORM_SRGB
+    *  - ISL_FORMAT_R9G9B9E5_SHAREDEXP
+    */
+   if (devinfo->ver >= 20)
+      return true;
+
+   if (devinfo->ver == 12 && isl_format_get_layout(format)->bpb >= 64)
+      return true;
+
+   /* The three RGBA32 formats are CCS_E-compatible on gfx9-11. */
+   if (isl_format_get_layout(format)->bpb == 128)
+      return true;
+
    if (!fmt_list || fmt_list->viewFormatCount == 0)
       return false;
 
@@ -2037,7 +2055,7 @@ anv_image_init(struct anv_device *device, struct anv_image *image,
       /* Workaround to disable XE2 CCS modifiers from drirc. */
       if (device->info->ver >= 20 &&
           image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT &&
-          device->physical->instance->drirc.debug.disable_xe2_ccs_modifiers) {
+          device->physical->drirc.debug.disable_xe2_ccs_modifiers) {
          anv_perf_warn(VK_LOG_OBJS(&image->vk.base),
                        "Disabling aux: "
                        "drirc disable_xe2_drm_ccs_modifiers");
@@ -2074,7 +2092,8 @@ anv_image_init(struct anv_device *device, struct anv_image *image,
    if (image->vk.create_flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) {
       if (!fmt_list || fmt_list->viewFormatCount == 0) {
          /* Without a format list provided, we must assume all compatible
-          * formats. Instead of adding them all, mark our list as incomplete.
+          * formats. Instead of adding them all with
+          * vk_image_create_get_format_list(), mark our list as incomplete.
           */
          mark_image_view_formats_incomplete(image);
       } else {
@@ -2677,10 +2696,10 @@ anv_image_get_memory_requirements(struct anv_device *device,
       }
    }
 
-   vk_foreach_struct(ext, pMemoryRequirements->pNext) {
-      switch (ext->sType) {
+   vk_foreach_struct(sType, ext, pMemoryRequirements->pNext) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
-         VkMemoryDedicatedRequirements *requirements = (void *)ext;
+         VkMemoryDedicatedRequirements *requirements = ext;
          if (image->vk.wsi_legacy_scanout ||
              image->from_ahb ||
              (isl_drm_modifier_has_aux(image->vk.drm_format_mod) &&
@@ -2705,7 +2724,7 @@ anv_image_get_memory_requirements(struct anv_device *device,
       }
 
       default:
-         vk_debug_ignored_stype(ext->sType);
+         vk_debug_ignored_stype(sType);
          break;
       }
    }
@@ -2747,8 +2766,8 @@ void anv_GetImageMemoryRequirements2(
 
    VkImageAspectFlags aspects = image->vk.aspects;
 
-   vk_foreach_struct_const(ext, pInfo->pNext) {
-      switch (ext->sType) {
+   vk_foreach_struct_const(sType, ext, pInfo->pNext) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_IMAGE_PLANE_MEMORY_REQUIREMENTS_INFO: {
          assert(image->disjoint);
          const VkImagePlaneMemoryRequirementsInfo *plane_reqs =
@@ -2758,7 +2777,7 @@ void anv_GetImageMemoryRequirements2(
       }
 
       default:
-         vk_debug_ignored_stype(ext->sType);
+         vk_debug_ignored_stype(sType);
          break;
       }
    }
@@ -3095,8 +3114,8 @@ anv_bind_image_memory(struct anv_device *device,
    if (mem && mem->vk.ahardware_buffer)
       resolve_ahb_image(device, image, mem);
 
-   vk_foreach_struct_const(s, bind_info->pNext) {
-      switch (s->sType) {
+   vk_foreach_struct_const(sType, s, bind_info->pNext) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_BIND_IMAGE_PLANE_MEMORY_INFO: {
          const VkBindImagePlaneMemoryInfo *plane_info =
             (const VkBindImagePlaneMemoryInfo *) s;
@@ -3193,7 +3212,7 @@ anv_bind_image_memory(struct anv_device *device,
          break;
       }
       default:
-         vk_debug_ignored_stype(s->sType);
+         vk_debug_ignored_stype(sType);
          break;
       }
    }
@@ -4210,6 +4229,19 @@ anv_can_fast_clear_color(const struct anv_cmd_buffer *cmd_buffer,
         image->vk.extent.width == 16 * 1024)) {
       anv_perf_warn(VK_LOG_OBJS(&image->vk.base),
                     "Wa_16021232440: 16k dimension. Slow clearing.");
+      return false;
+   }
+
+   /* Wa_22018390030 (Xe2+), Bspec 57340, and HSD 22021327133 (Xe3P+) say that
+    * we can't fast clear surfaces that are color, non-volumetric, Tile4, and
+    * have a VALIGN of 4.
+    */
+   if (cmd_buffer->device->info->ver >= 20 &&
+       anv_surf->isl.dim != ISL_SURF_DIM_3D &&
+       anv_surf->isl.image_alignment_el.h == 4) {
+      assert(anv_surf->isl.tiling == ISL_TILING_4);
+      anv_perf_warn(VK_LOG_OBJS(&image->vk.base),
+                    "Wa_2201839003: Don't fast-clear on VALIGN_4.");
       return false;
    }
 

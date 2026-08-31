@@ -1623,18 +1623,24 @@ nir_src_is_always_uniform(nir_src src)
    if (nir_src_is_intrinsic(src)) {
       nir_intrinsic_instr *intr = nir_src_as_intrinsic(src);
       /* As are uniform variables */
-      if (intr->intrinsic == nir_intrinsic_load_uniform &&
+      if ((intr->intrinsic == nir_intrinsic_load_uniform ||
+           intr->intrinsic == nir_intrinsic_load_push_constant) &&
           nir_src_is_always_uniform(intr->src[0]))
          return true;
-      /* From the Vulkan specification 15.6.1. Push Constant Interface:
-       * "Any member of a push constant block that is declared as an array must
-       * only be accessed with dynamically uniform indices."
-       */
-      if (intr->intrinsic == nir_intrinsic_load_push_constant)
-         return true;
+
       if (intr->intrinsic == nir_intrinsic_load_deref &&
-          nir_deref_mode_is(nir_src_as_deref(intr->src[0]), nir_var_mem_push_const))
+          nir_deref_mode_is(nir_src_as_deref(intr->src[0]), nir_var_mem_push_const)) {
+         nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
+         while (deref->deref_type != nir_deref_type_var) {
+            if (nir_deref_instr_is_arr(deref) &&
+                !nir_src_is_always_uniform(deref->arr.index))
+               return false;
+            deref = nir_deref_instr_parent(deref);
+            if (!deref)
+               return false;
+         }
          return true;
+      }
    }
 
    /* Operating together uniform expressions produces a uniform result */
@@ -2649,6 +2655,7 @@ nir_system_value_from_intrinsic(nir_intrinsic_op intrin)
    case nir_intrinsic_load_sample_pos:
       return SYSTEM_VALUE_SAMPLE_POS;
    case nir_intrinsic_load_sample_pos_or_center:
+   case nir_intrinsic_load_sample_pos_intel:
       return SYSTEM_VALUE_SAMPLE_POS_OR_CENTER;
    case nir_intrinsic_load_sample_mask_in:
       return SYSTEM_VALUE_SAMPLE_MASK_IN;
@@ -3198,6 +3205,7 @@ nir_get_nir_type_for_glsl_base_type(enum glsl_base_type base_type)
    case GLSL_TYPE_TEXTURE:
    case GLSL_TYPE_IMAGE:
    case GLSL_TYPE_ATOMIC_UINT:
+   case GLSL_TYPE_YUV_CSC_STANDARD_EXT:
    case GLSL_TYPE_STRUCT:
    case GLSL_TYPE_INTERFACE:
    case GLSL_TYPE_ARRAY:
@@ -3480,6 +3488,7 @@ nir_tex_instr_result_size(const nir_tex_instr *instr)
       case GLSL_SAMPLER_DIM_MS:
       case GLSL_SAMPLER_DIM_RECT:
       case GLSL_SAMPLER_DIM_EXTERNAL:
+      case GLSL_SAMPLER_DIM_EXTERNAL_2D_Y2Y:
       case GLSL_SAMPLER_DIM_SUBPASS:
       case GLSL_SAMPLER_DIM_SUBPASS_MS:
          ret = 2;

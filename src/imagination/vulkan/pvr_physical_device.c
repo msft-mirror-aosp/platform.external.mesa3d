@@ -23,6 +23,7 @@
 #include "vk_util.h"
 #include "vk_log.h"
 
+#include "hwdef/pvr_hw_utils.h"
 #include "hwdef/rogue_hw_utils.h"
 
 #include "pco/pco.h"
@@ -264,7 +265,7 @@ static void pvr_physical_device_get_supported_features(
       .occlusionQueryPrecise = false,
       .pipelineStatisticsQuery = false,
       .vertexPipelineStoresAndAtomics = false,
-      .fragmentStoresAndAtomics = false,
+      .fragmentStoresAndAtomics = true,
       .shaderTessellationAndGeometryPointSize = false,
       .shaderImageGatherExtended = true,
       .shaderStorageImageExtendedFormats = true,
@@ -645,7 +646,7 @@ static bool pvr_physical_device_get_properties(
 
       .maxImageDimension1D = 4096U,
       .maxImageDimension2D = 4096U,
-      .maxImageDimension3D = 256U,
+      .maxImageDimension3D = pvr_get_texture_extent_max_z(dev_info),
       .maxImageDimensionCube = 4096U,
       .maxImageArrayLayers = rogue_get_render_size_max_z(dev_info),
       .maxTexelBufferElements = 64U * 1024U,
@@ -1324,8 +1325,8 @@ void pvr_GetPhysicalDeviceQueueFamilyProperties2(
    vk_outarray_append_typed (VkQueueFamilyProperties2, &out, p) {
       p->queueFamilyProperties = pvr_queue_family_properties;
 
-      vk_foreach_struct (ext, p->pNext) {
-         switch (ext->sType) {
+      vk_foreach_struct (sType, ext, p->pNext) {
+         switch (sType) {
          case VK_STRUCTURE_TYPE_QUEUE_FAMILY_GLOBAL_PRIORITY_PROPERTIES: {
             VkQueueFamilyGlobalPriorityProperties
                *pvr_queue_global_family_properties =
@@ -1340,7 +1341,7 @@ void pvr_GetPhysicalDeviceQueueFamilyProperties2(
             break;
          }
          default:
-            vk_debug_ignored_stype(ext->sType);
+            vk_debug_ignored_stype(sType);
             break;
          }
       }
@@ -1355,8 +1356,8 @@ void pvr_GetPhysicalDeviceMemoryProperties2(
 
    pMemoryProperties->memoryProperties = pdevice->memory;
 
-   vk_foreach_struct (ext, pMemoryProperties->pNext) {
-      vk_debug_ignored_stype(ext->sType);
+   vk_foreach_struct (sType, ext, pMemoryProperties->pNext) {
+      vk_debug_ignored_stype(sType);
    }
 }
 

@@ -135,6 +135,7 @@ a6xx_base = GPUProps(
         has_fs_tex_prefetch = True,
         has_sampler_minmax = True,
         has_astc_hdr = True,
+        num_xfb_streams = 4,
 
         supports_double_threadsize = True,
 
@@ -170,6 +171,7 @@ a6xx_gen1_low = GPUProps(
         has_sampler_minmax = False,
         has_astc_hdr = False,
         has_fs_tex_prefetch = False,
+        num_xfb_streams = 1,
         sysmem_per_ccu_color_cache_size = 8 * 1024,
         sysmem_per_ccu_depth_cache_size = 8 * 1024,
         gmem_ccu_color_cache_fraction = CCUColorCacheFraction.HALF.value,
@@ -778,6 +780,7 @@ a7xx_base = GPUProps(
         has_fs_tex_prefetch = True,
         has_sampler_minmax = True,
         has_astc_hdr = True,
+        num_xfb_streams = 4,
 
         supports_double_threadsize = True,
 
@@ -1404,6 +1407,7 @@ add_gpus([
 
 add_gpus([
         GPUId(chip_id=0xffff44050000, name="Adreno (TM) 830"),
+        GPUId(chip_id=0xffff44050001, name="Adreno (TM) 830v1"),
         GPUId(chip_id=0x44050001, name="Adreno (TM) 830"), # KGSL
     ], A6xxGPUInfo(
         CHIP.A8XX,

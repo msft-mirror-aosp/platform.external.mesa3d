@@ -829,6 +829,8 @@ uint32_t radv_init_fmask(struct radv_cmd_buffer *cmd_buffer, struct radv_image *
 uint32_t radv_init_dcc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image,
                        const VkImageSubresourceRange *range, uint32_t value);
 
+uint32_t radv_init_display_dcc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image, uint32_t value);
+
 void radv_emit_cache_flush(struct radv_cmd_buffer *cmd_buffer);
 
 void radv_emit_set_predication_state(struct radv_cmd_buffer *cmd_buffer, bool draw_visible, unsigned pred_op,
@@ -855,7 +857,7 @@ struct radv_vbo_info {
 void radv_get_vbo_info(const struct radv_cmd_buffer *cmd_buffer, uint32_t vbo_idx, struct radv_vbo_info *vbo_info);
 
 void radv_emit_compute_shader(const struct radv_physical_device *pdev, struct radv_cmd_stream *cs,
-                              const struct radv_shader *shader);
+                              const struct radv_shader *shader, bool emit_cs_state);
 
 void radv_upload_indirect_descriptor_sets(struct radv_cmd_buffer *cmd_buffer,
                                           struct radv_descriptor_state *descriptors_state);
@@ -881,6 +883,12 @@ radv_resume_conditional_rendering(struct radv_cmd_buffer *cmd_buffer)
 
    cond_render->enabled = cond_render->enabled_save;
    cond_render->suspended = false;
+}
+
+static inline bool
+radv_cmd_buffer_is_transfer_gang(const struct radv_cmd_buffer *cmd_buffer)
+{
+   return cmd_buffer->qf == RADV_QUEUE_TRANSFER && cmd_buffer->gang.cs && cmd_buffer->gang.cs->hw_ip == AMD_IP_COMPUTE;
 }
 
 #endif /* RADV_CMD_BUFFER_H */

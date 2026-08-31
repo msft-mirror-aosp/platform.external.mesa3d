@@ -123,7 +123,16 @@ write_image_sampler(const struct pvr_descriptor_set *set,
       VK_FROM_HANDLE(pvr_image_view, image_view, image_info->imageView);
       image_sampler_desc.image =
          image_view->image_state[PVR_TEXTURE_STATE_SAMPLE];
-      if (image_view->sampler_words[0]) {
+
+      bool sampler_words_present = false;
+      for (unsigned i = 0; i < ROGUE_NUM_TEXSTATE_SAMPLER_WORDS; i++) {
+         if (image_view->sampler_words[i]) {
+            sampler_words_present = true;
+            break;
+         }
+      }
+
+      if (sampler_words_present) {
          for (unsigned i = 0; i < ROGUE_NUM_TEXSTATE_SAMPLER_WORDS; i++) {
             image_sampler_desc.sampler.words[i] |= image_view->sampler_words[i];
             image_sampler_desc.sampler.gather_words[i] |=
@@ -293,8 +302,8 @@ void PVR_PER_ARCH(UpdateDescriptorSets)(
       binding = &layout->bindings[write->dstBinding];
 
       const VkWriteDescriptorSetInlineUniformBlock *write_iub = NULL;
-      vk_foreach_struct_const (ext, write->pNext) {
-         switch (ext->sType) {
+      vk_foreach_struct_const (sType, ext, write->pNext) {
+         switch (sType) {
          case VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK:
             write_iub = (const VkWriteDescriptorSetInlineUniformBlock *)ext;
             continue;
@@ -303,7 +312,7 @@ void PVR_PER_ARCH(UpdateDescriptorSets)(
             break;
          }
 
-         vk_debug_ignored_stype(ext->sType);
+         vk_debug_ignored_stype(sType);
       }
 
       if (!binding->stage_flags)
@@ -418,8 +427,8 @@ void PVR_PER_ARCH(UpdateDescriptorSets)(
       src_binding = &src_layout->bindings[copy->srcBinding];
       dst_binding = &dst_layout->bindings[copy->dstBinding];
 
-      vk_foreach_struct_const (ext, copy->pNext) {
-         vk_debug_ignored_stype(ext->sType);
+      vk_foreach_struct_const (sType, ext, copy->pNext) {
+         vk_debug_ignored_stype(sType);
       }
 
       assert(src_binding->stage_flags == dst_binding->stage_flags);

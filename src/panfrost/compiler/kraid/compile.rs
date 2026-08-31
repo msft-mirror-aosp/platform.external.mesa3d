@@ -98,6 +98,7 @@ fn nir_opts(arch: u8, merge_wg: bool) -> nir_shader_compiler_options {
             0
         },
         lower_mediump_io: Some(pan_nir_lower_mediump_io),
+        io_options: nir_io_has_intrinsics | nir_io_non_interpolated_as_uint,
         ..Default::default()
     }
 }
@@ -234,13 +235,18 @@ pub extern "C" fn kraid_compile_nir(
     // they've completed.
     pass!(s.assign_message_slots());
     pass!(s.mark_reconvergence());
+    pass!(s.opt_end());
 
-    info.stats = s.get_stats();
+    if !s.is_empty() {
+        info.stats = s.get_stats();
 
-    let bin = model.encode_shader(&s);
-    dynarray_append_vec(binary, bin);
+        let bin = model.encode_shader(&s);
+        dynarray_append_vec(binary, bin);
 
-    encode_no_psiz_variant(nir, &mut s, model.as_ref(), binary, info);
+        encode_no_psiz_variant(nir, &mut s, model.as_ref(), binary, info);
+    } else {
+        info.stats = pan_stats::default();
+    }
 
     write_back_info(&s.info, nir, info);
     unsafe { pan_shader_update_info(info, nir, inputs) };

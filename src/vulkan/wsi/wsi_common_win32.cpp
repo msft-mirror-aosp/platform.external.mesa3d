@@ -36,7 +36,6 @@
 #include "wsi_common_entrypoints.h"
 #include "wsi_common_private.h"
 
-#define D3D12_IGNORE_SDK_LAYERS
 #include <dxgi1_4.h>
 #include <directx/d3d12.h>
 #include <dxguids/dxguids.h>
@@ -253,8 +252,8 @@ wsi_win32_surface_get_capabilities2(VkIcdSurfaceBase *surface,
       wsi_win32_surface_get_capabilities(surface, wsi_device,
                                          caps);
 
-   vk_foreach_struct(ext, caps->pNext) {
-      switch (ext->sType) {
+   vk_foreach_struct(sType, ext, caps->pNext) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_SURFACE_PROTECTED_CAPABILITIES_KHR: {
          VkSurfaceProtectedCapabilitiesKHR *protected_cap = (VkSurfaceProtectedCapabilitiesKHR *)ext;
          protected_cap->supportsProtected = VK_FALSE;

@@ -1180,7 +1180,10 @@ lower_lsc_memory_logical_send(const brw_builder &bld, brw_mem_inst *mem)
 
    brw_reg payload = addr;
 
-   if (addr.file != VGRF || !addr.is_contiguous()) {
+   /* Note a scalar address needs to be de-scalarized for the lowering
+    * to operate correctly.
+    */
+   if (addr.file != VGRF || !addr.is_contiguous() || addr.is_scalar) {
       if (mem->force_writemask_all) {
          const brw_builder dbld =
             mem->exec_size == 1 ?
@@ -1927,9 +1930,7 @@ lower_trace_ray_logical_send(const brw_builder &bld, brw_inst *inst)
    const brw_reg payload =
       bld.move_to_vgrf(inst->src[RT_LOGICAL_SRC_PAYLOADS],
                        inst->components_read(RT_LOGICAL_SRC_PAYLOADS));
-   const brw_reg synchronous_src = inst->src[RT_LOGICAL_SRC_SYNCHRONOUS];
-   assert(synchronous_src.file == IMM);
-   const bool synchronous = synchronous_src.ud;
+   const bool synchronous = inst->synchronous;
 
    const unsigned unit = reg_unit(devinfo);
    const unsigned mlen = unit;
@@ -1978,28 +1979,6 @@ lower_trace_ray_logical_send(const brw_builder &bld, brw_inst *inst)
       ubld.group(1, 0).MOV(byte_offset(header, 16), brw_imm_ud(synchronous));
 
    const unsigned ex_mlen = inst->exec_size / 8;
-
-   /* When doing synchronous traversal, the HW implicitly computes the
-    * stack_id using the following formula :
-    *
-    *    EUID[3:0] & THREAD_ID[2:0] & SIMD_LANE_ID[3:0]
-    *
-    * Only in the asynchronous case we need to set the stack_id given from the
-    * payload register.
-    */
-   if (!synchronous) {
-      /* For Xe2+, Bspec 64643:
-       * "StackID": The maximum number of StackIDs can be 2^12- 1.
-       *
-       * For platforms < Xe2, The maximum number of StackIDs can be 2^11 - 1.
-       */
-      brw_reg stack_id_mask = devinfo->ver >= 20 ?
-                              brw_imm_uw(0xfff) :
-                              brw_imm_uw(0x7ff);
-      bld.AND(subscript(payload, BRW_TYPE_UW, 1),
-              retype(brw_vec8_grf(1 * unit, 0), BRW_TYPE_UW),
-              stack_id_mask);
-   }
 
    brw_send_inst *send = brw_transform_inst_to_send(bld, inst);
    inst = NULL;

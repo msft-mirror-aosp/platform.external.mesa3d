@@ -76,6 +76,13 @@ lower_frag_coord(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 
       nir_def_replace(&intr->def, nir_fmul_imm(b, pos, 1.0f / 16.0f));
       return true;
+   } else if (intr->intrinsic == nir_intrinsic_load_sample_pos ||
+              intr->intrinsic == nir_intrinsic_load_sample_pos_or_center) {
+      nir_def *raw = nir_load_sample_pos_intel(b);
+      nir_def *floats = nir_u2f32(b, nir_unpack_bits(b, raw, 8));
+
+      nir_def_replace(&intr->def, nir_fmul_imm(b, floats, 1.0 / 16.0f));
+      return true;
    } else if (intr->intrinsic == nir_intrinsic_load_max_polygon_intel) {
       /* TODO: Support multipolygon */
       nir_def_replace(&intr->def, nir_imm_int(b, 1));
@@ -235,7 +242,11 @@ jay_nir_lower_simd(nir_builder *b, nir_intrinsic_instr *intr, void *simd_)
           */
          nir_def_replace(&intr->def, nir_undef(b, 1, intr->def.bit_size));
       } else {
-         nir_def *offset_B = nir_imul_imm(b, intr->src[1].ssa, 4);
+         /* Likewise, clamp non-constant indexes to avoid out of bounds
+          * indirect register file access.
+          */
+         nir_def *index = nir_iand_imm(b, intr->src[1].ssa, simd_width - 1);
+         nir_def *offset_B = nir_imul_imm(b, index, 4);
          nir_def_replace(&intr->def, nir_shuffle_intel(b, 1, data, offset_B));
       }
 
@@ -1113,6 +1124,7 @@ jay_select_simd(const struct intel_device_info *devinfo, nir_shader *nir)
       intel_simd_debug_allowed_modes(nir->info.stage) << 3;
    unsigned undesirable_modes = ~simd_debug_modes;
    unsigned unsupported_modes = ~(32 | 16 | (devinfo->ver < 20 ? 8 : 0));
+   unsigned smallest_mode = devinfo->ver >= 20 ? 16 : 8;
 
    /* Step 1: Discard SIMD modes we cannot dispatch */
 
@@ -1166,8 +1178,9 @@ jay_select_simd(const struct intel_device_info *devinfo, nir_shader *nir)
        !nir->info.workgroup_size_variable) {
       unsigned work_size = nir_static_workgroup_size(nir);
       unsigned pot_work_size = util_next_power_of_two(work_size);
-      if (pot_work_size & ~unsupported_modes)
-         undesirable_modes |= ~pot_work_size;
+      unsigned too_big = ~((MAX2(pot_work_size, smallest_mode) << 1) - 1);
+
+      undesirable_modes |= too_big;
    }
 
    /* Step 3: Handle SIMD overrides.  Undesirable modes become allowed,
