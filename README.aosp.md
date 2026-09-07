@@ -17,11 +17,11 @@ Google.
 
 ### 1.1 Supported Drivers
 
-| Driver                                      | Long-term use case                              | In-tree users                                        |
-| :------------------------------------------ | :---------------------------------------------- | :--------------------------------------------------- |
-| **gfxstream** (`vulkan.ranchu`)             | Cloud testing and emulators                     | `device/google/cuttlefish`, `device/google/goldfish` |
-| **Lavapipe** (`vulkan.lvp`)                 | [Early device bring-up][lavapipe-early-bringup] | None yet, but Pixel images projected                 |
-| **Turnip / Freedreno** (`vulkan.freedreno`) | DragonBoards, others experimenting              | None yet, but `device/linaro/dragonboard` projected  |
+| Driver                                      | Long-term use case                              | In-tree users                                          |
+| :------------------------------------------ | :---------------------------------------------- | :----------------------------------------------------- |
+| **gfxstream** (`vulkan.ranchu`)             | Cloud testing and emulators                     | `device/google/cuttlefish`, `device/google/goldfish`   |
+| **Lavapipe** (`vulkan.lvp`)                 | [Early device bring-up][lavapipe-early-bringup] | `device/google/cuttlefish`, and Pixel images projected |
+| **Turnip / Freedreno** (`vulkan.freedreno`) | DragonBoards, others experimenting              | None yet, but `device/linaro/dragonboard` projected    |
 
 ### 1.2 Future Targeted Drivers
 
