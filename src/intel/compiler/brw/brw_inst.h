@@ -219,12 +219,17 @@ struct brw_inst : brw_exec_node {
 };
 
 struct brw_send_inst : brw_inst {
-   uint32_t desc;
-   uint32_t ex_desc;
+   union {
+      struct {
+         uint32_t desc;
+         uint32_t ex_desc;
+      };
+      uint64_t combined_desc;/* SENDG combined desc */
+   };
    uint32_t offset;
 
-   uint8_t mlen;
-   uint8_t ex_mlen;
+   uint8_t mlen;/* SENDG address length */
+   uint8_t ex_mlen;/* SENDG data length */
    uint8_t sfid;
 
    /** The number of hardware registers used for a message header. */
@@ -263,7 +268,9 @@ struct brw_send_inst : brw_inst {
           */
          bool ex_desc_imm:1;
 
-         uint8_t pad:2;
+         bool efficient_64bit:1;
+
+         uint8_t pad:1;
       };
       uint8_t send_bits;
    };
@@ -307,8 +314,18 @@ struct brw_tex_inst : brw_inst {
           * brw_opt_zero_samples()
           */
          uint16_t required_params:13;
+         /**
+          * Texture index Gfx35+ only
+          */
+         uint8_t texture_index:5;
+         /**
+          * Sampler index Gfx35+ only
+          */
+         uint8_t sampler_index:3;
+
+         uint32_t pad:24;
       };
-      uint32_t bits;
+      uint64_t bits;
    };
 
    /**
@@ -326,6 +343,8 @@ struct brw_mem_inst : brw_inst {
    uint8_t coord_components;
    uint8_t components;
    uint8_t flags;
+   /** Texture index Gfx35+ only */
+   uint8_t surface_index;
 
    /** Required alignment of address in bytes; 0 for natural alignment */
    uint32_t alignment;
@@ -374,7 +393,16 @@ struct brw_scratch_inst : brw_inst {
     *
     * Currently this must be false for spills.
     */
-   bool use_transpose;
+   bool use_transpose:1;
+
+   /**
+    * Should a LSC fill the base offset?
+    *
+    * Currently this must be false for spills.
+    */
+   bool use_base_offset:1;
+
+   uint32_t pad:30;
 };
 
 /**

@@ -115,7 +115,7 @@ tu_spirv_to_nir_library(struct tu_device *dev,
    NIR_PASS(_, nir, nir_opt_copy_prop);
    NIR_PASS(_, nir, nir_opt_dce);
    NIR_PASS(_, nir, nir_opt_cse);
-   NIR_PASS(_, nir, nir_opt_gcm, true, true);
+   NIR_PASS(_, nir, nir_opt_gcm, true);
 
    nir_opt_peephole_select_options peephole_select_options = {};
    peephole_select_options.limit = 1;
@@ -3159,6 +3159,12 @@ tu_upload_shader(struct tu_device *dev,
 
    uint32_t pvtmem_size = v->pvtmem_size;
    bool per_wave = v->pvtmem_per_wave;
+
+   /* Shader stages that don't expose private memory are not expected to benefit
+    * as much from per-wave layout.
+    */
+   if ((v->type == MESA_SHADER_COMPUTE) && !per_wave)
+      perf_debug(dev, "falling back to per-fiber pvtmem layout");
 
    if (v->binning) {
       pvtmem_size = MAX2(pvtmem_size, shader->variant->binning->pvtmem_size);

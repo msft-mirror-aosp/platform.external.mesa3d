@@ -1029,6 +1029,9 @@ build_buffer_to_image_fs(const struct vk_meta_device *meta,
       MESA_SHADER_FRAGMENT, NULL, "vk-meta-copy-buffer-to-image-frag");
    nir_builder *b = &builder;
 
+   /* Don't read out of bounds for helpers */
+   nir_terminate_if(b, nir_is_helper_invocation(b, 1));
+
    VkFormat buf_fmt =
       copy_img_buf_format_for_aspect(&key->img.view, key->img.aspect);
 
@@ -1039,7 +1042,8 @@ build_buffer_to_image_fs(const struct vk_meta_device *meta,
    nir_def *img_offs = nir_vec3(b,
       load_info(b, struct vk_meta_copy_buffer_image_info, img.offset.x),
       load_info(b, struct vk_meta_copy_buffer_image_info, img.offset.y),
-      load_info(b, struct vk_meta_copy_buffer_image_info, img.offset.z));
+      /* Always zero. See copy_buffer_image_prepare_gfx_push_const */
+      nir_imm_zero(b, 1, 32));
 
    /* Move the layer ID to the second coordinate if we're dealing with a 1D
     * array, as this is where the texture instruction expects it. */
@@ -1054,7 +1058,7 @@ build_buffer_to_image_fs(const struct vk_meta_device *meta,
    assert(blk_sz % comp_count == 0);
    unsigned comp_sz = (blk_sz / comp_count) * 8;
 
-   coords = nir_isub(b, coords, img_offs);
+   coords = nir_iadd(b, coords, img_offs);
 
    nir_def *texel = nir_load_global(b,
       comp_count, comp_sz, copy_img_buf_addr(b, buf_pfmt, coords),
@@ -1222,10 +1226,13 @@ copy_buffer_image_prepare_gfx_push_const(
          .image_stride = buf_layout->image_stride_B,
          .addr = region->addressRange.address,
       },
+      /* Equivalent to copy_image_prepare_gfx_push_const, but with a
+       * zero src offset
+       */
       .img.offset = {
-         .x = region->imageOffset.x,
-         .y = region->imageOffset.y,
-         .z = region->imageOffset.z,
+         .x = -region->imageOffset.x,
+         .y = -region->imageOffset.y,
+         .z = 0,
       },
    };
 
@@ -2069,8 +2076,13 @@ copy_image_prepare_gfx_push_const(struct vk_command_buffer *cmd,
          .x = src_img_offs.x - region->dstOffset.x,
          .y = src_img_offs.y - region->dstOffset.y,
          /* Render image view only contains the layers needed for rendering,
-          * so we consider the coordinate containing the layer to always be
-          * zero.
+          * (that is, the z dst offset is applied with
+          * subresourceRange.baseArrayLayer rather than increasing the layer
+          * id), so we consider the coordinate containing the layer to always
+          * be zero. Note that this is specifically for the 3D copy case, since
+          * we turn 3D copies into 2D array copies. The 1D array and 2D array
+          * cases will have the array offsets in dstSubresource already so
+          * there's no special handling required here.
           */
          .z = src_img_offs.z,
       },

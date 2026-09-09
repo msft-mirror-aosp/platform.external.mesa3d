@@ -54,7 +54,7 @@ static inline nir_def *
 brw_load_btd_dss_id(nir_builder *b,
                     const struct intel_device_info *devinfo)
 {
-   assert(devinfo->ver >= 12 && devinfo->ver <= 30);
+   assert(devinfo->ver >= 12 && devinfo->ver <= 35);
    unsigned slice_stride = devinfo->max_subslices_per_slice;
 
    /* Xe3: Engine 3D and GPGPU Programs, EU Overview, Registers and
@@ -128,7 +128,7 @@ static inline nir_def *
 brw_load_eu_thread_simd(nir_builder *b,
                         const struct intel_device_info *devinfo)
 {
-   assert(devinfo->ver >= 12 && devinfo->ver <= 30);
+   assert(devinfo->ver >= 12 && devinfo->ver <= 35);
 
    /* Xe3: Engine 3D and GPGPU Programs, EU Overview, Registers and
     * Register Regions, ARF Registers, State Register.
@@ -267,6 +267,7 @@ brw_nir_trace_ray(nir_builder *b,
                   nir_def *bvh_level,
                   nir_def *trace_ray_control,
                   bool synchronous,
+                  bool efficient_64bit,
                   const struct intel_device_info *devinfo)
 {
    nir_def *payload_ldw = nir_bfi(b,
@@ -275,6 +276,9 @@ brw_nir_trace_ray(nir_builder *b,
                                   nir_u2u32(b, bvh_level));
 
    nir_trace_ray_intel(b,
+                       efficient_64bit ?
+                       /* BSpec 73321 */
+                       (synchronous ? globals : nir_ior_imm(b, globals, 0x1)) :
                        globals,
                        /* ATSM PRMs, Volume 2d: Command Reference: Structures, Trace Ray Message
                         *    "The maximum number of StackIDs can be 2^11 - 1."

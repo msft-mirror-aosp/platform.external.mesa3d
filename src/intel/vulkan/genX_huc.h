@@ -418,39 +418,26 @@ genX(h265_huc_s2l)(struct anv_cmd_buffer *cmd_buffer,
       ind.HUCIndirectStreamInObjectAddress =
          anv_address_add(src_buffer->address, frame_info->srcBufferOffset & ~4095);
 
-      ind.HUCIndirectStreamInObjectMemoryAddressAttributes = (struct GENX(MEMORYADDRESSATTRIBUTES)) {
-         .MOCS = anv_mocs(device, src_buffer->address.bo, 0),
-      };
-
+      ind.HUCIndirectStreamInObjectAddressAttributes = ANV_VID_ATTR(device, src_buffer->address.bo);
       ind.HUCIndirectStreamInObjectAccessUpperBound =
          anv_address_add(src_buffer->address,
                          align64(frame_info->srcBufferRange + frame_info->srcBufferOffset, 4096));
-
-      ind.HUCIndirectStreamOutObjectMemoryAddressAttributes = (struct GENX(MEMORYADDRESSATTRIBUTES)) {
-         .MOCS = anv_mocs(device, NULL, 0),
-      };
+      ind.HUCIndirectStreamOutObjectAddressAttributes = ANV_VID_ATTR(device, NULL);
    }
 
    anv_batch_emit(&cmd_buffer->batch, GENX(HUC_VIRTUAL_ADDR_STATE), va) {
       va.HUCVirtualAddressRegion[0] = (struct GENX(HUC_VIRTUAL_ADDR_REGION)) {
          .Address = second_bb_addr,
-         .MemoryAddressAttributes = {
-            .MOCS = anv_mocs(device, second_bb_addr.bo, 0),
-         },
+         .AddressAttributes = ANV_VID_ATTR(device, second_bb_addr.bo),
       };
 
-      for (unsigned i = 1; i < 16; i++) {
-         va.HUCVirtualAddressRegion[i].MemoryAddressAttributes = (struct GENX(MEMORYADDRESSATTRIBUTES)) {
-            .MOCS = anv_mocs(device, NULL, 0),
-         };
-      }
+      for (unsigned i = 1; i < 16; i++)
+         va.HUCVirtualAddressRegion[i].AddressAttributes = ANV_VID_ATTR(device, NULL);
    }
 
    anv_batch_emit(&cmd_buffer->batch, GENX(HUC_DMEM_STATE), dmem) {
       dmem.HUCDataSourceAddress = dmem_addr;
-      dmem.HUCDataSourceMemoryAddressAttributes = (struct GENX(MEMORYADDRESSATTRIBUTES)) {
-         .MOCS = anv_mocs(device, dmem_addr.bo, 0),
-      };
+      dmem.HUCDataSourceAddressAttributes = ANV_VID_ATTR(device, dmem_addr.bo);
       dmem.HUCDataDestinationAddress = (struct anv_address) {
          NULL, ANV_HUC_DMEM_DEST_OFFSET,
       };
@@ -530,6 +517,56 @@ genX(h265_huc_s2l)(struct anv_cmd_buffer *cmd_buffer,
       cbbe.CompareDataDword = 0;
       cbbe.CompareAddress = anv_address_add(status_addr, 8);
    }
+}
+
+static void
+anv_huc_emit_copy(struct anv_cmd_buffer *cmd_buffer,
+                  struct anv_address dst_addr,
+                  struct anv_address src_addr,
+                  uint32_t size)
+{
+   struct anv_device *device = cmd_buffer->device;
+   uint32_t src_offset = src_addr.offset & 4095;
+   uint32_t dst_offset = dst_addr.offset & 4095;
+   struct anv_address src_base = { src_addr.bo, src_addr.offset - src_offset };
+   struct anv_address dst_base = { dst_addr.bo, dst_addr.offset - dst_offset };
+
+   anv_batch_emit(&cmd_buffer->batch, GENX(MFX_WAIT), mfx) {
+      mfx.MFXSyncControlFlag = 1;
+   }
+
+   anv_batch_emit(&cmd_buffer->batch, GENX(HUC_PIPE_MODE_SELECT), sel) {
+      sel.IndirectStreamOutEnable = true;
+      sel.MediaSoftResetCounter = 2400;
+   }
+
+   anv_batch_emit(&cmd_buffer->batch, GENX(MFX_WAIT), mfx) {
+      mfx.MFXSyncControlFlag = 1;
+   }
+
+   anv_batch_emit(&cmd_buffer->batch, GENX(HUC_IND_OBJ_BASE_ADDR_STATE), ind) {
+      ind.HUCIndirectStreamInObjectAddress = src_base;
+      ind.HUCIndirectStreamInObjectAddressAttributes = ANV_VID_ATTR(device, src_base.bo);
+
+      ind.HUCIndirectStreamInObjectAccessUpperBound =
+         anv_address_add(src_base, align64(src_offset + size, 4096));
+
+      ind.HUCIndirectStreamOutObjectAddress = dst_base;
+      ind.HUCIndirectStreamOutObjectAddressAttributes = ANV_VID_ATTR(device, dst_base.bo);
+      ind.HUCIndirectStreamOutObjectAccessUpperBound =
+         anv_address_add(dst_base, align64(dst_offset + size, 4096));
+   }
+
+   anv_batch_emit(&cmd_buffer->batch, GENX(HUC_STREAM_OBJECT), so) {
+      so.IndirectStreamInDataLength = size;
+      so.IndirectStreamInAddress = src_offset;
+      so.HUCProcessing = true;
+      so.IndirectStreamOutAddress = dst_offset;
+      so.StreamOut = true;
+      so.HUCBitstreamEnable = true;
+   }
+
+   anv_batch_emit(&cmd_buffer->batch, GENX(MI_FLUSH_DW), flush);
 }
 
 #endif

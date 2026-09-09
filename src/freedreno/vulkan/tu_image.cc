@@ -1041,12 +1041,12 @@ tu_CreateImage(VkDevice _device,
                               OPAQUE_CAPTURE_DESCRIPTOR_DATA_CREATE_INFO_EXT);
       if (replay_info && replay_info->opaqueCaptureDescriptorData) {
          flags |= TU_SPARSE_VMA_REPLAYABLE;
-         client_address =
-            *(const uint64_t *)replay_info->opaqueCaptureDescriptorData;
+         memcpy(&client_address, replay_info->opaqueCaptureDescriptorData,
+                sizeof(client_address));
       }
 
       result = tu_sparse_vma_init(device, &image->vk.base, &image->vma,
-                                  &image->iova, flags, image->total_size,
+                                  &image->iova, flags, image->total_size, 0,
                                   client_address);
 
       if (result != VK_SUCCESS)
@@ -1459,12 +1459,14 @@ tu_get_image_subresource_layout(struct tu_image *image,
    pLayout->subresourceLayout.arrayPitch =
       fdl_layer_stride(layout, pSubresource->imageSubresource.mipLevel);
    pLayout->subresourceLayout.depthPitch = slice->size0;
-   pLayout->subresourceLayout.size = slice->size0 * layout->depth0;
+   pLayout->subresourceLayout.size = slice->size0;
+   if (image->vk.image_type == VK_IMAGE_TYPE_3D)
+      pLayout->subresourceLayout.size *= u_minify(layout->depth0, pSubresource->imageSubresource.mipLevel);
 
    VkSubresourceHostMemcpySizeEXT *memcpy_size =
       vk_find_struct(pLayout, SUBRESOURCE_HOST_MEMCPY_SIZE_EXT);
    if (memcpy_size) {
-      memcpy_size->size = slice->size0;
+      memcpy_size->size = pLayout->subresourceLayout.size;
    }
 
    VkImageCompressionPropertiesEXT *compression_props =
@@ -1606,7 +1608,7 @@ tu_GetImageOpaqueCaptureDescriptorDataEXT(VkDevice device,
    /* Save the image iova so that when replaying sparse images have a
     * consistent iova and therefore consistent descriptor contents.
     */
-   *(uint64_t *)pData = image->iova;
+   memcpy(pData, &image->iova, sizeof(image->iova));
    return VK_SUCCESS;
 }
 

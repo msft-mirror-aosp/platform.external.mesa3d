@@ -61,7 +61,8 @@ get_nir_options_for_stage(struct radv_compiler_info *compiler_info, mesa_shader_
    ac_nir_set_options(compiler_info->ac, compiler_info->key.use_llvm, options);
 
    if (split_fma) {
-      options->float_mul_add16 |= nir_float_muladd_support_prefers_split;
+      if (options->float_mul_add16 & nir_float_muladd_support_has_ffma)
+         options->float_mul_add16 |= nir_float_muladd_support_prefers_split;
       options->float_mul_add32 |= nir_float_muladd_support_prefers_split;
       options->float_mul_add64 |= nir_float_muladd_support_prefers_split;
    }
@@ -802,6 +803,8 @@ radv_shader_spirv_to_nir(const struct radv_compiler_info *compiler_info, struct 
 
       radv_optimize_nir(nir, false);
 
+      NIR_PASS(_, nir, nir_opt_scalar_array_vars_to_vec, nir_var_function_temp | nir_var_mem_shared);
+
       NIR_PASS(_, nir, nir_opt_memcpy);
       NIR_PASS(_, nir, nir_opt_deref);
    }
@@ -946,6 +949,9 @@ radv_consider_culling(const struct radv_compiler_info *compiler_info, struct nir
    if (!compiler_info->key.use_ngg_culling)
       return false;
 
+   if (gfx_state->rs.skip_all_ngg_culling)
+      return false;
+
    /* TODO: consider other heuristics here, such as PS execution time */
    assert(compiler_info->key.nggc_max_ps_params);
    if (util_bitcount64(ps_inputs_read) > compiler_info->key.nggc_max_ps_params)
@@ -1042,7 +1048,7 @@ radv_lower_ngg(const struct radv_compiler_info *compiler_info, struct radv_shade
    options.has_xfb_prim_query = info->has_xfb_query;
    options.has_gs_primitives_query = compiler_info->ac->gfx_level < GFX11;
    options.force_vrs = info->force_vrs_per_vertex;
-   options.skip_viewport_state_culling = nir->info.outputs_written & (VARYING_BIT_VIEWPORT | VARYING_BIT_VIEWPORT_MASK);
+   options.skip_face_culling = gfx_state->rs.skip_ngg_cull_face;
    options.rasterizer_discard = gfx_state->rs.rasterizer_discard;
 
    if (nir->info.stage == MESA_SHADER_VERTEX || nir->info.stage == MESA_SHADER_TESS_EVAL) {

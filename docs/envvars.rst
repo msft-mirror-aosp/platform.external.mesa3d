@@ -927,8 +927,6 @@ Anvil(ANV) driver environment variables
 
   Accepts the following comma-separated list of flags:
 
-  ``bindless``
-    Forces all descriptor sets to use the internal :ref:`Bindless model`
   ``desc-dirty``
     Print out what dirties descriptors
   ``experimental``
@@ -1446,9 +1444,6 @@ RADV driver environment variables
       dump fragment shader epilogs
    ``extra_md``
       add extra information in bo metadata to help tools (umr)
-   ``forcecompress``
-      Enables DCC,FMASK,CMASK,HTILE in situations where the driver supports it
-      but normally does not deem it beneficial.
    ``fullsync``
       synchronize all pending work after all draws/dispatches (this includes
       syncshaders but also flushes all caches)
@@ -1588,7 +1583,7 @@ RADV driver environment variables
 .. envvar:: RADV_FORCE_VRS_CONFIG_FILE
 
    similar to ``RADV_FORCE_VRS`` but allow to configure from a file. If present,
-   this supersedes ``RADV_FORCE_VRS``.
+   this supersedes ``RADV_FORCE_VRS``. This only affects GFX10.3 APUs.
 
 .. envvar:: RADV_PERFTEST
 
