@@ -173,7 +173,7 @@ tu_CreateDescriptorSetLayout(
    VkResult result = vk_create_sorted_bindings(
       pCreateInfo->pBindings, pCreateInfo->bindingCount, &bindings, NULL, NULL);
    if (result != VK_SUCCESS) {
-      vk_object_free(&device->vk, pAllocator, set_layout);
+      vk_descriptor_set_layout_unref(&device->vk, &set_layout->vk);
       return vk_error(device, result);
    }
 
@@ -295,14 +295,14 @@ tu_CreateDescriptorSetLayout(
                                                         TU_BO_ALLOC_INTERNAL_RESOURCE),
                               "embedded samplers");
       if (result != VK_SUCCESS) {
-         vk_object_free(&device->vk, pAllocator, set_layout);
+         vk_descriptor_set_layout_unref(&device->vk, &set_layout->vk);
          return vk_error(device, result);
       }
 
       result = tu_bo_map(device, set_layout->embedded_samplers, NULL);
       if (result != VK_SUCCESS) {
          tu_bo_finish(device, set_layout->embedded_samplers);
-         vk_object_free(&device->vk, pAllocator, set_layout);
+         vk_descriptor_set_layout_unref(&device->vk, &set_layout->vk);
          return vk_error(device, result);
       }
 
@@ -386,8 +386,10 @@ tu_GetDescriptorSetLayoutSupport(
             mutable_descriptor_size(device, &mutable_info->pMutableDescriptorTypeLists[i]);
       } else {
          bool has_subsampled_sampler = false;
-         if (binding->pImmutableSamplers) {
-            for (unsigned i = 0; i < binding->descriptorType; i++) {
+         if ((binding->descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
+              binding->descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) &&
+             binding->pImmutableSamplers) {
+            for (unsigned i = 0; i < binding->descriptorCount; i++) {
                VK_FROM_HANDLE(tu_sampler, sampler,
                               binding->pImmutableSamplers[i]);
                if (sampler->vk.flags & VK_SAMPLER_CREATE_SUBSAMPLED_BIT_EXT) {
@@ -668,8 +670,13 @@ tu_descriptor_set_create(struct tu_device *device,
       if (!pool->host_memory_base) {
          uint64_t pool_vma_offset =
             util_vma_heap_alloc(&pool->bo_heap, set->size, 1);
-         if (!pool_vma_offset)
-            return VK_ERROR_FRAGMENTED_POOL;
+         if (!pool_vma_offset) {
+            vk_object_free(&device->vk, NULL, set);
+            if (pool->bo_heap.free_size >= set->size)
+               return VK_ERROR_FRAGMENTED_POOL;
+            else
+               return VK_ERROR_OUT_OF_POOL_MEMORY;
+         }
 
          assert(pool_vma_offset >= TU_POOL_HEAP_OFFSET &&
                 pool_vma_offset <= pool->size + TU_POOL_HEAP_OFFSET);

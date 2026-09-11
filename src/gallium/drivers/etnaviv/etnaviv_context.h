@@ -203,6 +203,7 @@ struct etna_context {
    unsigned num_fragment_samplers;
    uint32_t active_samplers;
    uint32_t prev_active_samplers;
+   unsigned prev_vs_sampler_base;
    struct pipe_sampler_state *sampler[PIPE_MAX_SAMPLERS];
    struct pipe_rasterizer_state *rasterizer;
    struct pipe_depth_stencil_alpha_state *zsa;
@@ -219,6 +220,7 @@ struct etna_context {
    unsigned num_fragment_sampler_views;
    uint32_t active_sampler_views;
    uint32_t dirty_sampler_views;
+   uint32_t dirty_samplers;
    struct pipe_sampler_view *sampler_view[PIPE_MAX_SAMPLERS];
    struct etna_constbuf_state constant_buffer[MESA_SHADER_STAGES];
    struct etna_vertexbuf_state vertex_buffer;

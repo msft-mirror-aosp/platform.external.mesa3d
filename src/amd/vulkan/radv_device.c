@@ -874,9 +874,10 @@ capture_trace(VkQueue _queue)
       device->sqtt_triggered = true;
 
    if (instance->vk.trace_mode & RADV_TRACE_MODE_CTX_ROLLS) {
+      struct tm now;
       char filename[2048];
       time_t t = time(NULL);
-      struct tm now = *localtime(&t);
+      os_localtime(&t, &now);
       snprintf(filename, sizeof(filename), "/tmp/%s_%04d.%02d.%02d_%02d.%02d.%02d.ctxroll", util_get_process_name(),
                1900 + now.tm_year, now.tm_mon + 1, now.tm_mday, now.tm_hour, now.tm_min, now.tm_sec);
 
@@ -1502,8 +1503,13 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
          goto fail;
    }
 
-   if (pdev->info.gfx_level == GFX10_3) {
-      if (os_get_option("RADV_FORCE_VRS_CONFIG_FILE")) {
+   /* RADV_FORCE_VRS_CONFIG_FILE is only applied to gfx10.3 APUs and is used by SteamOS.
+    *
+    * RADV_FORCE_VRS is mainly for testing.
+    */
+   if (pdev->info.gfx_level >= GFX10_3) {
+      if (pdev->info.gfx_level == GFX10_3 && !pdev->info.has_dedicated_vram &&
+          os_get_option("RADV_FORCE_VRS_CONFIG_FILE")) {
          const char *file = radv_get_force_vrs_config_file();
 
          device->force_vrs = radv_parse_force_vrs_config_file(file);

@@ -1157,6 +1157,60 @@ cs_render_desc_ringbuf_move_ptr(struct cs_builder *b, uint32_t size,
 
 static bool get_first_provoking_vertex(struct panvk_cmd_buffer *cmdbuf);
 
+/* Write layer count information to the subqueue ctx so that it can be read by
+ * secondary cmdbufs */
+static void
+prepare_layer_count_inherited_ctx(struct panvk_cmd_buffer *cmdbuf)
+{
+   /* If multiview is enabled, then the view mask is included in
+    * VkCommandBufferInheritanceRenderingInfo, so the layer count will be
+    * known at record-time in the secondary cmdbuf */
+   if (cmdbuf->state.gfx.render.view_mask)
+      return;
+
+   struct cs_builder *b =
+      panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_VERTEX_TILER);
+
+   uint32_t layer_count = cmdbuf->state.gfx.render.layer_count;
+
+#if PAN_ARCH >= 14
+   struct cs_index layer_count_reg = cs_scratch_reg32(b, 0);
+   cs_move32_to(b, layer_count_reg, layer_count);
+   cs_store32(b, layer_count_reg, cs_subqueue_ctx_reg(b),
+              offsetof(struct panvk_cs_subqueue_context, render.layer_count));
+#else
+   uint32_t td_count = DIV_ROUND_UP(layer_count, MAX_LAYERS_PER_TILER_DESC);
+   uint32_t last_td_layers =
+      layer_count - (td_count - 1) * MAX_LAYERS_PER_TILER_DESC;
+   uint32_t last_td_view_mask = BITFIELD_RANGE(0, last_td_layers);
+
+   /* For RUN_FULLSCREEN, HW expects 0 for all flags. Only scissor_array_enable
+    * and the layer selection fields can be set to other values. */
+   struct mali_primitive_flags_packed last_td_tiler_flags = {0};
+   pan_pack(&last_td_tiler_flags, PRIMITIVE_FLAGS, cfg) {
+      /* These default to non-zero */
+      cfg.low_depth_cull = false;
+      cfg.high_depth_cull = false;
+      cfg.view_mask = last_td_view_mask;
+   }
+
+   /* The two fields are adjacent, so we can issue a single * write */
+   STATIC_ASSERT(
+      offsetof(struct panvk_cs_subqueue_context, render.last_td_fullscreen_tiler_flags) ==
+      offsetof(struct panvk_cs_subqueue_context, render.td_count) + 4);
+
+   struct cs_index values = cs_scratch_reg64(b, 0);
+   struct cs_index td_count_reg = cs_extract32(b, values, 0);
+   struct cs_index last_td_tiler_flags_reg = cs_extract32(b, values, 1);
+
+   cs_move32_to(b, td_count_reg, td_count);
+   cs_move32_to(b, last_td_tiler_flags_reg, last_td_tiler_flags.opaque[0]);
+
+   cs_store64(b, values, cs_subqueue_ctx_reg(b),
+              offsetof(struct panvk_cs_subqueue_context, render.td_count));
+#endif
+}
+
 static VkResult
 get_tiler_desc(struct panvk_cmd_buffer *cmdbuf)
 {
@@ -1359,6 +1413,8 @@ get_tiler_desc(struct panvk_cmd_buffer *cmdbuf)
                          -pan_size(TILER_CONTEXT));
       }
    }
+
+   prepare_layer_count_inherited_ctx(cmdbuf);
 
    /* Flush all stores to tiler_ctx_addr. */
    cs_flush_stores(b);
@@ -3034,6 +3090,8 @@ launch_draw(struct panvk_cmd_buffer *cmdbuf,
    struct cs_builder *b =
       panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_VERTEX_TILER);
 
+   struct cs_index tracing_scratch_regs = cs_scratch_reg_tuple(b, 0, 4);
+
    cs_update_vt_ctx(b) {
       cs_move32_to(b, cs_sr_reg32(b, IDVS, GLOBAL_ATTRIBUTE_OFFSET), 0);
       cs_move32_to(b, cs_sr_reg32(b, IDVS, INDEX_COUNT), draw->vertex.count);
@@ -3054,22 +3112,45 @@ launch_draw(struct panvk_cmd_buffer *cmdbuf,
 
    uint32_t idvs_count = DIV_ROUND_UP(cmdbuf->state.gfx.render.layer_count,
                                       MAX_LAYERS_PER_TILER_DESC);
+   bool dynamic_idvs_count = false;
+
+   if (idvs_count == 0 && inherits_render_ctx(cmdbuf)) {
+      /* The layer count is not part of inherited render state */
+#if PAN_ARCH >= 14
+      /* All layers always fit in one TD on v14+ */
+      idvs_count = 1;
+#else
+      dynamic_idvs_count = true;
+#endif
+   }
 
    panvk_cond_render(cmdbuf, b)
    {
-      if (idvs_count > 1) {
-         struct cs_index counter_reg = cs_scratch_reg32(b, 17);
+      if (idvs_count > 1 || dynamic_idvs_count) {
+         struct cs_index counter_reg = cs_scratch_reg32(b, 4);
          struct cs_index tiler_ctx_addr = cs_sr_reg64(b, IDVS, TILER_CTX);
+         struct cs_index tiler_ctx_addr_tmp = cs_scratch_reg64(b, 6);
 
-         cs_move32_to(b, counter_reg, idvs_count);
+         if (dynamic_idvs_count) {
+#if PAN_ARCH < 14
+            cs_load32_to(b, counter_reg, cs_subqueue_ctx_reg(b),
+                        offsetof(struct panvk_cs_subqueue_context,
+                                 render.td_count));
+            cs_add_imm64(b, tiler_ctx_addr_tmp, tiler_ctx_addr, 0);
+#else
+            UNREACHABLE("IDVS count is always static on v14+");
+#endif
+         } else {
+            cs_move32_to(b, counter_reg, idvs_count);
+         }
 
          cs_while(b, MALI_CS_CONDITION_GREATER, counter_reg) {
 #if PAN_ARCH >= 12
-            cs_trace_run_idvs2(b, tracing_ctx, cs_scratch_reg_tuple(b, 0, 4),
+            cs_trace_run_idvs2(b, tracing_ctx, tracing_scratch_regs,
                                flags_override.opaque[0], true, cs_undef(),
                                MALI_IDVS_SHADING_MODE_EARLY);
 #else
-            cs_trace_run_idvs(b, tracing_ctx, cs_scratch_reg_tuple(b, 0, 4),
+            cs_trace_run_idvs(b, tracing_ctx, tracing_scratch_regs,
                               flags_override.opaque[0], true,
                               cs_shader_res_sel(0, 0, 1, 0),
                               cs_shader_res_sel(2, 2, 2, 0), cs_undef());
@@ -3083,16 +3164,19 @@ launch_draw(struct panvk_cmd_buffer *cmdbuf,
          }
 
          cs_update_vt_ctx(b) {
-            cs_add_imm64(b, tiler_ctx_addr, tiler_ctx_addr,
-                         -(idvs_count * pan_size(TILER_CONTEXT)));
+            if (dynamic_idvs_count)
+               cs_add_imm64(b, tiler_ctx_addr, tiler_ctx_addr_tmp, 0);
+            else
+               cs_add_imm64(b, tiler_ctx_addr, tiler_ctx_addr,
+                            -(idvs_count * pan_size(TILER_CONTEXT)));
          }
       } else {
 #if PAN_ARCH >= 12
-         cs_trace_run_idvs2(b, tracing_ctx, cs_scratch_reg_tuple(b, 0, 4),
+         cs_trace_run_idvs2(b, tracing_ctx, tracing_scratch_regs,
                             flags_override.opaque[0], true, cs_undef(),
                             MALI_IDVS_SHADING_MODE_EARLY);
 #else
-         cs_trace_run_idvs(b, tracing_ctx, cs_scratch_reg_tuple(b, 0, 4),
+         cs_trace_run_idvs(b, tracing_ctx, tracing_scratch_regs,
                            flags_override.opaque[0], true,
                            cs_shader_res_sel(0, 0, 1, 0),
                            cs_shader_res_sel(2, 2, 2, 0), cs_undef());
@@ -3211,20 +3295,6 @@ launch_indirect_draw(struct panvk_cmd_buffer *cmdbuf,
    struct cs_builder *b =
       panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_VERTEX_TILER);
 
-   /* Layered indirect draw (VK_EXT_shader_viewport_index_layer) needs
-    * additional changes. We allow layer_count == 0 because that happens
-    * when mixing dynamic rendering and secondary command buffers. Once
-    * we decide to support layared+indirect, we'll need to pass the
-    * layer_count info through the tiler descriptor, for instance by
-    * re-using one of the word that's flagged 'ignored' in the descriptor
-    * (word 14:23).
-    *
-    * Multiview layer count is always lower or equal than the amount of
-    * layers one TD can fit. Therefore, layered rendering is allowed with
-    * multiview. */
-   assert(cmdbuf->state.gfx.render.layer_count <= 1 ||
-          cmdbuf->state.gfx.render.view_mask);
-
    struct mali_primitive_flags_packed flags_override =
       get_tiler_flags_override(draw);
 
@@ -3237,9 +3307,31 @@ launch_indirect_draw(struct panvk_cmd_buffer *cmdbuf,
    struct cs_index draw_count = cs_scratch_reg32(b, 6);
    struct cs_index max_draw_count = cs_scratch_reg32(b, 7);
    struct cs_index draw_id = cs_scratch_reg32(b, 7);
-   struct cs_index vs_fau_addr = cs_scratch_reg64(b, 8);
-   struct cs_index tracing_scratch_regs = cs_scratch_reg_tuple(b, 10, 4);
+   struct cs_index idvs_count_reg = cs_scratch_reg32(b, 8);
+   struct cs_index idvs_count_reg_tmp = cs_scratch_reg32(b, 9);
+   struct cs_index vs_fau_addr = cs_scratch_reg64(b, 10);
+   struct cs_index tiler_ctx_addr_tmp = cs_scratch_reg64(b, 12);
+   struct cs_index tracing_scratch_regs = cs_scratch_reg_tuple(b, 14, 4);
+   struct cs_index tiler_ctx_addr = cs_sr_reg64(b, IDVS, TILER_CTX);
    uint32_t vs_fau_count = vs->fau.total_count;
+
+   uint32_t idvs_count = DIV_ROUND_UP(cmdbuf->state.gfx.render.layer_count,
+                                      MAX_LAYERS_PER_TILER_DESC);
+   bool dynamic_idvs_count = false;
+
+   if (idvs_count == 0 && inherits_render_ctx(cmdbuf)) {
+      /* The layer count is not part of inherited render state */
+#if PAN_ARCH >= 14
+      /* All layers always fit in one TD on v14+ */
+      idvs_count = 1;
+#else
+      dynamic_idvs_count = true;
+      cs_add_imm64(b, tiler_ctx_addr_tmp, tiler_ctx_addr, 0);
+      cs_load32_to(b, idvs_count_reg_tmp, cs_subqueue_ctx_reg(b),
+                   offsetof(struct panvk_cs_subqueue_context,
+                            render.td_count));
+#endif
+   }
 
    if (draw->indirect.count_buffer_dev_addr) {
       cs_move32_to(b, max_draw_count, draw->indirect.draw_count);
@@ -3289,15 +3381,51 @@ launch_indirect_draw(struct panvk_cmd_buffer *cmdbuf,
       cs_update_vt_ctx(b)
          cs_move32_to(b, cs_sr_reg32(b, IDVS, INSTANCE_OFFSET), 0);
 
+      if (idvs_count > 1 || dynamic_idvs_count) {
+         if (dynamic_idvs_count) {
+            cs_add_imm32(b, idvs_count_reg, idvs_count_reg_tmp, 0);
+         } else {
+            cs_move32_to(b, idvs_count_reg, idvs_count);
+         }
+
+         cs_while(b, MALI_CS_CONDITION_GREATER, idvs_count_reg) {
 #if PAN_ARCH >= 12
-      cs_trace_run_idvs2(b, tracing_ctx, tracing_scratch_regs,
-                         flags_override.opaque[0], true, draw_id,
-                         MALI_IDVS_SHADING_MODE_EARLY);
+            cs_trace_run_idvs2(b, tracing_ctx, tracing_scratch_regs,
+                               flags_override.opaque[0], true, draw_id,
+                               MALI_IDVS_SHADING_MODE_EARLY);
 #else
-      cs_trace_run_idvs(
-         b, tracing_ctx, tracing_scratch_regs, flags_override.opaque[0], true,
-         cs_shader_res_sel(0, 0, 1, 0), cs_shader_res_sel(2, 2, 2, 0), draw_id);
+            cs_trace_run_idvs(
+               b, tracing_ctx, tracing_scratch_regs, flags_override.opaque[0],
+               true, cs_shader_res_sel(0, 0, 1, 0),
+               cs_shader_res_sel(2, 2, 2, 0), draw_id);
 #endif
+
+            cs_add_imm32(b, idvs_count_reg, idvs_count_reg, -1);
+            cs_update_vt_ctx(b) {
+               cs_add_imm64(b, tiler_ctx_addr, tiler_ctx_addr,
+                            pan_size(TILER_CONTEXT));
+            }
+         }
+
+         cs_update_vt_ctx(b) {
+            if (dynamic_idvs_count)
+               cs_add_imm64(b, tiler_ctx_addr, tiler_ctx_addr_tmp, 0);
+            else
+               cs_add_imm64(b, tiler_ctx_addr, tiler_ctx_addr,
+                            -(idvs_count * pan_size(TILER_CONTEXT)));
+         }
+      } else {
+#if PAN_ARCH >= 12
+         cs_trace_run_idvs2(b, tracing_ctx, tracing_scratch_regs,
+                            flags_override.opaque[0], true, draw_id,
+                            MALI_IDVS_SHADING_MODE_EARLY);
+#else
+         cs_trace_run_idvs(
+            b, tracing_ctx, tracing_scratch_regs, flags_override.opaque[0],
+            true, cs_shader_res_sel(0, 0, 1, 0),
+            cs_shader_res_sel(2, 2, 2, 0), draw_id);
+#endif
+      }
 
       cs_add_imm32(b, draw_count, draw_count, -1);
       cs_add_imm32(b, draw_id, draw_id, 1);
@@ -3761,13 +3889,13 @@ set_run_fullscreen_tiler_flags(struct cs_builder *b, uint32_t layer_index,
 #endif
 }
 
+/* If layer_count is 0, then reads the layer count dynamically from the
+ * subqueue context and clears all layers. */
 static void
 cmd_run_fullscreen(struct panvk_cmd_buffer *cmdbuf, uint64_t dcd,
                    bool ignore_scissor, uint32_t base_layer,
                    uint32_t layer_count)
 {
-   assert(layer_count > 0);
-
    const struct cs_tracing_ctx *tracing_ctx =
       &cmdbuf->state.cs[PANVK_SUBQUEUE_VERTEX_TILER].tracing;
    struct cs_builder *b =
@@ -3790,7 +3918,13 @@ cmd_run_fullscreen(struct panvk_cmd_buffer *cmdbuf, uint64_t dcd,
    struct cs_index dcd2_tmp = cs_scratch_reg32(b, 6);
 #endif
    struct cs_index scissor_tmp = cs_scratch_reg64(b, 8);
-   struct cs_index trace_regs = cs_scratch_reg_tuple(b, 12, 4);
+#if PAN_ARCH >= 14
+   struct cs_index layer = cs_scratch_reg32(b, 10);
+#else
+   struct cs_index render_ctx_values = cs_scratch_reg64(b, 10);
+   struct cs_index tiler_ctx_tmp = cs_scratch_reg64(b, 12);
+#endif
+   struct cs_index trace_regs = cs_scratch_reg_tuple(b, 14, 4);
 
    cs_move64_to(b, draw_ptr, dcd);
 
@@ -3856,7 +3990,82 @@ cmd_run_fullscreen(struct panvk_cmd_buffer *cmdbuf, uint64_t dcd,
    assert(layer_count <= render_layer_count - base_layer ||
           render_layer_count == 0);
 
-   if (render_view_mask) {
+   if (layer_count == 0) {
+      assert(base_layer == 0);
+
+#if PAN_ARCH >= 14
+      cs_load32_to(b, layer, cs_subqueue_ctx_reg(b),
+                   offsetof(struct panvk_cs_subqueue_context,
+                            render.layer_count));
+
+      /* view_mask is always 0, so we can set TILER_FLAGS2 outside of the
+       * loop */
+      struct mali_primitive_flags_2_packed tiler_flags_2;
+      pan_pack(&tiler_flags_2, PRIMITIVE_FLAGS_2, cfg) {
+         cfg.view_mask = 0;
+      }
+      cs_update_vt_ctx(b) {
+         cs_move32_to(b, cs_sr_reg32(b, IDVS, TILER_FLAGS2),
+                      tiler_flags_2.opaque[0]);
+      }
+
+      cs_while(b, MALI_CS_CONDITION_GREATER, layer) {
+         cs_add_imm32(b, layer, layer, -1);
+
+         /* Dynamic set_run_fullscreen_tiler_flags(b, layer, 0)
+          *
+          * The only field that needs to be set in TILER_FLAGS is layer_index,
+          * bits 24 to 32 */
+         cs_update_vt_ctx(b) {
+            cs_lshift_imm32(b, cs_sr_reg32(b, IDVS, TILER_FLAGS), layer, 24);
+         }
+
+         cs_trace_run_fullscreen(b, tracing_ctx, trace_regs, 0, draw_ptr);
+      }
+#else
+      struct cs_index tiler_ctx_addr = cs_sr_reg64(b, IDVS, TILER_CTX);
+
+      /* The two fields we want to read are adjacent, so we can issue a single
+       * read */
+      STATIC_ASSERT(
+         offsetof(struct panvk_cs_subqueue_context, render.last_td_fullscreen_tiler_flags) ==
+         offsetof(struct panvk_cs_subqueue_context, render.td_count) + 4);
+      struct cs_index td_count = cs_extract32(b, render_ctx_values, 0);
+      struct cs_index last_td_tiler_flags =
+         cs_extract32(b, render_ctx_values, 1);
+
+      cs_load64_to(b, render_ctx_values, cs_subqueue_ctx_reg(b),
+                   offsetof(struct panvk_cs_subqueue_context, render.td_count));
+
+      cs_add_imm64(b, tiler_ctx_tmp, tiler_ctx_addr, 0);
+
+      set_run_fullscreen_tiler_flags(b, MAX_LAYERS_PER_TILER_DESC, 0);
+
+      cs_while(b, MALI_CS_CONDITION_GREATER, td_count) {
+         cs_add_imm32(b, td_count, td_count, -1);
+
+         cs_if(b, MALI_CS_CONDITION_EQUAL, td_count) {
+            /* Last TD gets alternate tiler flags which may have a partial
+             * view mask */
+            cs_update_vt_ctx(b) {
+                cs_add_imm32(b, cs_sr_reg32(b, IDVS, TILER_FLAGS),
+                            last_td_tiler_flags, 0);
+            }
+         }
+
+         cs_trace_run_fullscreen(b, tracing_ctx, trace_regs, 0, draw_ptr);
+
+         cs_update_vt_ctx(b) {
+            cs_add_imm64(b, tiler_ctx_addr, tiler_ctx_addr,
+                         pan_size(TILER_CONTEXT));
+         }
+      }
+
+      cs_update_vt_ctx(b) {
+        cs_add_imm64(b, tiler_ctx_addr, tiler_ctx_tmp, 0);
+      }
+#endif
+   } else if (render_view_mask) {
       /* Multiview always fits inside a single tiler context */
       uint32_t view_mask =
          BITFIELD_RANGE(base_layer, layer_count) & render_view_mask;
@@ -3931,7 +4140,9 @@ cmd_run_fullscreen(struct panvk_cmd_buffer *cmdbuf, uint64_t dcd,
 void
 panvk_per_arch(cmd_fb_barrier)(struct panvk_cmd_buffer *cmdbuf)
 {
-   if (cmdbuf->state.gfx.render.layer_count == 0)
+   /* For inherited secondary cmdbufs, we fetch the layer count dynamically */
+   if (cmdbuf->state.gfx.render.layer_count == 0 &&
+       !inherits_render_ctx(cmdbuf))
       return;
 
    struct pan_ptr zsd = panvk_cmd_alloc_desc(cmdbuf, DEPTH_STENCIL);

@@ -125,7 +125,7 @@ fd_screen_get_timestamp(struct pipe_screen *pscreen)
    if (screen->has_timestamp) {
       uint64_t n;
       fd_pipe_get_param(screen->pipe, FD_TIMESTAMP, &n);
-      return ticks_to_ns(n);
+      return fd_ticks_to_ns(n);
    } else {
       int64_t cpu_time = os_time_get_nano();
       return cpu_time + screen->cpu_gpu_time_delta;
@@ -135,7 +135,7 @@ fd_screen_get_timestamp(struct pipe_screen *pscreen)
 static uint64_t
 fd_screen_convert_timestamp(struct pipe_screen *pscreen, uint64_t raw_timestamp)
 {
-   return ticks_to_ns(raw_timestamp);
+   return fd_ticks_to_ns(raw_timestamp);
 }
 
 static void
@@ -413,6 +413,8 @@ fd_init_screen_caps(struct fd_screen *screen)
    caps->has_const_bw = true;
 
    caps->copy_between_compressed_and_plain_formats =
+      is_a5xx(screen) || is_a6xx(screen);
+
    caps->multi_draw_indirect =
    caps->draw_parameters =
    caps->multi_draw_indirect_params =
@@ -655,7 +657,8 @@ fd_init_screen_caps(struct fd_screen *screen)
 
    /* Render targets. */
    caps->max_render_targets = screen->max_rts;
-   caps->max_dual_source_render_targets = (is_a3xx(screen) || is_a6xx(screen)) ? 1 : 0;
+   caps->max_dual_source_render_targets =
+      (is_a3xx(screen) || is_a5xx(screen) || is_a6xx(screen)) ? 1 : 0;
 
    /* Queries. */
    caps->occlusion_query =
@@ -664,7 +667,7 @@ fd_init_screen_caps(struct fd_screen *screen)
    caps->query_time_elapsed =
       /* only a4xx, requires new enough kernel so we know max_freq: */
       (screen->max_freq > 0) && (is_a4xx(screen) || is_a5xx(screen) || is_a6xx(screen));
-   caps->timer_resolution = ticks_to_ns(1);
+   caps->timer_resolution = fd_ticks_to_ns(1);
    caps->query_buffer_object =
    caps->query_so_overflow =
    caps->query_pipeline_statistics_single = is_a6xx(screen);

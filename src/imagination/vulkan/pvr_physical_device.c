@@ -169,6 +169,7 @@ static void pvr_physical_device_get_supported_extensions(
       .KHR_shader_draw_parameters = true,
       .KHR_shader_expect_assume = true,
       .KHR_shader_float_controls = true,
+      .KHR_shader_float_controls2 = true,
       .KHR_shader_fma = true,
       .KHR_shader_integer_dot_product = true,
       .KHR_shader_non_semantic_info = true,
@@ -382,6 +383,9 @@ static void pvr_physical_device_get_supported_features(
 
       /* Vulkan 1.2 / VK_KHR_separate_depth_stencil_layouts */
       .separateDepthStencilLayouts = true,
+
+      /* Vulkan 1.4 / VK_KHR_shader_float_controls2 */
+      .shaderFloatControls2 = true,
 
       /* VK_KHR_shader_relaxed_extended_instruction */
       .shaderRelaxedExtendedInstruction = true,
@@ -1100,6 +1104,7 @@ static bool pvr_device_is_conformant(const struct pvr_device_info *info)
 {
    const uint64_t bvnc = pvr_get_packed_bvnc(info);
    switch (bvnc) {
+   case PVR_BVNC_PACK(36, 52, 104, 182):
    case PVR_BVNC_PACK(36, 53, 104, 796):
       return true;
 

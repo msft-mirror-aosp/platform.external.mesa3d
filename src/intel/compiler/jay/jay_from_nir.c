@@ -119,6 +119,7 @@ struct nir_to_jay_state {
    BITSET_WORD *zero_inactive;
 
    bool needs_final_halt;
+   bool efficient_64bit;
 
    /* We cache ballot(true), ctz(ballot(true)), and 4*ctz(ballot(true)) within a
     * block. If we had competent backend CSE - or emitted uniformize in NIR and
@@ -1054,12 +1055,12 @@ jay_emit_fb_write(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
    jay_builder *b = &nj->bld;
    const struct brw_fs_prog_data *prog_data = &nj->s->prog_data->fs;
    const struct intel_device_info *devinfo = b->shader->devinfo;
-   jay_def colour = nj_src(intr->src[0]);
+   jay_def colour = nj_src(intr->src[1]);
    jay_def dual_colour = jay_null();
-   jay_def src0_alpha = optional_src(intr->src[2]);
-   jay_def omask = optional_src(intr->src[3]);
-   jay_def depth = optional_src(intr->src[4]);
-   jay_def stencil = optional_src(intr->src[5]);
+   jay_def src0_alpha = optional_src(intr->src[3]);
+   jay_def omask = optional_src(intr->src[4]);
+   jay_def depth = optional_src(intr->src[5]);
+   jay_def stencil = optional_src(intr->src[6]);
 
    int target = MAX2(((signed) nir_intrinsic_target(intr)), 0);
    const bool last = !nir_instr_next(&intr->instr);
@@ -1081,13 +1082,13 @@ jay_emit_fb_write(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
    /* If our alpha happens to match src0_alpha, we can skip sending it,
     * as the hardware will use our alpha in that case.
     */
-   if (scalars_equal(nir_scalar_resolved(intr->src[2].ssa, 0),
-                     nir_scalar_resolved(intr->src[0].ssa, 3)))
+   if (scalars_equal(nir_scalar_resolved(intr->src[3].ssa, 0),
+                     nir_scalar_resolved(intr->src[1].ssa, 3)))
       src0_alpha = jay_null();
 
    if (prog_data->dual_src_blend) {
       assert(b->shader->dispatch_width == 16);
-      dual_colour = nj_src(intr->src[1]);
+      dual_colour = nj_src(intr->src[2]);
       src0_alpha = jay_null();
    }
 
@@ -1496,7 +1497,7 @@ jay_emit_mem_access_lsc(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
                                                load_cache_mode;
 
    ASSERTED const unsigned max_imm_bits =
-      brw_max_immediate_offset_bits(surf_type);
+      brw_max_immediate_offset_bits(surf_type, false);
    assert(base_offset >= u_intN_min(max_imm_bits));
    assert(base_offset <= u_intN_max(max_imm_bits));
    assert(base_offset == 0 || sfid != GEN_SFID_TGM);
@@ -1752,7 +1753,7 @@ jay_emit_mem_access_hdc(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
                                                       load_cache_mode;
 
    ASSERTED const unsigned max_imm_bits =
-      brw_max_immediate_offset_bits(surf_type);
+      brw_max_immediate_offset_bits(surf_type, false);
    assert(base_offset >= u_intN_min(max_imm_bits));
    assert(base_offset <= u_intN_max(max_imm_bits));
    assert(base_offset == 0 || !tgm);
@@ -3350,8 +3351,7 @@ jay_emit_texture(struct nir_to_jay_state *nj, nir_tex_instr *tex)
       if (has_const_offsets) {
          const unsigned num_components = nir_tex_instr_src_size(tex, offs_idx);
          for (unsigned i = 0; i < num_components; i++) {
-            nir_scalar s = nir_get_scalar(tex->src[offs_idx].src.ssa, i);
-            s = nir_scalar_chase_movs(s);
+            nir_scalar s = nir_scalar_resolved(tex->src[offs_idx].src.ssa, i);
             assert(nir_scalar_is_const(s));
             int offset = nir_scalar_as_int(s);
 
@@ -4724,6 +4724,7 @@ jay_compile_simd(const struct intel_device_info *devinfo,
    s->prog_data = prog_data;
    s->archiver = archiver;
    s->helpers_tracked = track_helpers;
+   s->use_efficient_64bit = key->base.use_efficient_64bit;
 
    nir_foreach_function_impl(impl, nir) {
       jay_from_nir_function(devinfo, nir, s, impl, fs_perprim);
