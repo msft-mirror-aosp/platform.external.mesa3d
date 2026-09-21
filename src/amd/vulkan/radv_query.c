@@ -50,7 +50,7 @@ gfx10_copy_shader_query_gfx(struct radv_cmd_buffer *cmd_buffer, bool use_gds, ui
 
    /* Make sure GE and/or GDS is idle before copying the value. */
    cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_VS_PARTIAL_FLUSH | RADV_CMD_FLAG_INV_L2;
-   radv_emit_cache_flush(cmd_buffer);
+   radv_emit_cache_flush(cmd_buffer, false);
 
    if (use_gds) {
       src_sel = COPY_DATA_GDS;
@@ -1786,6 +1786,7 @@ radv_query_shader(struct radv_cmd_buffer *cmd_buffer, VkQueryType query_type, st
                   uint32_t flags, uint32_t pipeline_stats_mask, uint32_t avail_offset, bool uses_emulated_queries)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+   const struct radv_physical_device *pdev = radv_device_physical(device);
    VkPipelineLayout layout;
    VkPipeline pipeline;
    VkResult result;
@@ -1819,7 +1820,9 @@ radv_query_shader(struct radv_cmd_buffer *cmd_buffer, VkQueryType query_type, st
    cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_INV_L2 | RADV_CMD_FLAG_INV_VCACHE;
 
    if (flags & VK_QUERY_RESULT_WAIT_BIT)
-      cmd_buffer->state.flush_bits |= RADV_CMD_FLUSH_AND_INV_FRAMEBUFFER;
+      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_FLUSH_AND_INV_CB | RADV_CMD_FLAG_FLUSH_AND_INV_CB_META |
+                                      RADV_CMD_FLAG_FLUSH_AND_INV_DB |
+                                      (pdev->info.gfx_level < GFX10 ? RADV_CMD_FLAG_FLUSH_AND_INV_DB_META : 0);
 
    radv_unaligned_dispatch(cmd_buffer, count, 1, 1);
 
@@ -2469,7 +2472,7 @@ static void
 emit_query_flush(struct radv_cmd_buffer *cmd_buffer, struct radv_query_pool *pool)
 {
    if (cmd_buffer->pending_reset_query) {
-      radv_emit_cache_flush(cmd_buffer);
+      radv_emit_cache_flush(cmd_buffer, false);
    }
 }
 
@@ -2806,7 +2809,7 @@ radv_CmdWriteTimestamp2(VkCommandBuffer commandBuffer, VkPipelineStageFlags2 sta
          RADV_CMD_FLAG_VS_PARTIAL_FLUSH | RADV_CMD_FLAG_PS_PARTIAL_FLUSH | RADV_CMD_FLAG_CS_PARTIAL_FLUSH;
    }
 
-   radv_emit_cache_flush(cmd_buffer);
+   radv_emit_cache_flush(cmd_buffer, false);
 
    ASSERTED unsigned cdw_max = radeon_check_space(device->ws, cs->b, 28 * num_queries);
 
@@ -2839,7 +2842,7 @@ radv_CmdWriteAccelerationStructuresPropertiesKHR(VkCommandBuffer commandBuffer, 
 
    radv_cs_add_buffer(device->ws, cs->b, pool->bo);
 
-   radv_emit_cache_flush(cmd_buffer);
+   radv_emit_cache_flush(cmd_buffer, false);
 
    ASSERTED unsigned cdw_max = radeon_check_space(device->ws, cs->b, 6 * accelerationStructureCount);
 

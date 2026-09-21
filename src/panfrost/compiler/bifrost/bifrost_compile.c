@@ -4028,7 +4028,7 @@ va_count_stats(bi_context *ctx, unsigned nr_ins, unsigned size,
 }
 
 static unsigned
-va_gather_stats_block(bi_block *block, struct va_stats *counts)
+va_gather_stats_block(bi_block *block, struct va_stats *counts, unsigned arch)
 {
    unsigned nr_ins = 0;
 
@@ -4037,7 +4037,7 @@ va_gather_stats_block(bi_block *block, struct va_stats *counts)
          continue;
 
       nr_ins++;
-      va_count_instr_stats(I, counts);
+      va_count_instr_stats(I, counts, arch);
    }
    return nr_ins;
 }
@@ -4046,7 +4046,7 @@ va_gather_stats_block(bi_block *block, struct va_stats *counts)
  * Gather stats for a minimum length path through the shader.
  */
 static unsigned
-va_gather_min_path_stats(bi_block *block, struct va_stats *counts)
+va_gather_min_path_stats(bi_block *block, struct va_stats *counts, unsigned arch)
 {
    struct va_stats min_counts;
    struct va_stats save_counts = *counts;
@@ -4058,7 +4058,7 @@ va_gather_min_path_stats(bi_block *block, struct va_stats *counts)
       if (bi_block_dominates(next, block)) {
          continue;
       }
-      nr_ins = va_gather_min_path_stats(next, counts);
+      nr_ins = va_gather_min_path_stats(next, counts, arch);
       if (min_ins == 0 || nr_ins < min_ins) {
          min_ins = nr_ins;
          min_counts = *counts;
@@ -4068,7 +4068,7 @@ va_gather_min_path_stats(bi_block *block, struct va_stats *counts)
    if (min_ins != 0) {
       *counts = min_counts;
    }
-   nr_ins = min_ins + va_gather_stats_block(block, counts);
+   nr_ins = min_ins + va_gather_stats_block(block, counts, arch);
    return nr_ins;
 }
 
@@ -4079,7 +4079,8 @@ va_gather_min_path_stats(bi_block *block, struct va_stats *counts)
  * bail out.
  */
 static unsigned
-va_gather_max_path_stats(bi_block *block, struct va_stats *counts, BITSET_WORD *visited)
+va_gather_max_path_stats(bi_block *block, struct va_stats *counts,
+                         BITSET_WORD *visited, unsigned arch)
 {
    struct va_stats max_counts;
    struct va_stats save_counts = *counts;
@@ -4092,7 +4093,7 @@ va_gather_max_path_stats(bi_block *block, struct va_stats *counts, BITSET_WORD *
       if (BITSET_TEST(visited, next->index)) {
          continue;
       }
-      nr_ins = va_gather_max_path_stats(next, counts, visited);
+      nr_ins = va_gather_max_path_stats(next, counts, visited, arch);
       if (nr_ins > max_ins) {
          max_ins = nr_ins;
          max_counts = *counts;
@@ -4102,7 +4103,7 @@ va_gather_max_path_stats(bi_block *block, struct va_stats *counts, BITSET_WORD *
    if (max_ins != 0) {
       *counts = max_counts;
    }
-   nr_ins = max_ins + va_gather_stats_block(block, counts);
+   nr_ins = max_ins + va_gather_stats_block(block, counts, arch);
    return nr_ins;
 }
 
@@ -4129,15 +4130,15 @@ va_gather_stats(bi_context *ctx, unsigned size, struct valhall_stats *out,
             continue;
 
          nr_ins++;
-         va_count_instr_stats(I, &counts);
+         va_count_instr_stats(I, &counts, ctx->arch);
       }
       break;
    case GATHER_STATS_MIN:
-      nr_ins = va_gather_min_path_stats(first_block, &counts);
+      nr_ins = va_gather_min_path_stats(first_block, &counts, ctx->arch);
       break;
    case GATHER_STATS_MAX:
       visited = BITSET_RZALLOC(NULL, ctx->num_blocks);
-      nr_ins = va_gather_max_path_stats(first_block, &counts, visited);
+      nr_ins = va_gather_max_path_stats(first_block, &counts, visited, ctx->arch);
       ralloc_free(visited);
       break;
    }
@@ -4828,13 +4829,13 @@ pan_stats_verbose(FILE *f, const char *prefix, bi_context *ctx, const struct pan
                   const struct pan_shader_info *info)
 {
    const struct pan_model *model = pan_get_model(ctx->inputs->gpu_id, ctx->inputs->gpu_variant);
-   unsigned arch = (ctx->arch > 12) ? 0 : ctx->arch;
+   unsigned arch = (ctx->arch > 14) ? 0 : ctx->arch;
    const char *archname[] = {
       "Unknown",              /* 0 must always be "Unknown" */
       "Lima", "Lima", "Lima", /* 1-3 */
       "Utgard", "Midgard", "Bifrost", "Bifrost", /* 4-7 */
       "Valhall", "Valhall", "Valhall", "Valhall", /* 8-11 */
-      "Arm 5th Gen", /* 12 */
+      "Arm 5th Gen", "Arm 5th Gen", "Arm 5th Gen" /* 12-14 */
    };
 
    fprintf(f, "\n");

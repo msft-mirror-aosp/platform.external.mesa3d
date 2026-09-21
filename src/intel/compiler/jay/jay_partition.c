@@ -382,6 +382,7 @@ jay_partition_grf(jay_shader *shader)
 
       hw_grfs =
          intel_vrt_register_file_size(shader->devinfo,
+                                      shader->prog_data->base.source_hash,
                                       uniform_grfs + estimate_nonunif_grf);
 
       /* We want to determine a good GPR/UGPR split by the demand calculation.
@@ -493,6 +494,7 @@ jay_partition_grf(jay_shader *shader)
    };
 
    shader->num_regs[FLAG] = hw_flags;
+   shader->num_regs[J_ADDRESS] = 1;
 
    build_partition(shader, hw_grfs, blocks, ARRAY_SIZE(blocks));
 

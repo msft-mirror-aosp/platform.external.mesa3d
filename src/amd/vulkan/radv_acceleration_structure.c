@@ -129,7 +129,10 @@ radv_get_acceleration_structure_layout(struct radv_device *device,
 
    uint64_t bvh_size = bvh_leaf_size * hw_leaf_node_count + internal_node_size * internal_count;
    uint32_t offset = 0;
-   offset += sizeof(struct radv_accel_struct_header);
+   if (state->config.build_flags & RADV_BUILD_FLAG_BVH8)
+      offset += sizeof(struct radv_accel_struct_header_gfx12);
+   else
+      offset += sizeof(struct radv_accel_struct_header);
 
    if (device->rra_trace.accel_structs) {
       accel_struct->geometry_info_offset = offset;
@@ -149,7 +152,7 @@ radv_get_acceleration_structure_layout(struct radv_device *device,
       offset += bvh_size / 64 * 4;
 
    /* The BVH and hence bvh_offset needs 64 byte alignment for RT nodes. */
-   offset = align(offset, 64);
+   offset = align(offset, radv_use_bvh8(pdev) ? 128 : 64);
    accel_struct->bvh_offset = offset;
 
    /* root node */
@@ -531,8 +534,8 @@ radv_update_as_gfx12(VkCommandBuffer commandBuffer, struct vk_device *vk_device,
       struct radv_dispatch_info dispatch = {
          .ordered = true,
          .unaligned = true,
-         .indirect_va =
-            vk_acceleration_structure_get_va(src) + offsetof(struct radv_accel_struct_header, update_dispatch_size[0]),
+         .indirect_va = vk_acceleration_structure_get_va(src) +
+                        offsetof(struct radv_accel_struct_header_gfx12, update_dispatch_size[0]),
       };
 
       radv_compute_dispatch(cmd_buffer, &dispatch);
@@ -839,7 +842,7 @@ radv_init_header(VkCommandBuffer commandBuffer, struct vk_device *vk_device, str
    }
 
    radv_bvh_build_bind_pipeline(commandBuffer, RADV_META_OBJECT_KEY_BVH_HEADER, header_spv, sizeof(header_spv),
-                                sizeof(struct header_args), 0);
+                                sizeof(struct header_args), build_flags);
 
    for (uint32_t i = 0; i < build_count; i++) {
       struct vk_acceleration_structure_build_state *state = &states[i];
@@ -1018,7 +1021,7 @@ radv_encode(VkCommandBuffer commandBuffer, struct vk_device *vk_device, struct v
 
    if (has_batch_compress) {
       /* Wait for internal encoding to finish. */
-      vk_bvh_build_barrier_compute_to_compute(commandBuffer, false);
+      vk_bvh_build_barrier_compute_to_compute(commandBuffer, true);
 
       vk_build_stage(radv_encode_triangles_gfx12, commandBuffer, vk_device, meta, args, states, build_count,
                      RADV_ENCODE_TRIANGLES_GFX12_BUILD_FLAGS, false);

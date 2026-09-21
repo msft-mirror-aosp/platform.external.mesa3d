@@ -13,8 +13,6 @@
 #include "jay_opcodes.h"
 #include "jay_private.h"
 
-#define JAY_MAX_ACCUMS 4
-
 static void
 postra_liveness_ins(BITSET_WORD *live, jay_inst *I)
 {
@@ -144,7 +142,7 @@ can_access_accum(jay_shader *shader, jay_inst *I, signed src)
    }
 
    /* TODO: Many, many more restrictions on non-f32 */
-   if (I->type != JAY_TYPE_F32) {
+   if (!(jay_operand_type(I, src) == JAY_TYPE_F32 && I->type == JAY_TYPE_F32)) {
       return false;
    }
 
@@ -182,13 +180,14 @@ can_access_accum(jay_shader *shader, jay_inst *I, signed src)
 }
 
 static inline bool
-could_be_mac(const jay_inst *I)
+could_be_mac(const jay_shader *s, const jay_inst *I)
 {
    /* The bspec says "Instructions that specify an implicit accumulator
     * source cannot specify an explicit accumulator source operand.". But
     * it works fine on Lunar Lake so ¯\_(ツ)_/¯ ... gate on !strict.
     */
    return (I->op == JAY_OPCODE_MAD && I->type == JAY_TYPE_F32) &&
+          !jay_simd_split(s, I) &&
           !(I->src[0].negate || I->src[0].abs) &&
           !(jay_debug & JAY_DBG_STRICT);
 }
@@ -266,7 +265,8 @@ pass(jay_function *func)
          jay_foreach_src(I, s) {
             if (I->src[s].file == GPR && source_killed(live, I, s)) {
                last_use_ip[I->src[s].reg] = ip;
-               mac_candidates[I->src[s].reg] |= s == 0 && could_be_mac(I);
+               mac_candidates[I->src[s].reg] |=
+                  s == 0 && could_be_mac(func->shader, I);
             }
          }
 
@@ -349,7 +349,9 @@ pass(jay_function *func)
          }
 
          /* Rewrite MAD->MAC where possible to improve code density. */
-         if (could_be_mac(I) && I->src[0].file == ACCUM && I->src[0].reg == 0) {
+         if (could_be_mac(func->shader, I) &&
+             I->src[0].file == ACCUM &&
+             I->src[0].reg == 0) {
             I->op = JAY_OPCODE_MAC;
             SWAP(I->src[0], I->src[2]);
          }

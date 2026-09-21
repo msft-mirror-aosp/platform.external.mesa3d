@@ -138,18 +138,77 @@ etna_context_destroy(struct pipe_context *pctx)
    FREE(pctx);
 }
 
+static inline void
+etna_shader_key_set_tex_swizzle(struct etna_shader_key *key, unsigned i,
+                                const struct pipe_sampler_view *view)
+{
+   key->tex_swizzle[i].swizzle_r = view->swizzle_r;
+   key->tex_swizzle[i].swizzle_g = view->swizzle_g;
+   key->tex_swizzle[i].swizzle_b = view->swizzle_b;
+   key->tex_swizzle[i].swizzle_a = view->swizzle_a;
+}
+
+static unsigned
+etna_tex_mag_switchover(struct etna_context *ctx, unsigned lod_samplers,
+                        unsigned first)
+{
+   unsigned mask = 0;
+
+   if (!ctx->mag_switchover_half)
+      return 0;
+
+   u_foreach_bit(i, lod_samplers) {
+      const struct pipe_sampler_state *ss = ctx->sampler[first + i];
+
+      if (!ss || ss->lod_bias != 0.0f || ss->min_lod > 0.0f)
+         continue;
+
+      if (ss->min_img_filter == PIPE_TEX_FILTER_NEAREST &&
+          ss->mag_img_filter == PIPE_TEX_FILTER_LINEAR &&
+          ss->min_mip_filter != PIPE_TEX_MIPFILTER_NONE)
+         mask |= BITFIELD_BIT(i);
+   }
+
+   return mask;
+}
+
+static void
+etna_set_context_param(struct pipe_context *pctx,
+                       enum pipe_context_param param, unsigned value)
+{
+   struct etna_context *ctx = etna_context(pctx);
+
+   switch (param) {
+   case PIPE_CONTEXT_PARAM_MAG_SWITCHOVER_HALF:
+      ctx->mag_switchover_half = value;
+      break;
+   default:
+      break;
+   }
+}
+
 static bool
 etna_get_vs(struct etna_context *ctx, struct etna_shader_key* const key)
 {
    const struct etna_shader_variant *old = ctx->shader.vs;
+   struct etna_shader *vs = ctx->shader.bind_vs;
 
    key->tex_is_128bit = ctx->tex_is_128bit[MESA_SHADER_VERTEX];
 
-   if (key->tex_is_128bit)
+   if (key->tex_is_128bit) {
+      const unsigned offset = ctx->screen->specs.vertex_sampler_offset;
+
       for (unsigned i = 0; i < ctx->screen->specs.vertex_sampler_count; i++)
          key->sampler_companion[i] = ctx->sampler_companion[MESA_SHADER_VERTEX][i];
 
-   ctx->shader.vs = etna_shader_variant(ctx->shader.bind_vs, key, &ctx->base.debug, true);
+      u_foreach_bit(i, key->tex_is_128bit)
+         etna_shader_key_set_tex_swizzle(key, i, ctx->sampler_view[offset + i]);
+   }
+
+   key->tex_mag_switchover = etna_tex_mag_switchover(ctx, vs->tex_lod_samplers,
+                                                     ctx->screen->specs.vertex_sampler_offset);
+
+   ctx->shader.vs = etna_shader_variant(vs, key, &ctx->base.debug, true);
 
    if (!ctx->shader.vs)
       return false;
@@ -164,6 +223,7 @@ static bool
 etna_get_fs(struct etna_context *ctx, struct etna_shader_key* const key)
 {
    const struct etna_shader_variant *old = ctx->shader.fs;
+   struct etna_shader *fs = ctx->shader.bind_fs;
 
    /* update the key if we need to run nir_lower_sample_tex_compare(..).
     * halti < 2 has no HW shadow compare. halti >= 2 has it, but depth32f is
@@ -187,21 +247,24 @@ etna_get_fs(struct etna_context *ctx, struct etna_shader_key* const key)
       key->has_sample_tex_compare = 1;
       key->num_texture_states = ctx->num_fragment_sampler_views;
 
-      key->tex_swizzle[i].swizzle_r = ctx->sampler_view[i]->swizzle_r;
-      key->tex_swizzle[i].swizzle_g = ctx->sampler_view[i]->swizzle_g;
-      key->tex_swizzle[i].swizzle_b = ctx->sampler_view[i]->swizzle_b;
-      key->tex_swizzle[i].swizzle_a = ctx->sampler_view[i]->swizzle_a;
+      etna_shader_key_set_tex_swizzle(key, i, ctx->sampler_view[i]);
 
       key->tex_compare_func[i] = ctx->sampler[i]->compare_func;
    }
 
    key->tex_is_128bit = ctx->tex_is_128bit[MESA_SHADER_FRAGMENT];
 
-   if (key->tex_is_128bit)
+   if (key->tex_is_128bit) {
       for (unsigned i = 0; i < ctx->screen->specs.fragment_sampler_count; i++)
          key->sampler_companion[i] = ctx->sampler_companion[MESA_SHADER_FRAGMENT][i];
 
-   ctx->shader.fs = etna_shader_variant(ctx->shader.bind_fs, key, &ctx->base.debug, true);
+      u_foreach_bit(i, key->tex_is_128bit)
+         etna_shader_key_set_tex_swizzle(key, i, ctx->sampler_view[i]);
+   }
+
+   key->tex_mag_switchover = etna_tex_mag_switchover(ctx, fs->tex_lod_samplers, 0);
+
+   ctx->shader.fs = etna_shader_variant(fs, key, &ctx->base.debug, true);
 
    if (!ctx->shader.fs)
       return false;
@@ -360,22 +423,6 @@ etna_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
 
       if (screen->info->halti >= 5)
          key->flatshade = ctx->rasterizer->flatshade;
-
-      /* On LINEAR_PE GPUs rendering directly to a linear shared resource,
-       * use shader-based R/B swap so bytes in memory have the correct order
-       * for external consumers. This avoids a dedicated flush-time blit.
-       * Per-RT bitmask so MRT with mixed shared/non-shared targets works. */
-      if (VIV_FEATURE(screen, ETNA_FEATURE_LINEAR_PE)) {
-         for (i = 0; i < pfb->nr_cbufs; i++) {
-            if (pfb->cbufs[i].texture) {
-               struct etna_resource *rsc = etna_resource(pfb->cbufs[i].texture);
-               if (rsc->shared && rsc->layout == ETNA_LAYOUT_LINEAR &&
-                   translate_pe_format_rb_swap(pfb->cbufs[i].format, screen)) {
-                  key->frag_rb_swap |= (1 << i);
-               }
-            }
-         }
-      }
 
       key->rt_is_128bit = ctx->framebuffer_s.rt_is_128bit;
       key->has_128bit_rt = !!key->rt_is_128bit;
@@ -590,11 +637,8 @@ etna_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
 
          etna_resource_level_mark_changed(level);
 
-         /* PE rendered directly to the shared buffer (no render shadow).
-          * If the shader swapped R/B, data is in native byte order.
-          * Otherwise it's in PE-internal order (BGRA for RB_SWAP formats). */
          if (rsc->shared && res == rsc)
-            rsc->shared_native_order = !!(ctx->shader.key.frag_rb_swap & (1 << i));
+            rsc->shared_native_order = false;
       }
    }
 
@@ -769,6 +813,7 @@ etna_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
    pctx->fence_server_sync = etna_fence_server_sync;
    pctx->emit_string_marker = etna_emit_string_marker;
    pctx->set_frontend_noop = etna_set_frontend_noop;
+   pctx->set_context_param = etna_set_context_param;
    pctx->clear_buffer = u_default_clear_buffer;
    pctx->clear_texture = u_default_clear_texture;
 

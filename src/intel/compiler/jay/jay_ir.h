@@ -83,6 +83,7 @@ jay_normalize_uflag(enum jay_file x)
 #define JAY_MAX_FLAGS                (8)
 #define JAY_MAX_SAMPLER_MESSAGE_SIZE (11)
 #define JAY_MAX_PHYS_GRF             (256)
+#define JAY_MAX_ACCUMS               (4)
 #define JAY_NUM_UGPR                 (1024)
 #define JAY_REG_BITS                 (17)
 
@@ -702,6 +703,12 @@ jay_src_type(const jay_inst *I, unsigned s)
    return I->type;
 }
 
+static inline enum jay_type
+jay_operand_type(const jay_inst *I, signed idx)
+{
+   return idx < 0 ? I->type : jay_src_type(I, idx);
+}
+
 enum PACKED jay_stride {
    JAY_STRIDE_2 = 0,
    JAY_STRIDE_4,
@@ -818,10 +825,10 @@ typedef struct jay_shader {
    unsigned dispatch_width;
 
    /**
-    * Number of GPR/UGPRs used across all functions in the shader. This is the
+    * Number of registers used across all functions in the shader. This is the
     * limit that must be allocated for the shader.
     */
-   unsigned num_regs[JAY_NUM_RA_FILES];
+   unsigned num_regs[JAY_NUM_SSA_FILES];
 
    /**
     * Register file partition chosen for the whole shader.
@@ -1013,6 +1020,11 @@ unsigned jay_simd_split(const jay_shader *s, const jay_inst *I);
 static inline unsigned
 jay_simd_width_logical(const jay_shader *s, const jay_inst *I)
 {
+   /* Handle uniform SENDs with SIMD > 1 (e.g. for txf combining) */
+   if (I->op == JAY_OPCODE_SEND && jay_send_explicit_simd_width(I) > 0) {
+      return jay_send_explicit_simd_width(I);
+   }
+
    bool simd1 = I->uniform && !I->broadcast_flag;
    unsigned base = simd1 ? 1 : s->dispatch_width;
 
@@ -1129,17 +1141,6 @@ jay_num_accums(jay_shader *shader)
    /* TODO: Adjust for older platforms */
    unsigned total_grf = 4;
    return total_grf / jay_grf_per_gpr(shader);
-}
-
-static inline unsigned
-jay_num_regs(jay_shader *shader, enum jay_file file)
-{
-   assert(file < JAY_NUM_SSA_FILES);
-
-   if (file < JAY_NUM_RA_FILES)
-      return shader->num_regs[file];
-   else
-      return 1 /* TODO: We don't have address or accumulator RA yet */;
 }
 
 static inline enum jay_stride

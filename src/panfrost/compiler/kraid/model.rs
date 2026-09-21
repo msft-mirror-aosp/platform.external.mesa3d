@@ -1,12 +1,21 @@
 // Copyright © 2026 Collabora, Ltd.
 // SPDX-License-Identifier: MIT
 
+use std::ptr;
+
 use crate::encode_v9::*;
 use crate::ir::*;
 use crate::isa::ExecUnit;
+use compiler::bitset::ConstBitSet;
 use kraid_bindings::*;
 
 pub use kraid_bindings::pan_model as PanModel;
+
+pub const MAX_REG_COUNT: usize = 128;
+pub const MAX_REG_BYTES: usize = MAX_REG_COUNT * size_of::<u32>();
+const MAX_REG_WORDS: usize = MAX_REG_BYTES / (u32::BITS as usize);
+
+pub type RegByteSet = ConstBitSet<MAX_REG_WORDS, u16>;
 
 pub struct SmallConstantTable(Vec<SmallConstant>);
 
@@ -56,6 +65,8 @@ pub trait Model {
 
     fn op_exec_unit(&self, op: &Op) -> Option<ExecUnit>;
 
+    fn op_exec_time(&self, op: &Op) -> Option<u8>;
+
     fn op_is_message(&self, op: &Op) -> bool;
 
     fn op_src_is_staging_reg(&self, op: &Op, src: &Src) -> bool;
@@ -71,6 +82,12 @@ pub trait Model {
         swizzle: Swizzle,
     ) -> bool;
 
+    fn op_src_supported_swizzles(
+        &self,
+        op: &Op,
+        src: &Src,
+    ) -> AsmSwizzleWidenSet;
+
     fn op_src_supports_mod(&self, op: &Op, src: &Src, src_mod: SrcMod) -> bool;
 
     fn op_dst_is_staging_reg(&self, op: &Op) -> bool;
@@ -80,6 +97,10 @@ pub trait Model {
     fn op_dst_supports_lanes(&self, op: &Op, lanes: DstLanes) -> bool {
         self.op_dst_supported_lanes(op).contains(lanes)
     }
+
+    fn op_fixed_src_reg(&self, op: &Op, src: &Src) -> Option<RegRef>;
+
+    fn op_fixed_dst_reg(&self, op: &Op, dst: &Dst) -> Option<RegRef>;
 
     fn preload_reg(&self, preload: PreloadReg) -> Option<RegRef>;
 
@@ -168,6 +189,7 @@ impl ValhallModel {
             idx: idx << 1, // FAURef::idx is in units of 32-bit words
             special: Some(special),
             load64: true,
+            imm32: None,
         })
     }
 }
@@ -195,6 +217,10 @@ impl Model for ValhallModel {
 
     fn op_exec_unit(&self, op: &Op) -> Option<ExecUnit> {
         v9_op_exec_unit(op, self.arch)
+    }
+
+    fn op_exec_time(&self, op: &Op) -> Option<u8> {
+        v9_op_exec_time(op, self.arch)
     }
 
     fn op_is_message(&self, op: &Op) -> bool {
@@ -242,6 +268,18 @@ impl Model for ValhallModel {
         }
     }
 
+    fn op_src_supported_swizzles(
+        &self,
+        op: &Op,
+        src: &Src,
+    ) -> AsmSwizzleWidenSet {
+        if let Some(vop) = op.as_virtual() {
+            vop.src_supported_swizzles(src, op.src_type(src))
+        } else {
+            v9_op_src_supported_swizzles(op, src, self.arch)
+        }
+    }
+
     fn op_src_supports_mod(&self, op: &Op, src: &Src, src_mod: SrcMod) -> bool {
         if let Some(vop) = op.as_virtual() {
             vop.src_supports_mod(src, src_mod)
@@ -263,6 +301,51 @@ impl Model for ValhallModel {
             vop.dst_supported_lanes()
         } else {
             v9_op_dst_supported_lanes(op, self.arch)
+        }
+    }
+
+    fn op_fixed_src_reg(&self, op: &Op, src: &Src) -> Option<RegRef> {
+        let preg = |p| Some(self.preload_reg(p).unwrap());
+        let coverage = preg(PreloadReg::CumulativeCoverage);
+        match op {
+            Op::ATest(op) if ptr::eq(&op.coverage, src) => coverage,
+            Op::ZSEmit(op) if ptr::eq(&op.coverage, src) => coverage,
+            Op::Blend(op) if ptr::eq(&op.coverage, src) => coverage,
+            Op::BlendCall(op) => {
+                if ptr::eq(&op.color, src) {
+                    preg(PreloadReg::BlendInputSrc0)
+                } else if ptr::eq(&op.second_color, src) {
+                    if op.has_second_color {
+                        preg(PreloadReg::BlendInputSrc1)
+                    } else {
+                        assert!(op.second_color.src_ref == SrcRef::Zero);
+                        None
+                    }
+                } else if ptr::eq(&op.coverage, src) {
+                    coverage
+                } else if ptr::eq(&op.sample_id, src) {
+                    preg(PreloadReg::SampleCentroidId)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn op_fixed_dst_reg(&self, op: &Op, dst: &Dst) -> Option<RegRef> {
+        let coverage =
+            Some(self.preload_reg(PreloadReg::CumulativeCoverage).unwrap());
+        match op {
+            Op::ATest(op) => {
+                assert!(ptr::eq(&op.dst, dst));
+                coverage
+            }
+            Op::ZSEmit(op) => {
+                assert!(ptr::eq(&op.dst, dst));
+                coverage
+            }
+            _ => None,
         }
     }
 
@@ -290,6 +373,9 @@ impl Model for ValhallModel {
             RasterizerCoverage => 61,
             SampleCentroidId => 61,
             FrameArg => 62,
+            BlendInputSrc0 => 0,
+            BlendInputSrc1 => 4,
+            BlendReturnAddr => 48,
         };
 
         Some(RegRef {

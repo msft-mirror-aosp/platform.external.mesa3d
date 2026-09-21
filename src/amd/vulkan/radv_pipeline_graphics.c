@@ -2750,7 +2750,7 @@ radv_graphics_shaders_compile(const struct radv_compiler_info *compiler_info, st
 
       struct radv_shader_stage *fs_stage = &stages[MESA_SHADER_FRAGMENT];
 
-      if (fs_stage && (fs_stage->info.ps.allow_flat_shading || fs_stage->info.ps.force_disable_vrs)) {
+      if (fs_stage->nir && (fs_stage->info.ps.allow_flat_shading || fs_stage->info.ps.force_disable_vrs)) {
          stages[i].info.force_vrs_per_vertex = false;
 
          if (stages[i].info.outinfo.writes_primitive_shading_rate ||
@@ -2762,7 +2762,8 @@ radv_graphics_shaders_compile(const struct radv_compiler_info *compiler_info, st
             stages[i].nir->info.outputs_written &= ~VARYING_BIT_PRIMITIVE_SHADING_RATE;
             stages[i].nir->info.per_primitive_outputs &= ~VARYING_BIT_PRIMITIVE_SHADING_RATE;
          }
-      } else if (fs_stage && fs_stage->info.ps.disallow_force_vrs_per_vertex && stages[i].info.force_vrs_per_vertex) {
+      } else if (fs_stage->nir && fs_stage->info.ps.disallow_force_vrs_per_vertex &&
+                 stages[i].info.force_vrs_per_vertex) {
          stages[i].info.force_vrs_per_vertex = false;
          stages[i].info.outinfo.writes_primitive_shading_rate = false;
 
@@ -3202,10 +3203,13 @@ radv_needs_null_export_workaround(const struct radv_device *device, const struct
     *
     * Primitive Ordered Pixel Shading also requires an export, otherwise interlocking doesn't work
     * correctly before GFX11, and a hang happens on GFX11.
+    *
+    * fbfetch Z/S reads via input attachments expect pre-depth values (late-Z) to be returned but
+    * Z_ORDER has no effect without any exports.
     */
-   return (gfx_level <= GFX9 || ps->info.ps.can_discard || ps->info.ps.pops ||
+   return (gfx_level <= GFX9 || ps->info.ps.can_discard || ps->info.ps.pops || ps->info.ps.uses_fbfetch_output ||
            (custom_blend_mode == V_028808_CB_DCC_DECOMPRESS_GFX11 && gfx_level >= GFX11)) &&
-          !ps->info.ps.writes_z && !ps->info.ps.writes_stencil && !ps->info.ps.writes_sample_mask;
+          !radv_ps_writes_mrtz(&ps->info);
 }
 
 static VkResult

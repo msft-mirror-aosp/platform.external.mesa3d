@@ -239,6 +239,8 @@ enum tu_cmd_flush_bits {
    TU_CMD_FLAG_BLIT_CACHE_CLEAN = 1 << 11,
    TU_CMD_FLAG_RTU_INVALIDATE = 1 << 12,
    TU_CMD_FLAG_WAIT_FOR_BR = 1 << 13,
+   TU_CMD_FLAG_CACHE_INVALIDATE_GMEM = 1 << 14,
+   TU_CMD_FLAG_SUBPASS_SLICE_FENCE = 1 << 15,
 
    TU_CMD_FLAG_ALL_CLEAN =
       TU_CMD_FLAG_CCU_CLEAN_DEPTH |
@@ -253,6 +255,7 @@ enum tu_cmd_flush_bits {
       TU_CMD_FLAG_CCU_INVALIDATE_DEPTH |
       TU_CMD_FLAG_CCU_INVALIDATE_COLOR |
       TU_CMD_FLAG_CACHE_INVALIDATE |
+      TU_CMD_FLAG_CACHE_INVALIDATE_GMEM |
       TU_CMD_FLAG_BINDLESS_DESCRIPTOR_INVALIDATE |
       TU_CMD_FLAG_CCHE_INVALIDATE |
       /* Treat CP_WAIT_FOR_ME as a "cache" that needs to be invalidated when a
@@ -326,6 +329,16 @@ struct tu_render_pass_state
 
    /* Track whether conditional predicate for COND_REG_EXEC is changed in draw_cs */
    bool draw_cs_writes_to_cond_pred;
+
+   /* Track whether there has been a pipeline barrier in the subpass with an
+    * INPUT_ATTACHMENT_READ destination access.
+    */
+   bool input_attachment_read_barrier;
+
+   /* Track whether any FS have used dynamic rendering with read-only input
+    * attachments.
+    */
+   bool read_only_input_attachments;
 
    uint32_t drawcall_count;
 
@@ -854,6 +867,7 @@ tu_emit_event_write(struct tu_cmd_buffer *cmd,
                     struct tu_cs *cs,
                     enum fd_gpu_event event);
 
+template <chip CHIP>
 void
 tu_flush_for_access(struct tu_cache_state *cache,
                     enum tu_cmd_access_mask src_mask,

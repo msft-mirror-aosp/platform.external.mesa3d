@@ -303,6 +303,7 @@ get_device_extensions(const struct tu_physical_device *device,
       .KHR_shader_float_controls2 = tu_is_vk_1_1(device),
       .KHR_shader_integer_dot_product = true,
       .KHR_shader_non_semantic_info = true,
+      .KHR_shader_quad_control = device->info->props.has_getfiberid,
       .KHR_shader_relaxed_extended_instruction = true,
       .KHR_shader_subgroup_extended_types = tu_is_vk_1_1(device),
       .KHR_shader_subgroup_rotate = true,
@@ -675,6 +676,9 @@ tu_get_features(struct tu_physical_device *pdevice,
    /* VK_KHR_shader_float_controls2 */
    features->shaderFloatControls2 = true;
 
+   /* VK_KHR_shader_quad_control */
+   features->shaderQuadControl = pdevice->info->props.has_getfiberid;
+
    /* VK_KHR_shader_subgroup_uniform_control_flow */
    features->shaderSubgroupUniformControlFlow = true;
 
@@ -1027,21 +1031,12 @@ tu_get_physical_device_properties_1_2(struct tu_physical_device *pdevice,
    memset(p->driverInfo, 0, sizeof(p->driverInfo));
    snprintf(p->driverInfo, VK_MAX_DRIVER_INFO_SIZE,
             "Mesa " PACKAGE_VERSION MESA_GIT_SHA1);
-   if (pdevice->info->chip >= 7) {
-      p->conformanceVersion = (VkConformanceVersion) {
-         .major = 1,
-         .minor = 4,
-         .subminor = 0,
-         .patch = 0,
-      };
-   } else {
-      p->conformanceVersion = (VkConformanceVersion) {
-         .major = 1,
-         .minor = 2,
-         .subminor = 7,
-         .patch = 1,
-      };
-   }
+   p->conformanceVersion = (VkConformanceVersion) {
+      .major = 1,
+      .minor = 4,
+      .subminor = 6,
+      .patch = 1,
+   };
 
    p->denormBehaviorIndependence =
       VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL;
@@ -1820,6 +1815,17 @@ tu_physical_device_init(struct tu_physical_device *device,
          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
          VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+      device->memory.type_count++;
+   }
+
+   /* We don't expose device local type by default to not be treated as
+    * non-UMA, e.g. vkd3d-proton considers GPU as UMA only when all memory
+    * types are HOST_VISIBLE. However, certain apps may unconditionally
+    * expect us having non-HOST_VISIBLE memory.
+    */
+   if (instance->drirc.misc.expose_device_local_only_memory_type) {
+      device->memory.types[device->memory.type_count] =
+         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
       device->memory.type_count++;
    }
 
@@ -3791,10 +3797,9 @@ tu_AllocateMemory(VkDevice _device,
       if (wsi_info && wsi_info->implicit_sync)
          alloc_flags |= TU_BO_ALLOC_IMPLICIT_SYNC;
 
-      char name[64] = "vkAllocateMemory()";
+      char name[64] = "vkAlloc()";
       if (device->bo_sizes)
-         snprintf(name, ARRAY_SIZE(name), "vkAllocateMemory(%ldkb)",
-                  (long)DIV_ROUND_UP(pAllocateInfo->allocationSize, 1024));
+         snprintf(name, ARRAY_SIZE(name), "vkAlloc(%ldkb)", (long) DIV_ROUND_UP(pAllocateInfo->allocationSize, 1024));
       VkMemoryPropertyFlags mem_property =
          device->physical_device->memory.types[pAllocateInfo->memoryTypeIndex];
 
@@ -3881,10 +3886,9 @@ tu_allocate_lazy_memory(struct tu_device *dev,
    VkResult result = VK_SUCCESS;
    mtx_lock(&mem->lazy_mutex);
    if (!mem->lazy_initialized) {
-      char name[64] = "lazy vkAllocateMemory()";
+      char name[64] = "lazy vkAlloc()";
       if (dev->bo_sizes)
-         snprintf(name, ARRAY_SIZE(name), "lazy vkAllocateMemory(%ldkb)",
-                  (long)DIV_ROUND_UP(mem->size, 1024));
+         snprintf(name, ARRAY_SIZE(name), "lazy vkAlloc(%ldkb)", (long) DIV_ROUND_UP(mem->size, 1024));
       result =
          tu_bo_init_new_explicit_iova(dev, &mem->vk.base,
                                       &mem->bo, mem->size, 0, 0, 0,
@@ -4508,7 +4512,7 @@ uint64_t tu_GetDeviceMemoryOpaqueCaptureAddress(
     const VkDeviceMemoryOpaqueCaptureAddressInfo* pInfo)
 {
    VK_FROM_HANDLE(tu_device_memory, mem, pInfo->memory);
-   return mem->bo->iova;
+   return mem->iova;
 }
 
 struct tu_debug_bos_entry {

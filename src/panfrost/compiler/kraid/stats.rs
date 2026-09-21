@@ -8,7 +8,7 @@ use crate::ops::*;
 use compiler::bitset::BitSet;
 use kraid_bindings::*;
 
-fn get_va_stats(s: &Shader, code_size: u32) -> valhall_stats {
+fn get_va_stats(s: &Shader) -> valhall_stats {
     let mut regs: BitSet<usize> = BitSet::new();
     let mut mark_reg = |reg: &RegRef| {
         let idx = usize::from(reg.idx);
@@ -54,10 +54,27 @@ fn get_va_stats(s: &Shader, code_size: u32) -> valhall_stats {
                 }
             }
 
+            if matches!(&instr.op, Op::BlendCall(_)) {
+                // This will get lowered later into a BLEND + prologue, both
+                // should not be counted in the stats metrics
+                continue;
+            }
+
+            let cycles = match &instr.op {
+                Op::MMulI32(_) | Op::MMulF32(_) | Op::MMulF16(_) => {
+                    // While not written in the ISA, MMUL* executes in 4 cycles
+                    4
+                }
+                _ => {
+                    let cycles = dst_bytes.div_ceil(4).max(1);
+                    cycles * s.model.op_exec_time(&instr.op).unwrap_or(1)
+                }
+            };
+
             match s.model.op_exec_unit(&instr.op).unwrap() {
-                ExecUnit::Cvt => cvt += f32::from(dst_bytes.div_ceil(4)),
-                ExecUnit::Fma => fma += f32::from(dst_bytes.div_ceil(4)),
-                ExecUnit::Sfu => sfu += f32::from(dst_bytes.div_ceil(4)),
+                ExecUnit::Cvt => cvt += f32::from(cycles),
+                ExecUnit::Fma => fma += f32::from(cycles),
+                ExecUnit::Sfu => sfu += f32::from(cycles),
                 ExecUnit::Msg => match &instr.op {
                     Op::ACmpXchg(_)
                     | Op::Atom(_)
@@ -75,13 +92,32 @@ fn get_va_stats(s: &Shader, code_size: u32) -> valhall_stats {
                     | Op::Store(_) => {
                         ls += 1.0;
                     }
+                    Op::LdVarSpecial(op)
+                        if op.name == VarSpecialName::FragZ => {}
+                    Op::LdVar(_)
+                    | Op::LdVarBuf(_)
+                    | Op::LdVarBufFlat(_)
+                    | Op::LdVarFlat(_)
+                    | Op::LdVarSpecial(_) => {
+                        let total_bytes = if let Op::LdVarBuf(op) = &instr.op {
+                            (op.mem_type.bits() / 8) * op.dst_type.comps()
+                        } else {
+                            dst_bytes
+                        };
+                        v += f32::from(total_bytes.div_ceil(4));
+                    }
                     Op::TexFetch(_)
                     | Op::TexGather(_)
                     | Op::TexGradient(_)
                     | Op::TexSingle(_) => {
                         t += 1.0;
                     }
-                    Op::Barrier(_) => {
+                    Op::ATest(_)
+                    | Op::Barrier(_)
+                    | Op::Blend(_)
+                    | Op::LdTile(_)
+                    | Op::StTile(_)
+                    | Op::ZSEmit(_) => {
                         // These aren't counted
                     }
                     _ => panic!("Unknown message instruction"),
@@ -129,7 +165,7 @@ fn get_va_stats(s: &Shader, code_size: u32) -> valhall_stats {
         v,
         t,
         ls,
-        code_size,
+        code_size: 0, // Filled in after encoding
         constant_data_size: s
             .constant_pool
             .as_ref()
@@ -147,12 +183,12 @@ fn get_va_stats(s: &Shader, code_size: u32) -> valhall_stats {
 }
 
 impl Shader<'_> {
-    pub fn get_stats(&self, code_size: u32) -> pan_stats {
+    pub fn get_stats(&self) -> pan_stats {
         if self.model.arch() >= 9 {
             pan_stats {
                 isa: PAN_STAT_VALHALL,
                 __bindgen_anon_1: pan_stats__bindgen_ty_1 {
-                    valhall: get_va_stats(self, code_size),
+                    valhall: get_va_stats(self),
                 },
             }
         } else {

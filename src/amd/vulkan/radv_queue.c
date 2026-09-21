@@ -1026,7 +1026,7 @@ radv_update_preamble_cs(struct radv_queue_state *queue, struct radv_device *devi
    const enum amd_ip_type hw_ip = radv_queue_family_to_ring(pdev, queue->qf);
 
    for (int i = 0; i < 3; ++i) {
-      enum rgp_flush_bits sqtt_flush_bits = 0;
+      enum ac_rgp_flush_bits rgp_flush_bits = 0;
       struct radv_cmd_stream *cs = NULL;
 
       result = radv_create_cmd_stream(device, hw_ip, false, &cs);
@@ -1088,7 +1088,8 @@ radv_update_preamble_cs(struct radv_queue_state *queue, struct radv_device *devi
                flush_bits |= RADV_CMD_FLAG_VS_PARTIAL_FLUSH | RADV_CMD_FLAG_PS_PARTIAL_FLUSH;
          }
 
-         radv_cs_emit_cache_flush(ws, cs, gfx_level, NULL, 0, flush_bits, &sqtt_flush_bits, 0);
+         radv_cs_emit_cache_flush(ws, cs, gfx_level, NULL, 0, flush_bits, &rgp_flush_bits, RADV_PWS_ACQUIRE_POINT_PFP,
+                                  0);
       }
 
       /* Emit task rings after the initial cache flush and wait
@@ -1328,10 +1329,11 @@ radv_create_flush_postamble(struct radv_queue *queue)
                     RADV_CMD_FLAG_FLUSH_AND_INV_DB | RADV_CMD_FLAG_FLUSH_AND_INV_CB_META |
                     RADV_CMD_FLAG_FLUSH_AND_INV_DB_META;
 
-   enum rgp_flush_bits sqtt_flush_bits = 0;
+   enum ac_rgp_flush_bits rgp_flush_bits = 0;
    uint32_t flush_cnt = 0;
 
-   radv_cs_emit_cache_flush(ws, cs, pdev->info.gfx_level, &flush_cnt, 0, flush_bits, &sqtt_flush_bits, 0);
+   radv_cs_emit_cache_flush(ws, cs, pdev->info.gfx_level, &flush_cnt, 0, flush_bits, &rgp_flush_bits,
+                            RADV_PWS_ACQUIRE_POINT_PFP, 0);
 
    result = radv_finalize_cmd_stream(device, cs);
    if (result != VK_SUCCESS) {
@@ -1840,6 +1842,14 @@ radv_report_gpuvm_fault(struct radv_device *device)
    ac_print_gpuvm_fault_status(stderr, pdev->info.gfx_level, fault_info.status);
 }
 
+void
+radv_queue_handle_fault_state(struct radv_queue *queue)
+{
+   struct radv_device *device = radv_queue_device(queue);
+
+   radv_report_gpuvm_fault(device);
+}
+
 static VkResult
 radv_queue_sparse_submit(struct vk_queue *vqueue, struct vk_queue_submit *submission)
 {
@@ -1875,8 +1885,7 @@ fail:
        * VK_ERROR_DEVICE_LOST to ensure the clients do not attempt
        * to submit the same job again to this device.
        */
-      radv_report_gpuvm_fault(device);
-      result = vk_device_set_lost(&device->vk, "vkQueueSubmit() failed");
+      result = radv_queue_set_lost(queue, "vkQueueBindSparse() failed");
    }
    return result;
 }
@@ -1909,8 +1918,7 @@ fail:
        * VK_ERROR_DEVICE_LOST to ensure the clients do not attempt
        * to submit the same job again to this device.
        */
-      radv_report_gpuvm_fault(device);
-      result = vk_device_set_lost(&device->vk, "vkQueueSubmit() failed");
+      result = radv_queue_set_lost(queue, "vkQueueSubmit() failed");
    }
    return result;
 }

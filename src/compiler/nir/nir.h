@@ -2840,9 +2840,6 @@ typedef struct nir_tex_instr {
     */
    bool embedded_sampler;
 
-   /** True if the offset is not dynamically uniform */
-   bool offset_non_uniform;
-
    /** True whether this returns the same result anywhere in the shader and
     *  doesn't cause page faults.
     */
@@ -6414,6 +6411,12 @@ typedef struct nir_lower_tex_options {
    unsigned saturate_s;
    unsigned saturate_t;
    unsigned saturate_r;
+
+   /* Bitmask of samplers whose txl LOD <= 0.5 is replaced with 0.0, moving
+    * the magnification switch-over point from a lambda of 0 to the 0.5 that
+    * ES 2.0 and GL up to 3.0 ask for.
+    */
+   unsigned lower_txl_mag_switchover;
 
    /* Bitmask of textures that need swizzling.
     *

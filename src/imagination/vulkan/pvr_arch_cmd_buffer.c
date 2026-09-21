@@ -54,7 +54,6 @@
 #include "pvr_limits.h"
 #include "pvr_macros.h"
 #include "pvr_pass.h"
-#include "pvr_pds.h"
 #include "pvr_physical_device.h"
 #include "pvr_pipeline.h"
 #include "pvr_query.h"
@@ -8162,7 +8161,8 @@ static void pvr_emit_dirty_vdm_state(struct pvr_cmd_buffer *const cmd_buffer,
    pvr_csb_emit (csb, VDMCTRL_VDM_STATE0, state0) {
       state0.cam_size = cam_size;
 
-      if (dynamic_state->ia.primitive_restart_enable) {
+      if (state->draw_state.draw_indexed &&
+          dynamic_state->ia.primitive_restart_enable) {
          state0.cut_index_enable = true;
          state0.cut_index_present = true;
       }

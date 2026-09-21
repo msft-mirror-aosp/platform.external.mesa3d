@@ -5,6 +5,7 @@ mod bitview;
 mod builder;
 mod compile;
 mod data_type;
+pub mod decode;
 mod dst_mod_prop;
 mod encode_v9;
 mod flow;
@@ -17,6 +18,7 @@ mod jump_thread;
 mod legalize;
 mod legalize_src_swizzles;
 mod liveness;
+mod lower_blend_call;
 mod lower_copy;
 mod lower_mkvec_swz;
 mod message_slots;
@@ -25,14 +27,17 @@ mod nir;
 mod ops;
 mod opt_copy_prop;
 mod opt_dce;
-mod opt_end;
+mod opt_flow;
+mod opt_normalize_consts;
 mod opt_promote_consts;
+mod opt_var;
 mod parallel_copy;
 mod phi;
 mod ra;
 mod reconvergence;
 mod remat_constants;
 mod repair_ssa;
+mod required_waits;
 mod schedule;
 mod small_constants;
 mod spill;
@@ -49,6 +54,7 @@ mod debug {
             const VALIDATE = 1 << 1;
             const SPILL = 1 << 2;
             const SERIAL = 1 << 3;
+            const PRINT_RAW_CONST = 1 << 4;
         }
     }
 
@@ -65,6 +71,7 @@ mod debug {
                 "validate" => flags |= DebugFlags::VALIDATE,
                 "spill" => flags |= DebugFlags::SPILL,
                 "serial" => flags |= DebugFlags::SERIAL,
+                "print-raw-constants" => flags |= DebugFlags::PRINT_RAW_CONST,
                 unk => eprintln!("Unknown {debug_var} flag \"{}\"", unk),
             }
         }

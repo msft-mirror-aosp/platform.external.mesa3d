@@ -164,11 +164,19 @@ enum radv_cmd_flush_bits {
    RADV_CMD_FLAG_VGT_STREAMOUT_SYNC = 1 << 16,
    RADV_CMD_FLAG_PFP_SYNC_ME = 1 << 17,
 
-   RADV_CMD_FLUSH_AND_INV_FRAMEBUFFER = (RADV_CMD_FLAG_FLUSH_AND_INV_CB | RADV_CMD_FLAG_FLUSH_AND_INV_CB_META |
-                                         RADV_CMD_FLAG_FLUSH_AND_INV_DB | RADV_CMD_FLAG_FLUSH_AND_INV_DB_META),
-
    RADV_CMD_FLUSH_ALL_COMPUTE = (RADV_CMD_FLAG_INV_ICACHE | RADV_CMD_FLAG_INV_SCACHE | RADV_CMD_FLAG_INV_VCACHE |
                                  RADV_CMD_FLAG_INV_L2 | RADV_CMD_FLAG_WB_L2 | RADV_CMD_FLAG_CS_PARTIAL_FLUSH),
+};
+
+/* PWS (Pixel Wait Sync) acquire point, i.e. the pipeline stage at which a GFX11+ PWS ACQUIRE
+ * waits for a preceding RELEASE. The acquire point is derived from the barrier destination stage
+ * so the wait can be deferred to the latest legal pipeline stage.
+ */
+enum radv_pws_acquire_point {
+   RADV_PWS_ACQUIRE_POINT_NONE = 0,
+   RADV_PWS_ACQUIRE_POINT_PRE_DEPTH, /* Wait just before depth/fragment work. */
+   RADV_PWS_ACQUIRE_POINT_ME,        /* Wait at the CP micro-engine. */
+   RADV_PWS_ACQUIRE_POINT_PFP,       /* Wait at the CP prefetch parser (frontend). */
 };
 
 struct radv_streamout_binding {
@@ -268,25 +276,6 @@ struct radv_push_constant_state {
    bool need_upload;
 };
 
-enum rgp_flush_bits {
-   RGP_FLUSH_WAIT_ON_EOP_TS = 0x1,
-   RGP_FLUSH_VS_PARTIAL_FLUSH = 0x2,
-   RGP_FLUSH_PS_PARTIAL_FLUSH = 0x4,
-   RGP_FLUSH_CS_PARTIAL_FLUSH = 0x8,
-   RGP_FLUSH_PFP_SYNC_ME = 0x10,
-   RGP_FLUSH_SYNC_CP_DMA = 0x20,
-   RGP_FLUSH_INVAL_VMEM_L0 = 0x40,
-   RGP_FLUSH_INVAL_ICACHE = 0x80,
-   RGP_FLUSH_INVAL_SMEM_L0 = 0x100,
-   RGP_FLUSH_FLUSH_L2 = 0x200,
-   RGP_FLUSH_INVAL_L2 = 0x400,
-   RGP_FLUSH_FLUSH_CB = 0x800,
-   RGP_FLUSH_INVAL_CB = 0x1000,
-   RGP_FLUSH_FLUSH_DB = 0x2000,
-   RGP_FLUSH_INVAL_DB = 0x4000,
-   RGP_FLUSH_INVAL_L1 = 0x8000,
-};
-
 enum radv_depth_clamp_mode {
    RADV_DEPTH_CLAMP_MODE_VIEWPORT = 0,     /* Clamp to the viewport min/max depth bounds */
    RADV_DEPTH_CLAMP_MODE_USER_DEFINED = 1, /* Range set using VK_EXT_depth_clamp_control */
@@ -384,6 +373,8 @@ struct radv_cmd_state {
    struct radv_meta_saved_state meta;
 
    enum radv_cmd_flush_bits flush_bits;
+   /* Earliest PWS acquire point required by the currently pending flush_bits*/
+   enum radv_pws_acquire_point pws_acquire_point;
    unsigned active_occlusion_queries;
    bool perfect_occlusion_queries_enabled;
    unsigned active_pipeline_queries;
@@ -467,7 +458,7 @@ struct radv_cmd_state {
    uint32_t num_layout_transitions;
    bool in_barrier;
    bool pending_sqtt_barrier_end;
-   enum rgp_flush_bits sqtt_flush_bits;
+   enum ac_rgp_flush_bits rgp_flush_bits;
 
    uint32_t trace_id;
 };
@@ -830,12 +821,9 @@ void radv_unaligned_dispatch(struct radv_cmd_buffer *cmd_buffer, uint32_t x, uin
 uint32_t radv_init_fmask(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image,
                          const VkImageSubresourceRange *range);
 
-uint32_t radv_init_dcc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image,
-                       const VkImageSubresourceRange *range, uint32_t value);
-
 uint32_t radv_init_display_dcc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image, uint32_t value);
 
-void radv_emit_cache_flush(struct radv_cmd_buffer *cmd_buffer);
+void radv_emit_cache_flush(struct radv_cmd_buffer *cmd_buffer, bool pws_defer_allowed);
 
 void radv_emit_set_predication_state(struct radv_cmd_buffer *cmd_buffer, bool draw_visible, unsigned pred_op,
                                      uint64_t va);

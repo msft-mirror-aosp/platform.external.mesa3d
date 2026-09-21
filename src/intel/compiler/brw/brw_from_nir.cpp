@@ -3748,7 +3748,7 @@ brw_from_nir_emit_fs_intrinsic(nir_to_brw_state &ntb,
    case nir_intrinsic_terminate_if: {
       /* We track our discarded pixels in f0.1/f1.0.  By predicating on it, we
        * can update just the flag bits that aren't yet discarded.  If there's
-       * no condition, we emit a CMP of g0 != g0, so all currently executing
+       * no condition, we emit 'MOV.NZ null, 0', so all currently executing
        * channels will get turned off.
        */
       brw_inst *cmp = NULL;
@@ -3814,8 +3814,16 @@ brw_from_nir_emit_fs_intrinsic(nir_to_brw_state &ntb,
                           brw_imm_d(0), BRW_CONDITIONAL_Z);
          }
       } else {
-         brw_reg some_reg = brw_reg(retype(brw_vec8_grf(0, 0), BRW_TYPE_UW));
-         cmp = bld.CMP(bld.null_reg_f(), some_reg, some_reg, BRW_CONDITIONAL_NZ);
+         cmp = bld.MOV(retype(brw_null_reg(), BRW_TYPE_UW), brw_imm_uw(0));
+         cmp->conditional_mod = BRW_CONDITIONAL_NZ;
+      }
+
+      if (instr->intrinsic == nir_intrinsic_terminate_if) {
+         brw_inst *iff = bld.IF(BRW_PREDICATE_NORMAL);
+         iff->predicate_inverse = true;
+
+         cmp = bld.MOV(retype(brw_null_reg(), BRW_TYPE_UW), brw_imm_uw(0));
+         cmp->conditional_mod = BRW_CONDITIONAL_NZ;
       }
 
       cmp->predicate = BRW_PREDICATE_NORMAL;
@@ -3835,6 +3843,10 @@ brw_from_nir_emit_fs_intrinsic(nir_to_brw_state &ntb,
          jump->predicate = (devinfo->ver >= 20 ? XE2_PREDICATE_ANY :
                             BRW_PREDICATE_ALIGN1_ANY4H);
       }
+
+      if (instr->intrinsic == nir_intrinsic_terminate_if)
+         bld.emit(BRW_OPCODE_ENDIF);
+
       break;
    }
 
@@ -5957,7 +5969,7 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
    const unsigned nir_bit_size =
       is_store ? instr->src[data_src].ssa->bit_size : instr->def.bit_size;
    const enum lsc_data_size data_size = lsc_bits_to_data_size(nir_bit_size);
-   uint32_t data_bit_size = lsc_data_size_bytes(data_size) * 8;
+   uint32_t data_bit_size = lsc_data_size_register_bytes(data_size) * 8;
 
    const brw_reg_type data_type =
       brw_type_with_size(BRW_TYPE_UD, data_bit_size);

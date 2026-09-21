@@ -894,6 +894,10 @@ emit_lsc_fence(struct nir_to_jay_state *nj,
       return;
    }
 
+   if (mesa_shader_stage_is_compute(nj->nir->info.stage)) {
+      nj->s->prog_data->cs.uses_fence = true;
+   }
+
    jay_def notif = jay_alloc_def(&nj->bld, UGPR, jay_ugpr_per_grf(nj->s));
    uint32_t desc = lsc_fence_msg_desc(nj->s->devinfo, scope, flushtype, false);
 
@@ -1554,7 +1558,7 @@ jay_emit_mem_access_lsc(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
    uint32_t ex_desc_imm = 0;
    if (scratch) {
       /* TODO: Once we have an address register RA, we should CSE these */
-      ex_desc = jay_alloc_def(b, J_ADDRESS, 1);
+      ex_desc = jay_alloc_def(b, UGPR, 1);
       jay_SHR(b, JAY_TYPE_U32, ex_desc, jay_scratch_surface(nj), 4);
 
       if (has_dest) {
@@ -3018,6 +3022,8 @@ jay_emit_texture(struct nir_to_jay_state *nj, nir_tex_instr *tex)
    jay_def dst = nj_def(&tex->def);
    jay_def tmp = dst;
 
+   bool uses_implicit_derivative = nir_tex_instr_has_implicit_derivative(tex);
+
    const enum brw_sampler_opcode op = (enum brw_sampler_opcode)(
       tex->backend_flags & ~BRW_TEX_INSTR_FUSED_EU_DISABLE);
    const struct brw_sampler_payload_desc *payload_desc =
@@ -3403,7 +3409,9 @@ jay_emit_texture(struct nir_to_jay_state *nj, nir_tex_instr *tex)
 
    assert(payload_type_bit_size == 16 || payload_type_bit_size == 32);
    unsigned simd_mode = 0;
-   unsigned simd_width = payload_uniform ? 1 : nj->s->dispatch_width;
+   /* use simd4 if we have implicit derivative to calc derivatives properly */
+   unsigned simd_width = payload_uniform ? (uses_implicit_derivative ? 4 : 1) :
+                                           nj->s->dispatch_width;
    if (nj->devinfo->ver < 20) {
       if (payload_type_bit_size == 16) {
          assert(nj->devinfo->ver >= 11);
@@ -3454,10 +3462,10 @@ jay_emit_texture(struct nir_to_jay_state *nj, nir_tex_instr *tex)
       }
 
       /* We assume that the driver provided the handle in the top 20 bits so
-       * we can use the surface handle directly as the extended descriptor.
+-      * we can use the surface handle directly as the extended descriptor.
+       * This will be moved to an address register in jay_lower_pre_ra.
        */
-      desc_ex_src = jay_alloc_def(b, J_ADDRESS, 1);
-      jay_MOV(b, desc_ex_src, surface);
+      desc_ex_src = surface;
    } else {
       /* Immediate portion of the descriptor */
       desc = brw_sampler_desc(nj->devinfo, 0, 0, msg_type, simd_mode, ret_type);
@@ -3473,9 +3481,34 @@ jay_emit_texture(struct nir_to_jay_state *nj, nir_tex_instr *tex)
       desc_src = jay_AND_u32(b, desc_src, 0xfff);
    }
 
+   /* Pad out uniform sources to full GRFs as SEND does not support finer
+    * granularity.
+    */
    for (unsigned i = 0; i < n_sources; ++i) {
-      payload[i] =
-         jay_src_as_strided(b, payload[i], 1, payload_uniform ? UGPR : GPR);
+      struct brw_sampler_payload_src sampler_src = payload_desc->sources[i];
+
+      /* Texcoords for uniform SENDs with implicit derivatives must be
+       * replicated to four channels (one subspan) so that their derivatives are
+       * calculated correctly.
+       */
+      if (payload_uniform &&
+          uses_implicit_derivative &&
+          (sampler_src.param == BRW_SAMPLER_PAYLOAD_PARAM_U ||
+           sampler_src.param == BRW_SAMPLER_PAYLOAD_PARAM_V ||
+           sampler_src.param == BRW_SAMPLER_PAYLOAD_PARAM_R)) {
+         jay_def src_as_grf =
+            jay_alloc_def(b, UGPR, jay_ugpr_per_grf(b->shader));
+         jay_MOV(b, jay_extract_range(src_as_grf, 0, 4), payload[i]);
+         for (unsigned j = 4; j < jay_ugpr_per_grf(b->shader); j++) {
+            jay_UNDEF(b, jay_extract(src_as_grf, j));
+         }
+         payload[i] = src_as_grf;
+
+      } else {
+         /* Pad out all other operands as normal. */
+         payload[i] =
+            jay_src_as_strided(b, payload[i], 1, payload_uniform ? UGPR : GPR);
+      }
    }
 
    enum jay_type src_type = jay_type(JAY_TYPE_U, payload_type_bit_size);
@@ -3485,7 +3518,9 @@ jay_emit_texture(struct nir_to_jay_state *nj, nir_tex_instr *tex)
             .nr_srcs = n_sources, .type = dst_type, .src_type = { src_type },
             .dst = tmp, .uniform = payload_uniform,
             .bindless = surface_bindless, .pure = true,
-            .skip_helpers = tex->skip_helpers);
+            .skip_helpers = tex->skip_helpers,
+            .explicit_simd_width =
+               (uses_implicit_derivative && payload_uniform) ? 4 : 0);
 
    /* If we sampled into a temporary, copy out to the final */
    if (residency) {
@@ -3640,11 +3675,12 @@ jay_emit_if(struct nir_to_jay_state *nj, nir_if *nif)
    nj->after_block = else_first;
 
    /* Break and halt instructions in the else block may reconverge at the
-    * after block for a non-uniform IF, unless the then block always ends
-    * with break or halt.
+    * after block for a non-uniform IF, unless the then block is unreachable
+    * or always ends with a break or halt.
     */
    if (!uniform &&
-       jay_num_predecessors(then_last, GPR) > 0 &&
+       (then_first == then_last ||
+        jay_num_predecessors(then_last, GPR) > 0) &&
        !jay_block_ending_jump(then_last)) {
       nj->converge_block = after_block;
    } else {
@@ -3658,6 +3694,13 @@ jay_emit_if(struct nir_to_jay_state *nj, nir_if *nif)
    if (!uniform) {
       /* For a non-uniform IF, we fall through both sides in the physical CFG */
       jay_block_add_successor(then_last, else_first, UGPR);
+   }
+
+   if (nj->converge_block) {
+      /* For a non-uniform IF, we also have to consider if we may fall through
+       * after the else block, due to reconvergence from the then block
+       */
+      jay_block_add_successor(else_last, nj->converge_block, UGPR);
    }
 
    /* Logical CFG edges */
@@ -4659,7 +4702,7 @@ jay_gather_stats(const jay_shader *s, struct genisa_stats *stats)
    stats->source_hash = s->prog_data->base.source_hash;
    stats->grf_registers = s->prog_data->base.grf_used;
    stats->vrt_size =
-      intel_vrt_register_file_size(s->devinfo, stats->grf_registers);
+      intel_vrt_register_file_size(s->devinfo, stats->source_hash, stats->grf_registers);
    stats->vrt_threads = intel_max_vrt_threads(s->devinfo, stats->vrt_size);
 
    /* We currently only support up to 2MB of scratch space.  If we need to
@@ -4771,6 +4814,7 @@ jay_compile_simd(const struct intel_device_info *devinfo,
 
    JAY_PASS(s, jay_lower_flags);
    JAY_PASS(s, jay_opt_dead_code);
+   JAY_PASS(s, jay_opt_sampler_vectorize);
    JAY_PASS(s, jay_schedule);
 
    JAY_PASS(s, jay_lower_pre_ra);
@@ -4788,6 +4832,7 @@ jay_compile_simd(const struct intel_device_info *devinfo,
                  "Jay SIMD%u shader skipped due to num_regs[MEM] = %u > 0.\n",
                  simd_width, s->num_regs[MEM]);
       }
+      ralloc_free(s);
       return NULL;
    }
 

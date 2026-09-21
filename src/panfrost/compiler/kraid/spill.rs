@@ -86,7 +86,7 @@ struct GlobalNextUse {
 }
 
 impl GlobalNextUse {
-    fn for_shader(s: &Shader, live: &impl Liveness) -> GlobalNextUse {
+    fn for_shader(s: &Shader, live: &Liveness) -> GlobalNextUse {
         let mut last_use = SSADistMap::with_count(s.ssa_alloc.count());
 
         let mut block_next_use_in = Vec::new();
@@ -294,10 +294,6 @@ struct SpillMap {
 }
 
 impl SpillMap {
-    fn contains(&self, ssa: &SSAValue) -> bool {
-        self.map.contains_key(ssa)
-    }
-
     fn get(&self, ssa: &SSAValue) -> Option<&SpillValue> {
         self.map.get(ssa)
     }
@@ -528,7 +524,7 @@ impl Iterator for SpillChoiceIter {
     }
 }
 
-fn spill(s: &mut Shader, live: impl Liveness, limit: u32) {
+fn spill(s: &mut Shader, live: Liveness, limit: u32) {
     let global_next_use = GlobalNextUse::for_shader(s, &live);
     let phi_map = PhiMap::for_shader(s);
     let blocks = &mut s.blocks;
@@ -781,8 +777,9 @@ fn spill(s: &mut Shader, live: impl Liveness, limit: u32) {
                         }
                     }
 
-                    let rel_pressure =
-                        u32::from(bl.get_instr_pressure(ip, &instr));
+                    let rel_pressure = u32::from(
+                        bl.get_instr_pressure_top_down(s.model, ip, &instr),
+                    );
                     let abs_pressure = live.bytes().reg + rel_pressure;
 
                     if abs_pressure > limit {
@@ -816,7 +813,8 @@ fn spill(s: &mut Shader, live: impl Liveness, limit: u32) {
                         next_use_map[ssa] = Dist(dist);
                     }
 
-                    let max = live.insert_instr_top_down(ip, &instr, bl);
+                    let max =
+                        live.insert_instr_top_down(s.model, ip, &instr, bl);
                     debug_assert!(max.reg <= limit);
 
                     // We add the actual spill instructions later
@@ -987,7 +985,7 @@ fn spill(s: &mut Shader, live: impl Liveness, limit: u32) {
 }
 
 impl Shader<'_> {
-    pub fn spill_values(&mut self, live: impl Liveness, limit: u32) {
+    pub fn spill_values(&mut self, live: Liveness, limit: u32) {
         spill(self, live, limit);
     }
 }
