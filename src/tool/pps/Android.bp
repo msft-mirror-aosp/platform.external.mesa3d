@@ -157,6 +157,19 @@ cc_library_shared {
         ],
         (default, default, default): [],
     }),
+    shared_libs: select((os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
+        ("android", "true"): [
+            "libcutils",
+            "libdrm",
+            "libhardware",
+            "liblog",
+            "libnativewindow",
+            "libsync",
+            "libz",
+            "libzstd",
+        ],
+        (default, default): [],
+    }),
     target: {
         android: {
             relative_install_path: "hw",
@@ -211,6 +224,19 @@ cc_binary {
             "mesa_util_clflushopt",
         ],
         (default, default, default): [],
+    }),
+    shared_libs: select((os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
+        ("android", "true"): [
+            "libcutils",
+            "libdrm",
+            "libhardware",
+            "liblog",
+            "libnativewindow",
+            "libsync",
+            "libz",
+            "libzstd",
+        ],
+        (default, default): [],
     }),
     target: {
         android: {

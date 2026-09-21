@@ -130,6 +130,7 @@ cc_library_shared {
             "liblog",
             "libnativewindow",
             "libsync",
+            "libui",
         ],
         default: [],
     }),

@@ -26,9 +26,25 @@ cc_defaults {
 }
 
 cc_defaults {
+    name: "_mesa_u_gralloc_cpp_flags",
+    vendor: true,
+    cppflags: select(os(), {
+        "android": [
+            "-fvisibility=hidden",
+        ],
+        default: [],
+    }),
+}
+
+cc_defaults {
     name: "c_args_for_u_gralloc",
     vendor: true,
-    cflags: select((arch(), os()), {
+    cflags: select(os(), {
+        "android": [
+            "-DUSE_IMAPPER4_METADATA_API",
+        ],
+        default: [],
+    }) + select((arch(), os()), {
         ("arm64", "android"): [
             "-DHAS_FREEDRENO",
         ],
@@ -40,10 +56,14 @@ cc_library_static {
     name: "_mesa_u_gralloc",
     vendor: true,
     c_std: "c11",
+    cpp_std: "c++17",
     defaults: [
         "_mesa_u_gralloc_c_flags",
+        "_mesa_u_gralloc_cpp_flags",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
+        "aosp_mesa3d_cpp_link_args",
+        "aosp_mesa3d_cpp_project_args",
         "c_args_for_u_gralloc",
     ],
     header_libs: select(os(), {
@@ -59,6 +79,7 @@ cc_library_static {
             "u_gralloc.c",
             "u_gralloc_cros_api.c",
             "u_gralloc_fallback.c",
+            "u_gralloc_imapper5_api.cpp",
             "u_gralloc_internal.c",
             "u_gralloc_libdrm.c",
             "u_gralloc_qcom.c",
@@ -72,6 +93,7 @@ cc_library_static {
             "liblog",
             "libnativewindow",
             "libsync",
+            "libui",
         ],
         default: [],
     }),

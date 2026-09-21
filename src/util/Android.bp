@@ -345,6 +345,16 @@ cc_library_static {
         ],
         ("arm64", "linux_musl"): [
             "cache_ops_aarch64.c",
+            "u_debug_stack.c",
+            "u_debug_symbol.c",
+        ],
+        ("x86_64", "linux_glibc"): [
+            "u_debug_stack.c",
+            "u_debug_symbol.c",
+        ],
+        ("x86_64", "linux_musl"): [
+            "u_debug_stack.c",
+            "u_debug_symbol.c",
         ],
         (default, default): [],
     }) + select(os(), {
@@ -352,20 +362,6 @@ cc_library_static {
             "u_debug_stack_android.cpp",
         ],
         default: [],
-    }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
-        ("x86_64", "linux_glibc", default): [
-            "u_debug_stack.c",
-            "u_debug_symbol.c",
-        ],
-        ("x86_64", "linux_musl", default): [
-            "u_debug_stack.c",
-            "u_debug_symbol.c",
-        ],
-        ("arm64", "linux_musl", default): [
-            "u_debug_stack.c",
-            "u_debug_symbol.c",
-        ],
-        (default, default, default): [],
     }),
     static_libs: [
         "blake3",

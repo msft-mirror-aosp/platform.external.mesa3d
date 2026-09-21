@@ -334,4 +334,17 @@ cc_binary {
         ],
         (default, default): [],
     }),
+    shared_libs: select((arch(), os()), {
+        ("arm64", "android"): [
+            "libcutils",
+            "libdrm",
+            "libhardware",
+            "liblog",
+            "libnativewindow",
+            "libsync",
+            "libz",
+            "libzstd",
+        ],
+        (default, default): [],
+    }),
 }
