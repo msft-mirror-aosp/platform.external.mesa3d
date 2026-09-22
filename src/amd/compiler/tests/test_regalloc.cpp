@@ -1699,3 +1699,92 @@ BEGIN_TEST(regalloc.call.params.split_blocking_vecs)
 
    finish_ra_test(ra_test_policy());
 END_TEST
+
+BEGIN_TEST(regalloc.move_phi_operand_for_def)
+   //>> p_startpgm
+   if (!setup_cs("", GFX10))
+      return;
+
+   program->dev.vgpr_limit = 4;
+
+   //! v2: %tmp0:v[1-2] = p_unit_test
+   Temp tmp0 = bld.pseudo(aco_opcode::p_unit_test, bld.def(v2, PhysReg(256 + 1)));
+
+   //! p_branch
+   bld.branch(aco_opcode::p_branch);
+
+   //! BB1
+   //! /* logical preds: BB0, / linear preds: BB0, / kind: uniform, top-level, */
+   bld.reset(program->create_and_insert_block());
+   program->blocks[1].linear_preds.push_back(0);
+   program->blocks[1].logical_preds.push_back(0);
+   program->blocks[1].kind |= block_kind_top_level;
+
+   //! v2: %tmp1:v[0-1] = p_phi %tmp0:v[1-2]
+   //! v2: %tmp0_2:v[2-3] = p_phi %tmp0:v[1-2]
+   Temp tmp1 = bld.pseudo(aco_opcode::p_phi, bld.def(v2), tmp0);
+
+   //! p_unit_test %tmp0_2:v[2-3], %tmp1:v[0-1]
+   bld.pseudo(aco_opcode::p_unit_test, tmp0, tmp1);
+
+   finish_ra_test(ra_test_policy());
+END_TEST
+
+BEGIN_TEST(regalloc.pk_fmac_inline)
+   for (unsigned i = GFX10_3; i <= GFX11; i++) {
+      //>> v1: %a:v[0],  v1: %b:v[1],  v1: %c:v[2] = p_startpgm
+      if (!setup_cs("v1 v1 v1", (amd_gfx_level)i))
+         continue;
+
+      Temp a = inputs[0];
+      Temp b = inputs[1];
+      Temp c = inputs[2];
+
+      //~gfx10_3! v1: %res0:v[1] = v_pk_fma_f16 1.0.xx, %a:v[0], %b:v[1]
+      //~gfx11! v1: %res0:v[1] = v_pk_fmac_f16 1.0, %a:v[0], %b:v[1]
+      //! p_unit_test 0, %res0:v[1]
+      Builder::Result fma =
+         bld.vop3p(aco_opcode::v_pk_fma_f16, bld.def(v1), Operand::c16(0x3c00), a, b, 0x0, 0x6);
+      writeout(0, fma);
+
+      //~gfx10_3! v1: %res1:v[2] = v_pk_fmac_f16 1.0, %a:v[0], %c:v[2]
+      //~gfx11! v1: %res1:v[2] = v_pk_fma_f16 1.0, %a:v[0], %c:v[2]
+      //! p_unit_test 1, %res1:v[2]
+      fma = bld.vop3p(aco_opcode::v_pk_fma_f16, bld.def(v1), Operand::c16(0x3c00), a, c, 0x0, 0x7);
+      writeout(1, fma);
+
+      //! p_unit_test 2, %a:v[0]
+      writeout(2, a);
+
+      finish_ra_test(ra_test_policy());
+   }
+END_TEST
+
+BEGIN_TEST(regalloc.dot2c_inline)
+   for (unsigned i = GFX10_3; i <= GFX11; i++) {
+      //>> v1: %a:v[0],  v1: %b:v[1],  v1: %c:v[2] = p_startpgm
+      if (!setup_cs("v1 v1 v1", (amd_gfx_level)i))
+         continue;
+
+      Temp a = inputs[0];
+      Temp b = inputs[1];
+      Temp c = inputs[2];
+
+      //! v1: %res0:v[1] = v_dot2_f32_f16 1.0.xx, %a:v[0], %b:v[1]
+      //! p_unit_test 0, %res0:v[1]
+      Builder::Result dot =
+         bld.vop3p(aco_opcode::v_dot2_f32_f16, bld.def(v1), Operand::c16(0x3c00), a, b, 0x0, 0x6);
+      writeout(0, dot);
+
+      //! v1: %res1:v[2] = v_dot2c_f32_f16 1.0, %a:v[0], %c:v[2]
+      //! p_unit_test 1, %res1:v[2]
+      dot =
+         bld.vop3p(aco_opcode::v_dot2_f32_f16, bld.def(v1), Operand::c16(0x3c00), a, c, 0x0, 0x7);
+      writeout(1, dot);
+
+      //! p_unit_test 2, %a:v[0]
+      writeout(2, a);
+
+      finish_ra_test(ra_test_policy());
+   }
+END_TEST

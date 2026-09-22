@@ -128,6 +128,15 @@ VkResult getAndroidHardwareBufferPropertiesANDROID(
                 ahbFormatProps->format = VK_FORMAT_S8_UINT;
                 ahbFormatProps->externalFormat = DRM_FORMAT_S8_UINT;
                 break;
+#if __ANDROID_API__ >= 30
+            case AHARDWAREBUFFER_FORMAT_YCbCr_P010:
+#endif
+#if __ANDROID_API__ >= 35
+            case AHARDWAREBUFFER_FORMAT_YCbCr_P210:
+#endif
+                ahbFormatProps->format = VK_FORMAT_UNDEFINED;
+                ahbFormatProps->externalFormat = DRM_FORMAT_INVALID;
+                break;
             default:
                 ahbFormatProps->format = VK_FORMAT_UNDEFINED;
                 ahbFormatProps->externalFormat = DRM_FORMAT_INVALID;
@@ -206,6 +215,10 @@ VkResult getAndroidHardwareBufferPropertiesANDROID(
                         // P010 is a Y-plane followed by a interleaved UV-plane and is
                         // VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16 on the host.
                         break;
+                    case DRM_FORMAT_P210:
+                        // P210 is a Y-plane followed by a interleaved UV-plane and is
+                        // VK_FORMAT_G10X6_B10X6R10X6_2PLANE_422_UNORM_3PACK16 on the host.
+                        break;
                     case DRM_FORMAT_YUV420:
                         // YUV420 is a Y-plane, then a U-plane, and then a V-plane and is
                         // VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM on the host.
@@ -235,7 +248,7 @@ VkResult getAndroidHardwareBufferPropertiesANDROID(
             // transfer, and range. Replace those enums with their corresponding composite enums:
             switch (dataspace) {
                 case GFXSTREAM_AHB_DATASPACE_UNKNOWN: {
-                    dataspace = GFXSTREAM_AHB_DATASPACE_V0_JFIF;
+                    dataspace = GFXSTREAM_AHB_DATASPACE_V0_SRGB;
                     break;
                 }
                 case GFXSTREAM_AHB_DATASPACE_BT601_525: {
@@ -283,8 +296,8 @@ VkResult getAndroidHardwareBufferPropertiesANDROID(
                     break;
                 }
                 default: {
-                    mesa_logw("Unhandled AHB dataspace model: %d. Assuming YCBCR_601", model);
-                    ahbFormatProps->suggestedYcbcrModel = VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_601;
+                    mesa_logw("Unhandled AHB dataspace model: %d. Assuming YCBCR_709", model);
+                    ahbFormatProps->suggestedYcbcrModel = VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709;
                     break;
                 }
             }

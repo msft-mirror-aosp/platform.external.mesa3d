@@ -72,7 +72,7 @@ nu_handle_init(struct nu_handle *h, nir_src *src)
       if (deref->deref_type == nir_deref_type_var)
          return false;
 
-      nir_deref_instr *parent = nir_deref_instr_parent(deref);
+      ASSERTED nir_deref_instr *parent = nir_deref_instr_parent(deref);
       assert(parent->deref_type == nir_deref_type_var);
 
       assert(deref->deref_type == nir_deref_type_array);
@@ -139,7 +139,7 @@ get_first_use(nir_def *def, void *state)
 {
    uint32_t *last_first_use = state;
    nir_foreach_use(use, def)
-      *last_first_use = MIN2(*last_first_use, nir_src_parent_instr(use)->index);
+      *last_first_use = MIN2(*last_first_use, nir_src_use_instr(use)->index);
 
    return true;
 }
@@ -149,7 +149,7 @@ add_non_uniform_instr(struct nu_state *state, struct nu_handle *handles,
                       nir_src **srcs, uint32_t handle_count, bool group,
                       enum nir_lower_non_uniform_access_type access_type)
 {
-   nir_instr *instr = nir_src_parent_instr(srcs[0]);
+   nir_instr *instr = nir_src_use_instr(srcs[0]);
 
    struct nu_access_group_state *access_group = &state->access_groups[ffs(access_type) - 1];
 
@@ -205,10 +205,23 @@ add_non_uniform_instr(struct nu_state *state, struct nu_handle *handles,
 }
 
 static bool
+is_offset_non_uniform(nir_tex_instr *tex)
+{
+   int idx = nir_tex_instr_src_index(tex, nir_tex_src_offset);
+   return idx >= 0 && nir_src_is_divergent(&tex->src[idx].src);
+}
+
+static bool
 lower_non_uniform_tex_access(struct nu_state *state, nir_tex_instr *tex,
                              const nir_lower_non_uniform_access_options *opts)
 {
    enum nir_lower_non_uniform_access_type base_access_type;
+
+   bool offset_non_uniform = false;
+   if (opts->types & nir_lower_non_uniform_texture_offset_access) {
+      int idx = nir_tex_instr_src_index(tex, nir_tex_src_offset);
+      offset_non_uniform = idx >= 0 && nir_src_is_divergent(&tex->src[idx].src);
+   }
 
    switch (tex->op) {
    case nir_texop_txs:
@@ -230,7 +243,7 @@ lower_non_uniform_tex_access(struct nu_state *state, nir_tex_instr *tex,
    default:
       if (!(tex->texture_non_uniform && (opts->types & nir_lower_non_uniform_texture_access)) &&
           !(tex->sampler_non_uniform && (opts->types & nir_lower_non_uniform_texture_access)) &&
-          !(tex->offset_non_uniform  && (opts->types & nir_lower_non_uniform_texture_offset_access)))
+          !offset_non_uniform)
          return false;
       base_access_type = nir_lower_non_uniform_texture_access;
       break;
@@ -269,9 +282,7 @@ lower_non_uniform_tex_access(struct nu_state *state, nir_tex_instr *tex,
          break;
 
       case nir_tex_src_offset:
-         if (!tex->offset_non_uniform)
-            continue;
-         if (!(opts->types & nir_lower_non_uniform_texture_offset_access))
+         if (!offset_non_uniform)
             continue;
          if (opts->tex_src_callback && !opts->tex_src_callback(tex, i, opts->callback_data))
             continue;
@@ -291,13 +302,11 @@ lower_non_uniform_tex_access(struct nu_state *state, nir_tex_instr *tex,
       /* nu_handle_init() returned false because the handles are uniform. */
       tex->texture_non_uniform = false;
       tex->sampler_non_uniform = false;
-      tex->offset_non_uniform = false;
       return false;
    }
 
    tex->texture_non_uniform = false;
    tex->sampler_non_uniform = false;
-   tex->offset_non_uniform = false;
 
    add_non_uniform_instr(state, handles, srcs, num_handles, true,
                          base_access_type);
@@ -353,6 +362,8 @@ nir_lower_non_uniform_access_impl(nir_function_impl *impl,
    };
 
    nir_metadata_require(impl, nir_metadata_instr_index | nir_metadata_block_index);
+   if (options->types & nir_lower_non_uniform_texture_offset_access)
+      nir_metadata_require(impl, nir_metadata_divergence);
 
    nir_foreach_block_safe(block, impl) {
       nir_foreach_instr_safe(instr, block) {
@@ -490,7 +501,7 @@ nir_lower_non_uniform_access_impl(nir_function_impl *impl,
       struct nu_handle_data data = *(struct nu_handle_data *)entry->data;
 
       nir_src *first_src = util_dynarray_top_ptr(&data.srcs, struct nu_handle_src)->srcs[0];
-      b.cursor = nir_after_instr(nir_src_parent_instr(first_src));
+      b.cursor = nir_after_instr(nir_src_use_instr(first_src));
 
       nir_push_loop(&b);
 
@@ -514,7 +525,7 @@ nir_lower_non_uniform_access_impl(nir_function_impl *impl,
          for (uint32_t i = 0; i < key->handle_count; i++)
             nu_handle_rewrite(&b, &data.handles[i], src->srcs[i]);
 
-         nir_instr *instr = nir_src_parent_instr(src->srcs[0]);
+         nir_instr *instr = nir_src_use_instr(src->srcs[0]);
          nir_instr_remove(instr);
          nir_builder_instr_insert(&b, instr);
       }

@@ -15,6 +15,31 @@ package {
 }
 
 genrule {
+    name: "draw_nir_lower_opcodes.c",
+    out: [
+        "draw_nir_lower_opcodes.c",
+    ],
+    tools: [
+        "draw_nir_lower_opcodes_py_binary",
+    ],
+    cmd: "$(location draw_nir_lower_opcodes_py_binary) -p " +
+        "$(genDir)/src/compiler/nir/ > $(location draw_nir_lower_opcodes.c)",
+}
+
+genrule {
+    name: "lp_bld_nir_no_integer_algebraic.c",
+    out: [
+        "lp_bld_nir_no_integer_algebraic.c",
+    ],
+    tools: [
+        "lp_bld_nir_no_integer_algebraic_py_binary",
+    ],
+    cmd: "$(location lp_bld_nir_no_integer_algebraic_py_binary) -p " +
+        "$(genDir)/src/compiler/nir/ > $(location " +
+        "lp_bld_nir_no_integer_algebraic.c)",
+}
+
+genrule {
     name: "tr_util.ch_headers",
     out: [
         "src/gallium/auxiliary/tr_util.h",
@@ -76,8 +101,8 @@ genrule {
     tools: [
         "u_tracepoints_py_binary",
     ],
-    cmd: "$(location u_tracepoints_py_binary) -p /src/util/perf/ -C $(location " +
-        "u_tracepoints.c)",
+    cmd: "$(location u_tracepoints_py_binary) -p $(genDir)/src/util/perf/ -C " +
+        "$(location u_tracepoints.c)",
 }
 
 genrule {
@@ -93,8 +118,8 @@ genrule {
         "src/gallium",
         "src/gallium/auxiliary",
     ],
-    cmd: "$(location u_tracepoints_py_binary) -p /src/util/perf/ -H $(location " +
-        "src/gallium/auxiliary/u_tracepoints.h)",
+    cmd: "$(location u_tracepoints_py_binary) -p $(genDir)/src/util/perf/ -H " +
+        "$(location src/gallium/auxiliary/u_tracepoints.h)",
 }
 
 genrule {
@@ -262,13 +287,8 @@ cc_library_static {
         "u_format_gen.h",
         "u_tracepoints.h",
     ],
-    generated_sources: [
-        "tr_util.ch_impl",
-        "u_indices_gen.c",
-        "u_tracepoints.c",
-        "u_unfilled_gen.c",
-    ],
     srcs: [
+        ":draw_nir_lower_opcodes.c",
         ":files_libgallium",
         ":files_libgallium_1",
         ":files_libgallium_10",
@@ -285,6 +305,11 @@ cc_library_static {
         ":files_libgallium_7",
         ":files_libgallium_8",
         ":files_libgallium_9",
+        ":lp_bld_nir_no_integer_algebraic.c",
+        ":tr_util.ch_impl",
+        ":u_indices_gen.c",
+        ":u_tracepoints.c",
+        ":u_unfilled_gen.c",
     ],
     static_libs: [
         "blake3",
@@ -312,6 +337,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -393,6 +419,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -463,6 +490,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -535,6 +563,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

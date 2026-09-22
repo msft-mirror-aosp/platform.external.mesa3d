@@ -22,8 +22,6 @@
  */
 #if MFT_CODEC_H265ENC
 #include "hmft_entrypoints.h"
-#include "mfbufferhelp.h"
-#include "mfpipeinterop.h"
 #include "reference_frames_tracker_hevc.h"
 #include "wpptrace.h"
 
@@ -32,13 +30,47 @@
 extern DWORD
 CalculateQualityFromQP( DWORD QP );
 
+// utility to convert from pipe_h2645_enc_picture_type to string description
+static const char *
+ConvertPipeH2645FrameTypeToString( pipe_h2645_enc_picture_type picType )
+{
+   switch( picType )
+   {
+      case PIPE_H2645_ENC_PICTURE_TYPE_P:
+      {
+         return "H265_P_FRAME";
+      }
+      break;
+      case PIPE_H2645_ENC_PICTURE_TYPE_B:
+      {
+         return "H265_B_FRAME";
+      }
+      break;
+      case PIPE_H2645_ENC_PICTURE_TYPE_I:
+      {
+         return "H265_I_FRAME";
+      }
+      break;
+      case PIPE_H2645_ENC_PICTURE_TYPE_IDR:
+      {
+         return "H265_IDR_FRAME";
+      }
+      break;
+      default:
+      {
+         UNREACHABLE( "Unsupported pipe_h2645_enc_picture_type" );
+      }
+      break;
+   }
+}
+
 // utility function to compute the cropping rectangle given texture and output dimensions
 static void
 ComputeCroppingRect( const UINT32 textureWidth,
                      const UINT32 textureHeight,
                      const UINT uiOutputWidth,
                      const UINT uiOutputHeight,
-                     const enum pipe_video_profile outputPipeProfile,
+                     const eAVEncH265VProfile hevcProfile,
                      BOOL &bFrameCroppingFlag,
                      UINT32 &uiFrameCropRightOffset,
                      UINT32 &uiFrameCropBottomOffset )
@@ -48,7 +80,7 @@ ComputeCroppingRect( const UINT32 textureWidth,
 
    if( iCropRight || iCropBottom )
    {
-      UINT32 chromaFormatIdc = GetChromaFormatIdc( ConvertProfileToFormat( outputPipeProfile ) );
+      UINT32 chromaFormatIdc = GetChromaFormatIdc( ConvertAVEncVProfileToPipeFormat( hevcProfile ) );
       UINT32 cropUnitX = 1;
       UINT32 cropUnitY = 1;
       switch( chromaFormatIdc )
@@ -115,7 +147,7 @@ CDX12EncHMFT::UpdateH265EncPictureDesc( pipe_h265_enc_picture_desc *pPicInfo,
    pPicInfo->seq.ip_period = ip_period;
    pPicInfo->seq.pic_width_in_luma_samples = pic_width_in_luma_samples;
    pPicInfo->seq.pic_height_in_luma_samples = pic_height_in_luma_samples;
-   pPicInfo->seq.chroma_format_idc = GetChromaFormatIdc( ConvertProfileToFormat( m_outputPipeProfile ) );
+   pPicInfo->seq.chroma_format_idc = GetChromaFormatIdc( ConvertAVEncVProfileToPipeFormat( m_uiProfile ) );
 
    pPicInfo->seq.log2_max_pic_order_cnt_lsb_minus4 = log2_max_pic_order_cnt_lsb_minus4;
    pPicInfo->seq.log2_min_luma_coding_block_size_minus3 =
@@ -153,7 +185,8 @@ CDX12EncHMFT::UpdateH265EncPictureDesc( pipe_h265_enc_picture_desc *pPicInfo,
    pPicInfo->seq.sar_height = m_VUIInfo.stSARInfo.usHeight;
 
    pPicInfo->seq.num_units_in_tick = m_FrameRate.Denominator;
-   pPicInfo->seq.time_scale = m_FrameRate.Numerator; // Table E.6 seq.vui_flags.frame_field_info_present_flag is 0, deltaToDivisor should be 1.
+   pPicInfo->seq.time_scale =
+      m_FrameRate.Numerator;   // Table E.6 seq.vui_flags.frame_field_info_present_flag is 0, deltaToDivisor should be 1.
 
    pPicInfo->seq.video_format = m_VUIInfo.stVidSigType.eVideoFormat;
    pPicInfo->seq.colour_primaries = m_VUIInfo.stVidSigType.eColorPrimary;
@@ -358,12 +391,17 @@ CDX12EncHMFT::PrepareForEncodeHelper( LPDX12EncodeContext pDX12EncodeContext,
          pPicInfo->ref_list0[i] = cur_frame_desc->l0_reference_list[i];
    }
 
+   if( !m_EncoderCapabilities.m_bHWSupportsAppControlledSlicePartitioning && m_EncoderCapabilities.m_bHWSupportSliceModeAuto )
+   {
+      pPicInfo->slice_mode = PIPE_VIDEO_SLICE_MODE_AUTO;
+   }
+
    if( m_uiDirtyRectEnabled )
    {
       if( dirtyRectFrameNumSet )
       {
          DIRTYRECT_INFO *pDirtyRectInfo = (DIRTYRECT_INFO *) m_pDirtyRectBlob.data();
-         UINT uiNumDirtyRects = min( pDirtyRectInfo->NumDirtyRects, (UINT) PIPE_ENC_DIRTY_RECTS_NUM_MAX );
+         UINT uiNumDirtyRects = std::min( pDirtyRectInfo->NumDirtyRects, (UINT) PIPE_ENC_DIRTY_RECTS_NUM_MAX );
 
          if( uiNumDirtyRects > 0 )
          {
@@ -760,7 +798,7 @@ CDX12EncHMFT::GetCodecPrivateData( LPBYTE pSPSPPSData, DWORD dwSPSPPSDataLen, LP
    unsigned buf_size = dwSPSPPSDataLen;
    const uint32_t intra_period = m_uiGopSize;
    const uint32_t ip_period = m_uiBFrameCount + 1;
-   const uint8_t log2_max_pic_order_cnt_lsb_minus4 = 4;
+   const uint8_t log2_max_pic_order_cnt_lsb_minus4 = HEVC_LOG2_MAX_PIC_ORDER_CNT_LSB_MINUS4;
 
    pipe_h265_enc_picture_desc h265_pic_desc = {};
 
@@ -772,7 +810,7 @@ CDX12EncHMFT::GetCodecPrivateData( LPBYTE pSPSPPSData, DWORD dwSPSPPSDataLen, LP
                         alignedHeight,
                         m_uiOutputWidth,
                         m_uiOutputHeight,
-                        m_outputPipeProfile,
+                        m_uiProfile,
                         m_bFrameCroppingFlag,
                         m_uiFrameCropRightOffset,
                         m_uiFrameCropBottomOffset );
@@ -986,7 +1024,8 @@ CDX12EncHMFT::GetMaxReferences( unsigned int width, unsigned int height )
    UINT32 uiMaxReferences = m_EncoderCapabilities.m_uiMaxHWSupportedDPBCapacity;
    if( width != 0 && height != 0 )
    {
-      const int minCbSizeY = 1 << ( m_EncoderCapabilities.m_HWSupportH265BlockSizes.bits.log2_min_luma_coding_block_size_minus3 + 3 );
+      const int minCbSizeY =
+         1 << ( m_EncoderCapabilities.m_HWSupportH265BlockSizes.bits.log2_min_luma_coding_block_size_minus3 + 3 );
       int maxDPBSize = GetMaxDPBSize( width, height, m_uiLevel, minCbSizeY );
       uiMaxReferences = std::min( (int) m_EncoderCapabilities.m_uiMaxHWSupportedDPBCapacity, maxDPBSize );
    }
@@ -1035,7 +1074,7 @@ CDX12EncHMFT::CreateGOPTracker( uint32_t textureWidth, uint32_t textureHeight )
          m_pPipeVideoCodec,
          static_cast<unsigned>( std::ceil( textureWidth / ( 1 << m_pPipeVideoCodec->two_pass.pow2_downscale_factor ) ) ),
          static_cast<unsigned>( std::ceil( textureHeight / ( 1 << m_pPipeVideoCodec->two_pass.pow2_downscale_factor ) ) ),
-         ConvertProfileToFormat( m_pPipeVideoCodec->profile ),
+         ConvertAVEncVProfileToPipeFormat( m_uiProfile ),
          m_pPipeVideoCodec->max_references + 1 /*curr pic*/ +
             ( m_bLowLatency ? 0 : MFT_INPUT_QUEUE_DEPTH ) /*MFT process input queue depth for delayed in flight recon pic release*/,
          hr );
@@ -1044,6 +1083,7 @@ CDX12EncHMFT::CreateGOPTracker( uint32_t textureWidth, uint32_t textureHeight )
 
    m_pGOPTracker = new reference_frames_tracker_hevc( this,
                                                       m_pPipeVideoCodec,
+                                                      m_uiProfile,
                                                       textureWidth,
                                                       textureHeight,
                                                       m_uiGopSize,

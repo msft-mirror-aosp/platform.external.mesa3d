@@ -10,6 +10,7 @@ load("@rules_python//python:defs.bzl", "py_binary")
 cc_binary(
     name = "vulkan_lvp",
     srcs = [
+        "include/c99_compat.h",
         "include/no_extern_c.h",
         "src/compiler/shader_enums.h",
         "src/gallium/auxiliary/driver_ddebug/dd_public.h",
@@ -29,6 +30,8 @@ cc_binary(
         "src/gallium/include/pipe/p_screen.h",
         "src/gallium/include/pipe/p_video_enums.h",
         "src/gallium/targets/lavapipe/lavapipe_target.c",
+        "src/util/bitscan.h",
+        "src/util/bitset.h",
         "src/util/blake3/blake3.h",
         "src/util/blend.h",
         "src/util/compiler.h",
@@ -47,6 +50,7 @@ cc_binary(
         "src/util/u_atomic.h",
         "src/util/u_debug.h",
         "src/util/u_endian.h",
+        "src/util/u_math.h",
         "src/util/xmlconfig.h",
     ],
     additional_linker_inputs = [
@@ -401,6 +405,7 @@ cc_library(
         "src/compiler/glsl_types.h",
         "src/compiler/shader_enums.h",
         "src/util/bitscan.h",
+        "src/util/bitset.h",
         "src/util/blob.h",
         "src/util/compiler.h",
         "src/util/detect.h",
@@ -601,9 +606,11 @@ cc_library(
         "src/gallium/auxiliary/draw/draw_vs_exec.c",
         "src/gallium/auxiliary/draw/draw_vs_llvm.c",
         "src/gallium/auxiliary/draw/draw_vs_variant.c",
+        "src/gallium/auxiliary/draw_nir_lower_opcodes.c",
         "src/gallium/auxiliary/driver_ddebug/dd_context.c",
         "src/gallium/auxiliary/driver_ddebug/dd_draw.c",
         "src/gallium/auxiliary/driver_ddebug/dd_screen.c",
+        "src/gallium/auxiliary/driver_ddebug/dd_util.c",
         "src/gallium/auxiliary/driver_noop/noop_pipe.c",
         "src/gallium/auxiliary/driver_noop/noop_state.c",
         "src/gallium/auxiliary/driver_trace/tr_context.c",
@@ -640,6 +647,7 @@ cc_library(
         "src/gallium/auxiliary/gallivm/lp_bld_misc.cpp",
         "src/gallium/auxiliary/gallivm/lp_bld_nir.c",
         "src/gallium/auxiliary/gallivm/lp_bld_nir_aos.c",
+        "src/gallium/auxiliary/gallivm/lp_bld_nir_lower.c",
         "src/gallium/auxiliary/gallivm/lp_bld_nir_soa.c",
         "src/gallium/auxiliary/gallivm/lp_bld_pack.c",
         "src/gallium/auxiliary/gallivm/lp_bld_passmgr.c",
@@ -665,6 +673,7 @@ cc_library(
         "src/gallium/auxiliary/hud/hud_nic.c",
         "src/gallium/auxiliary/hud/hud_sensors_temp.c",
         "src/gallium/auxiliary/indices/u_primconvert.c",
+        "src/gallium/auxiliary/lp_bld_nir_no_integer_algebraic.c",
         "src/gallium/auxiliary/nir/nir_draw_helpers.c",
         "src/gallium/auxiliary/nir/nir_to_tgsi.c",
         "src/gallium/auxiliary/nir/nir_to_tgsi_info.c",
@@ -689,7 +698,6 @@ cc_library(
         "src/gallium/auxiliary/tgsi/tgsi_from_mesa.c",
         "src/gallium/auxiliary/tgsi/tgsi_info.c",
         "src/gallium/auxiliary/tgsi/tgsi_iterate.c",
-        "src/gallium/auxiliary/tgsi/tgsi_lowering.c",
         "src/gallium/auxiliary/tgsi/tgsi_parse.c",
         "src/gallium/auxiliary/tgsi/tgsi_point_sprite.c",
         "src/gallium/auxiliary/tgsi/tgsi_sanity.c",
@@ -765,6 +773,7 @@ cc_library(
         "include/GLES3/gl3ext.h",
         "include/GLES3/gl3platform.h",
         "include/KHR/khrplatform.h",
+        "include/c99_alloca.h",
         "include/c99_compat.h",
         "include/no_extern_c.h",
         "src/c11/threads.h",
@@ -804,6 +813,7 @@ cc_library(
         "src/gallium/auxiliary/draw/draw_mesh.h",
         "src/gallium/auxiliary/draw/draw_mesh_prim.h",
         "src/gallium/auxiliary/draw/draw_mesh_prim_tmp.h",
+        "src/gallium/auxiliary/draw/draw_nir.h",
         "src/gallium/auxiliary/draw/draw_pipe.h",
         "src/gallium/auxiliary/draw/draw_prim_assembler.h",
         "src/gallium/auxiliary/draw/draw_prim_assembler_tmp.h",
@@ -893,7 +903,6 @@ cc_library(
         "src/gallium/auxiliary/tgsi/tgsi_info.h",
         "src/gallium/auxiliary/tgsi/tgsi_info_opcodes.h",
         "src/gallium/auxiliary/tgsi/tgsi_iterate.h",
-        "src/gallium/auxiliary/tgsi/tgsi_lowering.h",
         "src/gallium/auxiliary/tgsi/tgsi_opcode_tmp.h",
         "src/gallium/auxiliary/tgsi/tgsi_parse.h",
         "src/gallium/auxiliary/tgsi/tgsi_point_sprite.h",
@@ -1038,6 +1047,7 @@ cc_library(
         "src/util/u_pointer.h",
         "src/util/u_process.h",
         "src/util/u_queue.h",
+        "src/util/u_shader_variant_cache.h",
         "src/util/u_string.h",
         "src/util/u_thread.h",
         "src/util/u_vector.h",
@@ -1207,6 +1217,7 @@ cc_library(
         "src/gallium/frontends/lavapipe/lvp_descriptor_set.c",
         "src/gallium/frontends/lavapipe/lvp_device.c",
         "src/gallium/frontends/lavapipe/lvp_device_generated_commands.c",
+        "src/gallium/frontends/lavapipe/lvp_drirc.c",
         "src/gallium/frontends/lavapipe/lvp_entrypoints.c",
         "src/gallium/frontends/lavapipe/lvp_execute.c",
         "src/gallium/frontends/lavapipe/lvp_formats.c",
@@ -1219,9 +1230,11 @@ cc_library(
         "src/gallium/frontends/lavapipe/lvp_util.c",
         "src/gallium/frontends/lavapipe/lvp_wsi.c",
         "src/gallium/frontends/lavapipe/nir/lvp_nir_lower_cooperative_matrix.c",
+        "src/gallium/frontends/lavapipe/nir/lvp_nir_lower_descriptor_heaps.c",
         "src/gallium/frontends/lavapipe/nir/lvp_nir_lower_exec_graph.c",
         "src/gallium/frontends/lavapipe/nir/lvp_nir_lower_input_attachments.c",
         "src/gallium/frontends/lavapipe/nir/lvp_nir_lower_pipeline_layout.c",
+        "src/gallium/frontends/lavapipe/nir/lvp_nir_lower_push_constants.c",
         "src/gallium/frontends/lavapipe/nir/lvp_nir_lower_ray_queries.c",
         "src/gallium/frontends/lavapipe/nir/lvp_nir_lower_sparse_residency.c",
         "src/gallium/frontends/lavapipe/nir/lvp_nir_opt_robustness.c",
@@ -1282,15 +1295,23 @@ cc_library(
         "src/gallium/auxiliary/cso_cache/cso_context.h",
         "src/gallium/auxiliary/cso_cache/cso_hash.h",
         "src/gallium/auxiliary/draw/draw_context.h",
+        "src/gallium/auxiliary/gallivm/lp_bld.h",
         "src/gallium/auxiliary/gallivm/lp_bld_debug.h",
+        "src/gallium/auxiliary/gallivm/lp_bld_ir_common.h",
+        "src/gallium/auxiliary/gallivm/lp_bld_jit_sample.h",
         "src/gallium/auxiliary/gallivm/lp_bld_jit_types.h",
         "src/gallium/auxiliary/gallivm/lp_bld_limits.h",
         "src/gallium/auxiliary/gallivm/lp_bld_sample.h",
         "src/gallium/auxiliary/gallivm/lp_bld_struct.h",
         "src/gallium/auxiliary/gallivm/lp_bld_swizzle.h",
+        "src/gallium/auxiliary/gallivm/lp_bld_tgsi.h",
+        "src/gallium/auxiliary/gallivm/lp_bld_tgsi_action.h",
         "src/gallium/auxiliary/gallivm/lp_bld_type.h",
         "src/gallium/auxiliary/pipe-loader/pipe_loader.h",
+        "src/gallium/auxiliary/tgsi/tgsi_exec.h",
         "src/gallium/auxiliary/tgsi/tgsi_from_mesa.h",
+        "src/gallium/auxiliary/tgsi/tgsi_info.h",
+        "src/gallium/auxiliary/tgsi/tgsi_scan.h",
         "src/gallium/auxiliary/util/u_debug_describe.h",
         "src/gallium/auxiliary/util/u_debug_refcnt.h",
         "src/gallium/auxiliary/util/u_inlines.h",
@@ -1299,11 +1320,16 @@ cc_library(
         "src/gallium/auxiliary/util/u_sampler.h",
         "src/gallium/auxiliary/util/u_surface.h",
         "src/gallium/auxiliary/util/u_upload_mgr.h",
+        "src/gallium/drivers/llvmpipe/lp_bld_interp.h",
         "src/gallium/drivers/llvmpipe/lp_jit.h",
         "src/gallium/drivers/llvmpipe/lp_limits.h",
+        "src/gallium/drivers/llvmpipe/lp_state.h",
+        "src/gallium/drivers/llvmpipe/lp_state_fs.h",
         "src/gallium/drivers/llvmpipe/lp_texture.h",
+        "src/gallium/drivers/llvmpipe/lp_texture_handle.h",
         "src/gallium/frontends/lavapipe/lvp_acceleration_structure.h",
         "src/gallium/frontends/lavapipe/lvp_conv.h",
+        "src/gallium/frontends/lavapipe/lvp_drirc.h",
         "src/gallium/frontends/lavapipe/lvp_entrypoints.h",
         "src/gallium/frontends/lavapipe/lvp_private.h",
         "src/gallium/frontends/lavapipe/lvp_wsi.h",
@@ -1333,6 +1359,7 @@ cc_library(
         "src/util/detect_cc.h",
         "src/util/detect_os.h",
         "src/util/disk_cache.h",
+        "src/util/driconf.h",
         "src/util/enum_operators.h",
         "src/util/format/u_format.h",
         "src/util/format/u_format_gen.h",
@@ -1374,15 +1401,11 @@ cc_library(
         "src/util/u_pack_color.h",
         "src/util/u_printf.h",
         "src/util/u_queue.h",
+        "src/util/u_shader_variant_cache.h",
         "src/util/u_sync_provider.h",
         "src/util/u_thread.h",
         "src/util/xmlconfig.h",
-        "src/vulkan/runtime/bvh/vk_bvh.h",
-        "src/vulkan/runtime/radix_sort/common/vk/barrier.h",
-        "src/vulkan/runtime/radix_sort/radix_sort_u64.h",
-        "src/vulkan/runtime/radix_sort/radix_sort_vk.h",
-        "src/vulkan/runtime/radix_sort/shaders/push.h",
-        "src/vulkan/runtime/radix_sort/target.h",
+        "src/vulkan/runtime/bvh/vk_bvh_defines.h",
         "src/vulkan/runtime/rmv/vk_rmv_common.h",
         "src/vulkan/runtime/rmv/vk_rmv_tokens.h",
         "src/vulkan/runtime/vk_acceleration_structure.h",
@@ -1410,6 +1433,7 @@ cc_library(
         "src/vulkan/runtime/vk_meta.h",
         "src/vulkan/runtime/vk_meta_object_list.h",
         "src/vulkan/runtime/vk_nir_convert_ycbcr.h",
+        "src/vulkan/runtime/vk_nir_lower_descriptor_heaps.h",
         "src/vulkan/runtime/vk_object.h",
         "src/vulkan/runtime/vk_physical_device.h",
         "src/vulkan/runtime/vk_physical_device_features.h",
@@ -1586,6 +1610,7 @@ cc_library(
     deps = [
         ":libblake3",
         ":libcompiler",
+        ":libloader",
         ":libloader_wayland_helper",
         ":libloader_x11",
         ":libmesa_util",
@@ -1865,6 +1890,7 @@ cc_library(
         "src/util/u_overflow.h",
         "src/util/u_pack_color.h",
         "src/util/u_pointer.h",
+        "src/util/u_shader_variant_cache.h",
         "src/util/u_string.h",
         "src/util/u_thread.h",
         "src/util/vma.h",
@@ -2031,6 +2057,7 @@ cc_library(
         "include/GL/gl.h",
         "include/GL/glext.h",
         "include/KHR/khrplatform.h",
+        "include/c99_compat.h",
         "include/drm-uapi/drm.h",
         "include/drm-uapi/drm_fourcc.h",
         "include/drm-uapi/drm_mode.h",
@@ -2048,7 +2075,10 @@ cc_library(
         "src/git_sha1.h",
         "src/loader/loader.h",
         "src/loader/loader_dri_helper.h",
+        "src/loader/loader_dri_helper_screen.h",
         "src/loader/pci_id_driver_map.h",
+        "src/util/bitscan.h",
+        "src/util/bitset.h",
         "src/util/blake3/blake3.h",
         "src/util/detect.h",
         "src/util/detect_arch.h",
@@ -2067,6 +2097,7 @@ cc_library(
         "src/util/u_atomic.h",
         "src/util/u_debug.h",
         "src/util/u_endian.h",
+        "src/util/u_math.h",
         "src/util/xmlconfig.h",
     ],
     copts = [
@@ -2628,6 +2659,7 @@ cc_library(
         "src/util/u_qsort.cpp",
         "src/util/u_queue.c",
         "src/util/u_range_remap.c",
+        "src/util/u_shader_variant_cache.c",
         "src/util/u_string.c",
         "src/util/u_sync_provider.c",
         "src/util/u_thread.c",
@@ -2706,6 +2738,7 @@ cc_library(
         "src/util/hex.h",
         "src/util/list.h",
         "src/util/log.h",
+        "src/util/lut.h",
         "src/util/macros.h",
         "src/util/memstream.h",
         "src/util/mesa-blake3.h",
@@ -2772,6 +2805,7 @@ cc_library(
         "src/util/u_qsort.h",
         "src/util/u_queue.h",
         "src/util/u_range_remap.h",
+        "src/util/u_shader_variant_cache.h",
         "src/util/u_string.h",
         "src/util/u_sync_provider.h",
         "src/util/u_thread.h",
@@ -3224,6 +3258,7 @@ cc_library(
         "src/compiler/nir/nir_clone.c",
         "src/compiler/nir/nir_constant_expressions.c",
         "src/compiler/nir/nir_control_flow.c",
+        "src/compiler/nir/nir_convert_address_format.c",
         "src/compiler/nir/nir_deref.c",
         "src/compiler/nir/nir_divergence_analysis.c",
         "src/compiler/nir/nir_dominance.c",
@@ -3248,6 +3283,7 @@ cc_library(
         "src/compiler/nir/nir_linking_helpers.c",
         "src/compiler/nir/nir_liveness.c",
         "src/compiler/nir/nir_loop_analyze.c",
+        "src/compiler/nir/nir_lower_abort.c",
         "src/compiler/nir/nir_lower_alpha.c",
         "src/compiler/nir/nir_lower_alu.c",
         "src/compiler/nir/nir_lower_alu_width.c",
@@ -3355,6 +3391,7 @@ cc_library(
         "src/compiler/nir/nir_lower_wpos_center.c",
         "src/compiler/nir/nir_lower_wpos_ytransform.c",
         "src/compiler/nir/nir_lower_wrmasks.c",
+        "src/compiler/nir/nir_lower_xfb_to_stores.c",
         "src/compiler/nir/nir_metadata.c",
         "src/compiler/nir/nir_mod_analysis.c",
         "src/compiler/nir/nir_move_output_stores_to_end.c",
@@ -3409,6 +3446,8 @@ cc_library(
         "src/compiler/nir/nir_opt_reassociate_bfi.c",
         "src/compiler/nir/nir_opt_rematerialize_compares.c",
         "src/compiler/nir/nir_opt_remove_phis.c",
+        "src/compiler/nir/nir_opt_scalar_array_vars_to_vec.c",
+        "src/compiler/nir/nir_opt_shared_vars_to_subgroup.c",
         "src/compiler/nir/nir_opt_shrink_stores.c",
         "src/compiler/nir/nir_opt_shrink_vectors.c",
         "src/compiler/nir/nir_opt_sink.c",
@@ -3753,6 +3792,7 @@ cc_library(
         "src/gallium/winsys/sw/wrapper/wrapper_sw_winsys.h",
         "src/loader/loader.h",
         "src/util/bitscan.h",
+        "src/util/bitset.h",
         "src/util/blake3/blake3.h",
         "src/util/blend.h",
         "src/util/box.h",
@@ -3966,6 +4006,7 @@ cc_library(
         "src/gallium/include/pipe/p_video_enums.h",
         "src/gallium/winsys/sw/dri/dri_sw_winsys.h",
         "src/util/bitscan.h",
+        "src/util/bitset.h",
         "src/util/blend.h",
         "src/util/box.h",
         "src/util/compiler.h",
@@ -3984,6 +4025,7 @@ cc_library(
         "src/util/os_memory_stdc.h",
         "src/util/os_misc.h",
         "src/util/os_time.h",
+        "src/util/ralloc.h",
         "src/util/u_atomic.h",
         "src/util/u_debug.h",
         "src/util/u_endian.h",
@@ -4166,6 +4208,7 @@ cc_library(
         "src/gallium/include/pipe/p_video_enums.h",
         "src/gallium/winsys/sw/kms-dri/kms_dri_sw_winsys.h",
         "src/util/bitscan.h",
+        "src/util/bitset.h",
         "src/util/blend.h",
         "src/util/box.h",
         "src/util/compiler.h",
@@ -4185,6 +4228,7 @@ cc_library(
         "src/util/os_memory_stdc.h",
         "src/util/os_misc.h",
         "src/util/os_time.h",
+        "src/util/ralloc.h",
         "src/util/simple_mtx.h",
         "src/util/u_atomic.h",
         "src/util/u_call_once.h",
@@ -4432,6 +4476,7 @@ cc_library(
         "src/util/list.h",
         "src/util/log.h",
         "src/util/macros.h",
+        "src/util/memstream.h",
         "src/util/mesa-blake3.h",
         "src/util/os_misc.h",
         "src/util/ralloc.h",
@@ -4640,6 +4685,7 @@ cc_library(
         "src/compiler/spirv/spirv.h",
         "src/compiler/spirv/spirv_info.h",
         "src/util/bitscan.h",
+        "src/util/bitset.h",
         "src/util/blob.h",
         "src/util/detect.h",
         "src/util/detect_arch.h",
@@ -4989,6 +5035,7 @@ cc_library(
         "src/util/u_math.h",
         "src/util/u_printf.h",
         "src/util/u_process.h",
+        "src/util/u_string.h",
         "src/util/u_sync_provider.h",
         "src/util/vl_bitstream.h",
         "src/util/vl_rbsp.h",
@@ -5220,10 +5267,6 @@ cc_library(
 cc_library(
     name = "libvulkan_runtime",
     srcs = [
-        "src/vulkan/runtime/radix_sort/common/util.c",
-        "src/vulkan/runtime/radix_sort/common/vk/barrier.c",
-        "src/vulkan/runtime/radix_sort/radix_sort_u64.c",
-        "src/vulkan/runtime/radix_sort/radix_sort_vk.c",
         "src/vulkan/runtime/vk_acceleration_structure.c",
         "src/vulkan/runtime/vk_meta.c",
         "src/vulkan/runtime/vk_meta_blit_resolve.c",
@@ -5335,30 +5378,15 @@ cc_library(
         "src/util/u_ycbcr.h",
         "src/vulkan/runtime/astc_spv.h",
         "src/vulkan/runtime/bvh/hploc_internal.spv.h",
+        "src/vulkan/runtime/bvh/id_prefix_sum.spv.h",
         "src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h",
         "src/vulkan/runtime/bvh/lbvh_main.spv.h",
         "src/vulkan/runtime/bvh/leaf.spv.h",
-        "src/vulkan/runtime/bvh/morton.spv.h",
+        "src/vulkan/runtime/bvh/morton_sort_32.spv.h",
+        "src/vulkan/runtime/bvh/morton_sort_64.spv.h",
+        "src/vulkan/runtime/bvh/pair_triangles.spv.h",
         "src/vulkan/runtime/bvh/ploc_internal.spv.h",
-        "src/vulkan/runtime/bvh/vk_build_interface.h",
-        "src/vulkan/runtime/bvh/vk_bvh.h",
-        "src/vulkan/runtime/radix_sort/common/macros.h",
-        "src/vulkan/runtime/radix_sort/common/util.h",
-        "src/vulkan/runtime/radix_sort/common/vk/barrier.h",
-        "src/vulkan/runtime/radix_sort/radix_sort_u64.h",
-        "src/vulkan/runtime/radix_sort/radix_sort_vk.h",
-        "src/vulkan/runtime/radix_sort/radix_sort_vk_devaddr.h",
-        "src/vulkan/runtime/radix_sort/shaders/config.h",
-        "src/vulkan/runtime/radix_sort/shaders/fill.comp.spv.h",
-        "src/vulkan/runtime/radix_sort/shaders/histogram.comp.spv.h",
-        "src/vulkan/runtime/radix_sort/shaders/init.comp.spv.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix.comp.spv.h",
-        "src/vulkan/runtime/radix_sort/shaders/push.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp.spv.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp.spv.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp.spv.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp.spv.h",
-        "src/vulkan/runtime/radix_sort/target.h",
+        "src/vulkan/runtime/bvh/vk_bvh_defines.h",
         "src/vulkan/runtime/rmv/vk_rmv_common.h",
         "src/vulkan/runtime/rmv/vk_rmv_tokens.h",
         "src/vulkan/runtime/vk_acceleration_structure.h",
@@ -5545,7 +5573,6 @@ cc_library(
         "src/util/format",
         "src/vulkan/runtime",
         "src/vulkan/runtime/bvh",
-        "src/vulkan/runtime/radix_sort/shaders",
         "src/vulkan/util",
     ],
     deps = [
@@ -5860,11 +5887,13 @@ cc_library(
         "src/loader/fifo-v1-client-protocol.h",
         "src/loader/linux-dmabuf-unstable-v1-client-protocol.h",
         "src/loader/linux-drm-syncobj-v1-client-protocol.h",
+        "src/loader/loader_dri_helper_screen.h",
         "src/loader/loader_wayland_helper.h",
         "src/loader/presentation-time-client-protocol.h",
         "src/loader/tearing-control-v1-client-protocol.h",
         "src/util/anon_file.h",
         "src/util/bitscan.h",
+        "src/util/bitset.h",
         "src/util/blake3/blake3.h",
         "src/util/cnd_monotonic.h",
         "src/util/compiler.h",
@@ -5912,6 +5941,7 @@ cc_library(
         "src/vulkan/runtime/vk_debug_report.h",
         "src/vulkan/runtime/vk_device.h",
         "src/vulkan/runtime/vk_fence.h",
+        "src/vulkan/runtime/vk_image.h",
         "src/vulkan/runtime/vk_instance.h",
         "src/vulkan/runtime/vk_log.h",
         "src/vulkan/runtime/vk_object.h",
@@ -6082,6 +6112,7 @@ cc_library(
     ],
     deps = [
         ":libblake3",
+        ":libloader",
         ":libloader_wayland_helper",
         ":libloader_x11",
         ":libmesa_util",
@@ -6107,10 +6138,13 @@ cc_library(
         "src/gallium/winsys/sw/null/null_sw_winsys.c",
     ],
     hdrs = [
+        "include/c99_compat.h",
         "include/no_extern_c.h",
         "src/gallium/include/frontend/sw_winsys.h",
         "src/gallium/include/frontend/winsys_handle.h",
         "src/gallium/winsys/sw/null/null_sw_winsys.h",
+        "src/util/bitscan.h",
+        "src/util/bitset.h",
         "src/util/detect.h",
         "src/util/detect_arch.h",
         "src/util/detect_cc.h",
@@ -6123,9 +6157,11 @@ cc_library(
         "src/util/os_memory_fd.h",
         "src/util/os_memory_stdc.h",
         "src/util/os_misc.h",
+        "src/util/ralloc.h",
         "src/util/u_atomic.h",
         "src/util/u_debug.h",
         "src/util/u_endian.h",
+        "src/util/u_math.h",
         "src/util/u_memory.h",
         "src/util/u_overflow.h",
     ],
@@ -6298,6 +6334,7 @@ cc_library(
         "src/gallium/include/pipe/p_video_enums.h",
         "src/gallium/winsys/sw/wrapper/wrapper_sw_winsys.h",
         "src/util/bitscan.h",
+        "src/util/bitset.h",
         "src/util/blend.h",
         "src/util/box.h",
         "src/util/compiler.h",
@@ -6315,6 +6352,7 @@ cc_library(
         "src/util/os_memory_stdc.h",
         "src/util/os_misc.h",
         "src/util/os_time.h",
+        "src/util/ralloc.h",
         "src/util/u_atomic.h",
         "src/util/u_debug.h",
         "src/util/u_endian.h",
@@ -6476,6 +6514,9 @@ cc_library(
         "src/util/xmlconfig.c",
     ],
     hdrs = [
+        "include/c99_compat.h",
+        "include/no_extern_c.h",
+        "src/util/bitscan.h",
         "src/util/blake3/blake3.h",
         "src/util/detect.h",
         "src/util/detect_arch.h",
@@ -6488,6 +6529,7 @@ cc_library(
         "src/util/ralloc.h",
         "src/util/strndup.h",
         "src/util/u_endian.h",
+        "src/util/u_math.h",
         "src/util/u_process.h",
         "src/util/xmlconfig.h",
     ],
@@ -6619,6 +6661,7 @@ cc_library(
     ],
     includes = [
         ".",
+        "include",
         "platform/linux-x86_64",
         "src",
         "src/util",
@@ -6682,35 +6725,19 @@ genrule(
 genrule(
     name = "generate_driconf_static_h",
     srcs = [
+        "src/gallium/frontends/lavapipe/00-lavapipe-defaults.conf",
         "src/util/00-mesa-defaults.conf",
         "src/util/driconf_static.py",
     ],
     outs = ["src/util/driconf_static.h"],
-    cmd = "$(location :00-mesa-defaults) $(location src/util/driconf_static.py) $(location src/util/driconf_static.h)",
-    cmd_bat = "$(location :00-mesa-defaults) $(location src/util/driconf_static.py) $(location src/util/driconf_static.h)",
+    cmd = "$(location :00-mesa-defaults) $(location src/util/driconf_static.py) $(location src/util/00-mesa-defaults.conf) $(location src/gallium/frontends/lavapipe/00-lavapipe-defaults.conf) $(location src/util/driconf_static.h)",
+    cmd_bat = "$(location :00-mesa-defaults) $(location src/util/driconf_static.py) $(location src/util/00-mesa-defaults.conf) $(location src/gallium/frontends/lavapipe/00-lavapipe-defaults.conf) $(location src/util/driconf_static.h)",
     tools = [":00-mesa-defaults"],
 )
 
 # Removed genrule generate_fifo-v1-client-protocol_h in rebase
 
 # Removed genrule generate_fifo-v1-protocol_c in rebase
-
-genrule(
-    name = "generate_fill_comp_spv_h",
-    srcs = [
-        "src/vulkan/runtime/radix_sort/shaders/fill.comp",
-        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
-        "src/vulkan/runtime/radix_sort/shaders/config.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
-        "src/vulkan/runtime/radix_sort/shaders/push.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
-    ],
-    outs = ["src/vulkan/runtime/radix_sort/shaders/fill.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/fill.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/fill.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/fill.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/fill.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
 
 genrule(
     name = "generate_format_srgb",
@@ -6731,94 +6758,12 @@ genrule(
 )
 
 genrule(
-    name = "generate_histogram_comp_spv_h",
-    srcs = [
-        "src/vulkan/runtime/radix_sort/shaders/histogram.comp",
-        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
-        "src/vulkan/runtime/radix_sort/shaders/config.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
-        "src/vulkan/runtime/radix_sort/shaders/push.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
-    ],
-    outs = ["src/vulkan/runtime/radix_sort/shaders/histogram.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
-
-genrule(
-    name = "generate_init_comp_spv_h",
-    srcs = [
-        "src/vulkan/runtime/radix_sort/shaders/init.comp",
-        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
-        "src/vulkan/runtime/radix_sort/shaders/config.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
-        "src/vulkan/runtime/radix_sort/shaders/push.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
-    ],
-    outs = ["src/vulkan/runtime/radix_sort/shaders/init.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/init.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/init.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/init.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/init.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
-
-genrule(
     name = "generate_ir_expression_operation_h",
     srcs = ["src/compiler/glsl/ir_expression_operation.py"],
     outs = ["src/compiler/ir_expression_operation.h"],
     cmd = "$(location :ir_expression_operation) enum > $(location src/compiler/ir_expression_operation.h)",
     cmd_bat = "$(location :ir_expression_operation) enum > $(location src/compiler/ir_expression_operation.h)",
     tools = [":ir_expression_operation"],
-)
-
-genrule(
-    name = "generate_lbvh_generate_ir_spv_h",
-    srcs = [
-        "src/vulkan/runtime/bvh/lbvh_generate_ir.comp",
-        "src/vulkan/runtime/bvh/leaf.h",
-        "src/vulkan/runtime/bvh/vk_build_helpers.h",
-        "src/vulkan/runtime/bvh/vk_build_interface.h",
-        "src/vulkan/runtime/bvh/vk_bvh.h",
-        "src/vulkan/runtime/bvh/vk_debug.h",
-    ],
-    outs = ["src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location src/vulkan/runtime/bvh/lbvh_generate_ir.comp) --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location src/vulkan/runtime/bvh/lbvh_generate_ir.comp) --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
-
-genrule(
-    name = "generate_lbvh_main_spv_h",
-    srcs = [
-        "src/vulkan/runtime/bvh/lbvh_main.comp",
-        "src/vulkan/runtime/bvh/leaf.h",
-        "src/vulkan/runtime/bvh/vk_build_helpers.h",
-        "src/vulkan/runtime/bvh/vk_build_interface.h",
-        "src/vulkan/runtime/bvh/vk_bvh.h",
-        "src/vulkan/runtime/bvh/vk_debug.h",
-    ],
-    outs = ["src/vulkan/runtime/bvh/lbvh_main.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location src/vulkan/runtime/bvh/lbvh_main.comp) --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location src/vulkan/runtime/bvh/lbvh_main.comp) --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
-
-genrule(
-    name = "generate_leaf_spv_h",
-    srcs = [
-        "src/vulkan/runtime/bvh/leaf.comp",
-        "src/vulkan/runtime/bvh/leaf.h",
-        "src/vulkan/runtime/bvh/vk_build_helpers.h",
-        "src/vulkan/runtime/bvh/vk_build_interface.h",
-        "src/vulkan/runtime/bvh/vk_bvh.h",
-        "src/vulkan/runtime/bvh/vk_debug.h",
-    ],
-    outs = ["src/vulkan/runtime/bvh/leaf.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/leaf.spv.h) $(location src/vulkan/runtime/bvh/leaf.comp) --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/leaf.spv.h) $(location src/vulkan/runtime/bvh/leaf.comp) --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
 # Removed genrule generate_linux-dmabuf-unstable-v1-client-protocol_h in rebase
@@ -6849,22 +6794,6 @@ genrule(
     cmd = "$(location :vk) $(location src/vulkan/util/vk_entrypoints_gen.py) --xml $(location src/vulkan/registry/vk.xml) --proto --weak --out-h $(location src/gallium/frontends/lavapipe/lvp_entrypoints.h) --out-c $(location src/gallium/frontends/lavapipe/lvp_entrypoints.c) --prefix lvp --beta false",
     cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_entrypoints_gen.py) --xml $(location src/vulkan/registry/vk.xml) --proto --weak --out-h $(location src/gallium/frontends/lavapipe/lvp_entrypoints.h) --out-c $(location src/gallium/frontends/lavapipe/lvp_entrypoints.c) --prefix lvp --beta false",
     tools = [":vk"],
-)
-
-genrule(
-    name = "generate_morton_spv_h",
-    srcs = [
-        "src/vulkan/runtime/bvh/morton.comp",
-        "src/vulkan/runtime/bvh/leaf.h",
-        "src/vulkan/runtime/bvh/vk_build_helpers.h",
-        "src/vulkan/runtime/bvh/vk_build_interface.h",
-        "src/vulkan/runtime/bvh/vk_bvh.h",
-        "src/vulkan/runtime/bvh/vk_debug.h",
-    ],
-    outs = ["src/vulkan/runtime/bvh/morton.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton.spv.h) $(location src/vulkan/runtime/bvh/morton.comp) --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton.spv.h) $(location src/vulkan/runtime/bvh/morton.comp) --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
 filegroup(
@@ -6961,110 +6890,9 @@ genrule(
 
 # Removed genrule generate_nir_opt_algebraic_c in rebase
 
-genrule(
-    name = "generate_ploc_internal_spv_h",
-    srcs = [
-        "src/vulkan/runtime/bvh/ploc_internal.comp",
-        "src/vulkan/runtime/bvh/leaf.h",
-        "src/vulkan/runtime/bvh/vk_build_helpers.h",
-        "src/vulkan/runtime/bvh/vk_build_interface.h",
-        "src/vulkan/runtime/bvh/vk_bvh.h",
-        "src/vulkan/runtime/bvh/vk_debug.h",
-    ],
-    outs = ["src/vulkan/runtime/bvh/ploc_internal.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location src/vulkan/runtime/bvh/ploc_internal.comp) --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location src/vulkan/runtime/bvh/ploc_internal.comp) --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
-
-genrule(
-    name = "generate_prefix_comp_spv_h",
-    srcs = [
-        "src/vulkan/runtime/radix_sort/shaders/prefix.comp",
-        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
-        "src/vulkan/runtime/radix_sort/shaders/config.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
-        "src/vulkan/runtime/radix_sort/shaders/push.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
-    ],
-    outs = ["src/vulkan/runtime/radix_sort/shaders/prefix.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
-
 # Removed genrule generate_presentation-time-client-protocol_h in rebase
 
 # Removed genrule generate_presentation-time-protocol_c in rebase
-
-genrule(
-    name = "generate_scatter_0_even_comp_spv_h",
-    srcs = [
-        "src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp",
-        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
-        "src/vulkan/runtime/radix_sort/shaders/config.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
-        "src/vulkan/runtime/radix_sort/shaders/push.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
-    ],
-    outs = ["src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
-
-genrule(
-    name = "generate_scatter_0_odd_comp_spv_h",
-    srcs = [
-        "src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp",
-        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
-        "src/vulkan/runtime/radix_sort/shaders/config.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
-        "src/vulkan/runtime/radix_sort/shaders/push.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
-    ],
-    outs = ["src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
-
-genrule(
-    name = "generate_scatter_1_even_comp_spv_h",
-    srcs = [
-        "src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp",
-        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
-        "src/vulkan/runtime/radix_sort/shaders/config.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
-        "src/vulkan/runtime/radix_sort/shaders/push.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
-    ],
-    outs = ["src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
-
-genrule(
-    name = "generate_scatter_1_odd_comp_spv_h",
-    srcs = [
-        "src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp",
-        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
-        "src/vulkan/runtime/radix_sort/shaders/config.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
-        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
-        "src/vulkan/runtime/radix_sort/shaders/push.h",
-        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
-    ],
-    outs = ["src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
 
 genrule(
     name = "generate_shader_stats_h",
@@ -7912,22 +7740,6 @@ genrule(
 )
 
 genrule(
-    name = "generate_hploc_internal_spv_h",
-    srcs = [
-        "src/vulkan/runtime/bvh/hploc_internal.comp",
-        "src/vulkan/runtime/bvh/leaf.h",
-        "src/vulkan/runtime/bvh/vk_build_helpers.h",
-        "src/vulkan/runtime/bvh/vk_build_interface.h",
-        "src/vulkan/runtime/bvh/vk_bvh.h",
-        "src/vulkan/runtime/bvh/vk_debug.h",
-    ],
-    outs = ["src/vulkan/runtime/bvh/hploc_internal.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh -Isrc/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location src/vulkan/runtime/bvh/hploc_internal.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh -Isrc/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location src/vulkan/runtime/bvh/hploc_internal.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
-
-genrule(
     name = "generate_linux-dmabuf-unstable-v1-client-protocol",
     srcs = ["@wayland-protocols//:unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml"],
     outs = ["src/loader/linux-dmabuf-unstable-v1-client-protocol.h"],
@@ -8023,4 +7835,199 @@ genrule(
     cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_icd_gen.py) --api-version 1.4 --xml $(location src/vulkan/registry/vk.xml) --sizeof-pointer 8 --icd-lib-path . --icd-filename ./libvulkan_lvp.so --out $(location lvp_icd.json)",
     tools = [":vk"],
     visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "generate_id_prefix_sum_spv_h",
+    srcs = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/id_prefix_sum.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/pair_triangles.h",
+        "src/vulkan/runtime/bvh/vk_bvh_defines.h",
+        "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
+    outs = ["src/vulkan/runtime/bvh/id_prefix_sum.spv.h"],
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/id_prefix_sum.spv.h) $(location src/vulkan/runtime/bvh/id_prefix_sum.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/id_prefix_sum.spv.h) $(location src/vulkan/runtime/bvh/id_prefix_sum.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
+)
+
+genrule(
+    name = "generate_lbvh_generate_ir_spv_h",
+    srcs = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/lbvh_generate_ir.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/pair_triangles.h",
+        "src/vulkan/runtime/bvh/vk_bvh_defines.h",
+        "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
+    outs = ["src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h"],
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location src/vulkan/runtime/bvh/lbvh_generate_ir.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location src/vulkan/runtime/bvh/lbvh_generate_ir.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
+)
+
+genrule(
+    name = "generate_lbvh_main_spv_h",
+    srcs = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/lbvh_main.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/pair_triangles.h",
+        "src/vulkan/runtime/bvh/vk_bvh_defines.h",
+        "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
+    outs = ["src/vulkan/runtime/bvh/lbvh_main.spv.h"],
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location src/vulkan/runtime/bvh/lbvh_main.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location src/vulkan/runtime/bvh/lbvh_main.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
+)
+
+genrule(
+    name = "generate_leaf_spv_h",
+    srcs = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/leaf.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/pair_triangles.h",
+        "src/vulkan/runtime/bvh/vk_bvh_defines.h",
+        "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
+    outs = ["src/vulkan/runtime/bvh/leaf.spv.h"],
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/leaf.spv.h) $(location src/vulkan/runtime/bvh/leaf.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/leaf.spv.h) $(location src/vulkan/runtime/bvh/leaf.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
+)
+
+genrule(
+    name = "generate_morton_sort_64_spv_h",
+    srcs = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/morton_sort.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/pair_triangles.h",
+        "src/vulkan/runtime/bvh/vk_bvh_defines.h",
+        "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
+    outs = ["src/vulkan/runtime/bvh/morton_sort_64.spv.h"],
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton_sort_64.spv.h) $(location src/vulkan/runtime/bvh/morton_sort.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require' -DMORTON_SORT_KEY64=1",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton_sort_64.spv.h) $(location src/vulkan/runtime/bvh/morton_sort.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require' -DMORTON_SORT_KEY64=1",
+    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
+)
+
+genrule(
+    name = "generate_morton_sort_32_spv_h",
+    srcs = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/morton_sort.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/pair_triangles.h",
+        "src/vulkan/runtime/bvh/vk_bvh_defines.h",
+        "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
+    outs = ["src/vulkan/runtime/bvh/morton_sort_32.spv.h"],
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton_sort_32.spv.h) $(location src/vulkan/runtime/bvh/morton_sort.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton_sort_32.spv.h) $(location src/vulkan/runtime/bvh/morton_sort.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
+)
+
+genrule(
+    name = "generate_pair_triangles_spv_h",
+    srcs = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/pair_triangles.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/pair_triangles.h",
+        "src/vulkan/runtime/bvh/vk_bvh_defines.h",
+        "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
+    outs = ["src/vulkan/runtime/bvh/pair_triangles.spv.h"],
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/pair_triangles.spv.h) $(location src/vulkan/runtime/bvh/pair_triangles.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/pair_triangles.spv.h) $(location src/vulkan/runtime/bvh/pair_triangles.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
+)
+
+genrule(
+    name = "generate_ploc_internal_spv_h",
+    srcs = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/ploc_internal.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/pair_triangles.h",
+        "src/vulkan/runtime/bvh/vk_bvh_defines.h",
+        "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
+    outs = ["src/vulkan/runtime/bvh/ploc_internal.spv.h"],
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location src/vulkan/runtime/bvh/ploc_internal.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location src/vulkan/runtime/bvh/ploc_internal.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
+)
+
+genrule(
+    name = "generate_hploc_internal_spv_h",
+    srcs = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/hploc_internal.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/pair_triangles.h",
+        "src/vulkan/runtime/bvh/vk_bvh_defines.h",
+        "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
+    outs = ["src/vulkan/runtime/bvh/hploc_internal.spv.h"],
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location src/vulkan/runtime/bvh/hploc_internal.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location src/vulkan/runtime/bvh/hploc_internal.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
+    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
+)
+
+genrule(
+    name = "generate_lvp_drirc",
+    srcs = [
+        "src/gallium/frontends/lavapipe/00-lavapipe-defaults.conf",
+        "src/gallium/frontends/lavapipe/lvp_drirc_gen.py",
+        "src/util/drirc_gen.py",
+    ],
+    outs = [
+        "src/gallium/frontends/lavapipe/lvp_drirc.c",
+        "src/gallium/frontends/lavapipe/lvp_drirc.h",
+    ],
+    cmd = "$(location :00-mesa-defaults) $(location src/gallium/frontends/lavapipe/lvp_drirc_gen.py) --import-path $$(dirname $(execpath src/util/drirc_gen.py)) --drirc-src $(location src/gallium/frontends/lavapipe/lvp_drirc.c) --drirc-hdr $(location src/gallium/frontends/lavapipe/lvp_drirc.h) --validate $(location src/gallium/frontends/lavapipe/00-lavapipe-defaults.conf)",
+    cmd_bat = "$(location :00-mesa-defaults) $(location src/gallium/frontends/lavapipe/lvp_drirc_gen.py) --import-path $$(dirname $(execpath src/util/drirc_gen.py)) --drirc-src $(location src/gallium/frontends/lavapipe/lvp_drirc.c) --drirc-hdr $(location src/gallium/frontends/lavapipe/lvp_drirc.h) --validate $(location src/gallium/frontends/lavapipe/00-lavapipe-defaults.conf)",
+    tools = [":00-mesa-defaults"],
+)
+
+genrule(
+    name = "generate_draw_nir_lower_opcodes_c",
+    srcs = [
+        "src/compiler/nir/nir_algebraic.py",
+        "src/compiler/nir/nir_opcodes.py",
+        "src/gallium/auxiliary/draw/draw_nir_lower_opcodes.py",
+    ],
+    outs = ["src/gallium/auxiliary/draw_nir_lower_opcodes.c"],
+    cmd = "$(location :nir_opt_algebraic) $(location src/gallium/auxiliary/draw/draw_nir_lower_opcodes.py) -p $$(dirname $(execpath src/compiler/nir/nir_algebraic.py)) > $(location src/gallium/auxiliary/draw_nir_lower_opcodes.c)",
+    cmd_bat = "$(location :nir_opt_algebraic) $(location src/gallium/auxiliary/draw/draw_nir_lower_opcodes.py) -p $$(dirname $(execpath src/compiler/nir/nir_algebraic.py)) > $(location src/gallium/auxiliary/draw_nir_lower_opcodes.c)",
+    tools = [":nir_opt_algebraic"],
+)
+
+genrule(
+    name = "generate_lp_bld_nir_no_integer_algebraic_c",
+    srcs = [
+        "src/compiler/nir/nir_algebraic.py",
+        "src/compiler/nir/nir_opcodes.py",
+        "src/gallium/auxiliary/gallivm/lp_bld_nir_no_integer_algebraic.py",
+    ],
+    outs = ["src/gallium/auxiliary/lp_bld_nir_no_integer_algebraic.c"],
+    cmd = "$(location :nir_opt_algebraic) $(location src/gallium/auxiliary/gallivm/lp_bld_nir_no_integer_algebraic.py) -p $$(dirname $(execpath src/compiler/nir/nir_algebraic.py)) > $(location src/gallium/auxiliary/lp_bld_nir_no_integer_algebraic.c)",
+    cmd_bat = "$(location :nir_opt_algebraic) $(location src/gallium/auxiliary/gallivm/lp_bld_nir_no_integer_algebraic.py) -p $$(dirname $(execpath src/compiler/nir/nir_algebraic.py)) > $(location src/gallium/auxiliary/lp_bld_nir_no_integer_algebraic.c)",
+    tools = [":nir_opt_algebraic"],
 )

@@ -21,6 +21,7 @@ enum ethosu_dbg {
    ETHOSU_DBG_DISABLE_NHCWB16 = BITFIELD_BIT(3),
    ETHOSU_DBG_DISABLE_SRAM = BITFIELD_BIT(4),
    ETHOSU_DBG_FORCE_U85 = BITFIELD_BIT(5),
+   ETHOSU_DBG_DUMP_PERF = BITFIELD_BIT(6),
 };
 
 extern int ethosu_debug;
@@ -48,7 +49,11 @@ struct ethosu_ml_device {
    struct ethosu_block ifm_ublock;
    struct ethosu_block ofm_ublock;
    unsigned max_concurrent_blocks;
+   /* Bits the pooling OFM scale is quantised to.  The register holds 32
+    * on both devices; the U85 leaves the top bit clear, as Vela does. */
+   unsigned ofm_scale_bits;
    uint32_t sram_size;
+   void *weight_cache;
 };
 
 struct ethosu_screen {

@@ -117,8 +117,10 @@ i915_virtio_gem_create(struct intel_virtio_device *dev,
     */
    req.blob_id = p_atomic_inc_return(&dev->next_blob_id);
 
+   uint32_t blob_hints = DRM_VIRTGPU_BLOB_FLAG_HINT_DEFER_MAPPING;
+
    int ret = vdrm_bo_create(dev->vdrm, create->size, blob_flags,
-                            req.blob_id, &req.hdr);
+                            req.blob_id, blob_hints, &req.hdr);
    if (!ret)
       return EINVAL;
 
@@ -225,8 +227,10 @@ i915_virtio_gem_create_ext(struct intel_virtio_device *dev,
     */
    req->blob_id = p_atomic_inc_return(&dev->next_blob_id);
 
+   uint32_t blob_hints = DRM_VIRTGPU_BLOB_FLAG_HINT_DEFER_MAPPING;
+
    int ret = vdrm_bo_create(dev->vdrm, create->size, blob_flags,
-                            req->blob_id, &req->hdr);
+                            req->blob_id, blob_hints, &req->hdr);
    if (!ret)
       return EINVAL;
 
@@ -696,14 +700,14 @@ intel_virtio_prime_handle_to_fd(struct intel_virtio_device *dev,
 int
 intel_virtio_ioctl(int fd, unsigned long cmd, void *req)
 {
+   int orig_errno = errno;
    struct intel_virtio_device *dev = fd_to_intel_virtio_device(fd);
 
    if (!dev) {
+      errno = orig_errno;
       /* this is a real phys device if not bound to virtio */
-      return intel_virtio_ioctl_errno(fd, cmd, req);
+      return ioctl(fd, cmd, req);
    }
-
-   int orig_errno = errno;
 
    /*
     * Special case for legacy ioctls that have same NR as extended ioctl

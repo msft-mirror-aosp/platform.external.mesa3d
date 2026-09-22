@@ -9,7 +9,7 @@
 
 #include "util/hash_table.h"
 
-#include "bvh/bvh.h"
+#include "bvh/bvh_defines.h"
 #include "nir/radv_nir_rt_common.h"
 #include "radv_device.h"
 #include "radv_nir.h"
@@ -68,6 +68,7 @@ enum radv_ray_query_field {
    radv_ray_query_cull_mask,
    radv_ray_query_origin,
    radv_ray_query_tmin,
+   radv_ray_query_tmax,
    radv_ray_query_direction,
    radv_ray_query_incomplete,
    radv_ray_query_candidate,
@@ -107,6 +108,7 @@ radv_get_ray_query_type()
    FIELD(cull_mask, glsl_uint_type());
    FIELD(origin, glsl_vec_type(3));
    FIELD(tmin, glsl_float_type());
+   FIELD(tmax, glsl_float_type());
    FIELD(direction, glsl_vec_type(3));
    FIELD(incomplete, glsl_bool_type());
    FIELD(candidate, intersection_type);
@@ -169,7 +171,7 @@ init_ray_query_vars(nir_shader *shader, const glsl_type *opaque_type, struct ray
    uint32_t shared_offset = align(shader->info.shared_size, 4);
 
    if (shader->info.stage != MESA_SHADER_COMPUTE || glsl_type_is_array(opaque_type) ||
-       shared_offset + shared_stack_size > compiler_info->hw.lds_size_per_workgroup) {
+       shared_offset + shared_stack_size > compiler_info->ac->lds_size_per_workgroup) {
       dst->stack_entries = MAX_SCRATCH_STACK_ENTRY_COUNT;
    } else {
       if (radv_use_bvh_stack_rtn(compiler_info)) {
@@ -283,6 +285,7 @@ lower_rq_initialize(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query
    rq_store(b, rq, direction, instr->src[6].ssa);
    rq_store(b, rq, trav_direction, instr->src[6].ssa);
 
+   rq_store(b, rq, tmax, instr->src[7].ssa);
    isec_store(b, closest, t, instr->src[7].ssa);
    isec_store(b, closest, intersection_type, nir_imm_int(b, intersection_type_none));
 
@@ -339,7 +342,7 @@ lower_rq_initialize(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query
 
    rq_store(b, rq, trav_top_stack, nir_imm_int(b, -1));
 
-   rq_store(b, rq, incomplete, nir_iand_imm(b, accel_struct_non_null, !compiler_info->cache_key->no_rt));
+   rq_store(b, rq, incomplete, nir_iand_imm(b, accel_struct_non_null, !compiler_info->key.no_rt));
 
    vars->initialize = instr;
 }
@@ -514,7 +517,7 @@ lower_rq_proceed(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query_va
    nir_deref_instr *closest = rq_deref(b, rq, closest);
    nir_deref_instr *candidate = rq_deref(b, rq, candidate);
 
-   nir_metadata_require(nir_cf_node_get_function(&instr->instr.block->cf_node), nir_metadata_dominance);
+   nir_metadata_require(instr->instr.block->impl, nir_metadata_dominance);
 
    bool ignore_cull_mask = false;
    if (vars->initialize && nir_block_dominates(vars->initialize->instr.block, instr->instr.block)) {
@@ -557,6 +560,7 @@ lower_rq_proceed(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query_va
       .cull_mask = rq_load(b, rq, cull_mask),
       .origin = rq_load(b, rq, origin),
       .tmin = rq_load(b, rq, tmin),
+      .tmax = rq_load(b, rq, tmax),
       .dir = rq_load(b, rq, direction),
       .vars = trav_vars,
       .stack_entries = vars->stack_entries,
@@ -586,7 +590,7 @@ lower_rq_proceed(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query_va
    nir_push_if(b, rq_load(b, rq, incomplete));
    {
       nir_def *incomplete;
-      if (compiler_info->cache_key->bvh8)
+      if (compiler_info->key.bvh8)
          incomplete = radv_build_ray_traversal_gfx12(compiler_info, b, &args);
       else
          incomplete = radv_build_ray_traversal(compiler_info, b, &args);

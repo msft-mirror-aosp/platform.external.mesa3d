@@ -471,10 +471,10 @@ st_get_sampler_view_format(const struct st_context *st,
       format = PIPE_FORMAT_R8G8_UNORM;
       break;
    case PIPE_FORMAT_AYUV:
-      format = PIPE_FORMAT_RGBA8888_UNORM;
+      format = PIPE_FORMAT_R8G8B8A8_UNORM;
       break;
    case PIPE_FORMAT_XYUV:
-      format = PIPE_FORMAT_RGBX8888_UNORM;
+      format = PIPE_FORMAT_R8G8B8X8_UNORM;
       break;
    default:
       break;
@@ -524,6 +524,7 @@ st_create_texture_sampler_view_from_stobj(struct st_context *st,
    }
    assert(templ.u.tex.first_layer <= templ.u.tex.last_layer);
    assert(templ.u.tex.first_level <= templ.u.tex.last_level);
+   templ.u.tex.min_lod_clamp = 0.0f;
    templ.target = gl_target_to_pipe(texObj->Target);
 
    templ.swizzle_r = GET_SWZ(swizzle, 0);

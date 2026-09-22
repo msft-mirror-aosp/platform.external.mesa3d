@@ -9,9 +9,6 @@
 #include "util/u_math.h"
 #include "util/u_memory.h"
 
-#include "tgsi/tgsi_dump.h"
-#include "tgsi/tgsi_ureg.h"
-
 #include "r300_cb.h"
 #include "r300_context.h"
 #include "r300_emit.h"
@@ -19,82 +16,11 @@
 #include "r300_fs.h"
 #include "r300_reg.h"
 #include "r300_texture.h"
-#include "r300_tgsi_to_rc.h"
 
 #include "compiler/radeon_compiler.h"
 #include "compiler/nir_to_rc.h"
 #include "nir.h"
-
-/* Convert info about FS input semantics to r300_shader_semantics. */
-void r300_shader_read_fs_inputs(struct tgsi_shader_info* info,
-                                struct r300_shader_semantics* fs_inputs)
-{
-    int i;
-    unsigned index;
-
-    r300_shader_semantics_reset(fs_inputs);
-
-    for (i = 0; i < info->num_inputs; i++) {
-        index = info->input_semantic_index[i];
-
-        switch (info->input_semantic_name[i]) {
-            case TGSI_SEMANTIC_COLOR:
-                assert(index < ATTR_COLOR_COUNT);
-                fs_inputs->color[index] = i;
-                break;
-
-            case TGSI_SEMANTIC_GENERIC:
-                assert(index < ATTR_GENERIC_COUNT);
-                fs_inputs->generic[index] = i;
-                fs_inputs->num_generic++;
-                break;
-
-            case TGSI_SEMANTIC_FOG:
-                assert(index == 0);
-                fs_inputs->fog = i;
-                break;
-
-            case TGSI_SEMANTIC_POSITION:
-                assert(index == 0);
-                fs_inputs->wpos = i;
-                break;
-
-            case TGSI_SEMANTIC_FACE:
-                assert(index == 0);
-                fs_inputs->face = i;
-                break;
-
-            default:
-                fprintf(stderr, "r300: FP: Unknown input semantic: %i\n",
-                        info->input_semantic_name[i]);
-        }
-    }
-}
-
-static void find_output_registers(struct r300_fragment_program_compiler * compiler,
-                                  struct r300_fragment_shader_code *shader)
-{
-    unsigned i;
-
-    /* Mark the outputs as not present initially */
-    compiler->OutputColor[0] = shader->info.num_outputs;
-    compiler->OutputColor[1] = shader->info.num_outputs;
-    compiler->OutputColor[2] = shader->info.num_outputs;
-    compiler->OutputColor[3] = shader->info.num_outputs;
-    compiler->OutputDepth = shader->info.num_outputs;
-
-    /* Now see where they really are. */
-    for(i = 0; i < shader->info.num_outputs; ++i) {
-        switch(shader->info.output_semantic_name[i]) {
-            case TGSI_SEMANTIC_COLOR:
-                compiler->OutputColor[shader->info.output_semantic_index[i]] = i;
-                break;
-            case TGSI_SEMANTIC_POSITION:
-                compiler->OutputDepth = i;
-                break;
-        }
-    }
-}
+#include "compiler/nir/nir_builder.h"
 
 static void allocate_hardware_inputs(
     struct r300_fragment_program_compiler * c,
@@ -127,6 +53,31 @@ static void allocate_hardware_inputs(
     }
 }
 
+static rc_wrap_mode r300_get_npot_wrap_mode(enum pipe_tex_wrap wrap)
+{
+    switch (wrap) {
+    case PIPE_TEX_WRAP_REPEAT:
+        return RC_WRAP_REPEAT;
+
+    case PIPE_TEX_WRAP_MIRROR_REPEAT:
+        return RC_WRAP_MIRRORED_REPEAT;
+
+    case PIPE_TEX_WRAP_MIRROR_CLAMP:
+    case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE:
+    case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_BORDER:
+        return RC_WRAP_MIRRORED_CLAMP;
+
+    default:
+        return RC_WRAP_NONE;
+    }
+}
+
+static bool r300_npot_wrap_clamps_to_edge(enum pipe_tex_wrap wrap)
+{
+    return wrap == PIPE_TEX_WRAP_CLAMP_TO_EDGE ||
+           wrap == PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE;
+}
+
 void r300_fragment_program_get_external_state(
     struct r300_context* r300,
     struct r300_fragment_program_external_state* state)
@@ -148,6 +99,10 @@ void r300_fragment_program_get_external_state(
 
         t = r300_resource(v->base.texture);
 
+        if (s->state.unnormalized_coords &&
+            (r300_fs(r300)->samplers_2d & (1u << i)))
+            state->unnormalized_coords_mask |= 1u << i;
+
         if (s->state.compare_mode == PIPE_TEX_COMPARE_R_TO_TEXTURE) {
             state->unit[i].compare_mode_enabled = 1;
 
@@ -162,29 +117,34 @@ void r300_fragment_program_get_external_state(
                                 v->swizzle[2], v->swizzle[3]);
         }
 
-        /* XXX this should probably take into account STR, not just S. */
         if (t->tex.is_npot) {
-            switch (s->state.wrap_s) {
-            case PIPE_TEX_WRAP_REPEAT:
-                state->unit[i].wrap_mode = RC_WRAP_REPEAT;
-                break;
-
-            case PIPE_TEX_WRAP_MIRROR_REPEAT:
-                state->unit[i].wrap_mode = RC_WRAP_MIRRORED_REPEAT;
-                break;
-
-            case PIPE_TEX_WRAP_MIRROR_CLAMP:
-            case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE:
-            case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_BORDER:
-                state->unit[i].wrap_mode = RC_WRAP_MIRRORED_CLAMP;
-                break;
-
-            default:
-                state->unit[i].wrap_mode = RC_WRAP_NONE;
+            if (t->b.target == PIPE_TEXTURE_CUBE) {
+                /* Cube coordinates are directions, so the generic STR wrap
+                 * lowering cannot be applied to them. */
+                state->unit[i].scale_cube_coords_before_fetch = true;
+                state->unit[i].clamp_cube_coords_before_fetch =
+                    s->state.min_img_filter == PIPE_TEX_FILTER_LINEAR ||
+                    s->state.mag_img_filter == PIPE_TEX_FILTER_LINEAR;
+                state->unit[i].bias_cube_lod_at_edge =
+                    s->state.min_img_filter != s->state.mag_img_filter;
+            } else {
+                state->unit[i].wrap_mode_s =
+                    r300_get_npot_wrap_mode(s->state.wrap_s);
+                state->unit[i].wrap_mode_t =
+                    r300_get_npot_wrap_mode(s->state.wrap_t);
+                state->unit[i].wrap_mode_r =
+                    r300_get_npot_wrap_mode(s->state.wrap_r);
             }
 
-            if (t->b.target == PIPE_TEXTURE_3D)
+            if (t->b.target == PIPE_TEXTURE_3D) {
                 state->unit[i].clamp_and_scale_before_fetch = true;
+                state->unit[i].clamp_to_edge_s =
+                    r300_npot_wrap_clamps_to_edge(s->state.wrap_s);
+                state->unit[i].clamp_to_edge_t =
+                    r300_npot_wrap_clamps_to_edge(s->state.wrap_t);
+                state->unit[i].clamp_to_edge_r =
+                    r300_npot_wrap_clamps_to_edge(s->state.wrap_r);
+            }
         }
     }
 }
@@ -198,25 +158,23 @@ static void r300_dummy_fragment_shader(
     struct r300_context* r300,
     struct r300_fragment_shader_code* shader)
 {
-    struct pipe_shader_state state;
-    struct ureg_program *ureg;
-    struct ureg_dst out;
-    struct ureg_src imm;
+    struct pipe_shader_state state = {};
+    const nir_shader_compiler_options *options =
+        r300->screen->screen.nir_options[MESA_SHADER_FRAGMENT];
 
-    /* Make a simple fragment shader which outputs (0, 0, 0, 1) */
-    ureg = ureg_create(MESA_SHADER_FRAGMENT);
-    out = ureg_DECL_output(ureg, TGSI_SEMANTIC_COLOR, 0);
-    imm = ureg_imm4f(ureg, 0, 0, 0, 1);
-
-    ureg_MOV(ureg, out, imm);
-    ureg_END(ureg);
-
-    state.tokens = ureg_finalize(ureg);
+    /* Make a simple fragment shader which outputs (0, 0, 0, 1). */
+    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT,
+                                                   options, "r300 dummy FS");
+    nir_variable *out = nir_variable_create(b.shader, nir_var_shader_out,
+                                            glsl_vec4_type(), "out_color");
+    out->data.location = FRAG_RESULT_COLOR;
+    nir_store_var(&b, out, nir_imm_vec4(&b, 0, 0, 0, 1), 0xf);
 
     shader->dummy = true;
+    state.type = PIPE_SHADER_IR_NIR;
+    state.ir.nir = b.shader;
     r300_translate_fragment_shader(r300, shader, state);
-
-    ureg_destroy(ureg);
+    ralloc_free(state.ir.nir);
 }
 
 static void r300_emit_fs_code_to_buffer(
@@ -404,20 +362,22 @@ static void r300_translate_fragment_shader(
     struct pipe_shader_state state)
 {
     struct r300_fragment_program_compiler compiler;
-    struct tgsi_to_rc ttr;
-    int wpos, face;
+    int face;
     unsigned i;
+    union r300_shader_code code;
+    code.f = shader;
 
-    if (state.type == PIPE_SHADER_IR_NIR) {
-        nir_shader *clone = nir_shader_clone(NULL, state.ir.nir);
-        state.tokens = nir_to_rc(clone, (struct pipe_screen *)r300->screen, shader->compare_state);
+    r300_shader_semantics_reset(&shader->inputs);
+
+    /* gl_FragColor (vs. gl_FragData[0]) makes the FS write the same value
+     * to all bound color buffers. */
+    shader->write_all = false;
+    nir_foreach_shader_out_variable(var, state.ir.nir) {
+        if (var->data.location == FRAG_RESULT_COLOR) {
+            shader->write_all = true;
+            break;
+        }
     }
-
-    tgsi_scan_shader(state.tokens, &shader->info);
-    r300_shader_read_fs_inputs(&shader->info, &shader->inputs);
-
-    wpos = shader->inputs.wpos;
-    face = shader->inputs.face;
 
     /* Setup the compiler. */
     memset(&compiler, 0, sizeof(compiler));
@@ -444,50 +404,27 @@ static void r300_translate_fragment_shader(
     compiler.AllocateHwInputs = &allocate_hardware_inputs;
     compiler.UserData = &shader->inputs;
 
-    find_output_registers(&compiler, shader);
+    nir_shader *clone = nir_shader_clone(NULL, state.ir.nir);
+    nir_to_rc(clone, (struct pipe_screen *)r300->screen, shader->compare_state,
+              code, &compiler.Base);
 
-    shader->write_all =
-          shader->info.properties[TGSI_PROPERTY_FS_COLOR0_WRITES_ALL_CBUFS];
-
-    if (compiler.Base.Debug & RC_DBG_LOG) {
-        DBG(r300, DBG_FP, "r300: Initial fragment program\n");
-        tgsi_dump(state.tokens, 0);
-    }
-
-    /* Translate TGSI to our internal representation */
-    ttr.compiler = &compiler.Base;
-    ttr.info = &shader->info;
-
-    r300_tgsi_to_rc(&ttr, state.tokens);
-
-    if (state.type == PIPE_SHADER_IR_NIR) {
-        FREE((void*)state.tokens);
-    }
-
-    if (ttr.error) {
-        shader->error = strdup("Cannot translate a shader from TGSI.");
+    if (compiler.Base.Error) {
+        shader->error = strdup(compiler.Base.ErrorMsg ? compiler.Base.ErrorMsg
+                                                      : "Cannot translate shader from NIR.");
+        rc_destroy(&compiler.Base);
         r300_dummy_fragment_shader(r300, shader);
         return;
     }
+
+    face = shader->inputs.face;
 
     if (!r300->screen->caps.is_r500 ||
         compiler.Base.Program.Constants.Count > 200) {
         compiler.Base.remove_unused_constants = true;
     }
 
-    /**
-     * Transform the program to support WPOS.
-     *
-     * Introduce a small fragment at the start of the program that will be
-     * the only code that directly reads the WPOS input.
-     * All other code pieces that reference that input will be rewritten
-     * to read from a newly allocated temporary. */
-    if (wpos != ATTR_UNUSED) {
-        /* Moving the input to some other reg is not really necessary. */
-        rc_transform_fragment_wpos(&compiler.Base, wpos, wpos, true);
-    }
-
-    if (face != ATTR_UNUSED) {
+    /* R3xx/R4xx emulation already provides FACE in the API convention. */
+    if (face != ATTR_UNUSED && r300->screen->caps.is_r500) {
         rc_transform_fragment_face(&compiler.Base, face);
     }
 

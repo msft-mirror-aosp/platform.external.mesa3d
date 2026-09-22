@@ -19,18 +19,18 @@
 bool
 panvk_android_is_gralloc_image(const VkImageCreateInfo *pCreateInfo)
 {
-   vk_foreach_struct_const(ext, pCreateInfo->pNext) {
-      switch ((uint32_t)ext->sType) {
+   vk_foreach_struct_const(sType, ext, pCreateInfo->pNext) {
+      switch ((uint32_t)sType) {
       case VK_STRUCTURE_TYPE_NATIVE_BUFFER_ANDROID:
          return true;
       case VK_STRUCTURE_TYPE_IMAGE_SWAPCHAIN_CREATE_INFO_KHR: {
-         const VkImageSwapchainCreateInfoKHR *swapchain_info = (void *)ext;
+         const VkImageSwapchainCreateInfoKHR *swapchain_info = ext;
          if (swapchain_info->swapchain != VK_NULL_HANDLE)
             return true;
          break;
       }
       case VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO: {
-         const VkExternalMemoryImageCreateInfo *external_info = (void *)ext;
+         const VkExternalMemoryImageCreateInfo *external_info = ext;
          if (external_info->handleTypes &
              VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID)
             return true;
@@ -41,31 +41,6 @@ panvk_android_is_gralloc_image(const VkImageCreateInfo *pCreateInfo)
       }
    }
    return false;
-}
-
-static VkResult
-panvk_android_create_deferred_image(VkDevice device,
-                                    const VkImageCreateInfo *pCreateInfo,
-                                    const VkAllocationCallbacks *pAllocator,
-                                    VkImage *pImage)
-{
-   VK_FROM_HANDLE(panvk_device, dev, device);
-
-   struct panvk_image *img =
-      vk_image_create(&dev->vk, pCreateInfo, pAllocator, sizeof(*img));
-   if (!img)
-      return panvk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
-
-   VkResult result = vk_android_init_deferred_image(&dev->vk, &img->vk,
-                                                    pCreateInfo, pAllocator);
-   if (result != VK_SUCCESS) {
-      vk_image_destroy(&dev->vk, pAllocator, &img->vk);
-      return panvk_error(dev, result);
-   }
-
-   *pImage = panvk_image_to_handle(img);
-
-   return VK_SUCCESS;
 }
 
 static inline uint32_t
@@ -135,7 +110,8 @@ panvk_android_get_buffer_mem_reqs(VkDevice dev_handle, VkBuffer buf_handle,
 }
 
 static VkResult
-panvk_android_anb_init(struct panvk_device *dev, VkImageCreateInfo *create_info,
+panvk_android_anb_init(struct panvk_device *dev,
+                       const VkImageCreateInfo *create_info,
                        struct panvk_image *img)
 {
    VkResult result;
@@ -155,9 +131,9 @@ panvk_android_anb_init(struct panvk_device *dev, VkImageCreateInfo *create_info,
       .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
    };
 
-   /* create_info is a already local copy from the caller */
-   create_info->pNext = &external_info;
-   return panvk_image_init(img, create_info);
+   VkImageCreateInfo local_create = *create_info;
+   local_create.pNext = &external_info;
+   return panvk_image_init(img, &local_create);
 }
 
 VkResult
@@ -169,17 +145,22 @@ panvk_android_create_gralloc_image(VkDevice device,
    VK_FROM_HANDLE(panvk_device, dev, device);
    VkResult result;
 
-   const VkNativeBufferANDROID *anb =
-      vk_find_struct_const(pCreateInfo->pNext, NATIVE_BUFFER_ANDROID);
-   if (!anb) {
-      return panvk_android_create_deferred_image(device, pCreateInfo,
-                                                 pAllocator, pImage);
-   }
-
    struct panvk_image *img =
       vk_image_create(&dev->vk, pCreateInfo, pAllocator, sizeof(*img));
    if (!img)
       return panvk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+
+   if (!vk_image_is_android_native_buffer(&img->vk)) {
+      result = vk_android_init_deferred_image(&dev->vk, &img->vk, pCreateInfo,
+                                              pAllocator);
+      if (result != VK_SUCCESS) {
+         vk_image_destroy(&dev->vk, pAllocator, &img->vk);
+         return panvk_error(device, result);
+      }
+
+      *pImage = panvk_image_to_handle(img);
+      return VK_SUCCESS;
+   }
 
    VkImageCreateInfo create_info = *pCreateInfo;
    create_info.tiling = img->vk.tiling =
@@ -362,8 +343,8 @@ panvk_android_import_ahb_memory(VkDevice device,
 bool
 panvk_android_is_ahb_memory(const VkMemoryAllocateInfo *pAllocateInfo)
 {
-   vk_foreach_struct_const(ext, pAllocateInfo->pNext) {
-      switch (ext->sType) {
+   vk_foreach_struct_const(sType, ext, pAllocateInfo->pNext) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID:
          return true;
       case VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO:

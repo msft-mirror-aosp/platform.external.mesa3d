@@ -32,6 +32,7 @@ tu_bo_init_new_explicit_iova(struct tu_device *dev,
                              struct vk_object_base *base,
                              struct tu_bo **out_bo,
                              uint64_t size,
+                             uint64_t align,
                              uint64_t client_iova,
                              VkMemoryPropertyFlags mem_property,
                              enum tu_bo_alloc_flags flags,
@@ -43,8 +44,28 @@ tu_bo_init_new_explicit_iova(struct tu_device *dev,
 
    size = align64(size, os_page_size);
 
+   const VkMemoryPropertyFlags replace_flags_mask =
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+      VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+
+   const VkMemoryPropertyFlags replace_flags_match =
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+   if (dev->physical_device->preferred_uncached_as_cached_index >= 0 &&
+      (mem_property & replace_flags_mask) == replace_flags_match) {
+      /* Override the memory type if the requested type was uncached, only replacing
+       * if the device supports cached-coherent memory type.
+       */
+      mem_property =
+          dev->physical_device->memory.types[dev->physical_device->preferred_uncached_as_cached_index];
+   }
+
    VkResult result =
-      dev->instance->knl->bo_init(dev, base, out_bo, size, client_iova,
+      dev->instance->knl->bo_init(dev, base, out_bo, size, align, client_iova,
                                   mem_property, flags, lazy_vma, name);
    if (result != VK_SUCCESS)
       return result;
@@ -69,12 +90,13 @@ VkResult
 tu_bo_init_dmabuf(struct tu_device *dev,
                   struct tu_bo **bo,
                   uint64_t size,
+                  uint64_t align,
                   enum tu_bo_alloc_flags flags,
                   int fd)
 {
    assert(!(flags & ~TU_BO_ALLOC_REPLAYABLE));
    size = align64(size, os_page_size);
-   VkResult result = dev->instance->knl->bo_init_dmabuf(dev, bo, size, flags, fd);
+   VkResult result = dev->instance->knl->bo_init_dmabuf(dev, bo, size, align, flags, fd);
    if (result != VK_SUCCESS)
       return result;
 
@@ -185,13 +207,13 @@ tu_sparse_vma_init(struct tu_device *dev,
                    struct tu_sparse_vma *out_vma,
                    uint64_t *out_iova,
                    enum tu_sparse_vma_flags flags,
-                   uint64_t size, uint64_t client_iova)
+                   uint64_t size, uint64_t align, uint64_t client_iova)
 {
    size = align64(size, os_page_size);
 
    out_vma->flags = flags;
    return dev->instance->knl->sparse_vma_init(dev, base, out_vma, out_iova,
-                                              flags, size, client_iova);
+                                              flags, size, align, client_iova);
 
 }
 

@@ -353,6 +353,19 @@ convert_yuv_to_rgb(nir_builder *b, nir_tex_instr *tex,
                    const nir_lower_tex_options *options,
                    unsigned texture_index)
 {
+   /* GL_EXT_YUV_target: __samplerExternal2DY2YEXT outputs raw YUV directly */
+   if (options->bypass_csc_external & (1u << texture_index)) {
+      unsigned bit_size = tex->def.bit_size;
+      /* Most callers pass nir_imm_float(b, 1.0f) for a, which is always
+       * 32-bit regardless of the texture's bit_size, so convert it to
+       * match here.
+       */
+      if (a->bit_size != bit_size)
+         a = nir_f2fN(b, a, bit_size);
+      nir_def *result = nir_vec4(b, y, u, v, a);
+      nir_def_rewrite_uses(&tex->def, result);
+      return;
+   }
    unsigned bpc = 8;
    if (options->lower_sx10_external & (1u << texture_index)) {
       bpc = 10;
@@ -409,7 +422,7 @@ convert_yuv_to_rgb(nir_builder *b, nir_tex_instr *tex,
    }
 
    nir_def *result =
-      nir_ffma(b, y, m0, nir_ffma(b, u, m1, nir_ffma(b, v, m2, offset)));
+      nir_ffma_weak(b, y, m0, nir_ffma_weak(b, u, m1, nir_ffma_weak(b, v, m2, offset)));
 
    nir_def_rewrite_uses(&tex->def, result);
 }
@@ -900,6 +913,8 @@ lower_tex_to_txd(nir_builder *b, nir_tex_instr *tex)
    txd->is_new_style_shadow = tex->is_new_style_shadow;
    txd->is_sparse = tex->is_sparse;
    txd->can_speculate = tex->can_speculate;
+   txd->texture_non_uniform = tex->texture_non_uniform;
+   txd->sampler_non_uniform = tex->sampler_non_uniform;
 
    /* reuse existing srcs */
    for (unsigned i = 0; i < tex->num_srcs; i++) {
@@ -944,6 +959,8 @@ lower_txb_to_txl(nir_builder *b, nir_tex_instr *tex)
    txl->is_new_style_shadow = tex->is_new_style_shadow;
    txl->is_sparse = tex->is_sparse;
    txl->can_speculate = tex->can_speculate;
+   txl->texture_non_uniform = tex->texture_non_uniform;
+   txl->sampler_non_uniform = tex->sampler_non_uniform;
 
    /* reuse all but bias src */
    for (int i = 0; i < tex->num_srcs; i++) {
@@ -1199,6 +1216,8 @@ lower_tg4_offsets(nir_builder *b, nir_tex_instr *tex)
       tex_copy->sampler_index = tex->sampler_index;
       tex_copy->backend_flags = tex->backend_flags;
       tex_copy->can_speculate = tex->can_speculate;
+      tex_copy->texture_non_uniform = tex->texture_non_uniform;
+      tex_copy->sampler_non_uniform = tex->sampler_non_uniform;
 
       for (unsigned j = 0; j < tex->num_srcs; ++j) {
          tex_copy->src[j].src = nir_src_for_ssa(tex->src[j].src.ssa);
@@ -1328,7 +1347,6 @@ nir_lower_ms_txf_to_fragment_fetch(nir_builder *b, nir_tex_instr *tex)
    fmask_fetch->sampler_dim = tex->sampler_dim;
    fmask_fetch->is_array = tex->is_array;
    fmask_fetch->texture_non_uniform = tex->texture_non_uniform;
-   fmask_fetch->offset_non_uniform = tex->offset_non_uniform;
    fmask_fetch->dest_type = nir_type_uint32;
    fmask_fetch->can_speculate = tex->can_speculate;
    nir_def_init(&fmask_fetch->instr, &fmask_fetch->def, 1, 32);
@@ -1578,7 +1596,8 @@ nir_lower_tex_block(nir_block *block, nir_builder *b,
          continue;
       } else if (instr->type == nir_instr_type_jump) {
          if (nir_instr_as_jump(instr)->type == nir_jump_halt ||
-             nir_instr_as_jump(instr)->type == nir_jump_return)
+             nir_instr_as_jump(instr)->type == nir_jump_return ||
+             nir_instr_as_jump(instr)->type == nir_jump_abort)
             *prev_terminate_return = instr->index;
          continue;
       } else if (instr->type != nir_instr_type_tex) {
@@ -1649,69 +1668,71 @@ nir_lower_tex_block(nir_block *block, nir_builder *b,
       } else
          texture_mask = texture_index < 32 ? (1u << texture_index) : 0u;
 
-      if (texture_mask & options->lower_y_uv_external) {
-         lower_y_uv_external(b, tex, options, texture_index);
-         progress = true;
-      }
+      if (!nir_tex_instr_is_query(tex)) {
+         if (texture_mask & options->lower_y_uv_external) {
+            lower_y_uv_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_y_vu_external) {
-         lower_y_vu_external(b, tex, options, texture_index);
-         progress = true;
-      }
+         if (texture_mask & options->lower_y_vu_external) {
+            lower_y_vu_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_y_u_v_external) {
-         lower_y_u_v_external(b, tex, options, texture_index);
-         progress = true;
-      }
+         if (texture_mask & options->lower_y_u_v_external) {
+            lower_y_u_v_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_yx_xuxv_external) {
-         lower_yx_xuxv_external(b, tex, options, texture_index);
-         progress = true;
-      }
+         if (texture_mask & options->lower_yx_xuxv_external) {
+            lower_yx_xuxv_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_yx_xvxu_external) {
-         lower_yx_xvxu_external(b, tex, options, texture_index);
-         progress = true;
-      }
+         if (texture_mask & options->lower_yx_xvxu_external) {
+            lower_yx_xvxu_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_xy_uxvx_external) {
-         lower_xy_uxvx_external(b, tex, options, texture_index);
-         progress = true;
-      }
+         if (texture_mask & options->lower_xy_uxvx_external) {
+            lower_xy_uxvx_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_xy_vxux_external) {
-         lower_xy_vxux_external(b, tex, options, texture_index);
-         progress = true;
-      }
+         if (texture_mask & options->lower_xy_vxux_external) {
+            lower_xy_vxux_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_ayuv_external) {
-         lower_ayuv_external(b, tex, options, texture_index);
-         progress = true;
-      }
+         if (texture_mask & options->lower_ayuv_external) {
+            lower_ayuv_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_xyuv_external) {
-         lower_xyuv_external(b, tex, options, texture_index);
-         progress = true;
-      }
+         if (texture_mask & options->lower_xyuv_external) {
+            lower_xyuv_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_yuv_external) {
-         lower_yuv_external(b, tex, options, texture_index);
-         progress = true;
-      }
+         if (texture_mask & options->lower_yuv_external) {
+            lower_yuv_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_yu_yv_external) {
-         lower_yu_yv_external(b, tex, options, texture_index);
-         progress = true;
-      }
+         if (texture_mask & options->lower_yu_yv_external) {
+            lower_yu_yv_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_yv_yu_external) {
-         lower_yv_yu_external(b, tex, options, texture_index);
-         progress = true;
-      }
+         if (texture_mask & options->lower_yv_yu_external) {
+            lower_yv_yu_external(b, tex, options, texture_index);
+            progress = true;
+         }
 
-      if (texture_mask & options->lower_y41x_external) {
-         lower_y41x_external(b, tex, options, texture_index);
-         progress = true;
+         if (texture_mask & options->lower_y41x_external) {
+            lower_y41x_external(b, tex, options, texture_index);
+            progress = true;
+         }
       }
 
       if (sat_mask) {
@@ -1799,6 +1820,25 @@ nir_lower_tex_block(nir_block *block, nir_builder *b,
          nir_tex_instr_add_src(tex, nir_tex_src_lod, nir_imm_int(b, 0));
          progress = true;
          continue;
+      }
+
+      if (tex->op == nir_texop_txl && tex->sampler_index < 32 &&
+          ((1u << tex->sampler_index) & options->lower_txl_mag_switchover)) {
+         int lod_index = nir_tex_instr_src_index(tex, nir_tex_src_lod);
+         assert(lod_index >= 0);
+
+         b->cursor = nir_before_instr(&tex->instr);
+
+         nir_def *lod = tex->src[lod_index].src.ssa;
+
+         /* Magnification reads the base level with the magnification filter,
+          * so the replacement LOD is only used to pick that path.
+          */
+         nir_src_rewrite(&tex->src[lod_index].src,
+                         nir_bcsel(b, nir_fle_imm(b, lod, 0.5),
+                                   nir_imm_floatN_t(b, 0.0, lod->bit_size),
+                                   lod));
+         progress = true;
       }
 
       /* Only fragment and compute (in some cases) support implicit

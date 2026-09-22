@@ -307,8 +307,8 @@ instance_data_unmap_physical_devices(
 static VkLayerInstanceCreateInfo *
 get_instance_chain_info(const VkInstanceCreateInfo *pCreateInfo)
 {
-   vk_foreach_struct_const (item, pCreateInfo->pNext) {
-      if (item->sType == VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO &&
+   vk_foreach_struct_const (sType, item, pCreateInfo->pNext) {
+      if (sType == VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO &&
           ((VkLayerInstanceCreateInfo *)item)->function == VK_LAYER_LINK_INFO)
          return (VkLayerInstanceCreateInfo *)item;
    }
@@ -447,7 +447,7 @@ vram_report_limit_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
    struct vram_report_limit_instance_data *instance_data = os_malloc_aligned(
       sizeof(*instance_data) + sizeof(instance_data->active_pdevices_array[0]) *
                                   active_pdevices_count,
-      CACHE_LINE_SIZE);
+      MESA_CACHE_LINE_SIZE);
    if (instance_data == NULL) {
       result = VK_ERROR_OUT_OF_HOST_MEMORY;
       goto err_free_is_pdevice_active_array;

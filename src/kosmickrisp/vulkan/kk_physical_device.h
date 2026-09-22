@@ -30,22 +30,36 @@ struct kk_queue_family {
 
 struct kk_memory_heap {
    uint64_t size;
-   uint64_t used;
    VkMemoryHeapFlags flags;
-   uint64_t (*available)(struct kk_physical_device *pdev);
+   uint64_t (*budget)(struct kk_physical_device *pdev);
+   uint64_t (*used)(struct kk_physical_device *pdev);
 };
 
 struct kk_device_info {
    uint32_t max_workgroup_count[3];
    uint32_t max_workgroup_invocations;
    uint32_t max_compute_shared_memory_size;
+   uint32_t gpu_apple_family;
+   enum mtl_language_version msl_version;
    uint64_t max_buffer_size;
+   uint32_t max_sampler_count;
+   uint32_t rendering_tile_width;
+   uint32_t rendering_tile_height;
+   VkSampleCountFlags supported_sample_counts;
+};
+
+struct kk_env_settings {
+   bool experimental_enabled;
+   bool gpu_capture_enabled;
+   const char *gpu_capture_dir;
+   uint64_t disabled_workarounds;
 };
 
 struct kk_physical_device {
    struct vk_physical_device vk;
    mtl_device *mtl_dev_handle;
    struct kk_device_info info;
+   struct kk_env_settings settings;
 
    struct wsi_device wsi_device;
 

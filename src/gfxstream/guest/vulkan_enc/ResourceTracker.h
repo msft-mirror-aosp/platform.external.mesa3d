@@ -196,6 +196,10 @@ class ResourceTracker {
                             VkMemoryMapFlags, void** ppData);
 
     void on_vkUnmapMemory(void* context, VkDevice device, VkDeviceMemory memory);
+    VkResult on_vkMapMemory2(void* context, VkResult input_result, VkDevice device,
+                             const VkMemoryMapInfo* pMemoryMapInfo, void** ppData);
+    VkResult on_vkUnmapMemory2(void* context, VkResult input_result, VkDevice device,
+                               const VkMemoryUnmapInfo* pMemoryUnmapInfo);
 
     VkResult on_vkCreateImage(void* context, VkResult input_result, VkDevice device,
                               const VkImageCreateInfo* pCreateInfo,
@@ -604,9 +608,11 @@ class ResourceTracker {
     void clearDescriptorPoolAndUnregisterDescriptorSets(void* context, VkDevice device,
                                                         VkDescriptorPool pool);
 
-    void setDeviceInfo(VkDevice device, VkPhysicalDevice physdev, VkPhysicalDeviceProperties props,
-                       VkPhysicalDeviceMemoryProperties memProps, uint32_t enabledExtensionCount,
-                       const char* const* ppEnabledExtensionNames, const void* pNext);
+    void setDeviceInfo(VkDevice device, VkPhysicalDevice physdev,
+                       const VkPhysicalDeviceProperties& props,
+                       const VkPhysicalDeviceMemoryProperties& memProps,
+                       uint32_t enabledExtensionCount, const char* const* ppEnabledExtensionNames,
+                       const void* pNext);
 
     void setDeviceMemoryInfo(VkDevice device, VkDeviceMemory memory, VkDeviceSize allocationSize,
                              uint8_t* ptr, uint32_t memoryTypeIndex, void* ahw, bool imported,
@@ -795,6 +801,7 @@ class ResourceTracker {
         zx_handle_t eventHandle = ZX_HANDLE_INVALID;
         zx_koid_t eventKoid = ZX_KOID_INVALID;
         std::optional<int> syncFd = {};
+        bool isTimeline = false;
     };
 
     struct VkDescriptorUpdateTemplate_Info {
@@ -880,7 +887,7 @@ class ResourceTracker {
 
     VkDescriptorImageInfo filterNonexistentSampler(const VkDescriptorImageInfo& inputInfo);
 
-    void emitDeviceMemoryReport(VkDevice_Info info, VkDeviceMemoryReportEventTypeEXT type,
+    void emitDeviceMemoryReport(const VkDevice_Info& info, VkDeviceMemoryReportEventTypeEXT type,
                                 uint64_t memoryObjectId, VkDeviceSize size, VkObjectType objectType,
                                 uint64_t objectHandle, uint32_t heapIndex = 0);
 

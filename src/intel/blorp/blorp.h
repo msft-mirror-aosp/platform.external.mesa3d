@@ -41,6 +41,8 @@ typedef struct nir_shader nir_shader;
 enum blorp_op {
    BLORP_OP_BLIT,
    BLORP_OP_COPY,
+   BLORP_OP_COPY_INDIRECT,
+   BLORP_OP_COPY_IMAGE_INDIRECT,
    BLORP_OP_CCS_AMBIGUATE,
    BLORP_OP_CCS_COLOR_CLEAR,
    BLORP_OP_CCS_PARTIAL_RESOLVE,
@@ -65,9 +67,11 @@ struct blorp_batch;
 struct blorp_params;
 
 struct blorp_config {
+   bool enable_tbimr;
    bool use_mesh_shading;
    bool use_unrestricted_depth_range;
    bool use_cached_dynamic_states;
+   bool use_efficient_64bit;
 };
 
 enum blorp_dynamic_state {
@@ -79,14 +83,26 @@ enum blorp_dynamic_state {
    BLORP_DYNAMIC_STATE_COUNT,
 };
 
+struct blorp_address {
+   void *buffer;
+   int64_t offset;
+   unsigned reloc_flags;
+   uint32_t mocs;
+
+   /**
+    * True if this buffer is intended to live in device-local memory.
+    * This is only a performance hint; it's OK to set it to true even
+    * if eviction has temporarily forced the buffer to system memory.
+    */
+   bool local_hint;
+};
+
 struct blorp_context {
    void *driver_ctx;
 
    const struct isl_device *isl_dev;
 
    struct blorp_compiler *compiler;
-
-   bool enable_tbimr;
 
    nir_shader *(*get_fp64_nir)(struct blorp_context *context);
 
@@ -97,14 +113,16 @@ struct blorp_context {
 
    bool (*lookup_shader)(struct blorp_batch *batch,
                          const void *key, uint32_t key_size,
-                         uint32_t *kernel_out, void *prog_data_out);
+                         uint64_t *kernel_out, void *prog_data_out);
    bool (*upload_shader)(struct blorp_batch *batch,
                          uint32_t stage,
                          const void *key, uint32_t key_size,
                          const void *kernel, uint32_t kernel_size,
                          const void *prog_data,
                          uint32_t prog_data_size,
-                         uint32_t *kernel_out, void *prog_data_out);
+                         uint64_t *kernel_out, void *prog_data_out);
+   uint64_t (*get_surface_address)(struct blorp_batch *batch,
+                                   struct blorp_address addr);
    void (*exec)(struct blorp_batch *batch, const struct blorp_params *params);
 
    struct blorp_config config;
@@ -155,6 +173,10 @@ enum blorp_batch_flags {
     * Mostly for debug
     */
    BLORP_BATCH_DISABLE_VF_DISTRIBUTION = BITFIELD_BIT(6),
+
+   /** Source buffer is unpadded and needs careful accesses
+    */
+   BLORP_BATCH_SRC_UNPADDED          = BITFIELD_BIT(7),
 };
 
 struct blorp_batch {
@@ -185,20 +207,6 @@ blorp_batch_isl_copy_usage(const struct blorp_batch *batch, bool is_dest,
 
    return usage;
 }
-
-struct blorp_address {
-   void *buffer;
-   int64_t offset;
-   unsigned reloc_flags;
-   uint32_t mocs;
-
-   /**
-    * True if this buffer is intended to live in device-local memory.
-    * This is only a performance hint; it's OK to set it to true even
-    * if eviction has temporarily forced the buffer to system memory.
-    */
-   bool local_hint;
-};
 
 static inline bool
 blorp_address_is_null(struct blorp_address address)
@@ -294,6 +302,22 @@ blorp_buffer_copy(struct blorp_batch *batch,
                   uint64_t size);
 
 void
+blorp_copy_memory_indirect(struct blorp_batch *batch,
+                           uint64_t indirect_buf_addr,
+                           uint32_t copy_count,
+                           uint64_t stride);
+
+void
+blorp_copy_memory_to_image_indirect(struct blorp_batch *batch,
+                                    const struct blorp_surf *img_blorp_surf,
+                                    uint64_t indirect_buf_addr,
+                                    uint64_t indirect_buf_stride,
+                                    uint32_t first_copy_idx,
+                                    uint32_t img_mip_level,
+                                    int layer_count,
+                                    int forced_layer_or_z);
+
+void
 blorp_fast_clear(struct blorp_batch *batch,
                  const struct blorp_surf *surf,
                  enum isl_format format, struct isl_swizzle swizzle,
@@ -360,7 +384,7 @@ blorp_hiz_clear_depth_stencil(struct blorp_batch *batch,
                               bool clear_stencil, uint8_t stencil_value);
 void
 blorp_clear_attachments(struct blorp_batch *batch,
-                        uint32_t binding_table_offset,
+                        uint64_t binding_table_offset_or_ss_pointer,
                         enum isl_format depth_format,
                         uint32_t num_samples,
                         uint32_t start_layer, uint32_t num_layers,
