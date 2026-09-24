@@ -24,7 +24,6 @@ filegroup {
         "ResourceTracker.cpp",
         "Resources.cpp",
         "Validation.cpp",
-        "VulkanHandleMapping.cpp",
         "VulkanStreamGuest.cpp",
         "gfxstream_vk_private.cpp",
     ],
