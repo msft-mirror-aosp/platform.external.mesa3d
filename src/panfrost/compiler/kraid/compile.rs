@@ -3,10 +3,12 @@
 
 use crate::data_type::NumericType;
 use crate::debug::*;
+use crate::decode::{Args, disassemble};
 use crate::ir::*;
 use crate::model::model_for_gpu_id;
 use crate::ops::OpNop;
 use compiler::bindings::*;
+use compiler::memstream::MemStream;
 use kraid_bindings::*;
 
 use std::collections::HashMap;
@@ -33,7 +35,6 @@ fn nir_opts(arch: u8, merge_wg: bool) -> nir_shader_compiler_options {
         lower_bitfield_extract: true,
         lower_bitfield_extract8: true,
         lower_bitfield_extract16: true,
-        lower_insert_byte: true,
         has_bitfield_select: true,
 
         lower_pack_64_4x16: true,
@@ -223,6 +224,27 @@ fn encode_no_psiz_variant(
     dynarray_append_vec(binary, bin);
 }
 
+fn print_disassembly(bin: &[u32], arch: u8) {
+    if !DEBUG.contains(DebugFlags::PRINT) {
+        return;
+    }
+    let mut lock = std::io::stderr().lock();
+    let args = Args {
+        arch,
+        print_offset: true,
+        print_hexdump: true,
+    };
+    let mut instrs: Vec<u64> = Default::default();
+    for idx in (0..bin.len()).step_by(2) {
+        let instr = (bin[idx] as u64) | (bin[idx + 1] as u64) << 32;
+        if instr == 0 {
+            break;
+        }
+        instrs.push(instr);
+    }
+    let _ = disassemble(&mut lock, &args, &instrs);
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn kraid_compile_nir(
     nir: &mut nir_shader,
@@ -277,6 +299,7 @@ pub extern "C" fn kraid_compile_nir(
         pass!(s.lower_blend_call());
 
         let bin = model.encode_shader(&s);
+        print_disassembly(&bin, model.arch());
         let code_size = std::mem::size_of_val(&bin[..]);
         dynarray_append_vec(binary, bin);
 
@@ -299,4 +322,35 @@ pub extern "C" fn kraid_compile_nir(
 
     write_back_info(model.as_ref(), &s.info, nir, info);
     unsafe { pan_shader_update_info(info, nir, inputs) };
+
+    if DEBUG.contains(DebugFlags::STATS) {
+        let mut stream = MemStream::new().expect("Failed to open memstream");
+
+        unsafe {
+            // Both binding crates generate their own stdio FILE, those are the
+            // same type underneath
+            let f = stream.c_file() as *mut kraid_bindings::FILE;
+            let prefix =
+                kraid_shader_stage_name(nir.info.stage(), inputs.is_blend);
+
+            pan_stats_verbose_prologue(
+                f,
+                prefix,
+                inputs.gpu_id,
+                inputs.gpu_variant,
+                model.arch().into(),
+            );
+            // TODO: min/max statistics
+            pan_valhall_stats_verbose(
+                f,
+                &info.stats.__bindgen_anon_1.valhall,
+                std::ptr::null(),
+                std::ptr::null(),
+                info.tls_size,
+            );
+            pan_stats_verbose_epilogue(f, info);
+        }
+
+        eprint!("{}", stream.take_utf8_string_lossy().unwrap());
+    }
 }

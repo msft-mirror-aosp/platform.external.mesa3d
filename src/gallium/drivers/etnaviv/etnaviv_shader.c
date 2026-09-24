@@ -40,19 +40,29 @@
 #include "util/u_math.h"
 #include "util/u_memory.h"
 
-/* Upload shader code to bo, if not already done */
-static bool etna_icache_upload_shader(struct etna_context *ctx, struct etna_shader_variant *v)
+static inline bool
+upload_bo(struct etna_context *ctx, struct etna_bo **bo, const void *data, uint32_t size)
 {
-   if (v->bo)
+   if (*bo)
       return true;
-   v->bo = etna_bo_new(ctx->screen->dev, v->code_size*4, DRM_ETNA_GEM_CACHE_WC);
-   if (!v->bo)
+
+   *bo = etna_bo_new(ctx->screen->dev, size, DRM_ETNA_GEM_CACHE_WC);
+   if (!*bo)
       return false;
 
-   void *buf = etna_bo_map(v->bo);
-   etna_bo_cpu_prep(v->bo, DRM_ETNA_PREP_WRITE);
-   memcpy(buf, v->code, v->code_size*4);
-   etna_bo_cpu_fini(v->bo);
+   void *buf = etna_bo_map(*bo);
+   etna_bo_cpu_prep(*bo, DRM_ETNA_PREP_WRITE);
+   memcpy(buf, data, size);
+   etna_bo_cpu_fini(*bo);
+
+   return true;
+}
+
+static bool etna_icache_upload_shader(struct etna_context *ctx, struct etna_shader_variant *v)
+{
+   if (!upload_bo(ctx, &v->bo, v->code, v->code_size * 4))
+      return false;
+
    DBG("Uploaded %s of %u words to bo %p", v->stage == MESA_SHADER_FRAGMENT ? "fs":"vs", v->code_size, v->bo);
    return true;
 }
@@ -170,7 +180,7 @@ etna_link_shaders(struct etna_context *ctx, struct compiled_shader_state *cs,
    /* vs outputs (varyings) */
    DEFINE_ETNA_BITARRAY(vs_output, ARRAY_SIZE(cs->VS_OUTPUT) * 4, 8) = {0};
    int varid = 0;
-   etna_bitarray_set(vs_output, 8, varid++, vs->vs_pos_out_reg);
+   etna_bitarray_set(vs_output, 8, varid++, MAX2(vs->vs_pos_out_reg, 0));
    for (int idx = 0; idx < link.num_varyings; ++idx)
       etna_bitarray_set(vs_output, 8, varid++, link.varyings[idx].reg);
    if (vs->vs_pointsize_out_reg >= 0)
@@ -323,10 +333,23 @@ etna_link_shaders(struct etna_context *ctx, struct compiled_shader_state *cs,
    return true;
 }
 
+static bool
+etna_upload_constant_data(struct etna_context *ctx, struct etna_shader_variant *v)
+{
+   if (!v->constant_data_size)
+      return true;
+
+   return upload_bo(ctx, &v->constant_bo, v->constant_data, v->constant_data_size);
+}
+
 bool
 etna_shader_link(struct etna_context *ctx)
 {
    if (!ctx->shader.vs || !ctx->shader.fs)
+      return false;
+
+   if (!etna_upload_constant_data(ctx, ctx->shader.vs) ||
+       !etna_upload_constant_data(ctx, ctx->shader.fs))
       return false;
 
    /* re-link vs and fs if needed */
@@ -339,6 +362,7 @@ etna_destroy_shader(struct etna_shader_variant *shader)
    assert(shader);
 
    FREE(shader->code);
+   FREE(shader->constant_data);
    FREE(shader->uniforms.data);
    FREE(shader->uniforms.contents);
    FREE(shader);
@@ -380,8 +404,9 @@ etna_shader_update_vs_inputs(struct compiled_shader_state *cs,
    cs->VS_TEMP_REGISTER_CONTROL =
       VIVS_VS_TEMP_REGISTER_CONTROL_NUM_TEMPS(num_temps);
 
-   /* vs inputs (attributes) */
-   DEFINE_ETNA_BITARRAY(vs_input, 16, 8) = {0};
+   /* vs inputs (attributes). VS_HALTI5_INPUT has 32 mapping slots, the
+    * pre-HALTI5 VS_INPUT only the first 16. */
+   DEFINE_ETNA_BITARRAY(vs_input, 32, 8) = {0};
    for (int idx = 0; idx < num_vs_inputs; ++idx) {
       if (idx < vs->infile.num_reg)
          etna_bitarray_set(vs_input, 8, idx, vs->infile.reg[idx].reg);
@@ -500,6 +525,9 @@ etna_variant_destroy_cb(struct util_shader_variant *base)
 
    if (v->bo)
       etna_bo_del(v->bo);
+
+   if (v->constant_bo)
+      etna_bo_del(v->constant_bo);
 
    etna_destroy_shader(v);
 }

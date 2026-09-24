@@ -671,7 +671,7 @@ fn spill(s: &mut Shader, live: Liveness, limit: u32) {
                     live_min = p_live.clone();
                     live_max = p_live.clone();
                 } else {
-                    live_max &= p_live.s(..);
+                    live_min &= p_live.s(..);
                     live_max |= p_live.s(..);
                 }
 
@@ -691,6 +691,17 @@ fn spill(s: &mut Shader, live: Liveness, limit: u32) {
                 }
             }
 
+            // Remove phi-src ssa which are live in the predecessors but dead now
+            // (every value still live must be in either live_in or a phi_dst)
+            let mut entry_values = bl.live_in_set().clone();
+            for op in blocks[b_idx].iter_phi_dsts() {
+                for ssa in op.iter_ssa_defs() {
+                    entry_values.insert(ssa.idx());
+                }
+            }
+            live_min &= entry_values.s(..);
+            live_max &= entry_values.s(..);
+
             // Now get an initial W
             let mut live = live_out[preds[0]].clone();
             let extra = BitSet::from(live.as_bit_set().s(..) - live_min.s(..));
@@ -699,16 +710,20 @@ fn spill(s: &mut Shader, live: Liveness, limit: u32) {
             }
             debug_assert!(live.bytes().reg <= limit);
 
+            // W now contains the minimal set of live values that are already in
+            // registers (from every predecessors).  Add back everything we can
+            // afford from the "missing" set (live_max - live_min).  Items used
+            // first take precedence
             let mut heap = BinaryHeap::new();
 
             let mut missing = live_max;
             missing -= live_min.s(..);
             for idx in missing.iter() {
                 let next_use = next_use_map[idx].0;
-                heap.push(NextUse { idx, next_use });
+                heap.push(Reverse(NextUse { idx, next_use }));
             }
 
-            while let Some(nu) = heap.pop() {
+            while let Some(Reverse(nu)) = heap.pop() {
                 let ssa = s.ssa_alloc.lookup_by_idx(nu.idx);
                 if live.bytes().reg + u32::from(ssa.bytes()) > limit {
                     break;

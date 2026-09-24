@@ -987,18 +987,8 @@ if with_gallium_rusticl or with_nouveau_vk or with_tools.contains('etnaviv') or 
     '--wrap-unsafe-ops',
     # can't do anything about it anyway
     '--raw-line', '#![allow(clippy::all)]',
-    '--raw-line', '#![allow(improper_ctypes)]',
-    # Some bindgen versions assume `unsafe_op_in_unsafe_fn`
-    '--raw-line', '#![allow(unused_unsafe)]',
-    '--raw-line', '#![allow(non_camel_case_types)]',
-    '--raw-line', '#![allow(non_snake_case)]',
-    '--raw-line', '#![allow(non_upper_case_globals)]',
-    # This is fixed in 0.72 but we don't have that in CI yet
-    '--raw-line', '#![allow(unsafe_op_in_unsafe_fn)]',
+    '--raw-line', '#![allow(warnings)]',
   ]
-  if rustc.version().version_compare('>= 1.88')
-    bindgen_output_args += ['--raw-line', '#![allow(unnecessary_transmutes)]']
-  endif
 
   rust_global_args = [
     # We want to be able to write `else { if {} }` when it makes more sense than
@@ -1329,6 +1319,9 @@ if cc.has_function('reallocarray')
 endif
 if cc.has_function('fmemopen')
    pre_args += '-DHAVE_FMEMOPEN'
+endif
+if cc.has_function('mallinfo2')
+   pre_args += '-DHAVE_MALLINFO2'
 endif
 
 # TODO: this is very incomplete
@@ -1722,6 +1715,12 @@ foreach f, prefix: functions_to_detect
   endif
 endforeach
 
+# sysconf() existing does not mean it can answer _SC_PHYS_PAGES: that selector
+# is a glibc extension, unlike the POSIX-mandated _SC_PAGESIZE beside it.
+if cc.has_header_symbol('unistd.h', '_SC_PHYS_PAGES')
+  pre_args += '-DHAVE_SC_PHYS_PAGES'
+endif
+
 if cpp.links('''
     #define _GNU_SOURCE
     #include <stdlib.h>
@@ -1999,7 +1998,7 @@ endif
 # MCJIT is deprecated in LLVM and will not accept new architecture ports,
 # so any architecture not in the exhaustive list will have to rely on LLVM
 # ORCJIT for llvmpipe functionality.
-llvm_has_mcjit = host_machine.cpu_family() in ['aarch64', 'arm', 'ppc', 'ppc64', 's390x', 'x86', 'x86_64']
+llvm_has_mcjit = host_machine.cpu_family() in ['aarch64', 'arm', 'mips', 'mips64', 'ppc', 'ppc64', 's390x', 'x86', 'x86_64']
 llvm_with_orcjit = get_option('llvm-orcjit') or not llvm_has_mcjit
 
 if (with_amd_vk or with_gallium_radeonsi) and amd_with_llvm
