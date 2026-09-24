@@ -8,6 +8,8 @@
 
 #include "sfn_instr_export.h"
 #include "sfn_shader_vs.h"
+#include "sfn_nir.h"
+#include "nir.h"
 
 #include <sstream>
 
@@ -16,7 +18,7 @@ namespace r600 {
 using std::string;
 
 TCSShader::TCSShader(const r600_shader_key& key):
-    Shader("TCS"),
+    Shader("TCS", {(uint8_t)key.tcs.nr_cbufs, 0, (uint8_t)key.tcs.dynamic_ssbo_offset}),
     m_tcs_prim_mode(key.tcs.prim_mode)
 {
 }
@@ -104,6 +106,7 @@ TCSShader::do_get_shader_info(r600_shader *sh_info)
 {
    sh_info->processor_type = MESA_SHADER_TESS_CTRL;
    sh_info->tcs_prim_mode = m_tcs_prim_mode;
+   sh_info->dynamic = get_dynamic_offset();
 }
 
 bool
@@ -137,7 +140,8 @@ TCSShader::do_print_properties(std::ostream& os) const
 TESShader::TESShader(const pipe_stream_output_info *so_info,
                      const r600_shader *gs_shader,
                      const r600_shader_key& key):
-    VertexStageShader("TES"),
+    VertexStageShader(
+       "TES", {(uint8_t)key.tes.nr_cbufs, 0, (uint8_t)key.tes.dynamic_ssbo_offset}),
     m_vs_as_gs_a(key.vs.as_gs_a)
 {
    if (key.tes.as_es)
@@ -224,6 +228,7 @@ TESShader::do_get_shader_info(r600_shader *sh_info)
 {
    sh_info->processor_type = MESA_SHADER_TESS_EVAL;
    m_export_processor->get_shader_info(sh_info);
+   sh_info->dynamic = get_dynamic_offset();
 }
 
 void
@@ -245,4 +250,41 @@ TESShader::do_print_properties(std::ostream& os) const
    (void)os;
 }
 
+class LowerTessLevelDefault : public NirLowerInstruction {
+   bool filter(const nir_instr *instr) const override
+   {
+      if (instr->type != nir_instr_type_intrinsic)
+         return false;
+
+      auto intr = nir_instr_as_intrinsic(instr);
+      return intr->intrinsic == nir_intrinsic_load_tess_level_inner_default ||
+             intr->intrinsic == nir_intrinsic_load_tess_level_outer_default;
+   }
+
+   nir_def *lower(nir_instr *instr) override
+   {
+      auto intr = nir_instr_as_intrinsic(instr);
+
+      auto info_buffer = nir_imm_int(b, R600_BUFFER_INFO_CONST_BUFFER);
+
+      switch (intr->intrinsic) {
+      case nir_intrinsic_load_tess_level_inner_default:
+         return  nir_load_ubo(b, 2, 32, info_buffer, nir_imm_int(b, 16),
+                               .range_base = 16, .range = 8);
+      case nir_intrinsic_load_tess_level_outer_default:
+         return nir_load_ubo(b, 4, 32, info_buffer, nir_imm_int(b, 0),
+                             .range_base = 0, .range = 16);
+      default:
+         assert(0);
+         return nullptr;
+      }
+   }
+};
+
 } // namespace r600
+
+int r600_lower_tess_level_default_to_ubo(nir_shader *sh)
+{
+   return r600::LowerTessLevelDefault().run(sh);
+}
+

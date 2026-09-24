@@ -54,6 +54,7 @@ static void blorp_measure_end(struct blorp_batch *_batch,
                          params->op,
                          params->x1 - params->x0,
                          params->y1 - params->y0,
+                         params->num_layers,
                          params->num_samples,
                          params->shader_pipeline,
                          params->dst.view.format,
@@ -100,14 +101,6 @@ blorp_surface_reloc(struct blorp_batch *batch, uint32_t ss_offset,
    write_reloc(cmd_buffer->device, dest, address_u64, false);
 }
 
-static uint64_t
-blorp_get_surface_address(struct blorp_batch *blorp_batch,
-                          struct blorp_address address)
-{
-   /* We'll let blorp_surface_reloc write the address. */
-   return 0;
-}
-
 static struct blorp_address
 blorp_get_surface_base_address(struct blorp_batch *batch)
 {
@@ -128,22 +121,6 @@ blorp_alloc_dynamic_state(struct blorp_batch *batch,
 
    struct anv_state state =
       anv_cmd_buffer_alloc_dynamic_state(cmd_buffer, size, alignment);
-
-   *offset = state.offset;
-   return state.map;
-}
-
-UNUSED static void *
-blorp_alloc_general_state(struct blorp_batch *batch,
-                          uint32_t size,
-                          uint32_t alignment,
-                          uint32_t *offset)
-{
-   struct anv_cmd_buffer *cmd_buffer = batch->driver_batch;
-
-   struct anv_state state =
-      anv_state_stream_alloc(&cmd_buffer->general_state_stream, size,
-                             alignment);
 
    *offset = state.offset;
    return state.map;

@@ -52,13 +52,26 @@ jay_after_inst(jay_inst *I)
    return (jay_cursor) { .inst = I, .option = jay_cursor_after_inst };
 }
 
+static inline bool
+jay_op_starts_block(enum jay_opcode op)
+{
+   return op == JAY_OPCODE_PHI_DST ||
+          op == JAY_OPCODE_PRELOAD ||
+          op == JAY_OPCODE_ELSE;
+}
+
+static inline bool
+jay_op_ends_block(enum jay_opcode op)
+{
+   return op == JAY_OPCODE_PHI_SRC ||
+          (jay_op_is_control_flow(op) && op != JAY_OPCODE_ELSE);
+}
+
 static inline jay_cursor
 jay_before_block(jay_block *block)
 {
    jay_foreach_inst_in_block(block, I) {
-      if (I->op != JAY_OPCODE_PHI_DST &&
-          I->op != JAY_OPCODE_PRELOAD &&
-          I->op != JAY_OPCODE_ELSE)
+      if (!jay_op_starts_block(I->op))
          return jay_before_inst(I);
    }
 
@@ -70,7 +83,7 @@ static inline jay_cursor
 jay_after_block_logical(jay_block *block)
 {
    jay_foreach_inst_in_block_rev(block, I) {
-      if (I->op != JAY_OPCODE_PHI_SRC && !jay_op_is_control_flow(I->op))
+      if (!jay_op_ends_block(I->op))
          return jay_after_inst(I);
    }
 
@@ -106,10 +119,12 @@ jay_before_function(jay_function *f)
  * have other predecessorss since there are no critical edges.
  */
 static inline jay_block *
-jay_edge_to_block(jay_block *pred, jay_block *succ)
+jay_edge_to_block(jay_block *pred, jay_block *succ, enum jay_file file)
 {
-   assert(jay_num_successors(pred) == 1 || jay_num_predecessors(succ) == 1);
-   return jay_num_successors(pred) == 1 ? pred : succ;
+   assert(jay_num_successors(pred, file) == 1 ||
+          jay_num_predecessors(succ, file) == 1);
+
+   return jay_num_successors(pred, file) == 1 ? pred : succ;
 }
 
 /*
@@ -118,9 +133,9 @@ jay_edge_to_block(jay_block *pred, jay_block *succ)
  * flow graph having no critical edges.
  */
 static inline jay_cursor
-jay_along_edge(jay_block *pred, jay_block *succ)
+jay_along_edge(jay_block *pred, jay_block *succ, enum jay_file file)
 {
-   jay_block *to = jay_edge_to_block(pred, succ);
+   jay_block *to = jay_edge_to_block(pred, succ, file);
 
    if (to == pred)
       return jay_after_block_logical(pred);
@@ -208,27 +223,30 @@ jay_collect(jay_builder *b,
 /*
  * Set the n'th channel of a def to index. This requires a copy-on-write.
  *
- * This implementation could likely be optimized.
+ * This implementation could likely be optimized. Right now, we just decompress
+ * the def, update in-place, then collect back.
  */
 static inline void
-jay_insert_channel(jay_builder *b, jay_def *d, unsigned c, jay_def scalar)
+jay_insert_channel_index(jay_builder *b, jay_def *d, unsigned c, uint32_t index)
 {
    uint32_t indices[JAY_MAX_DEF_LENGTH];
    uint32_t count = jay_num_values(*d);
 
-   assert(scalar.file == d->file && !scalar.negate && !scalar.abs);
    assert(c < count && count <= ARRAY_SIZE(indices));
 
-   /* First, decompress the def. */
    jay_foreach_comp(*d, i) {
       indices[i] = jay_channel(*d, i);
    }
 
-   /* Next, update the indices in place */
-   indices[c] = jay_index(scalar);
-
-   /* Now collect it back. */
+   indices[c] = index;
    jay_replace_src(d, jay_collect(b, d->file, indices, count));
+}
+
+static inline void
+jay_insert_channel(jay_builder *b, jay_def *d, unsigned c, jay_def scalar)
+{
+   assert(scalar.file == d->file && !scalar.negate && !scalar.abs);
+   jay_insert_channel_index(b, d, c, jay_index(scalar));
 }
 
 /*
@@ -241,12 +259,18 @@ jay_collect_vectors(jay_builder *b, jay_def *vecs, uint32_t nr)
    uint32_t nr_indices = 0;
 
    for (unsigned i = 0; i < nr; ++i) {
-      assert(vecs[i].file == vecs[0].file && jay_is_ssa(vecs[i]));
       assert(!vecs[i].negate && !vecs[i].abs);
-
-      jay_foreach_comp(vecs[i], c) {
+      if (jay_is_null(vecs[i])) {
+         assert(i != 0);
          assert(nr_indices < ARRAY_SIZE(indices));
-         indices[nr_indices++] = jay_channel(vecs[i], c);
+         indices[nr_indices++] = 0;
+      } else {
+         assert(vecs[i].file == vecs[0].file && jay_is_ssa(vecs[i]));
+
+         jay_foreach_comp(vecs[i], c) {
+            assert(nr_indices < ARRAY_SIZE(indices));
+            indices[nr_indices++] = jay_channel(vecs[i], c);
+         }
       }
    }
 
@@ -326,32 +350,20 @@ jay_grow_sources(jay_builder *b, jay_inst *I, uint8_t new_num_srcs)
 }
 
 static inline jay_inst *
-jay_add_predicate_else(jay_builder *b,
-                       jay_inst *I,
-                       jay_def predicate,
-                       jay_def default_value)
+jay_add_predicate(jay_builder *b, jay_inst *I, jay_def pred, jay_def default_)
 {
    assert(!I->predication && "pre-condition");
-   assert(jay_is_flag(predicate) && jay_is_ssa(default_value));
+   assert(jay_is_flag(pred) && (jay_is_ssa(default_) || jay_is_null(default_)));
 
    unsigned pred_index = I->num_srcs;
-   I = jay_grow_sources(b, I, pred_index + 2);
-   I->src[pred_index] = predicate;
-   I->src[pred_index + 1] = default_value;
-   I->predication = JAY_PREDICATED_DEFAULT;
-   return I;
-}
+   I->predication = jay_is_null(default_) ? 1 : 2;
+   I = jay_grow_sources(b, I, pred_index + I->predication);
+   I->src[pred_index] = pred;
 
-static inline jay_inst *
-jay_add_predicate(jay_builder *b, jay_inst *I, jay_def predicate)
-{
-   assert(!I->predication && "pre-condition");
-   assert(jay_is_flag(predicate));
+   if (I->predication == 2) {
+      I->src[pred_index + 1] = default_;
+   }
 
-   unsigned pred_index = I->num_srcs;
-   I = jay_grow_sources(b, I, pred_index + 1);
-   I->src[pred_index] = predicate;
-   I->predication = JAY_PREDICATED;
    return I;
 }
 
@@ -368,7 +380,7 @@ static inline jay_inst *
 jay_set_conditional_mod(jay_builder *b,
                         jay_inst *I,
                         jay_def cond_flag,
-                        enum jay_conditional_mod cmod)
+                        gen_condition cmod)
 {
    I->conditional_mod = cmod;
    return jay_set_cond_flag(b, I, cond_flag);
@@ -406,7 +418,7 @@ JAY_BUILD_SRC(uint32_t x)
 static inline jay_inst *
 _jay_CMP(jay_builder *b,
          enum jay_type src_type,
-         enum jay_conditional_mod cmod,
+         gen_condition cmod,
          jay_def dst,
          jay_def src0,
          jay_def src1)
@@ -415,6 +427,7 @@ _jay_CMP(jay_builder *b,
    I->type = src_type;
    I->src[0] = src0;
    I->src[1] = src1;
+   I->uniform = jay_is_uniform(dst);
 
    /* Even if we want to write a 32-bit 0/~0 result, we still need to
     * register-allocate a flag, since the hardware will implicitly clobber one
@@ -434,7 +447,7 @@ _jay_CMP(jay_builder *b,
    _jay_CMP(b, st, cmod, dst, JAY_BUILD_SRC(src0), JAY_BUILD_SRC(src1))
 
 struct jayb_send_params {
-   enum brw_sfid sfid;
+   enum gen_sfid sfid;
    uint64_t msg_desc;
    jay_def dst;
    jay_def header;
@@ -444,10 +457,13 @@ struct jayb_send_params {
    enum jay_type src_type[2];
    unsigned nr_srcs;
    uint32_t ex_desc_imm;
+   int split; /**< explicit split point */
    bool eot;
-   bool check_tdr;
    bool uniform;
    bool bindless;
+   bool pure;
+   bool skip_helpers;
+   uint8_t explicit_simd_width;
 };
 
 static inline jay_inst *
@@ -456,10 +472,12 @@ _jay_SEND(jay_builder *b, const struct jayb_send_params p)
    const struct intel_device_info *devinfo = b->shader->devinfo;
    jay_inst *I = jay_alloc_inst(b, JAY_OPCODE_SEND, 4, sizeof(jay_send_info));
    jay_send_info *info = jay_get_send_info(I);
+   info->explicit_simd_width = p.explicit_simd_width;
    bool has_header = !jay_is_null(p.header);
 
    I->dst = p.dst;
    I->type = p.type;
+   I->uniform = p.uniform;
 
    assert(I->type);
    info->type_0 = p.src_type[0] ? p.src_type[0] : I->type;
@@ -519,17 +537,18 @@ _jay_SEND(jay_builder *b, const struct jayb_send_params p)
       I->src[2] = p.nr_srcs > 0 ? p.srcs[0] : jay_null();
       I->src[3] = p.nr_srcs > 1 ? p.srcs[1] : jay_null();
    } else {
-      /* Otherwise, we need to pick a point to split at.
-       *
-       * Heuristic: don't split render targer writes becuase RA gets confused
-       * with the EOT requirements. Split everything else in half.
-       *
-       * TODO: Come up with a better heuristic.
-       */
+      /* Otherwise, we need to pick a point to split at. */
       assert(info->type_0 == info->type_1);
-      unsigned split = !p.check_tdr ? (p.nr_srcs / 2) : p.nr_srcs;
+      unsigned split = p.split > 0 ? p.split : p.nr_srcs / 2;
       I->src[2] = jay_collect_vectors(b, &p.srcs[0], split);
       I->src[3] = jay_collect_vectors(b, &p.srcs[split], p.nr_srcs - split);
+   }
+
+   if (jay_type_size_bits(p.type) == 16 &&
+       !p.uniform &&
+       b->shader->dispatch_width == 32) {
+      unsigned stride = b->shader->dispatch_width / 2;
+      I->dst = jay_alloc_def(b, UGPR, stride * jay_num_values(I->dst));
    }
 
    /* For message headers we pack a UGPR vector as a single GRF */
@@ -564,10 +583,11 @@ _jay_SEND(jay_builder *b, const struct jayb_send_params p)
 
    info->sfid = p.sfid;
    info->eot = p.eot;
-   info->check_tdr = p.check_tdr;
-   info->uniform = p.uniform;
    info->bindless = p.bindless;
+   info->pure = p.pure;
+   info->skip_helpers = p.skip_helpers;
    info->ex_desc_imm = p.ex_desc_imm;
+   info->mlen = lens[1];
    info->ex_mlen = lens[2];
    I->src[0] = jay_imm(((uint32_t) p.msg_desc) |
                        brw_message_desc(devinfo, lens[1], lens[0], has_header));
@@ -582,9 +602,16 @@ _jay_SEND(jay_builder *b, const struct jayb_send_params p)
       I->src[1] =
          jay_imm(brw_message_ex_desc(devinfo, lens[2]) | (p.msg_desc >> 32));
    } else if (p.ex_desc.file == J_ADDRESS) {
+      /* p.ex_desc should end up in an address register, so use it if it is
+       * provided in one already. this is necessary for anything generating
+       * SENDs after jay_lower_pre_ra (e.g. spills/fills).
+       */
       I->src[1] = p.ex_desc;
    } else {
-      I->src[1] = jay_alloc_def(b, J_ADDRESS, 1);
+      /* Otherwise we assume jay_lower_pre_ra will move it to an address
+       * register, so we can just stuff it in a UGPR for now.
+       */
+      I->src[1] = jay_alloc_def(b, UGPR, 1);
       if (info->bindless) {
          jay_MOV(b, I->src[1], p.ex_desc);
       } else {
@@ -593,30 +620,40 @@ _jay_SEND(jay_builder *b, const struct jayb_send_params p)
       }
    }
 
-   assert(!info->uniform || jay_is_null(I->dst) || I->dst.file == UGPR);
+   if (p.uniform && b->shader->helpers_tracked) {
+      I->cond_flag = jay_alloc_def(b, FLAG, 1);
+   }
+
    jay_builder_insert(b, I);
+
+   if (!jay_defs_equivalent(p.dst, I->dst)) {
+      /* Unpack 16-bit vectors to match the hardware with the data model.
+       *
+       * XXX: This is a hack.
+       */
+      unsigned stride = b->shader->dispatch_width / 2;
+      assert(stride % jay_ugpr_per_grf(b->shader) == 0);
+      for (unsigned i = 0; i < jay_num_values(p.dst); ++i) {
+         jay_def src = jay_extract_range(I->dst, i * stride, stride);
+         jay_MOV(b, jay_extract(p.dst, i), src)->type = JAY_TYPE_U16;
+      }
+   }
+
    return I;
 }
 
 #define jay_SEND(b, ...) _jay_SEND(b, (struct jayb_send_params) { __VA_ARGS__ })
 
 static inline void
-jay_copy_strided(jay_builder *b, jay_def dst, jay_def src, bool src_strided)
+jay_copy(jay_builder *b, jay_def dst, jay_def src)
 {
    assert(!jay_is_null(src));
 
-   unsigned src_stride = src_strided ? jay_ugpr_per_grf(b->shader) : 1;
-   uint32_t n = MIN2(jay_num_values(dst), jay_num_values(src) / src_stride);
+   uint32_t n = MIN2(jay_num_values(dst), jay_num_values(src));
 
    for (unsigned i = 0; i < n; ++i) {
-      jay_MOV(b, jay_extract(dst, i), jay_extract(src, i * src_stride));
+      jay_MOV(b, jay_extract(dst, i), jay_extract(src, i));
    }
-}
-
-static inline void
-jay_copy(jay_builder *b, jay_def dst, jay_def src)
-{
-   jay_copy_strided(b, dst, src, false);
 }
 
 static inline jay_def

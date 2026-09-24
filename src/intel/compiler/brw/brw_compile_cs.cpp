@@ -6,7 +6,6 @@
 #include "brw_shader.h"
 #include "brw_analysis.h"
 #include "brw_builder.h"
-#include "brw_generator.h"
 #include "brw_nir.h"
 #include "brw_cfg.h"
 #include "brw_private.h"
@@ -122,23 +121,33 @@ brw_compile_cs(const struct brw_compiler *compiler,
 {
    const struct intel_device_info *devinfo = compiler->devinfo;
    struct nir_shader *nir = params->base.nir;
-   const struct brw_cs_prog_key *key = params->key;
-   struct brw_cs_prog_data *prog_data = params->prog_data;
+   const struct brw_cs_prog_key *key =
+      (const struct brw_cs_prog_key *)params->base.key;
+   struct brw_cs_prog_data *prog_data =
+      (struct brw_cs_prog_data *)params->base.prog_data;
 
    const bool debug_enabled =
       brw_should_print_shader(nir, params->base.debug_flag ?
                                    params->base.debug_flag : DEBUG_CS,
-                                   params->base.source_hash);
+                                   prog_data->base.source_hash);
 
    brw_prog_data_init(&prog_data->base, &params->base);
-   prog_data->uses_inline_data = brw_nir_uses_inline_data(nir) ||
-                                 key->base.uses_inline_push_addr;
-   assert(compiler->devinfo->verx10 >= 125 || !prog_data->uses_inline_data);
 
    if (!nir->info.workgroup_size_variable) {
       prog_data->local_size[0] = nir->info.workgroup_size[0];
       prog_data->local_size[1] = nir->info.workgroup_size[1];
       prog_data->local_size[2] = nir->info.workgroup_size[2];
+
+      if (nir->info.workgroup_size[0] * nir->info.workgroup_size[1] % 32 == 0) {
+         struct nir_shader_compiler_options *options =
+            ralloc(nir, struct nir_shader_compiler_options);
+
+         *options = *nir->options;
+         options->divergence_analysis_options = nir_divergence_options(
+            options->divergence_analysis_options |
+            nir_divergence_uniform_local_invocation_id_z);
+         nir->options = options;
+      }
    }
 
    brw_pass_tracker pt_ = {
@@ -184,6 +193,7 @@ brw_compile_cs(const struct brw_compiler *compiler,
          .nir = shader,
          .dispatch_width = dispatch_width,
          .compiler = compiler,
+         .key = &key->base,
          .archiver = params->base.archiver,
       };
 
@@ -225,7 +235,9 @@ brw_compile_cs(const struct brw_compiler *compiler,
              !nir->info.workgroup_size_variable)
             break;
       } else {
-         simd_state.error[simd] = ralloc_strdup(params->base.mem_ctx, v[simd]->fail_msg);
+         brw_simd_mark_failed(simd_state, simd,
+                              ralloc_strdup(params->base.mem_ctx,
+                                            v[simd]->fail_msg));
          if (simd > 0) {
             brw_shader_perf_log(compiler, params->base.log_data,
                                 "SIMD%u shader failed to compile: %s\n",
@@ -250,36 +262,35 @@ brw_compile_cs(const struct brw_compiler *compiler,
    if (!nir->info.workgroup_size_variable)
       prog_data->prog_mask = 1 << selected_simd;
 
-   brw_generator g(compiler, &params->base, &prog_data->base,
-                  MESA_SHADER_COMPUTE);
-   if (unlikely(debug_enabled)) {
-      char *name = ralloc_asprintf(params->base.mem_ctx,
-                                   "%s compute shader %s",
-                                   nir->info.label ?
-                                   nir->info.label : "unnamed",
-                                   nir->info.name);
-      g.enable_debug(name);
-   }
+   brw_to_binary_params to_binary_params = {
+      .compiler = compiler,
+      .params = &params->base,
+      .prog_data = &prog_data->base,
+   };
 
-   uint32_t max_dispatch_width = 8u << (util_last_bit(prog_data->prog_mask) - 1);
-
-   struct genisa_stats *stats = params->base.stats;
+   unsigned num_variants = 0;
    for (unsigned simd = 0; simd < 3; simd++) {
       if (prog_data->prog_mask & (1u << simd)) {
          assert(v[simd]);
-         prog_data->prog_offset[simd] = g.generate_code(*v[simd], stats);
-         if (stats)
-            stats->max_dispatch_width = max_dispatch_width;
-         stats = stats ? stats + 1 : NULL;
-
+         to_binary_params.shaders[simd] = v[simd].get();
+         num_variants++;
          prog_data->base.grf_used = MAX2(prog_data->base.grf_used,
                                          v[simd]->grf_used);
-
-         max_dispatch_width = 8u << simd;
       }
    }
 
-   g.add_const_data(nir->constant_data, nir->constant_data_size);
+   const unsigned *assembly = brw_to_binary(&to_binary_params);
 
-   return g.get_assembly();
+   for (unsigned simd = 0; simd < 3; simd++) {
+      if (prog_data->prog_mask & (1u << simd))
+         prog_data->prog_offset[simd] = v[simd]->start_offset;
+   }
+
+   /* Override per-variant max_dispatch_width to make reports more useful. */
+   const uint32_t max_dispatch_width =
+      8u << (util_last_bit(prog_data->prog_mask) - 1);
+   for (unsigned i = 0; i < num_variants && params->base.stats; i++)
+      params->base.stats[i].max_dispatch_width = max_dispatch_width;
+
+   return assembly;
 }

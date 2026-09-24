@@ -116,6 +116,19 @@ avoid_direct_resolve_to(const struct pan_image *img)
 }
 
 static void
+panvk_fb_store_set_crc_header_addr(struct pan_fb_store_target *store,
+                                   const struct panvk_image_view *iview)
+{
+   if (!store->store || !pan_image_view_has_crc(&iview->pview))
+      return;
+
+   const struct panvk_image *image =
+      container_of(iview->vk.image, struct panvk_image, vk);
+
+   store->crc_header_addr = panvk_image_plane_crc_header_addr(image);
+}
+
+static void
 render_state_set_color_attachment(struct panvk_cmd_buffer *cmdbuf,
                                   const VkRenderingAttachmentInfo *att,
                                   uint32_t index)
@@ -178,8 +191,12 @@ render_state_set_color_attachment(struct panvk_cmd_buffer *cmdbuf,
    };
    render->fb.spill.load.rts[index] = pan_fb_load_iview(&iview->pview);
    render->fb.spill.store.rts[index] = pan_fb_store_iview(&iview->pview);
-   if (att->storeOp == VK_ATTACHMENT_STORE_OP_STORE && !ms2ss)
+   panvk_fb_store_set_crc_header_addr(&render->fb.spill.store.rts[index],
+                                      iview);
+   if (att->storeOp == VK_ATTACHMENT_STORE_OP_STORE && !ms2ss) {
       render->fb.store.rts[index] = pan_fb_store_iview(&iview->pview);
+      panvk_fb_store_set_crc_header_addr(&render->fb.store.rts[index], iview);
+   }
 
    if (att->resolveMode != VK_RESOLVE_MODE_NONE) {
       VK_FROM_HANDLE(panvk_image_view, resolve_iview, att->resolveImageView);
@@ -215,9 +232,13 @@ render_state_set_color_attachment(struct panvk_cmd_buffer *cmdbuf,
          };
          render->fb.store.rts[index] =
             pan_fb_always_store_iview_s0(&resolve.dst_iview->pview);
+         panvk_fb_store_set_crc_header_addr(&render->fb.store.rts[index],
+                                            resolve.dst_iview);
       } else {
          /* We need to store so we can do the MSAA resolve later */
          render->fb.store.rts[index] = pan_fb_store_iview(&iview->pview);
+         panvk_fb_store_set_crc_header_addr(&render->fb.store.rts[index],
+                                            iview);
          render->color_attachments.resolve[index] = resolve;
       }
    }
@@ -360,8 +381,10 @@ render_state_set_zs_attachments(struct panvk_cmd_buffer *cmdbuf,
       assert(z_iview->pview.dim == s_iview->pview.dim);
       assert(z_iview->pview.first_level == s_iview->pview.first_level);
       assert(z_iview->pview.last_level == s_iview->pview.last_level);
-      assert(z_iview->pview.first_layer == s_iview->pview.first_layer);
-      assert(z_iview->pview.last_layer == s_iview->pview.last_layer);
+      assert(z_iview->pview.first_layer_or_z_slice ==
+             s_iview->pview.first_layer_or_z_slice);
+      assert(z_iview->pview.last_layer_or_z_slice ==
+             s_iview->pview.last_layer_or_z_slice);
       assert(z_iview->pview.nr_samples == s_iview->pview.nr_samples);
    }
 
@@ -811,11 +834,10 @@ prepare_iam_sysvals(struct panvk_cmd_buffer *cmdbuf, BITSET_WORD *dirty_sysvals)
 
 void
 panvk_per_arch(cmd_prepare_draw_sysvals)(struct panvk_cmd_buffer *cmdbuf,
-                                         const struct panvk_draw_info *info)
+                                         const struct panvk_draw_info *info,
+                                         const struct panvk_shader_variant *fs)
 {
    struct vk_color_blend_state *cb = &cmdbuf->vk.dynamic_graphics_state.cb;
-   const struct panvk_shader_variant *fs =
-      panvk_shader_only_variant(get_fs(cmdbuf));
    uint32_t noperspective_varyings = fs ? fs->info.varyings.noperspective : 0;
    BITSET_DECLARE(dirty_sysvals, MAX_SYSVAL_FAUS) = {0};
 
@@ -937,10 +959,12 @@ panvk_per_arch(cmd_prepare_draw_sysvals)(struct panvk_cmd_buffer *cmdbuf,
                      fs_desc_state->dyn_ssbos);
    }
 
-   for (uint32_t i = 0; i < MAX_SETS; i++) {
-      uint32_t used_set_mask =
-         vs->desc_info.used_set_mask | (fs ? fs->desc_info.used_set_mask : 0);
+   uint32_t used_set_mask = 0;
+   used_set_mask |= cmdbuf->state.gfx.vs.shader->desc_info.used_set_mask;
+   if (fs)
+      used_set_mask |= cmdbuf->state.gfx.fs.shader->desc_info.used_set_mask;
 
+   for (uint32_t i = 0; i < MAX_SETS; i++) {
       if (used_set_mask & BITFIELD_BIT(i)) {
          set_gfx_sysval(cmdbuf, dirty_sysvals, desc.sets[i],
                         desc_state->sets[i]->descs.dev);
@@ -1027,6 +1051,4 @@ panvk_per_arch(CmdBindIndexBuffer2)(VkCommandBuffer commandBuffer,
       cmdbuf->state.gfx.ib.dev_addr = PAN_ARCH >= 10 ? 0x1000 : 0;
    }
    cmdbuf->state.gfx.ib.index_size = vk_index_type_to_bytes(indexType);
-
-   gfx_state_set_dirty(cmdbuf, IB);
 }

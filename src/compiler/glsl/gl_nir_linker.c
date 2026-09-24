@@ -134,12 +134,12 @@ replace_tex_src(nir_tex_src *dst, nir_tex_src_type src_type, nir_def *src_def,
                 nir_instr *src_parent)
 {
    *dst = nir_tex_src_for_ssa(src_type, src_def);
-   nir_src_set_parent_instr(&dst->src, src_parent);
+   nir_src_set_use_instr(&dst->src, src_parent);
    list_addtail(&dst->src.use_link, &dst->src.ssa->uses);
 }
 
-void
-gl_nir_inline_functions(nir_shader *shader)
+static void
+gl_nir_inline_functions(const struct pipe_caps *caps, nir_shader *shader)
 {
    /* We have to lower away local constant initializers right before we
     * inline functions.  That way they get properly initialized at the top
@@ -181,6 +181,10 @@ gl_nir_inline_functions(nir_shader *shader)
                if (!nir_deref_mode_is(deref, nir_var_uniform) ||
                    nir_deref_instr_get_variable(deref)->data.bindless) {
                   nir_def *load = nir_load_deref(&b, deref);
+
+                  if (caps->glsl_bindless_handles_are_32bit)
+                     load = nir_u2u32(&b, load);
+
                   replace_tex_src(&intr->src[0], nir_tex_src_texture_handle,
                                   load, instr);
                   replace_tex_src(&intr->src[1], nir_tex_src_sampler_handle,
@@ -867,7 +871,8 @@ add_vars_with_modes(const struct gl_constants *consts,
          sh_var->name.string = NULL;
          resource_name_updated(&sh_var->name);
          sh_var->type = var->type;
-         sh_var->location = var->data.location - loc_bias;
+         sh_var->location = var->data.explicit_location ?
+                            var->data.location - loc_bias : -1;
          sh_var->explicit_location = var->data.explicit_location;
          sh_var->index = var->data.index;
 
@@ -1371,18 +1376,37 @@ preprocess_shader(const struct pipe_screen *screen,
    NIR_PASS(_, nir, nir_opt_barrier_modes);
 
    /* before buffers and vars_to_ssa */
-   NIR_PASS(_, nir, gl_nir_lower_images, true);
+   NIR_PASS(_, nir, gl_nir_lower_images, &screen->caps, true);
 
-   if (prog->nir->info.stage == MESA_SHADER_COMPUTE ||
-       prog->nir->info.stage == MESA_SHADER_TASK ||
-       prog->nir->info.stage == MESA_SHADER_MESH) {
-      nir_variable_mode modes = nir_var_mem_shared | nir_var_mem_task_payload;
-      NIR_PASS(_, prog->nir, nir_lower_vars_to_explicit_types, modes, shared_type_info);
-      NIR_PASS(_, prog->nir, nir_lower_explicit_io, modes, nir_address_format_32bit_offset);
-   }
+   NIR_PASS(_, nir, nir_opt_constant_folding);
+}
+
+/* Lower shared and task_payload memory to explicit offsets.  This is done after
+ * the shader has been through the optimization loop (gl_nir_opts) so that the
+ * deref-based memory optimizations (nir_opt_copy_prop_vars,
+ * nir_opt_dead_write_vars, ...) get a chance to optimize these modes first.
+ */
+static bool
+lower_shared_memory(const struct gl_constants *consts,
+                    struct gl_shader_program *shader_program, nir_shader *nir)
+{
+   if (!mesa_shader_stage_uses_workgroup(nir->info.stage))
+      return true;
+
+   nir_variable_mode modes = nir_var_mem_shared | nir_var_mem_task_payload;
+   NIR_PASS(_, nir, nir_lower_vars_to_explicit_types, modes, shared_type_info);
+   NIR_PASS(_, nir, nir_lower_explicit_io, modes, nir_address_format_32bit_offset);
 
    /* Do a round of constant folding to clean up address calculations */
    NIR_PASS(_, nir, nir_opt_constant_folding);
+
+   if (nir->info.shared_size > consts->MaxComputeSharedMemorySize) {
+      linker_error(shader_program, "Too much shared memory used (%u/%u)\n",
+                   nir->info.shared_size, consts->MaxComputeSharedMemorySize);
+      return false;
+   }
+
+   return true;
 }
 
 static bool
@@ -1414,13 +1438,6 @@ prelink_lowering(const struct pipe_screen *screen,
 
       preprocess_shader(screen, consts, exts, prog, shader_program, shader->Stage);
 
-      if (prog->nir->info.shared_size > consts->MaxComputeSharedMemorySize) {
-         linker_error(shader_program, "Too much shared memory used (%u/%u)\n",
-                      prog->nir->info.shared_size,
-                      consts->MaxComputeSharedMemorySize);
-         return false;
-      }
-
       if (options->lower_to_scalar) {
          NIR_PASS(_, shader->Program->nir, nir_lower_load_const_to_scalar);
       }
@@ -1434,6 +1451,24 @@ prelink_lowering(const struct pipe_screen *screen,
     */
    if (num_shaders == 1)
       gl_nir_opts(linked_shader[0]->Program->nir);
+
+   /* Lower shared and task_payload memory to explicit offsets now that
+    * gl_nir_opts() has had a chance to optimize it as derefs.  Compute
+    * shaders are always single-shader programs so were optimized above,
+    * but task/mesh may be linked with other stages and haven't been
+    * optimized yet, so run the loop on them here first.
+    */
+   for (unsigned i = 0; i < num_shaders; i++) {
+      nir_shader *nir = linked_shader[i]->Program->nir;
+
+      if (num_shaders > 1 &&
+          (nir->info.stage == MESA_SHADER_TASK ||
+           nir->info.stage == MESA_SHADER_MESH))
+         gl_nir_opts(nir);
+
+      if (!lower_shared_memory(consts, shader_program, nir))
+         return false;
+   }
 
    /* nir_opt_access() needs to run before linking so that ImageAccess[]
     * and BindlessImage[].access are filled out with the correct modes.
@@ -2995,7 +3030,7 @@ reserve_explicit_locations(struct gl_shader_program *prog,
 
    struct range_entry *re =
       util_range_insert_remap(location, max_loc, prog->UniformRemapTable,
-                              NULL);
+                              NULL, false);
    if (!re) {
       /* ARB_explicit_uniform_location specification states:
        *
@@ -3195,6 +3230,7 @@ link_assign_subroutine_types(struct gl_shader_program *prog)
          assert(fn->subroutine_index != -1);
          if (p->sh.NumSubroutineFunctions + 1 > MAX_SUBROUTINES) {
             linker_error(prog, "Too many subroutine functions declared.\n");
+            _mesa_set_destroy(fn_decl_set, NULL);
             return;
          }
          p->sh.SubroutineFunctions = reralloc(p, p->sh.SubroutineFunctions,
@@ -3219,6 +3255,7 @@ link_assign_subroutine_types(struct gl_shader_program *prog)
                 p->sh.SubroutineFunctions[j].index == fn->subroutine_index) {
                linker_error(prog, "each subroutine index qualifier in the "
                             "shader must be unique\n");
+               _mesa_set_destroy(fn_decl_set, NULL);
                return;
             }
          }
@@ -3951,7 +3988,8 @@ gl_nir_link_glsl(struct gl_context *ctx, struct gl_shader_program *prog)
       if (!prog->data->LinkStatus)
          goto done;
 
-      gl_nir_inline_functions(prog->_LinkedShaders[i]->Program->nir);
+      gl_nir_inline_functions(&ctx->screen->caps,
+                              prog->_LinkedShaders[i]->Program->nir);
    }
 
    resize_tes_inputs(consts, prog);

@@ -39,16 +39,16 @@ cc_library_static {
     ],
     srcs: [
         "time.c",
-    ] + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
-        ("x86_64", "linux_glibc", default): [
+    ] + select((arch(), os()), {
+        ("x86_64", "linux_glibc"): [
             "threads_posix.c",
         ],
-        ("x86_64", "linux_musl", default): [
+        ("x86_64", "linux_musl"): [
             "threads_posix.c",
         ],
-        ("arm64", "linux_musl", default): [
+        ("arm64", "linux_musl"): [
             "threads_posix.c",
         ],
-        (default, default, default): [],
+        (default, default): [],
     }),
 }

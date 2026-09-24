@@ -20,16 +20,16 @@ cc_library_headers {
     host_supported: true,
     export_include_dirs: [
         ".",
-    ] + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
-        ("x86_64", "linux_glibc", default): [
+    ] + select((arch(), os()), {
+        ("x86_64", "linux_glibc"): [
             "android_stub",
         ],
-        ("x86_64", "linux_musl", default): [
+        ("x86_64", "linux_musl"): [
             "android_stub",
         ],
-        ("arm64", "linux_musl", default): [
+        ("arm64", "linux_musl"): [
             "android_stub",
         ],
-        (default, default, default): [],
+        (default, default): [],
     }),
 }

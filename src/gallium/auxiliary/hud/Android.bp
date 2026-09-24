@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium_5",
+    name: "files_libgallium_7",
     srcs: [
         "font.c",
         "hud_context.c",

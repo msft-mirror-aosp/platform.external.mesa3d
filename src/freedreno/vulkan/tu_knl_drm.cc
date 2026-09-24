@@ -17,11 +17,17 @@
 VkResult
 tu_allocate_userspace_iova(struct tu_device *dev,
                            uint64_t size,
+                           uint64_t align,
                            uint64_t client_iova,
                            enum tu_bo_alloc_flags flags,
                            uint64_t *iova)
 {
    *iova = 0;
+
+   if (flags & TU_BO_ALLOC_NO_32B_ROLLOVER)
+      dev->vma.nospan_shift = 32;
+   else
+      dev->vma.nospan_shift = 0;
 
    if (flags & TU_BO_ALLOC_REPLAYABLE) {
       if (client_iova) {
@@ -36,11 +42,11 @@ tu_allocate_userspace_iova(struct tu_device *dev,
           * them from the other end of the address space.
           */
          dev->vma.alloc_high = true;
-         *iova = util_vma_heap_alloc(&dev->vma, size, os_page_size);
+         *iova = util_vma_heap_alloc(&dev->vma, size, MAX2(os_page_size, align));
       }
    } else {
       dev->vma.alloc_high = false;
-      *iova = util_vma_heap_alloc(&dev->vma, size, os_page_size);
+      *iova = util_vma_heap_alloc(&dev->vma, size, MAX2(os_page_size, align));
    }
 
    if (!*iova)
@@ -87,7 +93,10 @@ tu_bo_make_zombie(struct tu_device *dev, struct tu_bo *bo)
 #endif
    vma->iova = bo->iova;
    vma->size = bo->size;
-   vma->fence = p_atomic_read(&dev->queues[0]->fence);
+   if (dev->queue_count[0] > 0)
+      vma->fence = p_atomic_read(&dev->queues[0]->fence);
+   else
+      vma->fence = -1;
 
    /* Must be cleared under the VMA mutex, or another thread could race to
     * reap the VMA, closing the BO and letting a new GEM allocation produce

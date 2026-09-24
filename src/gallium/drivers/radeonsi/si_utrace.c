@@ -12,7 +12,7 @@
 #include "util/hash_table.h"
 
 
-static void si_utrace_record_ts(struct u_trace *trace, void *cs, void *timestamps,
+static bool si_utrace_record_ts(struct u_trace *trace, void *cs, void *timestamps,
                                 uint64_t offset_B, uint32_t flags)
 {
    struct si_context *ctx = container_of(trace, struct si_context, trace);
@@ -20,15 +20,14 @@ static void si_utrace_record_ts(struct u_trace *trace, void *cs, void *timestamp
    struct si_resource *ts_bo = si_resource(buffer);
 
    if (ctx->gfx_cs.current.buf == ctx->last_timestamp_cmd &&
-       ctx->gfx_cs.current.cdw == ctx->last_timestamp_cmd_cdw) {
-      uint64_t *ts = (uint64_t *)((char *)si_buffer_map(ctx, ts_bo, PIPE_MAP_READ) + offset_B);
-      *ts = U_TRACE_NO_TIMESTAMP;
-      return;
-   }
+       ctx->gfx_cs.current.cdw == ctx->last_timestamp_cmd_cdw)
+      return false;
 
    si_emit_ts(ctx, ts_bo, offset_B);
    ctx->last_timestamp_cmd = ctx->gfx_cs.current.buf;
    ctx->last_timestamp_cmd_cdw = ctx->gfx_cs.current.cdw;
+
+   return true;
 }
 
 static uint64_t si_utrace_read_ts(struct u_trace_context *utctx, void *timestamps,
@@ -43,7 +42,7 @@ static uint64_t si_utrace_read_ts(struct u_trace_context *utctx, void *timestamp
    if (*ts == U_TRACE_NO_TIMESTAMP)
       return U_TRACE_NO_TIMESTAMP;
 
-   return (1000000 * *ts) / ctx->screen->info.clock_crystal_freq;
+   return *ts * 1000000.0 / ctx->screen->info.clock_crystal_freq;
 }
 
 static void si_utrace_delete_flush_data(struct u_trace_context *utctx, void *flush_data)

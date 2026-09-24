@@ -29,6 +29,14 @@
 #define XXH_INLINE_ALL
 #include "util/xxhash.h"
 
+static bool
+intrin_cb_true(const nir_intrinsic_instr *intr, const void *data)
+{
+   (void)intr;
+   (void)data;
+   return true;
+}
+
 /* This function determines if uses of an instruction can safely be rewritten
  * to use another identical instruction instead. Note that this function must
  * be kept in sync with hash_instr() and nir_instrs_equal() -- only
@@ -36,7 +44,7 @@
  * conversely they must handle everything that this function returns true for.
  */
 static bool
-instr_can_rewrite(const nir_instr *instr)
+instr_can_rewrite(const nir_instr *instr, nir_intrin_filter_cb allow_additional_intrin, const void *cb_data)
 {
    switch (instr->type) {
    case nir_instr_type_alu:
@@ -62,16 +70,10 @@ instr_can_rewrite(const nir_instr *instr)
           * CSE is inclined to without a problem.
           */
          return true;
-      case nir_intrinsic_terminate:
-      case nir_intrinsic_terminate_if:
-      case nir_intrinsic_demote:
-      case nir_intrinsic_demote_if:
-         /* If a terminate/demote dominates another with the same source,
-          * the second won't affect additional invocations.
-          */
-         return true;
       default:
-         return nir_intrinsic_can_reorder(intr);
+         if (nir_intrinsic_can_reorder(intr))
+            return true;
+         return allow_additional_intrin && allow_additional_intrin(intr, cb_data);
       }
    }
    case nir_instr_type_call:
@@ -231,6 +233,38 @@ hash_phi(uint32_t hash, const nir_phi_instr *instr)
    return hash;
 }
 
+/* Returns either the original indices or the provided buffer, if some
+ * change was necessary.
+ */
+static const int *
+normalized_intrinsic_const_indices(const nir_intrinsic_instr *instr,
+                                   int const_index[NIR_INTRINSIC_MAX_CONST_INDEX])
+{
+   const nir_intrinsic_info *info = &nir_intrinsic_infos[instr->intrinsic];
+
+   if (!nir_intrinsic_has_fp_math_ctrl(instr) &&
+       !nir_intrinsic_has_io_semantics(instr))
+      return instr->const_index;
+
+   memcpy(const_index, instr->const_index,
+          info->num_index_slots * sizeof(instr->const_index[0]));
+
+   /* Keep this in sync with nir_instr_set_add_or_rewrite(): these bits are
+    * merged into the rewritten instruction instead of preventing equality.
+    */
+   if (nir_intrinsic_has_fp_math_ctrl(instr)) {
+      unsigned offset = info->index_map[NIR_INTRINSIC_FP_MATH_CTRL] - 1;
+      const_index[offset] = 0;
+   } else if (nir_intrinsic_has_io_semantics(instr)) {
+      unsigned offset = info->index_map[NIR_INTRINSIC_IO_SEMANTICS] - 1;
+      nir_io_semantics sem = nir_intrinsic_io_semantics(instr);
+      sem.no_signed_zero = false;
+      memcpy(&const_index[offset], &sem, sizeof(sem));
+   }
+
+   return const_index;
+}
+
 static uint32_t
 hash_intrinsic(uint32_t hash, const nir_intrinsic_instr *instr)
 {
@@ -242,7 +276,10 @@ hash_intrinsic(uint32_t hash, const nir_intrinsic_instr *instr)
       hash = XXH32(v, sizeof(v), hash);
    }
 
-   hash = XXH32(instr->const_index, info->num_index_slots * sizeof(instr->const_index[0]), hash);
+   int const_index[NIR_INTRINSIC_MAX_CONST_INDEX];
+   const int *normalized =
+      normalized_intrinsic_const_indices(instr, const_index);
+   hash = XXH32(normalized, info->num_index_slots * sizeof(normalized[0]), hash);
 
    for (unsigned i = 0; i < nir_intrinsic_infos[instr->intrinsic].num_srcs; i++)
       hash = hash_src(hash, &instr->src[i]);
@@ -279,7 +316,6 @@ pack_tex(const nir_tex_instr *instr)
    PACK(instr->texture_non_uniform, 1);
    PACK(instr->sampler_non_uniform, 1);
    PACK(instr->embedded_sampler, 1);
-   PACK(instr->offset_non_uniform, 1);
 
 #undef PACK
 
@@ -553,7 +589,8 @@ nir_alu_srcs_equal(const nir_alu_instr *alu1, const nir_alu_instr *alu2,
 bool
 nir_instrs_equal(const nir_instr *instr1, const nir_instr *instr2)
 {
-   assert(instr_can_rewrite(instr1) && instr_can_rewrite(instr2));
+   assert(instr_can_rewrite(instr1, intrin_cb_true, NULL) &&
+          instr_can_rewrite(instr2, intrin_cb_true, NULL));
 
    if (instr1->type != instr2->type)
       return false;
@@ -748,10 +785,16 @@ nir_instrs_equal(const nir_instr *instr1, const nir_instr *instr2)
             return false;
       }
 
-      for (unsigned i = 0; i < info->num_index_slots; i++) {
-         if (intrinsic1->const_index[i] != intrinsic2->const_index[i])
-            return false;
-      }
+      int const_index1[NIR_INTRINSIC_MAX_CONST_INDEX];
+      int const_index2[NIR_INTRINSIC_MAX_CONST_INDEX];
+      const int *normalized1 =
+         normalized_intrinsic_const_indices(intrinsic1, const_index1);
+      const int *normalized2 =
+         normalized_intrinsic_const_indices(intrinsic2, const_index2);
+
+      if (memcmp(normalized1, normalized2,
+                 info->num_index_slots * sizeof(intrinsic1->const_index[0])))
+         return false;
 
       return true;
    }
@@ -786,10 +829,12 @@ nir_instr_set_fini(struct set *instr_set)
 
 nir_instr *
 nir_instr_set_add_or_rewrite(struct set *instr_set, nir_instr *instr,
+                             nir_intrin_filter_cb allow_additional_intrin,
+                             const void *intrin_data,
                              bool (*cond_function)(const nir_instr *a,
                                                    const nir_instr *b))
 {
-   if (!instr_can_rewrite(instr))
+   if (!instr_can_rewrite(instr, allow_additional_intrin, intrin_data))
       return NULL;
 
    struct set_entry *e = _mesa_set_search_or_add(instr_set, instr, NULL);
@@ -806,8 +851,22 @@ nir_instr_set_add_or_rewrite(struct set *instr_set, nir_instr *instr,
        * long as we take the fp_math_ctrl union. If we got here, the two instructions are
        * exactly identical in every other way.
        */
-      if (instr->type == nir_instr_type_alu)
+      if (instr->type == nir_instr_type_alu) {
          nir_instr_as_alu(match)->fp_math_ctrl |= nir_instr_as_alu(instr)->fp_math_ctrl;
+      } else if (instr->type == nir_instr_type_intrinsic) {
+         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+         nir_intrinsic_instr *match_intr = nir_instr_as_intrinsic(match);
+         if (nir_intrinsic_has_io_semantics(intr) &&
+             !nir_intrinsic_io_semantics(intr).no_signed_zero) {
+            nir_io_semantics sem = nir_intrinsic_io_semantics(match_intr);
+            sem.no_signed_zero = false;
+            nir_intrinsic_set_io_semantics(match_intr, sem);
+         } else if (nir_intrinsic_has_fp_math_ctrl(intr)) {
+            unsigned fp_math_ctrl = nir_intrinsic_fp_math_ctrl(match_intr);
+            fp_math_ctrl |= nir_intrinsic_fp_math_ctrl(intr);
+            nir_intrinsic_set_fp_math_ctrl(match_intr, fp_math_ctrl);
+         }
+      }
 
       assert(!def == !new_def);
       if (def)
@@ -824,7 +883,7 @@ nir_instr_set_add_or_rewrite(struct set *instr_set, nir_instr *instr,
 void
 nir_instr_set_remove(struct set *instr_set, nir_instr *instr)
 {
-   if (!instr_can_rewrite(instr))
+   if (!instr_can_rewrite(instr, intrin_cb_true, NULL))
       return;
 
    struct set_entry *entry = _mesa_set_search(instr_set, instr);

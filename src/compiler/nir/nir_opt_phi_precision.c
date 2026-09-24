@@ -217,7 +217,7 @@ try_move_narrowing_dst(nir_builder *b, nir_phi_instr *phi)
       if (nir_src_is_if(use))
          return false;
 
-      op = narrowing_conversion_op(nir_src_parent_instr(use), op);
+      op = narrowing_conversion_op(nir_src_use_instr(use), op);
 
       /* Not a (compatible) narrowing conversion: */
       if (op == INVALID_OP)
@@ -253,7 +253,7 @@ try_move_narrowing_dst(nir_builder *b, nir_phi_instr *phi)
       /* We've previously established that all the uses were alu
        * conversion ops.  Turn them into movs instead.
        */
-      nir_alu_instr *alu = nir_instr_as_alu(nir_src_parent_instr(use));
+      nir_alu_instr *alu = nir_instr_as_alu(nir_src_use_instr(use));
       alu->op = nir_op_mov;
       alu->fp_math_ctrl = nir_op_valid_fp_math_ctrl(alu->op, alu->fp_math_ctrl);
    }
@@ -269,13 +269,21 @@ try_move_narrowing_dst(nir_builder *b, nir_phi_instr *phi)
 static bool
 can_convert_load_const(nir_load_const_instr *lc, nir_op op)
 {
-   nir_alu_type type = op_to_type(op);
+   const nir_op_info *info = &nir_op_infos[op];
+
+   nir_alu_type dest_type = nir_alu_type_get_base_type(info->output_type);
+   nir_alu_type src_type = nir_alu_type_get_base_type(info->input_types[0]);
 
    /* Note that we only handle phi's with bit_size == 32: */
    assert(lc->def.bit_size == 32);
+   assert(info->num_inputs == 1);
+
+   /* TODO: handle conversions between float and ints */
+   if (dest_type != src_type)
+      return false;
 
    for (unsigned i = 0; i < lc->def.num_components; i++) {
-      switch (type) {
+      switch (dest_type) {
       case nir_type_int:
          if (lc->value[i].i32 != (int32_t)(int16_t)lc->value[i].i32)
             return false;

@@ -6,6 +6,7 @@
 #pragma once
 
 #include "pps/pps_driver.h"
+#include "drm-uapi/msm_drm.h"
 
 extern "C" {
 struct fd_dev_id;
@@ -21,6 +22,12 @@ struct fd_perfcntr_counter;
 namespace pps
 {
 
+struct FreedrenoPerfRecord {
+   uint64_t timestamp;
+   uint32_t seqno;
+   std::vector<uint64_t> values;
+};
+
 class FreedrenoDriver : public Driver
 {
 public:
@@ -33,6 +40,7 @@ public:
    void disable_perfcnt() override;
    bool dump_perfcnt() override;
    uint64_t next() override;
+   bool sample_timestamps_are_interval_starts() const override { return true; }
    uint32_t gpu_clock_id() const override;
    uint64_t gpu_timestamp() const override;
    bool cpu_gpu_timestamp(uint64_t &cpu_timestamp,
@@ -54,9 +62,30 @@ private:
    const struct fd_dev_info *info;
 
    /**
-    * The memory mapped i/o space for counter readback:
+    * The memory mapped i/o space for counter readback (legacy):
     */
    void *io;
+
+   /**
+    * perfcntr stream fd, if not using memory mapped i/o for counter
+    * readback.
+    */
+   int perfcntr_stream_fd = -1;
+
+   /**
+    * The configured sampling period
+    */
+   uint64_t sampling_period_ns_ = 1000000000;
+
+   /**
+    * Buffer used to read samples
+    */
+   std::vector<uint64_t> sample_buf;
+
+   /**
+    * Perf-counter records waiting to be accumulated
+    */
+   std::vector<FreedrenoPerfRecord> records;
 
    const struct fd_perfcntr_group *perfcntrs;
    unsigned num_perfcntrs;
@@ -75,9 +104,14 @@ private:
 
    void setup_a6xx_counters();
    void setup_a7xx_counters();
+   void setup_a8xx_counters();
 
    void configure_counters(bool reset, bool wait);
    void collect_countables();
+   uint64_t gpu_timestamp_ticks() const;
+
+   int configure_counters_stream();
+   void collect_countables_stream();
 
    /**
     * Split out countable mutable state from the class so that copy-
@@ -88,6 +122,9 @@ private:
       uint64_t last_value, value;
       const struct fd_perfcntr_countable *countable;
       const struct fd_perfcntr_counter   *counter;
+
+      /* index into perfcntr stream sample buf: */
+      unsigned idx;
    };
 
    std::vector<struct CountableState> state;
@@ -115,6 +152,12 @@ private:
       void collect() const;
       void resolve() const;
 
+      /* perfcntr stream related APIs */
+      void configure_stream(struct drm_msm_perfcntr_config *req) const;
+      void resolve_sample_idx(const struct drm_msm_perfcntr_config *req) const;
+      void collect_stream(const uint64_t *record_a,
+                          const uint64_t *record_b) const;
+
    private:
 
       uint64_t get_value() const;
@@ -141,5 +184,26 @@ private:
    DerivedCounter counter(std::string name, Counter::Units units,
                           std::function<int64_t()> derive);
 };
+
+static inline double
+safe_div(uint64_t a, uint64_t b)
+{
+   if (b == 0)
+      return 0;
+
+   return a / static_cast<double>(b);
+}
+
+static inline float
+percent(uint64_t a, uint64_t b)
+{
+   /* Sometimes we get bogus values but we want for the timeline
+    * to look nice without higher than 100% values.
+    */
+   if (b == 0 || a > b)
+      return 0;
+
+   return 100.f * (a / static_cast<double>(b));
+}
 
 } // namespace pps

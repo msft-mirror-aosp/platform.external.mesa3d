@@ -50,7 +50,10 @@ cc_library_static {
     cpp_std: "c++17",
     host_supported: true,
     defaults: [
+        "_trial_c",
         "_trial_msvc",
+        "_trial_soong_c",
+        "_trial_soong_cpp",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -89,17 +92,17 @@ cc_library_static {
             "QemuPipeStream.cpp",
         ],
         default: [],
-    }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
-        ("x86_64", "linux_glibc", default): [
+    }) + select((arch(), os()), {
+        ("x86_64", "linux_glibc"): [
             "QemuPipeStreamStub.cpp",
         ],
-        ("x86_64", "linux_musl", default): [
+        ("x86_64", "linux_musl"): [
             "QemuPipeStreamStub.cpp",
         ],
-        ("arm64", "linux_musl", default): [
+        ("arm64", "linux_musl"): [
             "QemuPipeStreamStub.cpp",
         ],
-        (default, default, default): [],
+        (default, default): [],
     }),
     static_libs: [
         "blake3",
@@ -132,6 +135,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

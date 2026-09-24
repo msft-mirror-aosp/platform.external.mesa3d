@@ -27,15 +27,19 @@
 #define MAX_DYNAMIC_BUFFERS                                                    \
    (MAX_DYNAMIC_UNIFORM_BUFFERS + MAX_DYNAMIC_STORAGE_BUFFERS)
 
-#if PAN_ARCH < 9
-
 /* On Bifrost, this is a software limit. We pick the minimum required by
- * Vulkan, because Bifrost GPUs don't have unified descriptor tables,
- * which forces us to aggregate all descriptors from all sets and dispatch
- * them to per-type descriptor tables emitted at draw/dispatch time. The
- * more sets we support the more copies we are likely to have to do at
- * draw time. */
-#define MAX_SETS 4
+ * Vulkan 1.4 (7). Bifrost GPUs don't have unified descriptor tables, which
+ * forces us to aggregate all descriptors from all sets and dispatch them to
+ * per-type descriptor tables emitted at draw/dispatch time. The more sets we
+ * support the more copies we are likely to have to do at draw time.
+ * Benchmarking with gfxbench showed that the difference in performance for 4
+ * (minimum for Vulkan Core) versus 7 sets was insignificant.
+ *
+ * Valhall has native support for descriptor sets, and allows a maximum
+ * of 16 sets, but we reserve 9 for our internal use, so we have 7 left. */
+#define MAX_SETS 7
+
+#if PAN_ARCH < 9
 
 /* MALI_RENDERER_STATE::sampler_count is 16-bit. */
 #define MAX_PER_SET_SAMPLERS UINT16_MAX
@@ -55,10 +59,6 @@
 #define MAX_PER_SET_STORAGE_IMAGES (1 << 8)
 
 #else
-
-/* Valhall has native support for descriptor sets, and allows a maximum
- * of 16 sets, but we reserve 9 for our internal use, so we have 7 left. */
-#define MAX_SETS 7
 
 /* Hardware limit is 2^24 each of buffer, texture, and sampler descriptors. We
  * use the same hardware descriptors for multiple kinds of vulkan descriptors,
@@ -121,7 +121,7 @@ to_panvk_descriptor_set_layout(const struct vk_descriptor_set_layout *layout)
    return container_of(layout, const struct panvk_descriptor_set_layout, vk);
 }
 
-static inline const uint32_t
+static inline uint32_t
 panvk_get_desc_stride(const struct panvk_descriptor_set_binding_layout *layout)
 {
    /* One descriptor for each sampler plane, and one for each texture. */
@@ -129,7 +129,7 @@ panvk_get_desc_stride(const struct panvk_descriptor_set_binding_layout *layout)
       ? layout->textures_per_desc + layout->samplers_per_desc : 1;
 }
 
-static inline const uint32_t
+static inline uint32_t
 panvk_get_iub_desc_count(uint32_t size)
 {
    /* Each inline uniform block contains an internal buffer descriptor, in
@@ -138,7 +138,7 @@ panvk_get_iub_desc_count(uint32_t size)
    return DIV_ROUND_UP(size, PANVK_DESCRIPTOR_SIZE) + 1;
 }
 
-static inline const uint32_t
+static inline uint32_t
 panvk_get_iub_size(uint32_t desc_count)
 {
    assert(desc_count >= 1);

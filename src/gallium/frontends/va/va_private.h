@@ -40,9 +40,6 @@
 #include "pipe/p_video_codec.h"
 #include "pipe/p_video_state.h"
 
-#include "vl/vl_compositor.h"
-#include "vl/vl_csc.h"
-
 #include "util/u_dynarray.h"
 #include "util/u_thread.h"
 #include "util/detect_os.h"
@@ -60,7 +57,7 @@
 #define VL_VA_DRIVER(ctx) ((vlVaDriver *)ctx->pDriverData)
 #define VL_VA_PSCREEN(ctx) (VL_VA_DRIVER(ctx)->vscreen->pscreen)
 
-#define VL_VA_MAX_IMAGE_FORMATS 22
+#define VL_VA_MAX_IMAGE_FORMATS 23
 #define VL_VA_ENC_GOP_COEFF 16
 
 #define UINT_TO_PTR(x) ((void*)(uintptr_t)(x))
@@ -148,6 +145,8 @@ VaFourccToPipeFormat(unsigned format)
       return PIPE_FORMAT_A8R8G8B8_UNORM;
    case VA_FOURCC('R','G','B','A'):
       return PIPE_FORMAT_R8G8B8A8_UNORM;
+   case VA_FOURCC('A','B','G','R'):
+      return PIPE_FORMAT_A8B8G8R8_UNORM;
    case VA_FOURCC('B','G','R','X'):
       return PIPE_FORMAT_B8G8R8X8_UNORM;
    case VA_FOURCC('R','G','B','X'):
@@ -200,6 +199,8 @@ PipeFormatToVaFourcc(enum pipe_format p_format)
       return VA_FOURCC('R','G','B','A');
    case PIPE_FORMAT_A8R8G8B8_UNORM:
       return VA_FOURCC('A','R','G','B');
+   case PIPE_FORMAT_A8B8G8R8_UNORM:
+      return VA_FOURCC('A','B','G','R');
    case PIPE_FORMAT_B8G8R8X8_UNORM:
       return VA_FOURCC('B','G','R','X');
    case PIPE_FORMAT_R8G8B8X8_UNORM:
@@ -340,9 +341,7 @@ typedef struct {
    struct pipe_context *pipe;
    struct pipe_context *pipe2;
    struct handle_table *htab;
-   struct vl_compositor compositor;
-   struct vl_compositor_state cstate;
-   vl_csc_matrix csc;
+   struct pipe_video_codec *proc;
    mtx_t mutex;
    char vendor_string[256];
 
@@ -355,7 +354,7 @@ typedef struct {
    struct u_rect src_rect;
    struct u_rect dst_rect;
 
-   struct pipe_sampler_view *sampler;
+   struct vlVaSurface *surf;
 } vlVaSubpicture;
 
 typedef struct {
@@ -373,8 +372,8 @@ typedef struct {
    unsigned int coded_size;
    struct pipe_enc_feedback_metadata extended_metadata;
    void *feedback;
-   struct vlVaContext *ctx;
    struct vlVaSurface *coded_surf;
+   struct pipe_video_codec *codec;
    struct pipe_fence_handle *fence;
 } vlVaBuffer;
 
@@ -412,11 +411,8 @@ typedef struct vlVaContext {
    bool needs_begin_frame;
    int packed_header_type;
    bool packed_header_emulation_bytes;
-   struct set *surfaces;
-   struct set *buffers;
    unsigned slice_data_offset;
    bool have_slice_params;
-   mtx_t mutex;
 
    struct {
       struct util_dynarray buffers;
@@ -433,14 +429,16 @@ typedef struct {
 typedef struct vlVaSurface {
    struct pipe_video_buffer templat, *buffer;
    struct util_dynarray subpics; /* vlVaSubpicture */
-   vlVaContext *ctx;
    vlVaBuffer *coded_buf;
+   struct pipe_video_codec *codec;
    struct pipe_fence_handle *fence; /* pipe_video_codec fence */
    struct pipe_fence_handle *pipe_fence; /* pipe_context fence */
-   bool is_dpb;
+   uint32_t *dpb_id;
+   struct pipe_video_buffer **dpb_buffer;
    unsigned int strides[3];
    unsigned int offsets[3];
    unsigned int data_size;
+   enum pipe_video_entrypoint entrypoint;
 } vlVaSurface;
 
 typedef struct {
@@ -560,18 +558,18 @@ VAStatus vlVaMapBuffer2(VADriverContextP ctx, VABufferID buf_id, void **pbuf, ui
 
 // internal functions
 MESAPROC VAStatus vlVaHandleVAProcPipelineParameterBufferType(vlVaDriver *drv, vlVaContext *context, vlVaBuffer *buf) TAIL;
-VAStatus vlVaHandleSurfaceAllocate(vlVaDriver *drv, vlVaSurface *surface, struct pipe_video_buffer *templat,
-                                   const uint64_t *modifiers, unsigned int modifiers_count);
+VAStatus vlVaHandleSurfaceAllocate(vlVaDriver *drv, vlVaSurface *surface, const uint64_t *modifiers, unsigned modifiers_count);
 struct pipe_video_buffer *vlVaGetSurfaceBuffer(vlVaDriver *drv, vlVaSurface *surface);
 void vlVaSurfaceFlush(vlVaDriver *drv, vlVaSurface *surf);
 void vlVaAddRawHeader(struct util_dynarray *headers, uint8_t type, uint32_t size, uint8_t *buf,
                       bool is_slice, uint32_t emulation_bytes_start);
 void vlVaGetBufferFeedback(vlVaBuffer *buf);
-void vlVaSetSurfaceContext(vlVaDriver *drv, vlVaSurface *surf, vlVaContext *context);
-MESAPROC VAStatus vlVaPostProcCompositor(vlVaDriver *drv, struct pipe_video_buffer *src, struct pipe_video_buffer *dst,
-                                enum vl_compositor_deinterlace deinterlace, struct pipe_vpp_desc *param) TAIL;
+MESAPROC VAStatus vlVaPostProc(vlVaDriver *drv, vlVaContext *context, struct pipe_video_buffer *src, struct pipe_video_buffer *dst,
+                               struct pipe_vpp_desc *param) TAIL;
 void vlVaGetReferenceFrame(vlVaDriver *drv, VASurfaceID surface_id, struct pipe_video_buffer **ref_frame);
 VAStatus vlVaHandleDecBufferType(vlVaDriver *drv, vlVaContext *context, vlVaBuffer *buf);
+VAStatus vlVaUploadImage(vlVaDriver *drv, vlVaSurface *surf, vlVaBuffer *buf, VAImage *image);
+void vlVaDestroySurface(vlVaDriver *drv, vlVaSurface *surf);
 #undef _U_STUB__
 
 #if !VIDEO_CODEC_MPEG12DEC

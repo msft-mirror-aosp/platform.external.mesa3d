@@ -28,6 +28,7 @@
  */
 
 #include "xmlconfig.h"
+#include <ctype.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -651,8 +652,15 @@ struct OptConfData {
    const char *driverName, *execName;
    const char *kernelDriverName;
    const char *deviceName;
+   uint32_t deviceVersion;
    const char *engineName;
    const char *applicationName;
+   union {
+      blake3_hash blake3;
+      uint64_t    u64;
+   } shaderHash;
+   uint32_t shaderHashSize;
+
    uint32_t engineVersion;
    uint32_t applicationVersion;
    uint32_t ignoringDevice;
@@ -660,7 +668,11 @@ struct OptConfData {
    uint32_t inDriConf;
    uint32_t inDevice;
    uint32_t inApp;
+   uint32_t inShader;
    uint32_t inOption;
+
+   driShaderOptionCallback shaderOptionCallback;
+   void *shaderOptionCallbackData;
 };
 
 /** \brief Parse a list of ranges of type info->type. */
@@ -710,11 +722,13 @@ parseDeviceAttr(struct OptConfData *data, const char **attr)
 {
    uint32_t i;
    const char *driver = NULL, *screen = NULL, *kernel = NULL, *device = NULL;
+   const char *device_version_regexp = NULL;
    for (i = 0; attr[i]; i += 2) {
       if (!strcmp(attr[i], "driver")) driver = attr[i+1];
       else if (!strcmp(attr[i], "screen")) screen = attr[i+1];
       else if (!strcmp(attr[i], "kernel_driver")) kernel = attr[i+1];
       else if (!strcmp(attr[i], "device")) device = attr[i+1];
+      else if (!strcmp(attr[i], "device_version_regexp")) device_version_regexp = attr[i+1];
       else XML_WARNING("unknown device attribute: %s.", attr[i]);
    }
    if (driver && strcmp(driver, data->driverName))
@@ -725,7 +739,30 @@ parseDeviceAttr(struct OptConfData *data, const char **attr)
    else if (device && (!data->deviceName ||
                        strcmp(device, data->deviceName)))
       data->ignoringDevice = data->inDevice;
-   else if (screen) {
+   else if (device_version_regexp) {
+      /* device_version_regexp: Extended regex pattern matching on device version.
+       * Uses POSIX extended regular expressions (ERE).
+       *
+       * Examples:
+       *   "^(40|50|60)$"       - Match exact versions 40, 50, or 60
+       *   "^[4-6][0-9]$"       - Match versions 40-69
+       *   "^12[0-9]"           - Match versions starting with 12 (120-129)
+       */
+      if (!data->deviceVersion) {
+         data->ignoringDevice = data->inDevice;
+      } else {
+         regex_t re;
+         if (regcomp(&re, device_version_regexp, REG_EXTENDED|REG_NOSUB) == 0) {
+            char device_version_str[32];
+            snprintf(device_version_str, sizeof(device_version_str), "%u", data->deviceVersion);
+
+            if (regexec(&re, device_version_str, 0, NULL, 0) == REG_NOMATCH)
+               data->ignoringDevice = data->inDevice;
+            regfree(&re);
+         } else
+            XML_WARNING("Invalid device_version_regexp=\"%s\".", device_version_regexp);
+      }
+   } else if (screen) {
       driOptionValue screenNum;
       if (!parseValue(&screenNum, DRI_INT, screen))
          XML_WARNING("illegal screen number: %s.", screen);
@@ -853,6 +890,42 @@ parseEngineAttr(struct OptConfData *data, const char **attr)
    }
 }
 
+/** \brief Parse attributes of a shader element. */
+static void
+parseShaderAttr(struct OptConfData *data, const char **attr)
+{
+   uint32_t i;
+   const char *type = NULL, *hash = NULL;
+   for (i = 0; attr[i]; i += 2) {
+      if (!strcmp(attr[i], "type")) type = attr[i+1];
+      else if (!strcmp(attr[i], "hash")) hash = attr[i+1];
+      else XML_WARNING("unknown shader attribute: %s.", attr[i]);
+   }
+   if (!type) XML_WARNING1("type attribute missing in shader.");
+   if (!hash) XML_WARNING1("hash attribute missing in shader.");
+
+   if (type && hash) {
+      if (!strcmp(type, "dxbc") || !strcmp(type, "dxil")) {
+         data->shaderHash.u64 = strtoull(hash, NULL, 16);
+         data->shaderHashSize = sizeof(data->shaderHash.u64);
+      } else if (!strcmp(type, "spirv")) {
+         if (strlen(hash) != (BLAKE3_HEX_LEN - 1)) {
+            XML_WARNING("hash attribute value \"%s\" %u/%u not in blake3 format.",
+                        hash, strlen(hash), BLAKE3_HEX_LEN);
+         } else {
+            char blake3_str[BLAKE3_HEX_LEN] = {0};
+            for (unsigned i = 0; i < MIN2(strlen(hash), BLAKE3_HEX_LEN); i++)
+               blake3_str[i] = tolower(hash[i]);
+            _mesa_blake3_hex_to_blake3(data->shaderHash.blake3, blake3_str);
+            data->shaderHashSize = sizeof(data->shaderHash.blake3);
+         }
+      } else {
+         XML_WARNING("type attribute value \"%s\" invalid in shader (valid : spirv, dxbc, dxil).",
+                     type);
+      }
+   }
+}
+
 /** \brief Parse attributes of an option element. */
 static void
 parseOptConfAttr(struct OptConfData *data, const char **attr)
@@ -885,11 +958,50 @@ parseOptConfAttr(struct OptConfData *data, const char **attr)
    }
 }
 
+/** \brief Parse attributes of an option element for <shader>. */
+static void
+parseShaderOptConfAttr(struct OptConfData *data, const char **attr)
+{
+   uint32_t i;
+   const char *name = NULL, *value = NULL;
+   for (i = 0; attr[i]; i += 2) {
+      if (!strcmp(attr[i], "name")) name = attr[i+1];
+      else if (!strcmp(attr[i], "value")) value = attr[i+1];
+      else XML_WARNING("unknown option attribute: %s.", attr[i]);
+   }
+   if (!name) XML_WARNING1("name attribute missing in option.");
+   if (!value) XML_WARNING1("value attribute missing in option.");
+   if (name && value && data->shaderHashSize != 0) {
+      driOptionCache *cache = data->cache;
+      uint32_t opt = findOption(cache, name);
+      if (cache->info[opt].name == NULL)
+         /* don't use XML_WARNING, drirc defines options for all drivers,
+          * but not all drivers support them */
+         return;
+      else if (os_get_option(cache->info[opt].name)) {
+         /* don't use XML_WARNING, we want the user to see this! */
+         if (be_verbose()) {
+            fprintf(stderr,
+                    "ATTENTION: option value of option %s ignored.\n",
+                    cache->info[opt].name);
+         }
+      } else if (!parseValue(&cache->values[opt], cache->info[opt].type, value)) {
+         XML_WARNING("illegal option value: %s.", value);
+      } else if (data->shaderOptionCallback != NULL) {
+         data->shaderOptionCallback(&data->shaderHash,
+                                    data->shaderHashSize,
+                                    &cache->info[opt],
+                                    &cache->values[opt],
+                                    data->shaderOptionCallbackData);
+      }
+   }
+}
+
 #if WITH_XMLCONFIG
 
 /** \brief Elements in configuration files. */
 enum OptConfElem {
-   OC_APPLICATION = 0, OC_DEVICE, OC_DRICONF, OC_ENGINE, OC_OPTION, OC_COUNT
+   OC_APPLICATION = 0, OC_DEVICE, OC_DRICONF, OC_ENGINE, OC_OPTION, OC_SHADER, OC_COUNT
 };
 static const char *OptConfElems[] = {
    [OC_APPLICATION]  = "application",
@@ -897,6 +1009,7 @@ static const char *OptConfElems[] = {
    [OC_DRICONF] = "driconf",
    [OC_ENGINE]  = "engine",
    [OC_OPTION] = "option",
+   [OC_SHADER] = "shader",
 };
 
 static int compare(const void *a, const void *b) {
@@ -956,14 +1069,27 @@ optConfStartElem(void *userData, const char *name,
       if (!data->ignoringDevice && !data->ignoringApp)
          parseEngineAttr(data, attr);
       break;
-   case OC_OPTION:
+   case OC_SHADER:
       if (!data->inApp)
-         XML_WARNING1("<option> should be inside <application>.");
+         XML_WARNING1("<shader> should be inside <application>.");
+      if (data->inShader)
+         XML_WARNING1("nested <shader> elements.");
+      data->inShader++;
+      if (!data->ignoringDevice && !data->ignoringApp)
+         parseShaderAttr(data, attr);
+      break;
+   case OC_OPTION:
+      if (!data->inApp && !data->inShader)
+         XML_WARNING1("<option> should be inside <application> or <shader>.");
       if (data->inOption)
          XML_WARNING1("nested <option> elements.");
       data->inOption++;
-      if (!data->ignoringDevice && !data->ignoringApp)
-         parseOptConfAttr(data, attr);
+      if (!data->ignoringDevice && !data->ignoringApp) {
+         if (data->inShader)
+            parseShaderOptConfAttr(data, attr);
+         else
+            parseOptConfAttr(data, attr);
+      }
       break;
    default:
       XML_WARNING("unknown element: %s.", name);
@@ -988,6 +1114,10 @@ optConfEndElem(void *userData, const char *name)
    case OC_ENGINE:
       if (data->inApp-- == data->ignoringApp)
          data->ignoringApp = 0;
+      break;
+   case OC_SHADER:
+      data->inShader--;
+      data->shaderHashSize = 0;
       break;
    case OC_OPTION:
       data->inOption--;
@@ -1230,11 +1360,7 @@ driInjectExecName(const char *exec)
 
 void
 driParseConfigFiles(driOptionCache *cache, const driOptionCache *info,
-                    int screenNum, const char *driverName,
-                    const char *kernelDriverName,
-                    const char *deviceName,
-                    const char *applicationName, uint32_t applicationVersion,
-                    const char *engineName, uint32_t engineVersion)
+                    const driConfigFileParseParams *params)
 {
    initOptionCache(cache, info);
    struct OptConfData userData = {0};
@@ -1245,24 +1371,34 @@ driParseConfigFiles(driOptionCache *cache, const driOptionCache *info,
       execname = util_get_process_name();
 
    userData.cache = cache;
-   userData.screenNum = screenNum;
-   userData.driverName = driverName;
-   userData.kernelDriverName = kernelDriverName;
-   userData.deviceName = deviceName;
-   userData.applicationName = applicationName ? applicationName : "";
-   userData.applicationVersion = applicationVersion;
-   userData.engineName = engineName ? engineName : "";
-   userData.engineVersion = engineVersion;
+   userData.screenNum = params->screenNum;
+   userData.driverName = params->driverName;
+   userData.kernelDriverName = params->kernelDriverName;
+   userData.deviceName = params->deviceName;
+   userData.deviceVersion = params->deviceVersion;
+   userData.applicationName = params->applicationName ? params->applicationName : "";
+   userData.applicationVersion = params->applicationVersion;
+   userData.engineName = params->engineName ? params->engineName : "";
+   userData.engineVersion = params->engineVersion;
    userData.execName = execname;
+   userData.shaderOptionCallback = params->shaderOptionCallback;
+   userData.shaderOptionCallbackData = params->shaderOptionCallbackData;
 
 #if WITH_XMLCONFIG
    const char *configdir;
    const char *home;
 
    /* parse from either $DRIRC_CONFIGDIR or $datadir/drirc.d */
-   if ((configdir = os_get_option("DRIRC_CONFIGDIR")))
-      parseConfigDir(&userData, configdir);
-   else {
+   if ((configdir = os_get_option("DRIRC_CONFIGDIR"))) {
+      for (size_t len; len = strcspn(configdir, ":"), *configdir; configdir += MAX2(1, len)) {
+         if (!len)
+            continue;
+
+         char *dir = strndup(configdir, len);
+         parseConfigDir(&userData, dir);
+         free(dir);
+      }
+   } else {
       parseConfigDir(&userData, DATADIR "/drirc.d");
       parseOneConfigFile(&userData, SYSCONFDIR "/drirc");
    }

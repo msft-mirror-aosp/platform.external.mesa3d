@@ -730,7 +730,7 @@ draw_textured_quad(struct gl_context *ctx, GLint x, GLint y, GLfloat z,
    GLfloat x0, y0, x1, y1;
    ASSERTED GLsizei maxSize;
    bool normalized = sv[0]->texture->target == PIPE_TEXTURE_2D ||
-                     (sv[0]->texture->target == PIPE_TEXTURE_RECT && st->lower_rect_tex);
+                     (sv[0]->texture->target == PIPE_TEXTURE_RECT && !st->screen->caps.texrect);
    unsigned invalidate_flags;
 
    assert(sv[0]->texture->target == st->internal_target);
@@ -1124,7 +1124,7 @@ get_color_fp_variant(struct st_context *st)
 
    memset(&key, 0, sizeof(key));
 
-   key.st = st->has_shareable_shaders ? NULL : st;
+   key.st = st->screen->caps.shareable_shaders ? NULL : st;
    key.drawpixels = 1;
    key.scaleAndBias = (ctx->Pixel.RedBias != 0.0 ||
                        ctx->Pixel.RedScale != 1.0 ||
@@ -1157,7 +1157,7 @@ get_color_index_fp_variant(struct st_context *st)
 
    memset(&key, 0, sizeof(key));
 
-   key.st = st->has_shareable_shaders ? NULL : st;
+   key.st = st->screen->caps.shareable_shaders ? NULL : st;
    key.drawpixels = 1;
    /* Since GL is always in RGBA mode MapColorFlag does not
     * affect GL_COLOR_INDEX format.
@@ -1172,26 +1172,6 @@ get_color_index_fp_variant(struct st_context *st)
    fpv = st_get_fp_variant(st, ctx->FragmentProgram._Current, &key, false, NULL);
 
    return fpv;
-}
-
-
-/**
- * Clamp glDrawPixels width and height to the maximum texture size.
- */
-static void
-clamp_size(struct st_context *st, GLsizei *width, GLsizei *height,
-           struct gl_pixelstore_attrib *unpack)
-{
-   const int maxSize = st->screen->caps.max_texture_2d_size;
-
-   if (*width > maxSize) {
-      if (unpack->RowLength == 0)
-         unpack->RowLength = *width;
-      *width = maxSize;
-   }
-   if (*height > maxSize) {
-      *height = maxSize;
-   }
 }
 
 
@@ -1291,12 +1271,6 @@ st_DrawPixels(struct gl_context *ctx, GLint x, GLint y,
        !_mesa_clip_drawpixels(ctx, &x, &y, &width, &height, &clippedUnpack))
       return;
 
-   /* Limit the size of the glDrawPixels to the max texture size.
-    * Strictly speaking, that's not correct but since we don't handle
-    * larger images yet, this is better than crashing.
-    */
-   clamp_size(st, &width, &height, &clippedUnpack);
-
    if (format == GL_DEPTH_STENCIL)
       write_stencil = write_depth = GL_TRUE;
    else if (format == GL_STENCIL_INDEX)
@@ -1305,17 +1279,10 @@ st_DrawPixels(struct gl_context *ctx, GLint x, GLint y,
       write_depth = GL_TRUE;
 
    if (write_stencil &&
-       !st->has_stencil_export) {
+       !st->screen->caps.shader_stencil_export) {
       /* software fallback */
       draw_stencil_pixels(ctx, x, y, width, height, format, type,
                           unpack, pixels);
-      return;
-   }
-
-   /* Put glDrawPixels image into a texture */
-   pt = make_texture(st, width, height, format, type, unpack, pixels);
-   if (!pt) {
-      _mesa_error(ctx, GL_OUT_OF_MEMORY, "glDrawPixels");
       return;
    }
 
@@ -1335,7 +1302,6 @@ st_DrawPixels(struct gl_context *ctx, GLint x, GLint y,
       driver_fp = fpv->base.driver_shader;
 
       if (ctx->Pixel.MapColorFlag && format != GL_COLOR_INDEX) {
-         sv[1] = st->pixel_xfer.pixelmap_sampler_view;
          num_sampler_view++;
       }
 
@@ -1345,57 +1311,81 @@ st_DrawPixels(struct gl_context *ctx, GLint x, GLint y,
       st_upload_constants(st, ctx->FragmentProgram._Current, MESA_SHADER_FRAGMENT);
    }
 
-   {
-      /* create sampler view for the image */
-      struct pipe_sampler_view templ;
-
-      u_sampler_view_default_template(&templ, pt, pt->format);
-      /* Set up the sampler view's swizzle */
-      setup_sampler_swizzle(&templ, format, type);
-
-      sv[0] = st->pipe->create_sampler_view(st->pipe, pt, &templ);
-   }
-   if (!sv[0]) {
-      _mesa_error(ctx, GL_OUT_OF_MEMORY, "glDrawPixels");
-      pipe_resource_reference(&pt, NULL);
-      return;
-   }
-
-   /* Create a second sampler view to read stencil.  The stencil is
-    * written using the shader stencil export functionality.
+   /*
+    * Tile the image if it exceeds the max texture size.
     */
-   if (write_stencil) {
-      enum pipe_format stencil_format =
-         util_format_stencil_only(pt->format);
-      /* we should not be doing pixel map/transfer (see above) */
-      assert(num_sampler_view == 1);
-      sv[1] = st_create_texture_sampler_view_format(st->pipe, pt,
-                                                    stencil_format);
-      if (!sv[1]) {
-         _mesa_error(ctx, GL_OUT_OF_MEMORY, "glDrawPixels");
+   const int maxSize = st->screen->caps.max_texture_2d_size;
+
+   for (GLsizei tile_y = 0; tile_y < height; tile_y += maxSize) {
+      for (GLsizei tile_x = 0; tile_x < width; tile_x += maxSize) {
+         GLsizei tile_w = MIN2(width - tile_x, maxSize);
+         GLsizei tile_h = MIN2(height - tile_y, maxSize);
+
+         struct gl_pixelstore_attrib tile_unpack = *unpack;
+         tile_unpack.SkipPixels += tile_x;
+         tile_unpack.SkipRows += tile_y;
+
+         /* Put glDrawPixels tile image into a texture */
+         pt = make_texture(st, tile_w, tile_h, format, type,
+                           &tile_unpack, pixels);
+         if (!pt) {
+            _mesa_error(ctx, GL_OUT_OF_MEMORY, "glDrawPixels");
+            return;
+         }
+
+         /* create sampler view for the tile */
+         sv[0] = NULL;
+         {
+            struct pipe_sampler_view templ;
+            u_sampler_view_default_template(&templ, pt, pt->format);
+            setup_sampler_swizzle(&templ, format, type);
+            sv[0] = st->pipe->create_sampler_view(st->pipe, pt, &templ);
+         }
+         if (!sv[0]) {
+            _mesa_error(ctx, GL_OUT_OF_MEMORY, "glDrawPixels");
+            pipe_resource_reference(&pt, NULL);
+            return;
+         }
+
+         num_sampler_view = 1;
+
+         if (ctx->Pixel.MapColorFlag && format != GL_COLOR_INDEX &&
+             !write_depth && !write_stencil) {
+            sv[1] = st->pixel_xfer.pixelmap_sampler_view;
+            num_sampler_view++;
+         }
+
+         /* Create a second sampler view to read stencil. */
+         if (write_stencil) {
+            enum pipe_format stencil_format =
+               util_format_stencil_only(pt->format);
+            assert(num_sampler_view == 1);
+            sv[1] = st_create_texture_sampler_view_format(st->pipe, pt,
+                                                          stencil_format);
+            if (!sv[1]) {
+               _mesa_error(ctx, GL_OUT_OF_MEMORY, "glDrawPixels");
+               pipe_resource_reference(&pt, NULL);
+               st->pipe->sampler_view_release(st->pipe, sv[0]);
+               return;
+            }
+            num_sampler_view++;
+         }
+
+         draw_textured_quad(ctx, x + tile_x, y + tile_y,
+                            ctx->Current.RasterPos[2],
+                            tile_w, tile_h,
+                            ctx->Pixel.ZoomX, ctx->Pixel.ZoomY,
+                            sv, num_sampler_view,
+                            st->passthrough_vs,
+                            driver_fp, fpv,
+                            ctx->Current.RasterColor,
+                            GL_FALSE, write_depth, write_stencil);
+
+         for (int i = 0; i < num_sampler_view; i++)
+            st->pipe->sampler_view_release(st->pipe, sv[i]);
          pipe_resource_reference(&pt, NULL);
-         st->pipe->sampler_view_release(st->pipe, sv[0]);
-         return;
       }
-      num_sampler_view++;
    }
-
-   draw_textured_quad(ctx, x, y, ctx->Current.RasterPos[2],
-                      width, height,
-                      ctx->Pixel.ZoomX, ctx->Pixel.ZoomY,
-                      sv,
-                      num_sampler_view,
-                      st->passthrough_vs,
-                      driver_fp, fpv,
-                      ctx->Current.RasterColor,
-                      GL_FALSE, write_depth, write_stencil);
-
-
-   for (unsigned i = 0; i < num_sampler_view; i++)
-      st->pipe->sampler_view_release(st->pipe, sv[i]);
-   
-   /* free the texture (but may persist in the cache) */
-   pipe_resource_reference(&pt, NULL);
 }
 
 
@@ -1692,7 +1682,7 @@ st_CopyPixels(struct gl_context *ctx, GLint srcx, GLint srcy,
 
    /* fallback if the driver can't do stencil exports */
    if (type == GL_DEPTH_STENCIL &&
-       !st->has_stencil_export) {
+       !st->screen->caps.shader_stencil_export) {
       st_CopyPixels(ctx, srcx, srcy, width, height, dstx, dsty, GL_STENCIL);
       st_CopyPixels(ctx, srcx, srcy, width, height, dstx, dsty, GL_DEPTH);
       return;
@@ -1700,7 +1690,7 @@ st_CopyPixels(struct gl_context *ctx, GLint srcx, GLint srcy,
 
    /* fallback if the driver can't do stencil exports */
    if (type == GL_STENCIL &&
-       !st->has_stencil_export) {
+       !st->screen->caps.shader_stencil_export) {
       copy_stencil_pixels(ctx, srcx, srcy, width, height, dstx, dsty);
       return;
    }

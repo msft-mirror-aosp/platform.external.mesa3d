@@ -97,7 +97,7 @@ create_program(enum amd_gfx_level gfx_level, Stage stage, unsigned wave_size,
    program.reset(new Program);
    rad_info.gfx_level = gfx_level;
    rad_info.family = family;
-   ac_fill_compiler_info(&rad_info, NULL);
+   ac_fill_compiler_info(&rad_info, NULL, false);
    struct aco_compiler_options options = {
       .compiler_info = &rad_info.compiler_info,
       .family = family,
@@ -174,7 +174,7 @@ setup_nir_cs(enum amd_gfx_level gfx_level, mesa_shader_stage stage, enum radeon_
    memset(&rad_info, 0, sizeof(rad_info));
    rad_info.gfx_level = gfx_level;
    rad_info.family = family;
-   ac_fill_compiler_info(&rad_info, NULL);
+   ac_fill_compiler_info(&rad_info, NULL, false);
 
    memset(&nir_options, 0, sizeof(nir_options));
    ac_nir_set_options(&rad_info.compiler_info, false, &nir_options);
@@ -387,12 +387,14 @@ finish_assembler_test()
 {
    finish_program(program.get());
    std::vector<uint32_t> binary;
-   unsigned exec_size = emit_program(program.get(), binary);
+   std::vector<aco_symbol> symbols;
+   aco_callback_params params = {};
+   emit_program(program.get(), binary, symbols, true, &params);
 
    /* we could use CLRX for disassembly but that would require it to be
     * installed */
    if (program->gfx_level >= GFX8) {
-      print_asm(program.get(), rad_info.family, binary, exec_size / 4u, output);
+      print_asm(program.get(), rad_info.family, binary, params.exec_size / 4u, output);
    } else {
       // TODO: maybe we should use CLRX and skip this test if it's not available?
       for (uint32_t dword : binary)
