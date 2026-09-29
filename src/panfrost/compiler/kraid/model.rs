@@ -28,6 +28,21 @@ impl<'a> IntoIterator for &'a SmallConstantTable {
     }
 }
 
+impl SmallConstantTable {
+    pub fn find_imm8(&self, mut filter: impl FnMut(u8) -> bool) -> Option<Src> {
+        for small_const in self {
+            for byte_idx in 0..4 {
+                let imm8 = (small_const.imm32 >> (byte_idx * 8)) as u8;
+                if filter(imm8) {
+                    let src = Src::from(FAURef::from(small_const));
+                    return Some(src.byte(byte_idx));
+                }
+            }
+        }
+        None
+    }
+}
+
 pub struct FAUModel {
     user_fau_page_words: u16,
     pub small_constants: SmallConstantTable,
@@ -38,6 +53,9 @@ pub struct FAUModel {
     /// they need to be "aligned" to the same 64-bit address.
     /// This limit has been lifted from v14
     pub single_fau_ram_index: bool,
+
+    /// From v12 k0 does not consume any FAU bandwidth.
+    pub is_zero_free: bool,
 }
 
 impl FAUModel {
@@ -134,6 +152,7 @@ impl ValhallModel {
                 ValhallModel::special_fau(special, arch)
             }),
             single_fau_ram_index: arch < 14,
+            is_zero_free: arch >= 12,
         };
         ValhallModel {
             arch,

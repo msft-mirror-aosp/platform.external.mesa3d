@@ -8,7 +8,6 @@ import sys
 VALID_COMMON_VK_OPTIONS = {
     "force_vk_devicename",
     "vk_lower_terminate_to_discard",
-    "vk_zero_vram",
     "vk_require_etc2",
     "vk_require_astc",
 }
@@ -115,7 +114,7 @@ def declare_options():
           "Expose a dedicated SDMA transfer queue so transfer-queue copies run on the async DMA engine.",
           c_name="enable_transfer_queue"),
         S("radv_gfx12_hiz_wa",
-          description="Choose the specific HiZ workaround to apply on GFX12 (RDNA4). Accepted values are: disabled, partial or full",
+          description="Choose the specific HiZ workaround to apply on GFX12 (RDNA4). Accepted values are: disabled, partial, full or full_rez",
           c_name="gfx12_hiz_wa"),
         B("radv_force_exclusive_image", False,
           description="Force using exclusive images for apps that incorrectly use concurrent for everything.",

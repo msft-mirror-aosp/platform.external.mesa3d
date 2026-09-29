@@ -1318,6 +1318,14 @@ get_image_format_properties(struct panvk_physical_device *physical_device,
       if (!(caps & PAN_MOD_FORMAT_CAP_WSI))
          goto unsupported;
 
+      /* An AFBC modifier can't honor a request for an uncompressed image. */
+      const VkImageCompressionControlEXT *compr_info =
+         vk_find_struct_const(info->pNext, IMAGE_COMPRESSION_CONTROL_EXT);
+      if (compr_info &&
+          (compr_info->flags & VK_IMAGE_COMPRESSION_DISABLED_EXT) &&
+          drm_is_afbc(mod_info->drmFormatModifier))
+         goto unsupported;
+
       if (info->type == VK_IMAGE_TYPE_1D && !(caps & PAN_MOD_FORMAT_CAP_DIM_1D))
          goto unsupported;
       if (info->type == VK_IMAGE_TYPE_2D && !(caps & PAN_MOD_FORMAT_CAP_DIM_2D))
@@ -1521,6 +1529,37 @@ panvk_get_external_image_format_properties(
    return VK_SUCCESS;
 }
 
+/* Whether an image with this configuration may end up AFBC. The queries have
+ * no image, so a true result is only an upper bound: the usage, create flags
+ * and extent checks happen at image creation.
+ */
+static bool
+panvk_physical_device_can_use_afbc(const struct panvk_physical_device *pdev,
+                                   VkFormat format, VkImageType type,
+                                   VkImageTiling tiling,
+                                   VkImageCompressionFlagsEXT compr_flags)
+{
+   enum pipe_format pfmt = vk_format_to_pipe_format(format);
+
+   /* The application asked for an uncompressed image. */
+   if (compr_flags & VK_IMAGE_COMPRESSION_DISABLED_EXT)
+      return false;
+
+   if (PANVK_DEBUG(NO_AFBC) || tiling == VK_IMAGE_TILING_LINEAR ||
+       type == VK_IMAGE_TYPE_1D || !pan_query_afbc(&pdev->kmod.dev->props))
+      return false;
+
+   PAN_SUPPORTED_MODIFIERS(supported);
+   for (unsigned i = 0; i < ARRAY_SIZE(supported); i++) {
+      if (drm_is_afbc(supported[i]) &&
+          pan_image_test_modifier_with_format(&pdev->kmod.dev->props,
+                                              supported[i], pfmt))
+         return true;
+   }
+
+   return false;
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL
 panvk_GetPhysicalDeviceImageFormatProperties2(
    VkPhysicalDevice physicalDevice,
@@ -1530,10 +1569,13 @@ panvk_GetPhysicalDeviceImageFormatProperties2(
    VK_FROM_HANDLE(panvk_physical_device, physical_device, physicalDevice);
    const VkPhysicalDeviceExternalImageFormatInfo *external_info = NULL;
    const VkPhysicalDeviceImageViewImageFormatInfoEXT *image_view_info = NULL;
+   const VkPhysicalDeviceImageDrmFormatModifierInfoEXT *drm_info = NULL;
+   const VkImageCompressionControlEXT *compr_info = NULL;
    VkExternalImageFormatProperties *external_props = NULL;
    VkFilterCubicImageViewImageFormatPropertiesEXT *cubic_props = NULL;
    VkFormatFeatureFlags2 format_feature_flags;
    VkHostImageCopyDevicePerformanceQuery *hic_props = NULL;
+   VkImageCompressionPropertiesEXT *compression_props = NULL;
    VkSamplerYcbcrConversionImageFormatProperties *ycbcr_props = NULL;
    VkResult result;
 
@@ -1552,6 +1594,12 @@ panvk_GetPhysicalDeviceImageFormatProperties2(
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_VIEW_IMAGE_FORMAT_INFO_EXT:
          image_view_info = s;
          break;
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT:
+         drm_info = s;
+         break;
+      case VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_CONTROL_EXT:
+         compr_info = s;
+         break;
       default:
          break;
       }
@@ -1568,6 +1616,9 @@ panvk_GetPhysicalDeviceImageFormatProperties2(
          break;
       case VK_STRUCTURE_TYPE_HOST_IMAGE_COPY_DEVICE_PERFORMANCE_QUERY:
          hic_props = s;
+         break;
+      case VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT:
+         compression_props = s;
          break;
       case VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_IMAGE_FORMAT_PROPERTIES:
          ycbcr_props = s;
@@ -1625,27 +1676,16 @@ panvk_GetPhysicalDeviceImageFormatProperties2(
       }
    }
 
+   const VkImageCompressionFlagsEXT compr_flags =
+      compr_info ? compr_info->flags : 0;
+
    if (hic_props) {
       /* We don't support AFBC for images used for host transfer. So, if an
        * image could have been tiled as AFBC if it weren't for host transfer,
        * report suboptimal access. */
-      enum pipe_format pfmt = vk_format_to_pipe_format(base_info->format);
-      bool can_use_afbc = false;
-      if (!PANVK_DEBUG(WSI_NO_AFBC) &&
-          base_info->tiling != VK_IMAGE_TILING_LINEAR &&
-          base_info->type != VK_IMAGE_TYPE_1D &&
-          pan_query_afbc(&physical_device->kmod.dev->props)) {
-         PAN_SUPPORTED_MODIFIERS(supported);
-         for (unsigned i = 0; i < ARRAY_SIZE(supported); i++) {
-            if (drm_is_afbc(supported[i]) &&
-                pan_image_test_modifier_with_format(
-                   &physical_device->kmod.dev->props, supported[i], pfmt)) {
-               can_use_afbc = true;
-               break;
-            }
-         }
-      }
-      hic_props->optimalDeviceAccess = !can_use_afbc;
+      hic_props->optimalDeviceAccess = !panvk_physical_device_can_use_afbc(
+         physical_device, base_info->format, base_info->type,
+         base_info->tiling, compr_flags);
 
       /* FIXME: we only support host transfer with certain modifiers and for now
        * there's no easy way to know whether the presence of HOST_TRANSFER will
@@ -1656,6 +1696,25 @@ panvk_GetPhysicalDeviceImageFormatProperties2(
        * details.
        */
       hic_props->identicalMemoryLayout = false;
+   }
+
+   if (compression_props) {
+      /* When the application asks about a specific modifier, that modifier
+       * already tells us whether the image is compressed. Otherwise we can
+       * only give the upper bound panvk_physical_device_can_use_afbc()
+       * computes.
+       */
+      bool compressed;
+
+      if (base_info->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
+         compressed = drm_info && drm_is_afbc(drm_info->drmFormatModifier);
+      } else {
+         compressed = panvk_physical_device_can_use_afbc(
+            physical_device, base_info->format, base_info->type,
+            base_info->tiling, compr_flags);
+      }
+
+      panvk_image_set_compression_props(compression_props, compressed);
    }
 
    const struct vk_format_ycbcr_info *ycbcr_info =
