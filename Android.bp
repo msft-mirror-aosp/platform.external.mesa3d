@@ -586,6 +586,16 @@ rust_defaults {
     vendor: true,
     host_supported: true,
     flags: [
+        "-Dboxed_slice_into_iter",
+        "-Ddeprecated_safe_2024",
+        "-Dimpl_trait_overcaptures",
+        "-Dkeyword_idents_2024",
+        "-Dmissing_unsafe_on_extern",
+        "-Dnever_type_fallback_flowing_into_unsafe",
+        "-Drust_2024_guarded_string_incompatible_syntax",
+        "-Drust_2024_incompatible_pat",
+        "-Drust_2024_prelude_collisions",
+        "-Dstatic_mut_refs",
         "-Dunsafe_op_in_unsafe_fn",
     ],
 }
