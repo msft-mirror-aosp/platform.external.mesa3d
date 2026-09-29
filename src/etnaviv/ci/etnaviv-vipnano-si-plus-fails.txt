@@ -13,7 +13,6 @@ Models.Op/yolox_yolox_nano_full_integer_quant,Fail
 
 Models.Op/efficientdet_efficientdet_tflite_lite0_int8_v1,Fail
 
-Models.Op/inception_000,Fail
 Models.Op/inception_inception_v1_224_quant,Fail
 
 Models.Op/movenetlightning_093,Fail
@@ -47,3 +46,6 @@ Models.Op/movenetthunder_movenet_single_pose_thunder_ptq,Fail
 Models.Op/ssdmobilenetv2_011,Fail
 Models.Op/ssdmobilenetv2_052,Fail
 Models.Op/ssdmobilenetv2_ssd_mobilenet_v2_coco_quant_postprocess,Fail
+
+Models.Op/ssdmobilenetv3_ssd_mobilenet_v3_int8,Fail
+Models.Op/vww4_vww4_128_128_INT8,Fail

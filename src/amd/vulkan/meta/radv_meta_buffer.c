@@ -8,10 +8,11 @@
  */
 
 #include "nir/radv_meta_nir.h"
+#include "tools/radv_debug_hang.h"
 #include "radv_cp_dma.h"
-#include "radv_debug.h"
 #include "radv_meta.h"
 #include "radv_sdma.h"
+#include "radv_tracepoints.h"
 #include "vk_shader_module.h"
 
 #include "radv_cs.h"
@@ -202,6 +203,8 @@ radv_compute_copy_memory(struct radv_cmd_buffer *cmd_buffer, uint64_t src_va, ui
       return;
    }
 
+   radv_utrace_begin_compute_copy_memory(cmd_buffer, size);
+
    radv_meta_bind_compute_pipeline(cmd_buffer, pipeline);
 
    assert(size <= UINT32_MAX);
@@ -223,6 +226,8 @@ radv_compute_copy_memory(struct radv_cmd_buffer *cmd_buffer, uint64_t src_va, ui
    radv_meta_push_constants(cmd_buffer, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(copy_consts), &copy_consts);
 
    radv_unaligned_dispatch(cmd_buffer, dim_x, 1, 1);
+
+   radv_utrace_end_compute_copy_memory(cmd_buffer);
 }
 
 static bool
@@ -235,8 +240,12 @@ radv_prefer_compute_or_cp_dma(const struct radv_device *device, uint64_t size, V
    if (pdev->info.gfx_level >= GFX10 && pdev->info.has_dedicated_vram) {
       if (!(src_copy_flags & VK_ADDRESS_COPY_DEVICE_LOCAL_BIT_KHR) ||
           !(dst_copy_flags & VK_ADDRESS_COPY_DEVICE_LOCAL_BIT_KHR)) {
-         /* Prefer CP DMA for GTT on dGPUS due to slow PCIe. */
-         use_compute = false;
+         /* For GTT/host memory on dGPUs, CP DMA avoids occupying the compute
+          * units. But CP DMA is a serial engine that badly underperforms a
+          * compute copy for large transfers, even over PCIe: keep CP DMA only
+          * for small GTT copies and use a compute copy for large ones. */
+         if (size <= RADV_BUFFER_OPS_GTT_CP_DMA_MAX_BYTES)
+            use_compute = false;
       }
    }
 
@@ -255,27 +264,32 @@ radv_is_compute_required(const struct radv_device *device, VkAddressCopyFlagsKHR
 }
 
 static uint32_t
-radv_fill_memory_internal(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *image, uint64_t va,
-                          uint64_t size, uint32_t value, VkAddressCopyFlagsKHR copy_flags)
+radv_fill_memory_internal(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *image, uint64_t dst_va,
+                          uint64_t size, uint32_t value, VkAddressCopyFlagsKHR dst_copy_flags)
 {
-   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
-   const bool use_compute = radv_is_compute_required(device, copy_flags, copy_flags) ||
-                            radv_prefer_compute_or_cp_dma(device, size, copy_flags, copy_flags);
-   uint32_t flush_bits = 0;
-
-   assert(!(va & 3));
+   assert(!(dst_va & 3));
    assert(!(size & 3));
 
+   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+
    if (cmd_buffer->qf == RADV_QUEUE_TRANSFER) {
-      radv_sdma_fill_memory(device, cmd_buffer->cs, va, size, value);
-   } else if (use_compute) {
-      radv_compute_fill_memory(cmd_buffer, va, size, value);
+      radv_sdma_fill_memory(device, cmd_buffer->cs, dst_va, size, value);
+      return 0;
+   }
+
+   const bool use_compute = radv_is_compute_required(device, dst_copy_flags, dst_copy_flags) ||
+                            radv_prefer_compute_or_cp_dma(device, size, dst_copy_flags, dst_copy_flags);
+   uint32_t flush_bits = 0;
+
+   if (use_compute) {
+      radv_compute_fill_memory(cmd_buffer, dst_va, size, value);
 
       flush_bits = RADV_CMD_FLAG_CS_PARTIAL_FLUSH | RADV_CMD_FLAG_INV_VCACHE |
                    radv_src_access_flush(cmd_buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                          VK_ACCESS_2_SHADER_WRITE_BIT, 0, image, NULL);
-   } else if (size)
-      radv_cp_dma_fill_memory(cmd_buffer, va, size, value);
+   } else if (size) {
+      radv_cp_dma_fill_memory(cmd_buffer, dst_va, size, value);
+   }
 
    return flush_bits;
 }
@@ -358,14 +372,18 @@ radv_copy_memory(struct radv_cmd_buffer *cmd_buffer, uint64_t src_va, uint64_t d
                  VkAddressCopyFlagsKHR src_copy_flags, VkAddressCopyFlagsKHR dst_copy_flags)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
-   const bool use_compute = radv_is_compute_required(device, src_copy_flags, dst_copy_flags) ||
-                            (radv_is_copy_memory_4B_aligned(src_va, dst_va, size) &&
-                             radv_prefer_compute_or_cp_dma(device, size, src_copy_flags, dst_copy_flags));
 
    if (cmd_buffer->qf == RADV_QUEUE_TRANSFER) {
       radv_sdma_copy_memory(device, cmd_buffer->cs, src_va, dst_va, size,
                             cmd_buffer->vk.pool->flags & VK_COMMAND_POOL_CREATE_PROTECTED_BIT);
-   } else if (use_compute) {
+      return;
+   }
+
+   const bool use_compute = radv_is_compute_required(device, src_copy_flags, dst_copy_flags) ||
+                            (radv_is_copy_memory_4B_aligned(src_va, dst_va, size) &&
+                             radv_prefer_compute_or_cp_dma(device, size, src_copy_flags, dst_copy_flags));
+
+   if (use_compute) {
       radv_compute_copy_memory(cmd_buffer, src_va, dst_va, size);
    } else if (size) {
       radv_cp_dma_copy_memory(cmd_buffer, src_va, dst_va, size);
@@ -438,7 +456,7 @@ radv_update_memory_cp(struct radv_cmd_buffer *cmd_buffer, uint64_t va, const voi
 
    assert(size < RADV_BUFFER_UPDATE_THRESHOLD);
 
-   radv_emit_cache_flush(cmd_buffer);
+   radv_emit_cache_flush(cmd_buffer, false);
    radeon_check_space(device->ws, cs->b, words + 4);
 
    ac_emit_cp_write_data(cs->b, V_371_MICRO_ENGINE, mec ? V_371_MEMORY : V_371_MEM_GRBM, va, words, data, false);

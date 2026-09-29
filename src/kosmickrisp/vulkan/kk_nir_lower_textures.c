@@ -114,6 +114,24 @@ lower_cube_image_intrin(nir_builder *b, nir_intrinsic_instr *intrin)
 }
 
 static bool
+fix_image_store_components(nir_builder *b, nir_intrinsic_instr *intrin)
+{
+   if (intrin->intrinsic != nir_intrinsic_bindless_image_store)
+      return false;
+
+   nir_src *src = &intrin->src[3];
+   nir_def *val = src->ssa;
+
+   /* Metal image write always requires 4 components for the value */
+   nir_def *padded = nir_pad_vec4(b, val);
+   if (padded == val)
+      return false;
+
+   nir_src_rewrite(src, padded);
+   return true;
+}
+
+static bool
 lower_image_load_store(nir_builder *b, nir_intrinsic_instr *intrin)
 {
    b->cursor = nir_before_instr(&intrin->instr);
@@ -134,17 +152,23 @@ lower_image_load_store(nir_builder *b, nir_intrinsic_instr *intrin)
    case nir_intrinsic_bindless_image_sparse_load:
    case nir_intrinsic_bindless_image_store:
    case nir_intrinsic_bindless_image_atomic:
-   case nir_intrinsic_bindless_image_atomic_swap:
+   case nir_intrinsic_bindless_image_atomic_swap: {
+      bool progress = false;
       switch (nir_intrinsic_image_dim(intrin)) {
       case GLSL_SAMPLER_DIM_1D:
          lower_1d_image_intrin(b, intrin);
-         return true;
+         progress = true;
+         break;
       case GLSL_SAMPLER_DIM_CUBE:
          lower_cube_image_intrin(b, intrin);
-         return true;
+         progress = true;
+         break;
       default:
-         return false;
+         break;
       }
+      progress |= fix_image_store_components(b, intrin);
+      return progress;
+   }
    case nir_intrinsic_bindless_image_size:
    case nir_intrinsic_bindless_image_samples:
       nir_def_rewrite_uses(
@@ -172,6 +196,29 @@ lower_image(nir_builder *b, nir_instr *instr)
    return false;
 }
 
+static bool
+fence_image(struct nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+   b->cursor = nir_after_instr(&intr->instr);
+
+   /* If the image is write-only, there is no fencing needed */
+   if (nir_intrinsic_has_access(intr) &&
+       (nir_intrinsic_access(intr) & ACCESS_NON_READABLE)) {
+      return false;
+   }
+
+   switch (intr->intrinsic) {
+   case nir_intrinsic_bindless_image_store:
+   case nir_intrinsic_bindless_image_atomic:
+   case nir_intrinsic_bindless_image_atomic_swap:
+      nir_bindless_image_fence_kk(b, intr->src[0].ssa);
+      return true;
+
+   default:
+      return false;
+   }
+}
+
 /* Must go after descriptor lowering to ensure the instr we introduce are also
  * lowered */
 bool
@@ -189,5 +236,9 @@ kk_nir_lower_textures(nir_shader *nir)
             nir_progress(progress_impl, impl, nir_metadata_control_flow);
       }
    }
+
+   NIR_PASS(progress, nir, nir_shader_intrinsics_pass, fence_image,
+            nir_metadata_control_flow, NULL);
+
    return progress;
 }

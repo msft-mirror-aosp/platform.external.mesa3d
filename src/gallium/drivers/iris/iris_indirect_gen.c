@@ -79,7 +79,7 @@
 static nir_def *
 load_fragment_index(nir_builder *b)
 {
-   nir_def *pos_in = nir_f2i32(b, nir_trim_vector(b, nir_load_frag_coord(b), 2));
+   nir_def *pos_in = nir_f2i32(b, nir_build_frag_coord(b, 2));
    return nir_iadd(b,
                    nir_imul_imm(b, nir_channel(b, pos_in, 1), 8192),
                    nir_channel(b, pos_in, 0));
@@ -324,7 +324,8 @@ emit_indirect_generate_draw(struct iris_batch *batch,
 #endif
 
 #if GFX_VER >= 30
-      ps.RegistersPerThread = ptl_register_blocks(fs_prog_data->base.grf_used);
+      ps.RegistersPerThread =
+         intel_register_blocks(devinfo, fs_prog_data->base.grf_used);
 #endif
 
 #else
@@ -362,6 +363,10 @@ emit_indirect_generate_draw(struct iris_batch *batch,
       psx.PixelShaderComputesStencil = fs_data->computed_stencil;
 #endif
       psx.PixelShaderHasUAV = GFX_VER == 8;
+
+#if INTEL_WA_16030144090_GFX_VER
+      assert(!fs_data->is_per_sample);
+#endif
    }
 
    iris_emit_cmd(batch, GENX(3DSTATE_VIEWPORT_STATE_POINTERS_CC), cc) {

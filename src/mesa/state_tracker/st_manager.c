@@ -401,6 +401,9 @@ st_new_renderbuffer_fb(enum pipe_format format, unsigned samples, bool sw)
    case PIPE_FORMAT_Z32_UNORM:
       rb->InternalFormat = GL_DEPTH_COMPONENT32;
       break;
+   case PIPE_FORMAT_Z32_FLOAT:
+      rb->InternalFormat = GL_DEPTH_COMPONENT32F;
+      break;
    case PIPE_FORMAT_Z24_UNORM_S8_UINT:
    case PIPE_FORMAT_S8_UINT_Z24_UNORM:
       rb->InternalFormat = GL_DEPTH24_STENCIL8_EXT;
@@ -880,6 +883,14 @@ st_context_teximage(struct st_context *st, GLenum target,
    st_texture_release_all_sampler_views(st, texObj);
    pipe_resource_reference(&texImage->pt, tex);
    texObj->surface_format = pipe_format;
+
+   /* Cache whether the extra YUV plane-view / lowering setup in
+    * st_get_sampler_views() and st_get_external_sampler_key() must run for
+    * this texture. st_finalize_texture() returns early for surface_based
+    * textures without computing this.
+    */
+   texObj->needs_yuv_plane_views = tex &&
+      (pipe_format != tex->format || util_format_is_yuv(pipe_format));
 
    texObj->needs_validation = true;
 

@@ -932,7 +932,7 @@ svga_create_shader(struct pipe_context *pipe,
          .keep_double_immediates = true,
       };
       /* nir_to_tgsi requires lowered images */
-      NIR_PASS(_, nir, gl_nir_lower_images, false);
+      NIR_PASS(_, nir, gl_nir_lower_images, NULL, false);
       shader->tokens = nir_to_tgsi_options(nir, pipe->screen, &ntt_options);
    } else {
       shader->tokens = pipe_shader_state_to_tgsi_tokens(pipe->screen, templ);
@@ -1005,9 +1005,12 @@ svga_compile_shader(struct svga_context *svga,
 
    *out_variant = variant;
 
-   /* insert variant at head of linked list */
-   variant->next = shader->variants;
-   shader->variants = variant;
+   /* Do this in compile_passthrough_vs since it is not original vs */
+   if (!key->vs.passthrough) {
+      /* insert variant at head of linked list */
+      variant->next = shader->variants;
+      shader->variants = variant;
+   }
 
    return PIPE_OK;
 }

@@ -9,13 +9,13 @@
  */
 
 #include "radv_buffer.h"
+#include "tools/radv_rmv.h"
 #include "radv_device.h"
 #include "radv_device_memory.h"
 #include "radv_dgc.h"
 #include "radv_entrypoints.h"
 #include "radv_instance.h"
 #include "radv_physical_device.h"
-#include "radv_rmv.h"
 
 #include "vk_common_entrypoints.h"
 #include "vk_debug_utils.h"
@@ -43,6 +43,7 @@ VkResult
 radv_create_buffer(struct radv_device *device, const VkBufferCreateInfo *pCreateInfo,
                    const VkAllocationCallbacks *pAllocator, VkBuffer *pBuffer, bool is_internal)
 {
+   const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radv_buffer *buffer;
 
    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
@@ -55,19 +56,25 @@ radv_create_buffer(struct radv_device *device, const VkBufferCreateInfo *pCreate
       return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
 #endif
 
-   buffer = vk_alloc2(&device->vk.alloc, pAllocator, sizeof(*buffer), 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   buffer = vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*buffer), 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (buffer == NULL)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    vk_buffer_init(&device->vk, &buffer->vk, pCreateInfo);
-   buffer->bo = NULL;
-   buffer->range = 0;
 
-   if (pCreateInfo->flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) {
+   if (buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) {
       enum radeon_bo_flag flags = RADEON_FLAG_VIRTUAL;
       uint64_t replay_address = 0;
 
-      if (pCreateInfo->flags & VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT) {
+      if (pdev->info.compiler_info.has_smem_with_null_prt_bug &&
+          (buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT) &&
+          (buffer->vk.usage & (VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT |
+                               VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT))) {
+         /* Emulate sparse residency for sparse buffers that might use SMEM reads. */
+         flags |= RADEON_FLAG_EMULATE_SPARSE_RESIDENCY;
+      }
+
+      if (buffer->vk.create_flags & VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT) {
          flags |= RADEON_FLAG_REPLAYABLE;
 
          const VkBufferOpaqueCaptureAddressCreateInfo *opaque_addr_info =
@@ -89,8 +96,9 @@ radv_create_buffer(struct radv_device *device, const VkBufferCreateInfo *pCreate
           (VK_BUFFER_USAGE_2_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_2_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT))
          flags |= RADEON_FLAG_32BIT;
 
-      VkResult result = radv_bo_create(device, &buffer->vk.base, align64(buffer->vk.size, 4096), 4096, 0, flags,
-                                       RADV_BO_PRIORITY_VIRTUAL, replay_address, is_internal, &buffer->bo);
+      VkResult result = radv_bo_create(device, &buffer->vk.base, align64(buffer->vk.size, RADV_SPARSE_BUFFER_ALIGNMENT),
+                                       RADV_SPARSE_BUFFER_ALIGNMENT, 0, flags, RADV_BO_PRIORITY_VIRTUAL, replay_address,
+                                       is_internal, &buffer->bo);
       if (result != VK_SUCCESS) {
          radv_destroy_buffer(device, pAllocator, buffer);
          return vk_error(device, result);
@@ -192,7 +200,7 @@ radv_get_buffer_memory_requirements(struct radv_device *device, VkDeviceSize siz
       pMemoryRequirements->memoryRequirements.memoryTypeBits &= pdev->memory_types_protected;
 
    if (flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) {
-      pMemoryRequirements->memoryRequirements.alignment = 4096;
+      pMemoryRequirements->memoryRequirements.alignment = RADV_SPARSE_BUFFER_ALIGNMENT;
    } else {
       if (usage & VK_BUFFER_USAGE_2_PREPROCESS_BUFFER_BIT_EXT)
          pMemoryRequirements->memoryRequirements.alignment = radv_dgc_get_buffer_alignment(device);
@@ -209,8 +217,8 @@ radv_get_buffer_memory_requirements(struct radv_device *device, VkDeviceSize siz
 
    pMemoryRequirements->memoryRequirements.size = align64(size, pMemoryRequirements->memoryRequirements.alignment);
 
-   vk_foreach_struct (ext, pMemoryRequirements->pNext) {
-      switch (ext->sType) {
+   vk_foreach_struct (sType, ext, pMemoryRequirements->pNext) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
          VkMemoryDedicatedRequirements *req = (VkMemoryDedicatedRequirements *)ext;
          req->requiresDedicatedAllocation = false;
@@ -223,20 +231,12 @@ radv_get_buffer_memory_requirements(struct radv_device *device, VkDeviceSize siz
    }
 }
 
-static const VkBufferUsageFlagBits2
-radv_get_buffer_usage_flags(const VkBufferCreateInfo *pCreateInfo)
-{
-   const VkBufferUsageFlags2CreateInfo *flags2 =
-      vk_find_struct_const(pCreateInfo->pNext, BUFFER_USAGE_FLAGS_2_CREATE_INFO);
-   return flags2 ? flags2->usage : pCreateInfo->usage;
-}
-
 VKAPI_ATTR void VKAPI_CALL
 radv_GetDeviceBufferMemoryRequirements(VkDevice _device, const VkDeviceBufferMemoryRequirements *pInfo,
                                        VkMemoryRequirements2 *pMemoryRequirements)
 {
    VK_FROM_HANDLE(radv_device, device, _device);
-   const VkBufferUsageFlagBits2 usage_flags = radv_get_buffer_usage_flags(pInfo->pCreateInfo);
+   const VkBufferUsageFlags2 usage_flags = vk_buffer_usage_flags(pInfo->pCreateInfo);
 
    radv_get_buffer_memory_requirements(device, pInfo->pCreateInfo->size, pInfo->pCreateInfo->flags, usage_flags,
                                        pMemoryRequirements);
@@ -272,7 +272,10 @@ radv_bo_create(struct radv_device *device, struct vk_object_base *object, uint64
    /* Pad the BO with an extra VM page to mitigate OOB access from SMEM instructions.
     * This doesn't allocate extra memory, just writes an extra page table entry.
     */
-   if (pdev->cache_key.mitigate_smem_oob && !is_internal)
+   if (device->compiler_info.key.mitigate_smem_oob && !is_internal)
+      flags |= RADEON_FLAG_VM_PAD_1PAGE;
+
+   if (pdev->info.has_smem_partial_oob_access_bug && !is_internal)
       flags |= RADEON_FLAG_VM_PAD_1PAGE;
 
    result = ws->buffer_create(ws, size, alignment, domain, flags, priority, address, out_bo);

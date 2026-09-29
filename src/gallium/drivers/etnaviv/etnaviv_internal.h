@@ -44,6 +44,13 @@
 #define ETNA_MAX_UNIFORMS (256)
 #define ETNA_MAX_CONST_BUF 16
 #define ETNA_MAX_PIXELPIPES 2
+#define ETNA_MAX_SAMPLES 4
+
+/* 128-bit color emulation reserves the upper half of the render targets for
+ * companion targets, so at most this many color RTs can be bound (and be
+ * 128-bit). It bounds the per-RT rt_is_128bit mask and rt_companion table.
+ */
+#define ETNA_MAX_128BIT_RTS (PIPE_MAX_COLOR_BUFS / 2)
 
 /* All RS operations must have width%16 = 0 */
 #define ETNA_RS_WIDTH_MASK (16 - 1)
@@ -62,6 +69,7 @@
 #define ETNA_SE_SCISSOR_MARGIN_BOTTOM (0x1111)
 #define ETNA_SE_CLIP_MARGIN_RIGHT (0xffff)
 #define ETNA_SE_CLIP_MARGIN_BOTTOM (0xffff)
+#define ETNA_SE_FIXP_MAX (0x1fffffff)
 
 /* GPU chip 3D specs */
 struct etna_specs {
@@ -95,6 +103,8 @@ struct etna_specs {
    unsigned bits_per_tile;
    /* clear value for TS (dependent on bits_per_tile) */
    uint32_t ts_clear_value;
+   /* fragment and vertex samplers share one dynamically partitioned array */
+   unsigned unified_samplers : 1;
    /* base of vertex texture units */
    unsigned vertex_sampler_offset;
    /* number of fragment sampler units */
@@ -208,6 +218,7 @@ struct compiled_framebuffer_state {
 /* Compiled context->create_vertex_elements_state */
 struct compiled_vertex_elements_state {
    unsigned num_elements;
+   bool dummy_element;
    uint32_t FE_VERTEX_ELEMENT_CONFIG[VIVS_FE_VERTEX_ELEMENT_CONFIG__LEN];
    uint32_t NFE_GENERIC_ATTRIB_CONFIG0[VIVS_NFE_GENERIC_ATTRIB__LEN];
    uint32_t NFE_GENERIC_ATTRIB_SCALE[VIVS_NFE_GENERIC_ATTRIB__LEN];

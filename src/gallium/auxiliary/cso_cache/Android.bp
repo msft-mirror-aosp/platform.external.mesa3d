@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium",
+    name: "files_libgallium_3",
     srcs: [
         "cso_cache.c",
         "cso_context.c",

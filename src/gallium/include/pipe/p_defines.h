@@ -436,10 +436,9 @@ enum pipe_flush_flags
 #define PIPE_BARRIER_IMAGE             (1 << 8)
 #define PIPE_BARRIER_FRAMEBUFFER       (1 << 9)
 #define PIPE_BARRIER_STREAMOUT_BUFFER  (1 << 10)
-#define PIPE_BARRIER_GLOBAL_BUFFER     (1 << 11)
-#define PIPE_BARRIER_UPDATE_BUFFER     (1 << 12)
-#define PIPE_BARRIER_UPDATE_TEXTURE    (1 << 13)
-#define PIPE_BARRIER_ALL               ((1 << 14) - 1)
+#define PIPE_BARRIER_UPDATE_BUFFER     (1 << 11)
+#define PIPE_BARRIER_UPDATE_TEXTURE    (1 << 12)
+#define PIPE_BARRIER_ALL               ((1 << 13) - 1)
 
 #define PIPE_BARRIER_UPDATE \
    (PIPE_BARRIER_UPDATE_BUFFER | PIPE_BARRIER_UPDATE_TEXTURE)
@@ -745,6 +744,14 @@ enum pipe_quirk_texture_border_color_swizzle {
    PIPE_QUIRK_TEXTURE_BORDER_COLOR_SWIZZLE_ALPHA_NOT_W = (1 << 3),
 };
 
+enum pipe_device_type
+{
+   PIPE_DEVICE_TYPE_UNKNOWN,
+   PIPE_DEVICE_TYPE_INTEGRATED_GPU,
+   PIPE_DEVICE_TYPE_DISCRETE_GPU,
+   PIPE_DEVICE_TYPE_CPU,
+};
+
 enum pipe_endian
 {
    PIPE_ENDIAN_LITTLE = 0,
@@ -802,6 +809,7 @@ struct pipe_shader_caps {
    bool fp16;
    bool fp16_derivatives;
    bool fp16_const_buffers;
+   bool fp16_no_denorms;
    bool int16;
    bool glsl_16bit_consts;
    bool glsl_16bit_load_dst; /* fp16 or int16 is AND'ed with this */
@@ -926,6 +934,7 @@ struct pipe_caps {
    bool texture_float_linear;
    bool texture_half_float_linear;
    bool depth_bounds_test;
+   bool native_fp32_depth;
    bool texture_query_samples;
    bool force_persample_interp;
    bool shareable_shaders;
@@ -1001,6 +1010,8 @@ struct pipe_caps {
    bool atomic_float_minmax;
    bool fragment_shader_texture_lod;
    bool fragment_shader_derivatives;
+   /** defaults to true; clearing it withdraws GL_EXT_frag_depth */
+   bool fragment_shader_depth;
    bool texture_shadow_lod;
    bool shader_samples_identical;
    bool image_atomic_inc_wrap;
@@ -1062,6 +1073,7 @@ struct pipe_caps {
    bool representative_fragment_test;
    bool prefer_persp;
    bool blit_3d;
+   bool glsl_bindless_handles_are_32bit;
 
    int accelerated;
    int min_texel_offset;
@@ -1121,11 +1133,28 @@ struct pipe_caps {
    unsigned max_gs_invocations;
    unsigned max_shader_buffer_size;
    unsigned max_combined_shader_buffers;
+   unsigned max_combined_image_uniforms;
    unsigned max_combined_hw_atomic_counters;
    unsigned max_combined_hw_atomic_counter_buffers;
    unsigned max_texture_upload_memory_budget;
    unsigned max_vertex_element_src_offset;
    unsigned max_varyings;
+
+   /* Per-stage mask of VARYING_SLOT_* outputs that don't count against the
+    * stage's GL MAX_*_OUTPUT_COMPONENTS limit at link time.
+    *
+    * For the pre-rasterization stages this is the set consumed by
+    * fixed-function hardware rather than taking up varying storage, which is
+    * driver-dependent: drivers where every declared output consumes varying
+    * space (for example Vulkan, whose VUIDs count all of them) should set 0.
+    *
+    * MESA_SHADER_TESS_CTRL is not that.  Its entry is the per-patch built-ins,
+    * which land in nir_shader_info::outputs_written rather than
+    * patch_outputs_written because their slots are below VARYING_SLOT_VAR0.
+    * The limit they'd be checked against is per-vertex only, so they should
+    * stay masked off no matter what the hardware does.
+    */
+   uint64_t ignored_output_varyings[MESA_SHADER_MESH_STAGES];
    unsigned dmabuf;
    unsigned clip_planes;
    unsigned max_vertex_buffers;
@@ -1152,6 +1181,10 @@ struct pipe_caps {
    uint64_t min_vma;
    uint64_t max_vma;
 
+   /** Which POT pattern sizes are accelerated? This is a bitmask of sizes */
+   uint16_t hw_clear_buffer_sizes;
+
+   enum pipe_device_type device_type;
    enum pipe_vertex_input_alignment vertex_input_alignment;
    enum pipe_endian endianness;
    enum pipe_point_size_lower_mode point_size_fixed;
@@ -1202,6 +1235,26 @@ enum pipe_context_param
     * benefits from it.
     */
    PIPE_CONTEXT_PARAM_UPDATE_THREAD_SCHEDULING,
+
+   /* The minification/magnification switch-over point, the constant c of the
+    * GL and ES specs. Value 1 selects c = 0.5, value 0 selects c = 0.
+    *
+    * ES 2.0 section 3.7.8 requires the first: "If the magnification filter is
+    * given by LINEAR and the minification filter is given by
+    * NEAREST_MIPMAP_NEAREST or NEAREST_MIPMAP_LINEAR, then c = 0.5. This is
+    * done to ensure that a minified texture does not appear "sharper" than a
+    * magnified texture. Otherwise c = 0."
+    *
+    * GL 3.1 section 3.8.9 relaxed it to "Implementations may either
+    * unconditionally assume c = 0 [...] or may choose to make c depend on the
+    * combination of minification and magnification modes" (bug 4392), and
+    * GL 4.5 and ES 3.0 removed the choice again, c = 0 always (Bug 9997).
+    *
+    * So c = 0.5 is required up to GL 3.0 and in ES 2.0, and additionally
+    * allowed from GL 3.1 to 4.4. Only sent where it is required, so drivers
+    * default to c = 0.
+    */
+   PIPE_CONTEXT_PARAM_MAG_SWITCHOVER_HALF,
 };
 
 /**

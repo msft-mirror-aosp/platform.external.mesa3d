@@ -22,6 +22,7 @@
 #include "sfn_nir_lower_tex.h"
 #include "sfn_optimizer.h"
 #include "sfn_ra.h"
+#include "sfn_shader_tess.h"
 #include "sfn_scheduler.h"
 #include "sfn_shader.h"
 #include "sfn_split_address_loads.h"
@@ -456,7 +457,7 @@ r600_nir_lower_atomics(nir_shader *shader)
 using r600::r600_lower_fs_out_to_vector;
 using r600::r600_lower_ubo_to_align16;
 
-int
+unsigned
 r600_glsl_type_size(const struct glsl_type *type, bool is_bindless)
 {
    return glsl_count_vec4_slots(type, false, is_bindless);
@@ -696,12 +697,14 @@ r600_finalize_nir_common(nir_shader *nir, enum amd_gfx_level gfx_level)
 
    NIR_PASS(_, nir, nir_lower_flrp, nir_lower_flrp_mask, false);
 
+   NIR_PASS(_, nir, nir_opt_idiv_const, 64);
+   NIR_PASS(_, nir, nir_opt_idiv_const, 32);
    nir_lower_idiv_options idiv_options = {0};
    NIR_PASS(_, nir, nir_lower_idiv, &idiv_options);
 
    NIR_PASS(_, nir, r600_nir_lower_trigen, gfx_level);
    NIR_PASS(_, nir, nir_lower_phis_to_scalar, NULL, NULL);
-   NIR_PASS(_, nir, nir_lower_undef_to_zero);
+   NIR_PASS(_, nir, nir_lower_undef_to_zero, NULL);
 
    struct nir_lower_tex_options lower_tex_options = {0};
    lower_tex_options.lower_txp = ~0u;
@@ -717,6 +720,7 @@ r600_finalize_nir_common(nir_shader *nir, enum amd_gfx_level gfx_level)
 
    NIR_PASS(_, nir, r600_lower_shared_io);
    NIR_PASS(_, nir, r600_nir_lower_atomics);
+
 
    static const nir_lower_subgroups_options r600_nir_subgroups_options = {
       .ballot_bit_size = 32,
@@ -869,8 +873,11 @@ r600_lower_and_optimize_nir(nir_shader *sh,
       NIR_PASS(_, sh, r600_lower_tess_io, static_cast<mesa_prim>(prim_type));
    }
 
-   if (sh->info.stage == MESA_SHADER_TESS_CTRL)
+   if (sh->info.stage == MESA_SHADER_TESS_CTRL) {
+      NIR_PASS(_, sh, nir_lower_system_values);
+      NIR_PASS(_, sh, r600_lower_tess_level_default_to_ubo);
       NIR_PASS(_, sh, r600_append_tcs_TF_emission, (mesa_prim)key->tcs.prim_mode);
+   }
 
    if (sh->info.stage == MESA_SHADER_TESS_EVAL) {
       NIR_PASS(_,
@@ -883,6 +890,10 @@ r600_lower_and_optimize_nir(nir_shader *sh,
    NIR_PASS(_, sh, nir_lower_phis_to_scalar, NULL, NULL);
    NIR_PASS(_, sh, nir_lower_alu_to_scalar, r600_lower_to_scalar_instr_filter, NULL);
    NIR_PASS(_, sh, r600_nir_lower_int_tg4);
+
+
+   if (gfx_level < EVERGREEN)
+      NIR_PASS(_, sh, r600::r600_nir_lower_buf_txf_pre_eg);
    NIR_PASS(_, sh, r600::r600_nir_lower_tex_to_backend, gfx_level);
 
    if (lower_64bit_io_to_vec2) {
@@ -969,18 +980,18 @@ r600_finalize_and_optimize_shader(r600::Shader *shader)
       }
    }
 
-   split_address_loads(*shader);
-   
-   if (r600::sfn_log.has_debug_flag(r600::SfnLog::steps)) {
-      std::cerr << "Shader after splitting address loads\n";
-      shader->print(std::cerr);
-   }
-   
-   if (!skip_shader_opt) {
-      optimize(*shader);
+   if (split_address_loads(*shader)) {
       if (r600::sfn_log.has_debug_flag(r600::SfnLog::steps)) {
-         std::cerr << "Shader after optimization\n";
+         std::cerr << "Shader after splitting address loads\n";
          shader->print(std::cerr);
+      }
+
+      if (!skip_shader_opt) {
+         optimize(*shader);
+         if (r600::sfn_log.has_debug_flag(r600::SfnLog::steps)) {
+            std::cerr << "Shader after optimization\n";
+            shader->print(std::cerr);
+         }
       }
    }
 }

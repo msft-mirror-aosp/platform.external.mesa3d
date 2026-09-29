@@ -7,7 +7,7 @@ use nvidia_headers::Mthd;
 pub const MAX_MTHD_LEN: u16 = 0x1fff;
 pub const MAX_MTHD_ADDR: u16 = 0x7fff;
 
-fn class_to_subc(class: u16) -> u8 {
+pub fn class_to_subc(class: u16) -> u8 {
     match class & 0xff {
         0x97 => 0,
         0xc0 => 1,
@@ -131,7 +131,7 @@ impl Push {
         }
     }
 
-    fn push_mthd_bits(&mut self, subc: u8, addr: u16, bits: u32) {
+    pub fn push_mthd_bits(&mut self, subc: u8, addr: u16, bits: u32) {
         let current_len = self.mem.len();
         if let Some(last) = self.mem.get_mut(self.last_inc) {
             let last = MthdHeader::from_bits_mut(last);
@@ -193,7 +193,7 @@ impl Push {
         }
     }
 
-    pub fn push_method<M: Mthd>(&mut self, mthd: M) {
+    pub fn push_mthd<M: Mthd>(&mut self, mthd: M) {
         self.push_mthd_bits(class_to_subc(M::CLASS), M::ADDR, mthd.to_bits());
     }
 
@@ -222,7 +222,7 @@ impl Push {
         self.mem.push(mthd.to_bits());
     }
 
-    pub fn push_array_method<M: ArrayMthd>(&mut self, i: usize, mthd: M) {
+    pub fn push_array_mthd<M: ArrayMthd>(&mut self, i: usize, mthd: M) {
         self.push_mthd_bits(
             class_to_subc(M::CLASS),
             M::addr(i),
@@ -264,6 +264,10 @@ impl Push {
             panic!("Inline data must only be placed after a method header");
         }
         self.mem.extend_from_slice(data);
+    }
+
+    pub fn size(&self) -> usize {
+        self.mem.len()
     }
 }
 

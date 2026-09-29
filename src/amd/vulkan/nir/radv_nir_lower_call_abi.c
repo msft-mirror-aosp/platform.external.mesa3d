@@ -136,31 +136,33 @@ gather_tail_call_instrs_block(nir_function *caller, const struct nir_block *bloc
       /* The call instruction itself has not been lowered to the new signature yet, so do this in a separate loop and
        * adjust parameter indices for the caller.
        */
-      for (unsigned i = 0; i < call->num_params; ++i) {
-         unsigned caller_param_idx = i + ACO_NIR_CALL_SYSTEM_ARG_COUNT;
-         /* We can only do tail calls if the caller returns exactly the callee return values */
-         if (caller->params[caller_param_idx].is_return) {
-            assert(nir_def_as_deref_or_null(call->params[i].ssa));
-            nir_deref_instr *deref_root = nir_def_as_deref(call->params[i].ssa);
-            while (nir_deref_instr_parent(deref_root))
-               deref_root = nir_deref_instr_parent(deref_root);
+      if (!(caller->driver_attributes & ACO_NIR_FUNCTION_ATTRIB_NORETURN)) {
+         for (unsigned i = 0; i < call->num_params; ++i) {
+            unsigned caller_param_idx = i + ACO_NIR_CALL_SYSTEM_ARG_COUNT;
+            /* We can only do tail calls if the caller returns exactly the callee return values */
+            if (caller->params[caller_param_idx].is_return) {
+               assert(nir_def_as_deref_or_null(call->params[i].ssa));
+               nir_deref_instr *deref_root = nir_def_as_deref(call->params[i].ssa);
+               while (nir_deref_instr_parent(deref_root))
+                  deref_root = nir_deref_instr_parent(deref_root);
 
-            if (!deref_root->parent.ssa)
-               return;
-            nir_intrinsic_instr *intrin = nir_def_as_intrinsic_or_null(deref_root->parent.ssa);
-            if (!intrin || intrin->intrinsic != nir_intrinsic_load_param)
-               return;
-            if (nir_intrinsic_param_idx(intrin) != caller_param_idx)
-               return;
-         } else if (!(caller->params[caller_param_idx].driver_attributes & ACO_NIR_PARAM_ATTRIB_DISCARDABLE)) {
-            /* If the parameter is not marked as discardable, then we have to preserve the caller's value. Passing
-             * a modified value to a tail call leaves us unable to restore the original value, so bail out if we have
-             * modified parameters.
-             */
-            nir_intrinsic_instr *intrin = nir_def_as_intrinsic_or_null(call->params[i].ssa);
-            if (!intrin || intrin->intrinsic != nir_intrinsic_load_param ||
-                nir_intrinsic_param_idx(intrin) != caller_param_idx)
-               return;
+               if (!deref_root->parent.ssa)
+                  return;
+               nir_intrinsic_instr *intrin = nir_def_as_intrinsic_or_null(deref_root->parent.ssa);
+               if (!intrin || intrin->intrinsic != nir_intrinsic_load_param)
+                  return;
+               if (nir_intrinsic_param_idx(intrin) != caller_param_idx)
+                  return;
+            } else if (!(caller->params[caller_param_idx].driver_attributes & ACO_NIR_PARAM_ATTRIB_DISCARDABLE)) {
+               /* If the parameter is not marked as discardable, then we have to preserve the caller's value. Passing
+                * a modified value to a tail call leaves us unable to restore the original value, so bail out if we have
+                * modified parameters.
+                */
+               nir_intrinsic_instr *intrin = nir_def_as_intrinsic_or_null(call->params[i].ssa);
+               if (!intrin || intrin->intrinsic != nir_intrinsic_load_param ||
+                   nir_intrinsic_param_idx(intrin) != caller_param_idx)
+                  return;
+            }
          }
       }
 
@@ -180,7 +182,7 @@ static void
 rewrite_return_param_uses(nir_def *def, unsigned param_idx, struct lower_param_info *param_defs)
 {
    nir_foreach_use_safe (use, def) {
-      nir_instr *use_instr = nir_src_parent_instr(use);
+      nir_instr *use_instr = nir_src_use_instr(use);
 
       if (use_instr->type == nir_instr_type_deref) {
          assert(nir_instr_as_deref(use_instr)->deref_type == nir_deref_type_cast);

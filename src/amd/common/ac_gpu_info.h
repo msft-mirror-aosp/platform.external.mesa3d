@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "amd_family.h"
+#include "ac_video.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -115,6 +116,9 @@ struct ac_compiler_info {
    uint32_t min_wave64_vgpr_alloc;
    uint32_t max_vgpr_alloc;
    uint32_t wave64_vgpr_alloc_granularity;
+   uint32_t wave64_vgpr_encode_granularity;
+
+   uint32_t lds_size_per_workgroup;
 
    uint32_t hs_offchip_workgroup_dw_size;
 
@@ -149,36 +153,59 @@ struct ac_compiler_info {
    /* Whether 3D textures, cubemap textures, border colors, and mipmapping are supported. (CDNA) */
    uint32_t has_3d_cube_border_color_mipmap : 1;
 
-   /* conformant_trunc_coord is equal to TA_CNTL2.TRUNCATE_COORD_MODE, which exists since gfx11.
+   /* conformant_trunc_coord is equal to TA_CNTL2.TRUNCATE_COORD_MODE, which exists since gfx11,
+    * but this privileged config register field may be initialized to 0 by the HW/FW, leading to
+    * non-conformant behavior in some cases.
     *
-    * If TA_CNTL2.TRUNCATE_COORD_MODE == 0, coordinate truncation is the same as gfx10 and older.
+    * If TA_CNTL2.TRUNCATE_COORD_MODE == 0, coordinate truncation is the same as gfx10 and older,
+    * where TRUNC_COORD == 0 is fully conformant with D3D10+ (also referred to as the legacy D3D12
+    * behavior), but it's impossible to make nearest filtering fully conformant with D3D9/GL/Vulkan.
+    * Partial conformance is possible by setting TRUNC_COORD == 1 in the sample descriptor if both
+    * the min or mag filters are nearest. If only one of them is nearest, we can't set TRUNC_COORD
+    * because it would also affect the linear filter, which would be incorrect. TRUNC_COORD also has
+    * to be cleared to 0 for nir_texop_tg4 in the shader in this mode, and the layer coordinate must
+    * be rounded using ALU in the shader regardless of TRUNC_COORD because the HW truncates it too.
     *
-    * If TA_CNTL2.TRUNCATE_COORD_MODE == 1, coordinate truncation is adjusted to be D3D9/GL/Vulkan
-    * conformant if you also set TRUNC_COORD. Coordinate truncation uses D3D10+ behaviour if
-    * TRUNC_COORD is unset.
+    * If TA_CNTL2.TRUNCATE_COORD_MODE == 1, all of the issues above are fixed. TRUNC_COORD == 0 is
+    * the same, and TRUNC_COORD == 1 makes coordinate truncation D3D9/GL/Vulkan-conformant regardless
+    * of other sampler states because first the HW selects the filter (from either the min or mag
+    * filter) and then truncation is applied only if the selected filter is nearest. Additionally,
+    * nir_texop_tg4 no longer has to clear the TRUNC_COORD bit, and the shader no longer has to round
+    * the layer coordinate using ALU.
     *
-    * Behavior if TA_CNTL2.TRUNCATE_COORD_MODE == 1:
+    * Behavior if TA_CNTL2.TRUNCATE_COORD_MODE == 1 (always conformant, set TRUNC_COORD = is_d3d9_gl_vk):
     *    truncate_coord_xy = TRUNC_COORD && (xy_filter == Point && !gather);
     *    truncate_coord_z = TRUNC_COORD && (z_filter == Point);
     *    truncate_coord_layer = false;
     *
-    * Behavior if TA_CNTL2.TRUNCATE_COORD_MODE == 0:
+    * Behavior if TA_CNTL2.TRUNCATE_COORD_MODE == 0 (only correct for DX10+ if TRUNC_COORD == 0):
     *    truncate_coord_xy = TRUNC_COORD;
     *    truncate_coord_z = TRUNC_COORD;
-    *    truncate_coord_layer = TRUNC_COORD;
+    *    truncate_coord_layer = true;
     *
     * AnisoPoint is treated as Point.
+    *
+    * Newer versions of D3D12 were changed to require the D3D9/GL/Vulkan behavior, whose support is
+    * indicated by the feature option PointSamplingAddressesNeverRoundUp == true in D3D12. See:
+    * https://microsoft.github.io/DirectX-Specs/d3d/VulkanOn12.html#changing-the-spec-for-point-sampling-address-computations
+    * Note that this new D3D12 requirement cannot be satisfied by all gfx6-10.3 chips and any newer
+    * chips where TRUNCATE_COORD_MODE is initialized to 0.
+    *
+    * If TA_CNTL2.TRUNCATE_COORD_MODE == 0, it can be set to 1 on gfx11+ using UMR or in the kernel
+    * driver at boot to enable the conformant behavior, but it's unclear whether either setting
+    * persists across power gating. If not, the FW must reset it after power gating.
     */
    uint32_t conformant_trunc_coord : 1;
 
    uint32_t has_attr_ring : 1;
-   uint32_t mesh_fast_launch_2 : 1;
 
    /* GFX6-7: limit TCS workgroup to 16 patches for better performance. */
    uint32_t smaller_tcs_workgroups : 1;
 
    /* Some GFX6 GPUs have a bug where it only looks at the x writemask component. */
    uint32_t has_gfx6_mrt_export_bug : 1;
+   /* GFX6 needs single-wave TCS workgroups when load balance per watt is enabled. */
+   uint32_t has_lbpw_tcs_wg_bug : 1;
    /* Pre-GFX9: A bug where the alpha component of 10_10_10_2 formats is always unsigned.*/
    uint32_t has_vtx_format_alpha_adjust_bug : 1;
    /* GFX6-7: SMEM accesses memory even when it's out of bounds */
@@ -197,8 +224,13 @@ struct ac_compiler_info {
    uint32_t has_attr_ring_wait_bug : 1;
    /* GFX6: limit TCS workgroup to one patch if primitive ID is used. */
    uint32_t has_primid_instancing_bug : 1;
+   /* GFX6 and certain GFX7 chips: bug with compute workgroups larger 256 invocations. */
+   uint32_t has_cs_regalloc_hang_bug : 1;
+   /* GFX6-GFX12, except GFX9: SMEM loads on NULL PRT page don't work. */
+   uint32_t has_smem_with_null_prt_bug : 1;
+   uint32_t has_desc_resource_level : 1;
 
-   uint32_t reserved : 5;
+   uint32_t reserved : 2;
 };
 
 struct radeon_info {
@@ -268,7 +300,6 @@ struct radeon_info {
    bool has_two_planes_iterate256_bug;
    bool has_vgt_flush_ngg_legacy_bug;
    bool has_prim_restart_sync_bug;
-   bool has_cs_regalloc_hang_bug;
    bool has_async_compute_threadgroup_bug;
    bool has_async_compute_align32_bug;
    bool has_32bit_predication;
@@ -293,9 +324,8 @@ struct radeon_info {
    bool needs_llvm_wait_wa; /* True if the chip needs to workarounds based on s_waitcnt_deptr but
                              * the LLVM version doesn't work with multiparts shaders.
                              */
-
-   /* Support GS_FAST_LAUNCH(2) for mesh shaders. */
-   bool mesh_fast_launch_2;
+   bool has_smem_partial_oob_access_bug;
+   bool has_out_of_order_uncached_l2;
 
    /* Display features. */
    /* There are 2 display DCC codepaths, because display expects unaligned DCC. */
@@ -318,7 +348,10 @@ struct radeon_info {
    uint32_t address32_hi;
    bool has_dedicated_vram;
    bool all_vram_visible;
+   uint64_t high_va_offset;
+   uint64_t high_va_max;
    uint64_t virtual_address_max;
+   uint64_t virtual_address_alignment;
    bool has_l2_uncached;
    bool r600_has_virtual_memory;
    uint32_t max_tcc_blocks;
@@ -327,7 +360,6 @@ struct radeon_info {
    bool cp_sdma_ge_use_system_memory_scope;
    bool cp_dma_use_L2;
    unsigned pc_lines;
-   uint32_t lds_size_per_workgroup;
 
    /* CP info. */
    bool gfx_ib_pad_with_type2;
@@ -348,16 +380,7 @@ struct radeon_info {
    uint32_t vcn_enc_major_version;
    uint32_t vcn_enc_minor_version;
    uint32_t vcn_fw_revision;
-   struct video_caps_info {
-      struct video_codec_cap {
-         uint32_t valid;
-         uint32_t max_width;
-         uint32_t max_height;
-         uint32_t max_pixels_per_frame;
-         uint32_t max_level;
-         uint32_t pad;
-      } codec_info[8]; /* the number of available codecs */
-   } dec_caps, enc_caps;
+   struct ac_video_caps video_caps;
 
    enum vcn_version vcn_ip_version;
    enum sdma_version sdma_ip_version;
@@ -393,21 +416,7 @@ struct radeon_info {
    bool has_trap_handler_support;
    bool kernel_has_modifiers;
    uint32_t userq_ip_mask; /* AMD_IP_* bits */
-
-   /* If the kernel driver uses CU reservation for high priority compute on gfx10+, it programs
-    * a global CU mask in the hw that is AND'ed with CU_EN register fields set by userspace.
-    * The packet that does the AND'ing is SET_SH_REG_INDEX(index = 3). If you don't use
-    * SET_SH_REG_INDEX, the global CU mask will not be applied.
-    *
-    * If uses_kernel_cu_mask is true, use SET_SH_REG_INDEX.
-    *
-    * If uses_kernel_cu_mask is false, SET_SH_REG_INDEX shouldn't be used because it only
-    * increases CP overhead and doesn't have any other effect.
-    *
-    * The alternative to this is to set the AMD_CU_MASK environment variable that has the same
-    * effect on radeonsi and RADV and doesn't need SET_SH_REG_INDEX.
-    */
-   bool uses_kernel_cu_mask;
+   uint8_t address_prt_wa_control_bit;
 
    struct ac_compiler_info compiler_info;
 
@@ -423,6 +432,7 @@ struct radeon_info {
    uint32_t scratch_wavesize_granularity;
    uint32_t max_scratch_waves;
    bool has_scratch_base_registers;
+   uint32_t instr_prefetch_distance;
 
    /* Pos, prim, and attribute rings. */
    uint32_t attribute_ring_size_per_se;   /* GFX11+ */
@@ -486,9 +496,18 @@ enum ac_query_gpu_info_result {
    AC_QUERY_GPU_INFO_UNIMPLEMENTED_HW,
 };
 
+/* If compiler_compat_mode is true, then ac_compiler_info must be identical between:
+ * - CHIP_VANGOGH and CHIP_REMBRANDT
+ * - CHIP_NAVI33, CHIP_PHOENIX and CHIP_PHOENIX2
+ * This is done by disabling features and enabling workarounds.
+ *
+ * conformant_trunc_coord is an exception, and might differ.
+ */
 enum ac_query_gpu_info_result ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
-                                                bool require_pci_bus_info);
-void ac_fill_compiler_info(struct radeon_info *info, const struct drm_amdgpu_info_device *device_info);
+                                                bool require_pci_bus_info,
+                                                bool compiler_compat_mode);
+void ac_fill_compiler_info(struct radeon_info *info,
+                           const struct drm_amdgpu_info_device *device_info, bool compat_mode);
 void ac_fill_tiling_info(struct radeon_info *info, const struct amdgpu_gpu_info *amdinfo);
 void ac_fill_memory_info(struct radeon_info *info, const struct drm_amdgpu_info_device *device_info,
                          const struct drm_amdgpu_memory_info *meminfo);

@@ -486,7 +486,7 @@ static nir_def *
 lower_boolean_shuffle(nir_builder *b, nir_intrinsic_instr *intrin,
                       const nir_lower_subgroups_options *options)
 {
-   assert(options->ballot_components == 1 && options->subgroup_size);
+   assert(options->ballot_components == 1);
    nir_def *ballot = nir_ballot_relaxed(b, 1, options->ballot_bit_size, intrin->src[0].ssa);
 
    nir_def *index = NULL;
@@ -512,6 +512,7 @@ lower_boolean_shuffle(nir_builder *b, nir_intrinsic_instr *intrin,
       index = nir_ixor(b, nir_load_subgroup_invocation(b), intrin->src[1].ssa);
       break;
    case nir_intrinsic_rotate: {
+      assert(options->subgroup_size);
       nir_def *delta = nir_as_uniform(b, intrin->src[1].ssa);
       uint32_t cluster_size = nir_intrinsic_cluster_size(intrin);
       cluster_size = cluster_size ? cluster_size : options->subgroup_size;
@@ -1020,7 +1021,10 @@ build_vote(nir_builder *b, nir_def *src,
       ballot = nir_iand(b, ballot, mask);
    }
 
-   return all ? nir_ieq_imm(b, ballot, 0) : nir_ine_imm(b, ballot, 0);
+   nir_def *zero = nir_imm_zero(b, options->ballot_components,
+                                options->ballot_bit_size);
+   return all ? nir_ball_iequal(b, ballot, zero)
+              : nir_bany_inequal(b, ballot, zero);
 }
 
 static nir_def *
@@ -1396,7 +1400,7 @@ lower_subgroups_instr(nir_builder *b, nir_instr *instr, void *_options)
          return intrin->src[0].ssa;
       if (options->lower_to_scalar && intrin->num_components > 1)
          return lower_subgroup_op_to_scalar(b, intrin, is_bitwise(nir_intrinsic_reduction_op(intrin)));
-      if (intrin->def.bit_size == 1 && options->ballot_components == 1 &&
+      if (intrin->def.bit_size == 1 && intrin->def.num_components == 1 && options->ballot_components == 1 &&
           (options->lower_boolean_reduce || options->lower_reduce))
          return lower_boolean_reduce(b, intrin, options);
       if (options->lower_reduce)
@@ -1407,7 +1411,7 @@ lower_subgroups_instr(nir_builder *b, nir_instr *instr, void *_options)
    case nir_intrinsic_exclusive_scan:
       if (options->lower_to_scalar && intrin->num_components > 1)
          return lower_subgroup_op_to_scalar(b, intrin, is_bitwise(nir_intrinsic_reduction_op(intrin)));
-      if (intrin->def.bit_size == 1 && options->ballot_components == 1 &&
+      if (intrin->def.bit_size == 1 && intrin->def.num_components == 1 && options->ballot_components == 1 &&
           (options->lower_boolean_reduce || options->lower_reduce))
          return lower_boolean_reduce(b, intrin, options);
       if (options->lower_reduce)

@@ -198,10 +198,6 @@ set_io_mask(nir_shader *shader, nir_variable *var, int offset, int len,
             }
          }
 
-         if (shader->info.stage == MESA_SHADER_FRAGMENT &&
-             !is_output_read && var->data.index == 1)
-            shader->info.fs.color_is_dual_source = true;
-
          if (var->data.per_view)
             shader->info.per_view_outputs |= bitfield;
       }
@@ -376,8 +372,8 @@ nir_intrinsic_writes_external_memory(const nir_intrinsic_instr *instr)
    case nir_intrinsic_ssbo_atomic_ir3:
    case nir_intrinsic_ssbo_atomic_swap_ir3:
    case nir_intrinsic_store_global:
+   case nir_intrinsic_store_global_offset:
    case nir_intrinsic_store_global_etna:
-   case nir_intrinsic_store_global_ir3:
    case nir_intrinsic_store_global_amd:
    case nir_intrinsic_store_buffer_amd:
    case nir_intrinsic_store_ssbo:
@@ -559,7 +555,7 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
    case nir_intrinsic_load_input_vertex:
    case nir_intrinsic_load_interpolated_input:
    case nir_intrinsic_load_per_primitive_input:
-   case nir_intrinsic_load_attribute_pan:
+   case nir_intrinsic_load_attr_pan:
       if (shader->info.stage == MESA_SHADER_TESS_EVAL &&
           instr->intrinsic == nir_intrinsic_load_input &&
           !is_patch_special) {
@@ -724,6 +720,7 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
    case nir_intrinsic_load_invocation_id:
    case nir_intrinsic_load_frag_coord:
    case nir_intrinsic_load_pixel_coord:
+   case nir_intrinsic_load_frag_coord_xy:
    case nir_intrinsic_load_frag_coord_z:
    case nir_intrinsic_load_frag_coord_w:
    case nir_intrinsic_load_frag_coord_w_rcp:
@@ -736,6 +733,7 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
    case nir_intrinsic_load_sample_id:
    case nir_intrinsic_load_sample_pos:
    case nir_intrinsic_load_sample_pos_or_center:
+   case nir_intrinsic_load_sample_pos_intel:
    case nir_intrinsic_load_sample_mask_in:
    case nir_intrinsic_load_helper_invocation:
    case nir_intrinsic_load_tess_coord:
@@ -793,7 +791,8 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
 
    case nir_intrinsic_load_barycentric_pixel:
       if (nir_intrinsic_interp_mode(instr) == INTERP_MODE_SMOOTH ||
-          nir_intrinsic_interp_mode(instr) == INTERP_MODE_NONE) {
+          (!shader->options->ignore_none_interpolation_in_sysval_gathering &&
+           nir_intrinsic_interp_mode(instr) == INTERP_MODE_NONE)) {
          BITSET_SET(shader->info.system_values_read,
                     SYSTEM_VALUE_BARYCENTRIC_PERSP_PIXEL);
       } else if (nir_intrinsic_interp_mode(instr) == INTERP_MODE_NOPERSPECTIVE) {
@@ -804,7 +803,8 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
 
    case nir_intrinsic_load_barycentric_centroid:
       if (nir_intrinsic_interp_mode(instr) == INTERP_MODE_SMOOTH ||
-          nir_intrinsic_interp_mode(instr) == INTERP_MODE_NONE) {
+          (!shader->options->ignore_none_interpolation_in_sysval_gathering &&
+           nir_intrinsic_interp_mode(instr) == INTERP_MODE_NONE)) {
          BITSET_SET(shader->info.system_values_read,
                     SYSTEM_VALUE_BARYCENTRIC_PERSP_CENTROID);
       } else if (nir_intrinsic_interp_mode(instr) == INTERP_MODE_NOPERSPECTIVE) {
@@ -815,7 +815,8 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
 
    case nir_intrinsic_load_barycentric_sample:
       if (nir_intrinsic_interp_mode(instr) == INTERP_MODE_SMOOTH ||
-          nir_intrinsic_interp_mode(instr) == INTERP_MODE_NONE) {
+          (!shader->options->ignore_none_interpolation_in_sysval_gathering &&
+           nir_intrinsic_interp_mode(instr) == INTERP_MODE_NONE)) {
          BITSET_SET(shader->info.system_values_read,
                     SYSTEM_VALUE_BARYCENTRIC_PERSP_SAMPLE);
       } else if (nir_intrinsic_interp_mode(instr) == INTERP_MODE_NOPERSPECTIVE) {
@@ -870,6 +871,7 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
       shader->info.outputs_written |= BITFIELD64_BIT(FRAG_RESULT_SAMPLE_MASK);
       break;
 
+   case nir_intrinsic_load_tile_image:
    case nir_intrinsic_load_tile_pan:
    case nir_intrinsic_load_tile_res_pan: {
       const nir_io_semantics io = nir_intrinsic_io_semantics(instr);
@@ -901,6 +903,10 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
       }
       break;
    }
+
+   case nir_intrinsic_abort:
+      shader->info.uses_abort = true;
+      break;
 
    default:
       shader->info.uses_bindless |= intrinsic_is_bindless(instr);
@@ -941,6 +947,7 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
           instr->intrinsic == nir_intrinsic_bindless_image_samples ||
           instr->intrinsic == nir_intrinsic_get_ubo_size ||
           instr->intrinsic == nir_intrinsic_get_ssbo_size ||
+          instr->intrinsic == nir_intrinsic_load_ssbo_address ||
           instr->intrinsic == nir_intrinsic_image_heap_levels ||
           instr->intrinsic == nir_intrinsic_image_heap_size ||
           instr->intrinsic == nir_intrinsic_image_heap_samples)
@@ -1155,6 +1162,22 @@ nir_shader_gather_info(nir_shader *shader, nir_function_impl *entrypoint)
             glsl_count_attribute_slots(glsl_get_array_element(var->type), false);
          shader->info.per_view_outputs |= BITFIELD64_RANGE(var->data.location, slots);
       }
+      if (var->data.yuv) {
+         assert(shader->info.stage == MESA_SHADER_FRAGMENT);
+         shader->info.fs.yuv_color = true;
+      }
+
+      /*
+       * Dual-source blending is part of the shader interface, not a
+       * property of whether the output ends up written: a var with
+       * index == 1 still selects dual-source blending even if every
+       * store to it got optimized away (e.g. nir_opt_undef removing a
+       * store whose value is entirely undef).
+       */
+      shader->info.fs.color_is_dual_source |=
+         shader->info.stage == MESA_SHADER_FRAGMENT &&
+         (var->data.index == 1 ||
+          var->data.location == FRAG_RESULT_DUAL_SRC_BLEND);
    }
 
    if (shader->info.stage == MESA_SHADER_FRAGMENT) {

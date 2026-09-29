@@ -11,11 +11,11 @@
 #include "vk_alloc.h"
 #include "vk_log.h"
 
+#include "tools/radv_rmv.h"
 #include "radv_buffer.h"
 #include "radv_device.h"
 #include "radv_entrypoints.h"
 #include "radv_event.h"
-#include "radv_rmv.h"
 
 static void
 radv_destroy_event(struct radv_device *device, const VkAllocationCallbacks *pAllocator, struct radv_event *event)
@@ -37,7 +37,7 @@ radv_create_event(struct radv_device *device, const VkEventCreateInfo *pCreateIn
    struct radv_event *event;
    VkResult result;
 
-   event = vk_alloc2(&device->vk.alloc, pAllocator, sizeof(*event), 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   event = vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*event), 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (!event)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 

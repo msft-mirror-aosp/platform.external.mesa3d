@@ -164,8 +164,7 @@
 
   <enum name="Swizzles (8-bit)">
     <value default="true">b0123</value>
-    <!-- b3210 until v11 -->
-    <reserved/>
+    <value>b3210</value>
     <value>b0101</value>
     <value>b2323</value>
     <value>b0000</value>
@@ -938,6 +937,32 @@
     <slot/>
     <src/>
     <imm name="index" start="12" size="4"/> <!-- 0 for pointx, 1 for pointy, 2 for fragw, 3 for fragz -->
+  </ins>
+
+  <ins name="LD_VAR_BUF_FLAT_IMM" title="Load immediate flat varying" message="varying" unit="V">
+    <opcode>
+      <op val="0x40" start="48" mask="0x1FF"/>
+    </opcode>
+    <desc>Fetches a given flat varying from hardware buffer</desc>
+    <slot/>
+    <vecsize/>
+    <regfmt/>
+    <sr write="true"/>
+    <sr_count count="format"/>
+    <imm name="index" start="8" size="11"/>
+  </ins>
+
+  <ins name="LD_VAR_BUF_FLAT" title="Load indirect flat varying" message="varying" unit="V">
+    <opcode>
+      <op val="0x5F" start="48" mask="0x1FF"/>
+    </opcode>
+    <desc>Fetches a given flat varying from hardware buffer</desc>
+    <slot/>
+    <vecsize/>
+    <regfmt/>
+    <sr write="true"/>
+    <sr_count count="format"/>
+    <src/>
   </ins>
 
   <group name="LD_VAR_BUF_IMM" title="Load immediate varying" message="varying" unit="V">
@@ -2034,7 +2059,7 @@
     <src/>
   </ins>
 
-  <ins name="CLZ.u32" title="Count leading zeroes" dests="1" unused="true" unit="CVT">
+  <ins name="CLZ.u32" title="Count leading zeroes" dests="1" unused="true" unit="SFU">
     <opcode>
       <op val="0x91" start="48" mask="0x1FF"/>
       <op val="0x4" start="16" mask="0x1F"/> <!-- opcode2 -->
@@ -2045,7 +2070,7 @@
     <src/>
   </ins>
 
-  <ins name="CLZ.v2u16" title="Count leading zeroes" dests="1" unused="true" unit="CVT">
+  <ins name="CLZ.v2u16" title="Count leading zeroes" dests="1" unused="true" unit="SFU">
     <opcode>
       <op val="0x91" start="48" mask="0x1FF"/>
       <op val="0x5" start="16" mask="0x1F"/> <!-- opcode2 -->
@@ -2056,7 +2081,7 @@
     <src swizzle="true"/>
   </ins>
 
-  <ins name="CLZ.v4u8" title="Count leading zeroes" dests="1" unused="true" unit="CVT">
+  <ins name="CLZ.v4u8" title="Count leading zeroes" dests="1" unused="true" unit="SFU">
     <opcode>
       <op val="0x91" start="48" mask="0x1FF"/>
       <op val="0x6" start="16" mask="0x1F"/> <!-- opcode2 -->
@@ -2549,6 +2574,38 @@
     <src lane="26">B</src>
   </ins>
 
+  <group name="MMUL" title="Cooperative matrix multiply" dests="1" unit="FMA">
+    <ins name="MMUL.v4s8">
+      <opcode>
+        <op val="0x100" start="48" mask="0x1FF"/>
+      </opcode>
+    </ins>
+    <ins name="MMUL.v4u8">
+      <opcode>
+        <op val="0x101" start="48" mask="0x1FF"/>
+      </opcode>
+    </ins>
+    <ins name="MMUL.f32">
+      <opcode>
+        <op val="0x102" start="48" mask="0x1FF"/>
+      </opcode>
+    </ins>
+    <ins name="MMUL.v2f16">
+      <opcode>
+        <op val="0x103" start="48" mask="0x1FF"/>
+      </opcode>
+    </ins>
+    <desc>
+      4x4 cooperative matrix multiply and accumulate, calculating
+      $A \cdot B + C$. The matrices are spread across the subgroup with one
+      element per lane. The destination register must differ from A and B
+      (it may reuse the accumulator C).
+    </desc>
+    <src>A</src>
+    <src>B</src>
+    <src>C</src>
+  </group>
+
   <group name="ISUB" title="Integer subtract" dests="1" unused="true" unit="CVT">
     <ins name="ISUB.u32">
       <opcode>
@@ -2848,6 +2905,30 @@
         <op val="0x000" start="24" mask="0x703"/> <!-- opcode2 -->
       </opcode>
     </ins>
+    <ins name="ARSHIFT_AND.i32">
+      <opcode>
+        <op val="0xB4" start="48" mask="0x1FF"/>
+        <op val="0x400" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
+    <ins name="ARSHIFT_AND.v2i16">
+      <opcode>
+        <op val="0xB5" start="48" mask="0x1FF"/>
+        <op val="0x400" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
+    <ins name="ARSHIFT_AND.v4i8">
+      <opcode>
+        <op val="0xB6" start="48" mask="0x1FF"/>
+        <op val="0x400" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
+    <ins name="ARSHIFT_AND.i64">
+      <opcode>
+        <op val="0x1B7" start="48" mask="0x1FF"/>
+        <op val="0x400" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
     <desc>
       Right shifts its first source by a specified amount and bitwise ANDs it with the
       second source, optionally inverting the second source or the result. If
@@ -2921,6 +3002,30 @@
         <op val="0x001" start="24" mask="0x703"/> <!-- opcode2 -->
       </opcode>
     </ins>
+    <ins name="ARSHIFT_OR.i32">
+      <opcode>
+        <op val="0xB4" start="48" mask="0x1FF"/>
+        <op val="0x401" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
+    <ins name="ARSHIFT_OR.v2i16">
+      <opcode>
+        <op val="0xB5" start="48" mask="0x1FF"/>
+        <op val="0x401" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
+    <ins name="ARSHIFT_OR.v4i8">
+      <opcode>
+        <op val="0xB6" start="48" mask="0x1FF"/>
+        <op val="0x401" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
+    <ins name="ARSHIFT_OR.i64">
+      <opcode>
+        <op val="0x1B7" start="48" mask="0x1FF"/>
+        <op val="0x401" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
     <desc>
       Right shifts its first source by a specified amount and bitwise ORs it with the
       second source, optionally inverting the second source or the result. If
@@ -2992,6 +3097,30 @@
       <opcode>
         <op val="0x1B7" start="48" mask="0x1FF"/>
         <op val="0x002" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
+    <ins name="ARSHIFT_XOR.i32">
+      <opcode>
+        <op val="0xB4" start="48" mask="0x1FF"/>
+        <op val="0x402" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
+    <ins name="ARSHIFT_XOR.v2i16">
+      <opcode>
+        <op val="0xB5" start="48" mask="0x1FF"/>
+        <op val="0x402" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
+    <ins name="ARSHIFT_XOR.v4i8">
+      <opcode>
+        <op val="0xB6" start="48" mask="0x1FF"/>
+        <op val="0x402" start="24" mask="0x703"/> <!-- opcode2 -->
+      </opcode>
+    </ins>
+    <ins name="ARSHIFT_XOR.i64">
+      <opcode>
+        <op val="0x1B7" start="48" mask="0x1FF"/>
+        <op val="0x402" start="24" mask="0x703"/> <!-- opcode2 -->
       </opcode>
     </ins>
     <desc>
@@ -3098,7 +3227,7 @@
     <src>CD</src>
   </ins>
 
-  <ins name="CUBEFACE1" title="Cube map transform step 1" dests="1" unused="true" unit="SFU">
+  <ins name="CUBEFACE1" title="Cube map transform step 1" dests="1" unused="true" unit="CVT">
     <opcode>
       <op val="0xC0" start="48" mask="0x1FF"/>
     </opcode>
@@ -3108,7 +3237,7 @@
     <src absneg="true">Z coordinate as 32-bit floating point</src>
   </ins>
 
-  <ins name="CUBEFACE2_V9" title="Cube map transform step 2" dests="1" unit="SFU">
+  <ins name="CUBEFACE2_V9" title="Cube map transform step 2" dests="1" unit="CVT">
     <opcode>
       <op val="0xC1" start="48" mask="0x1FF"/>
     </opcode>

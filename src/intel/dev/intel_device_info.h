@@ -162,6 +162,7 @@ intel_device_info_dual_subslice_id_bound(const struct intel_device_info *devinfo
 }
 
 int intel_device_name_to_pci_device_id(const char *name);
+const char *intel_platform_name_by_index(unsigned idx);
 
 static inline uint64_t
 intel_device_info_timebase_scale(const struct intel_device_info *devinfo,
@@ -170,8 +171,11 @@ intel_device_info_timebase_scale(const struct intel_device_info *devinfo,
    /* Try to avoid going over the 64bits when doing the scaling */
    uint64_t upper_ts = gpu_timestamp >> 32;
    uint64_t lower_ts = gpu_timestamp & 0xffffffff;
-   uint64_t upper_scaled_ts = upper_ts * 1000000000ull / devinfo->timestamp_frequency;
-   uint64_t lower_scaled_ts = lower_ts * 1000000000ull / devinfo->timestamp_frequency;
+   uint64_t upper_num = upper_ts * 1000000000ull;
+   uint64_t upper_scaled_ts = upper_num / devinfo->timestamp_frequency;
+   uint64_t upper_remainder = upper_num % devinfo->timestamp_frequency;
+   uint64_t lower_scaled_ts = ((upper_remainder << 32) + lower_ts * 1000000000ull) /
+                              devinfo->timestamp_frequency;
    return (upper_scaled_ts << 32) + lower_scaled_ts;
 }
 
@@ -215,6 +219,16 @@ enum intel_wa_steppings intel_device_info_wa_stepping(struct intel_device_info *
 uint32_t intel_device_info_get_max_slm_size(const struct intel_device_info *devinfo);
 uint32_t intel_device_info_get_max_preferred_slm_size(const struct intel_device_info *devinfo);
 
+static inline unsigned
+intel_device_info_get_max_engine_prefetch(const struct intel_device_info *devinfo)
+{
+   unsigned max_prefetch = 0;
+   for (unsigned engine = INTEL_ENGINE_CLASS_RENDER;
+        engine < ARRAY_SIZE(devinfo->engine_class_prefetch); engine++)
+      max_prefetch = MAX2(max_prefetch, devinfo->engine_class_prefetch[engine]);
+   return max_prefetch;
+}
+
 /**
  * True if this device supports the Extended Bindless Surface Offset mode,
  * which offers 26-bit surface handles, instead of 20-bit.  This effectively
@@ -244,6 +258,12 @@ static inline bool
 intel_use_tcs_multi_patch(const struct intel_device_info *devinfo)
 {
    return devinfo->ver >= 12;
+}
+
+static inline unsigned
+intel_device_info_max_sbids(const struct intel_device_info *devinfo)
+{
+   return devinfo->ver >= 30 ? 32 : 16;
 }
 
 #ifdef __cplusplus

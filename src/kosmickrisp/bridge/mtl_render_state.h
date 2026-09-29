@@ -61,6 +61,28 @@ void mtl_render_pass_attachment_descriptor_set_clear_depth(
 void mtl_render_pass_attachment_descriptor_set_clear_stencil(
    mtl_render_pass_attachment_descriptor *descriptor, uint32_t stencil);
 
+void mtl_render_pass_attachment_descriptor_set_depth_resolve_filter(
+   mtl_render_pass_attachment_descriptor *descriptor,
+   enum mtl_depth_resolve_filter filter);
+
+void mtl_render_pass_attachment_descriptor_set_stencil_resolve_filter(
+   mtl_render_pass_attachment_descriptor *descriptor,
+   enum mtl_stencil_resolve_filter filter);
+
+void mtl_render_pass_attachment_descriptor_set_resolve_texture(
+   mtl_render_pass_attachment_descriptor *descriptor,
+   mtl_texture *resolve_texture);
+
+void mtl_render_pass_attachment_descriptor_set_resolve_level(
+   mtl_render_pass_attachment_descriptor *descriptor, uint32_t resolve_level);
+
+void mtl_render_pass_attachment_descriptor_set_resolve_slice(
+   mtl_render_pass_attachment_descriptor *descriptor, uint32_t resolve_slice);
+
+void mtl_render_pass_attachment_descriptor_set_resolve_depth_plane(
+   mtl_render_pass_attachment_descriptor *descriptor,
+   uint32_t resolve_depth_plane);
+
 void mtl_render_pass_descriptor_set_render_target_array_length(
    mtl_render_pass_descriptor *descriptor, uint32_t length);
 
@@ -73,51 +95,12 @@ void mtl_render_pass_descriptor_set_render_target_height(
 void mtl_render_pass_descriptor_set_default_raster_sample_count(
    mtl_render_pass_descriptor *descriptor, uint32_t sample_count);
 
+void mtl_render_pass_descriptor_set_sample_positions(
+   mtl_render_pass_descriptor *descriptor,
+   const struct mtl_sample_position *positions, uint32_t count);
+
 void mtl_render_pass_descriptor_set_visibility_buffer(
    mtl_render_pass_descriptor *descriptor, mtl_buffer *visibility_buffer);
-
-/* Render pipeline descriptor */
-mtl_render_pipeline_descriptor *mtl_new_render_pipeline_descriptor(void);
-
-void mtl_render_pipeline_descriptor_set_vertex_shader(
-   mtl_render_pass_descriptor *descriptor, mtl_function *shader);
-
-void mtl_render_pipeline_descriptor_set_fragment_shader(
-   mtl_render_pass_descriptor *descriptor, mtl_function *shader);
-
-void mtl_render_pipeline_descriptor_set_input_primitive_topology(
-   mtl_render_pass_descriptor *descriptor,
-   enum mtl_primitive_topology_class topology_class);
-
-void mtl_render_pipeline_descriptor_set_color_attachment_format(
-   mtl_render_pass_descriptor *descriptor, uint8_t index,
-   enum mtl_pixel_format format);
-
-void mtl_render_pipeline_descriptor_set_depth_attachment_format(
-   mtl_render_pass_descriptor *descriptor, enum mtl_pixel_format format);
-
-void mtl_render_pipeline_descriptor_set_stencil_attachment_format(
-   mtl_render_pass_descriptor *descriptor, enum mtl_pixel_format format);
-
-void mtl_render_pipeline_descriptor_set_raster_sample_count(
-   mtl_render_pass_descriptor *descriptor, uint32_t sample_count);
-
-void mtl_render_pipeline_descriptor_set_alpha_to_coverage(
-   mtl_render_pass_descriptor *descriptor, bool enabled);
-
-void mtl_render_pipeline_descriptor_set_alpha_to_one(
-   mtl_render_pass_descriptor *descriptor, bool enabled);
-
-void mtl_render_pipeline_descriptor_set_rasterization_enabled(
-   mtl_render_pass_descriptor *descriptor, bool enabled);
-
-void mtl_render_pipeline_descriptor_set_max_vertex_amplification_count(
-   mtl_render_pass_descriptor *descriptor, uint32_t count);
-
-/* Render pipeline */
-mtl_render_pipeline_state *
-mtl_new_render_pipeline(mtl_device *device,
-                        mtl_render_pass_descriptor *descriptor);
 
 /* Stencil descriptor */
 mtl_stencil_descriptor *mtl_new_stencil_descriptor(void);

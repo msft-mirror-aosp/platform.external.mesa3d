@@ -416,6 +416,12 @@ opt_loop_peel_initial_break(nir_loop *loop)
    nir_block *prev_block = nir_cf_node_cf_tree_prev(&loop->cf_node);
    nir_block *exit_block = nir_cf_node_cf_tree_next(&loop->cf_node);
 
+   /* If we immediately continue/break out from the header block,
+    * we can't extract it since we'd be extracting the break as well.
+    * Instead, let nir_opt_dead_cf clean up the rest of the loop. */
+   if (nir_block_ends_in_jump(header_block))
+      return false;
+
    /* The loop must have exactly one continue block. */
    if (nir_block_num_preds(header_block) != 2)
       return false;
@@ -506,12 +512,12 @@ insert_phis_after_terminator_merge(nir_def *def, void *state)
    nir_foreach_use_including_if_safe(src, def) {
       /* Don't reprocess the phi we just added */
       if (!nir_src_is_if(src) && phi_instr &&
-          nir_src_parent_instr(src) == &phi_instr->instr) {
+          nir_src_use_instr(src) == &phi_instr->instr) {
          continue;
       }
 
       if (nir_src_is_if(src) ||
-          (!nir_src_is_if(src) && nir_src_parent_instr(src)->block != nir_def_block(def))) {
+          (!nir_src_is_if(src) && nir_src_use_instr(src)->block != nir_def_block(def))) {
          if (!phi_created) {
             phi_instr = nir_phi_instr_create(m_state->shader);
             nir_def_init(&phi_instr->instr, &phi_instr->def, def->num_components,

@@ -119,8 +119,11 @@ driCreateNewScreen3(int scrn, int fd,
     /* Option parsing before ->InitScreen(), as some options apply there. */
     driParseOptionInfo(&screen->optionInfo,
                        __dri2ConfigOptions, ARRAY_SIZE(__dri2ConfigOptions));
-    driParseConfigFiles(&screen->optionCache, &screen->optionInfo, screen->myNum,
-                        "dri2", NULL, NULL, NULL, 0, NULL, 0);
+    driParseConfigFiles(&screen->optionCache, &screen->optionInfo,
+                        &(driConfigFileParseParams) {
+                           .screenNum = screen->myNum,
+                           .driverName = "dri2",
+                        });
 
    (void) mtx_init(&screen->opencl_func_mutex, mtx_plain);
 
@@ -526,6 +529,19 @@ driCreateContextAttribs(struct dri_screen *screen, int api,
         ctx_config.major_version == 3 && ctx_config.minor_version == 1 &&
         screen->max_gl_compat_version < 31)
        mesa_api = API_OPENGL_CORE;
+
+    /* If the screen supports at maximum OpenGL 3.1, it's free to implement
+     * GL_ARB_compatibility or not. However, as OpenGL 3.1 is a corner case
+     * on the Core vs Compatiblity thing (it has no Compatibility Profile
+     * defined, only GL_ARB_compatibility extension defined), some applications
+     * will misbehave without GL_ARB_compatibility, so try hard to support
+     * GL_ARB_compatiblity in such case.
+     */
+    if (mesa_api == API_OPENGL_CORE &&
+        ctx_config.major_version == 3 && ctx_config.minor_version == 1 &&
+        screen->max_gl_compat_version == 31 &&
+        screen->max_gl_core_version == 31)
+       mesa_api = API_OPENGL_COMPAT;
 
     /* The latest version of EGL_KHR_create_context spec says:
      *
@@ -943,6 +959,24 @@ static const struct {
       .image_format    = __DRI_IMAGE_FORMAT_XBGR8888,
       .internal_format =        GL_RGB8,
    },
+#if UTIL_ARCH_BIG_ENDIAN
+   {
+      .image_format    = PIPE_FORMAT_A8R8G8B8_UNORM,
+      .internal_format =        GL_RGBA8,
+   },
+   {
+      .image_format    = PIPE_FORMAT_X8R8G8B8_UNORM,
+      .internal_format =        GL_RGB8,
+   },
+   {
+      .image_format    = PIPE_FORMAT_A8B8G8R8_UNORM,
+      .internal_format =        GL_RGBA8,
+   },
+   {
+      .image_format    = PIPE_FORMAT_X8B8G8R8_UNORM,
+      .internal_format =        GL_RGB8,
+   },
+#endif
    {
       .image_format    = __DRI_IMAGE_FORMAT_R8,
       .internal_format =        GL_R8,
@@ -1069,7 +1103,8 @@ driGetDriInfoXML(const char* driverName)
 
 bool
 dri_get_drm_device_info(const char *device_name, uint8_t *device_uuid, uint8_t *driver_uuid,
-                        char **vendor_name, char **renderer_name, char **driver_name)
+                        char **vendor_name, char **renderer_name, char **driver_name,
+                        enum pipe_device_type *device_type)
 {
 #ifdef HAVE_LIBDRM
    struct pipe_loader_device *pldev;
@@ -1103,6 +1138,7 @@ dri_get_drm_device_info(const char *device_name, uint8_t *device_uuid, uint8_t *
    if (pscreen->get_name)
       *renderer_name = strdup(pscreen->get_name(pscreen));
 
+   *device_type = pscreen->caps.device_type;
    *driver_name = loader_get_driver_for_fd(fd);
 
    pscreen->destroy(pscreen);

@@ -104,7 +104,7 @@ lookup_shader(struct st_context *st,
 
    unsigned inputs[2 + MAX_TEXTURE_UNITS];
 
-   for (int j = 0; j < num_attribs; j++) {
+   for (j = 0; j < num_attribs; j++) {
       inputs[j] = slot_to_vert_attrib(slots[j]);
    }
 
@@ -234,7 +234,7 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
             SET_ATTRIB(2, tex_attr, s1, t1, 0.0f, 1.0f);  /* upper right */
             SET_ATTRIB(3, tex_attr, s0, t1, 0.0f, 1.0f);  /* upper left */
 
-            slots[tex_attr] = st->needs_texcoord_semantic ?
+            slots[tex_attr] = st->screen->caps.tgsi_texcoord ?
                VARYING_SLOT_TEX0 : VARYING_SLOT_VAR0;
 
             tex_attr++;
@@ -275,14 +275,14 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
    {
       const struct gl_framebuffer *fb = ctx->DrawBuffer;
       const GLboolean invert = (_mesa_fb_orientation(fb) == Y_0_TOP);
-      const GLfloat width = (GLfloat)_mesa_geometric_width(fb);
-      const GLfloat height = (GLfloat)_mesa_geometric_height(fb);
+      const GLfloat wfb = (GLfloat)_mesa_geometric_width(fb);
+      const GLfloat hfb = (GLfloat)_mesa_geometric_height(fb);
       struct pipe_viewport_state vp;
-      vp.scale[0] =  0.5f * width;
-      vp.scale[1] = height * (invert ? -0.5f : 0.5f);
+      vp.scale[0] =  0.5f * wfb;
+      vp.scale[1] = hfb * (invert ? -0.5f : 0.5f);
       vp.scale[2] = 1.0f;
-      vp.translate[0] = 0.5f * width;
-      vp.translate[1] = 0.5f * height;
+      vp.translate[0] = 0.5f * wfb;
+      vp.translate[1] = 0.5f * hfb;
       vp.translate[2] = 0.0f;
       vp.swizzle_x = PIPE_VIEWPORT_SWIZZLE_POSITIVE_X;
       vp.swizzle_y = PIPE_VIEWPORT_SWIZZLE_POSITIVE_Y;

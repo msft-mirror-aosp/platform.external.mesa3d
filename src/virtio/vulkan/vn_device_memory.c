@@ -10,9 +10,9 @@
 
 #include "vn_device_memory.h"
 
-#include "venus-protocol/vn_protocol_driver_device_memory.h"
-#include "venus-protocol/vn_protocol_driver_transport.h"
 #include "vk_debug_utils.h"
+#include "vn_protocol_driver_device_memory.h"
+#include "vn_protocol_driver_transport.h"
 
 #include "vn_android.h"
 #include "vn_buffer.h"
@@ -56,12 +56,12 @@ vn_device_memory_free_simple(struct vn_device *dev,
    vn_async_vkFreeMemory(dev->primary_ring, dev_handle, mem_handle, NULL);
 }
 
-static VkResult
-vn_device_memory_wait_alloc(struct vn_device *dev,
-                            struct vn_device_memory *mem)
+static bool
+vn_device_memory_needs_wait_alloc(struct vn_device *dev,
+                                  struct vn_device_memory *mem)
 {
    if (!mem->bo_ring_seqno_valid)
-      return VK_SUCCESS;
+      return false;
 
    /* fine to false it here since renderer submission failure is fatal */
    mem->bo_ring_seqno_valid = false;
@@ -70,40 +70,54 @@ vn_device_memory_wait_alloc(struct vn_device *dev,
     * - mem alloc is done upon bo map or export
     * - mem import is done upon bo destroy
     */
-   if (vn_ring_get_seqno_status(dev->primary_ring, mem->bo_ring_seqno))
-      return VK_SUCCESS;
-
-   const uint64_t ring_id = vn_ring_get_id(dev->primary_ring);
-   uint32_t local_data[8];
-   struct vn_cs_encoder local_enc =
-      VN_CS_ENCODER_INITIALIZER_LOCAL(local_data, sizeof(local_data));
-   vn_encode_vkWaitRingSeqnoMESA(&local_enc, 0, ring_id, mem->bo_ring_seqno);
-   return vn_renderer_submit_simple(dev->renderer, local_data,
-                                    vn_cs_encoder_get_len(&local_enc));
+   return !vn_ring_get_seqno_status(dev->primary_ring, mem->bo_ring_seqno);
 }
 
 static inline VkResult
 vn_device_memory_bo_init(struct vn_device *dev, struct vn_device_memory *mem)
 {
-   VkResult result = vn_device_memory_wait_alloc(dev, mem);
-   if (result != VK_SUCCESS)
-      return result;
+   struct vn_renderer_submit_batch *batch = NULL;
+   struct vn_renderer_submit_batch local_batch;
+   uint32_t local_data[8];
+   if (vn_device_memory_needs_wait_alloc(dev, mem)) {
+      struct vn_cs_encoder local_enc =
+         VN_CS_ENCODER_INITIALIZER_LOCAL(local_data, sizeof(local_data));
+      vn_encode_vkWaitRingSeqnoMESA(&local_enc, 0,
+                                    vn_ring_get_id(dev->primary_ring),
+                                    mem->bo_ring_seqno);
+      local_batch = (struct vn_renderer_submit_batch){
+         .cs_data = local_data,
+         .cs_size = vn_cs_encoder_get_len(&local_enc),
+      };
+      batch = &local_batch;
+   }
 
    const struct vk_device_memory *mem_vk = &mem->base.vk;
    const VkMemoryType *mem_type = &dev->physical_device->memory_properties
                                       .memoryTypes[mem_vk->memory_type_index];
    return vn_renderer_bo_create_from_device_memory(
-      dev->renderer, mem_vk->size, mem->base.id, mem_type->propertyFlags,
-      mem_vk->export_handle_types, &mem->base_bo);
+      dev->renderer, batch, mem_vk->size, mem->base.id,
+      mem_type->propertyFlags, mem_vk->export_handle_types, &mem->base_bo);
 }
 
 static inline void
 vn_device_memory_bo_fini(struct vn_device *dev, struct vn_device_memory *mem)
 {
-   if (mem->base_bo) {
-      vn_device_memory_wait_alloc(dev, mem);
-      vn_renderer_bo_unref(dev->renderer, mem->base_bo);
+   if (!mem->base_bo)
+      return;
+
+   if (vn_device_memory_needs_wait_alloc(dev, mem)) {
+      uint32_t local_data[8];
+      struct vn_cs_encoder local_enc =
+         VN_CS_ENCODER_INITIALIZER_LOCAL(local_data, sizeof(local_data));
+      vn_encode_vkWaitRingSeqnoMESA(&local_enc, 0,
+                                    vn_ring_get_id(dev->primary_ring),
+                                    mem->bo_ring_seqno);
+      vn_renderer_submit_simple(dev->renderer, local_data,
+                                vn_cs_encoder_get_len(&local_enc));
    }
+
+   vn_renderer_bo_unref(dev->renderer, mem->base_bo);
 }
 
 VkResult
@@ -168,7 +182,7 @@ vn_device_memory_alloc_guest_vram(struct vn_device *dev,
       flags |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 
    VkResult result = vn_renderer_bo_create_from_device_memory(
-      dev->renderer, mem_vk->size, mem->base.id, flags,
+      dev->renderer, NULL, mem_vk->size, mem->base.id, flags,
       mem_vk->export_handle_types, &mem->base_bo);
    if (result != VK_SUCCESS) {
       return result;
@@ -242,11 +256,11 @@ vn_device_memory_fix_alloc_info(
    struct vn_device_memory_alloc_info *local_info)
 {
    local_info->alloc = *alloc_info;
-   VkBaseOutStructure *cur = (void *)&local_info->alloc;
+   void *cur = (void *)&local_info->alloc;
 
-   vk_foreach_struct_const(src, alloc_info->pNext) {
+   vk_foreach_struct_const(sType, src, alloc_info->pNext) {
       void *next = NULL;
-      switch (src->sType) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO:
          /* guest vram turns export alloc into import, so drop export info */
          if (has_guest_vram)
@@ -272,12 +286,12 @@ vn_device_memory_fix_alloc_info(
       }
 
       if (next) {
-         cur->pNext = next;
+         vk_pnext_set_next(cur, next);
          cur = next;
       }
    }
 
-   cur->pNext = NULL;
+   vk_pnext_set_next(cur, NULL);
 
    return &local_info->alloc;
 }
@@ -484,7 +498,7 @@ vn_MapMemory2(VkDevice device,
 
    mem->map_end = size == VK_WHOLE_SIZE ? mem_vk->size : offset + size;
 
-   *ppData = ptr + offset;
+   *ppData = (char *)ptr + offset;
 
    return VK_SUCCESS;
 }
