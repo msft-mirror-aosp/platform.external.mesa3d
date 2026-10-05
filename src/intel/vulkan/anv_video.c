@@ -100,6 +100,8 @@ anv_video_patch_encode_session_parameters(struct anv_device *device, struct vk_v
          sps->log2_diff_max_min_luma_coding_block_size = 3;
          sps->log2_min_luma_transform_block_size_minus2 = 0;
          sps->log2_diff_max_min_luma_transform_block_size = 3;
+         sps->max_transform_hierarchy_depth_inter = 2;
+         sps->max_transform_hierarchy_depth_intra = 2;
 
          /* maxSubLayerCount = 1 */
          sps->sps_max_sub_layers_minus1 = 0;
@@ -133,6 +135,13 @@ anv_video_patch_encode_session_parameters(struct anv_device *device, struct vk_v
       }
       break;
    }
+   case VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR:
+      /* Derive the bit depth from the profile if pColorConfig is NULL */
+      if (params->av1_enc.seq_hdr.color_config.BitDepth == 0) {
+         params->av1_enc.seq_hdr.color_config.BitDepth =
+            params->luma_bit_depth == VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR ? 10 : 8;
+      }
+      break;
    default:
       break;
    }
@@ -144,6 +153,7 @@ anv_video_patch_session_parameters(struct anv_device *device, struct vk_video_se
    switch (params->op) {
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR:
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR:
+   case VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR:
       anv_video_patch_encode_session_parameters(device, params);
       break;
    default:
@@ -166,6 +176,22 @@ anv_CreateVideoSessionParametersKHR(VkDevice _device, const VkVideoSessionParame
    anv_video_patch_session_parameters(device, params);
 
    *pVideoSessionParameters = vk_video_session_parameters_to_handle(params);
+   return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+anv_UpdateVideoSessionParametersKHR(VkDevice _device,
+                                    VkVideoSessionParametersKHR videoSessionParameters,
+                                    const VkVideoSessionParametersUpdateInfoKHR *pUpdateInfo)
+{
+   ANV_FROM_HANDLE(anv_device, device, _device);
+   VK_FROM_HANDLE(vk_video_session_parameters, params, videoSessionParameters);
+
+   VkResult result = vk_video_session_parameters_update(params, pUpdateInfo);
+   if (result != VK_SUCCESS)
+      return result;
+
+   anv_video_patch_session_parameters(device, params);
    return VK_SUCCESS;
 }
 
@@ -737,6 +763,29 @@ get_h265_video_mem_size(struct anv_video_session *vid, uint32_t mem_idx)
          DIV_ROUND_UP(vid->vk.max_coded.width, ANV_MAX_H265_CTB_SIZE);
       return align64((uint64_t)width_in_max_lcu * 64 * 2 * 2, 4096);
    }
+   case ANV_VID_MEM_H265_VDENC_STATS_STREAMOUT:
+   case ANV_VID_MEM_H265_FRAME_STATS_STREAMOUT: {
+      uint32_t max_tiles = DIV_ROUND_UP(vid->vk.max_coded.width, 128) *
+                           DIV_ROUND_UP(vid->vk.max_coded.height, 128);
+      uint32_t per_tile = mem_idx == ANV_VID_MEM_H265_VDENC_STATS_STREAMOUT ? 1216 : 512;
+      return align64((uint64_t)per_tile * max_tiles, 4096);
+   }
+   case ANV_VID_MEM_H265_VDENC_TILE_ROW_STORE:
+      return align64((uint64_t)DIV_ROUND_UP(vid->vk.max_coded.width, 32) * 64 * 2, 4096);
+   case ANV_VID_MEM_H265_VDENC_CU_COUNT_STREAMOUT:
+   case ANV_VID_MEM_H265_MB_CODE: {
+      uint64_t num_lcu =
+         (uint64_t)DIV_ROUND_UP(vid->vk.max_coded.width, ANV_MAX_H265_CTB_SIZE) *
+         (DIV_ROUND_UP(vid->vk.max_coded.height, ANV_MAX_H265_CTB_SIZE) + 1);
+      if (mem_idx == ANV_VID_MEM_H265_VDENC_CU_COUNT_STREAMOUT)
+         return align64(num_lcu * 4, 4096);
+      return align64(2 * 4 * (num_lcu * 5 + num_lcu * 64 * 8), 4096);
+   }
+   case ANV_VID_MEM_H265_LCU_ILDB_STREAMOUT:
+      return 4096;
+   case ANV_VID_MEM_H265_LCU_BASE_ADDR:
+      return align64((uint64_t)DIV_ROUND_UP(vid->vk.max_coded.width, 16) *
+                     DIV_ROUND_UP(vid->vk.max_coded.height, 16) * 64, 4096);
    default:
       UNREACHABLE("unknown memory");
    }

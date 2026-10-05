@@ -1766,6 +1766,7 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
         "VK_EXT_depth_clip_enable",
         "VK_KHR_create_renderpass2",
         "VK_KHR_vertex_attribute_divisor",
+        "VK_EXT_vertex_attribute_divisor",
         "VK_EXT_host_query_reset",
         "VK_EXT_blend_operation_advanced",
         "VK_EXT_frame_boundary",
@@ -1782,6 +1783,7 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
         // Passthrough if available on host. Will otherwise be emulated by guest
         "VK_EXT_image_drm_format_modifier",
         "VK_KHR_external_memory_fd",
+        "VK_EXT_robustness2",
 #endif
         // Vulkan 1.1
         "VK_KHR_16bit_storage",
@@ -3084,7 +3086,14 @@ static uint32_t getVirglFormat(VkFormat vkFormat) {
             virglFormat = VIRGL_FORMAT_B8G8R8A8_UNORM;
             break;
         case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
             virglFormat = VIRGL_FORMAT_R10G10B10A2_UNORM;
+            break;
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
+            virglFormat = VIRGL_FORMAT_R16G16B16A16_FLOAT;
+            break;
+        case VK_FORMAT_R5G6B5_UNORM_PACK16:
+            virglFormat = VIRGL_FORMAT_B5G6R5_UNORM;
             break;
         default:
             break;
@@ -3958,28 +3967,6 @@ VkResult ResourceTracker::on_vkAllocateMemory(void* context, VkResult input_resu
                 imageCreateInfo = imageInfo.createInfo;
             }
 
-            // Need to query the stride of the underyling image resource
-            // (VkSubresourceLayout::rowPitch) In most cases, the application will have created the
-            // VkImage w/ VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT, in which case the aspectMask to
-            // query is the PLANE_0_BIT resource. Otherwise, query the more generic COLOR_BIT.
-            // Note: For VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT, the image may actually be emulated
-            // with VK_IMAGE_TILING_LINEAR.
-            const VkImageSubresource imageSubresource = {
-                .aspectMask = (imageCreateInfo.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT)
-                                  ? VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT
-                                  : VK_IMAGE_ASPECT_COLOR_BIT,
-                .mipLevel = 0,
-                .arrayLayer = 0,
-            };
-            VkSubresourceLayout subResourceLayout;
-            enc->vkGetImageSubresourceLayout(device, dedicatedAllocInfoPtr->image,
-                                             &imageSubresource, &subResourceLayout,
-                                             true /* do lock */);
-            if (!subResourceLayout.rowPitch) {
-                mesa_loge("Failed to query stride for VirtGpu resource creation.");
-                return VK_ERROR_INITIALIZATION_FAILED;
-            }
-
             uint32_t virglFormat = gfxstream::vk::getVirglFormat(imageCreateInfo.format);
             if (!virglFormat) {
                 mesa_loge("Unsupported VK format for VirtGpu resource, vkFormat: 0x%x",
@@ -4028,6 +4015,30 @@ VkResult ResourceTracker::on_vkAllocateMemory(void* context, VkResult input_resu
                     return VK_ERROR_OUT_OF_HOST_MEMORY;
                 }
             } else {
+                // Need to query the stride of the underyling image resource
+                // (VkSubresourceLayout::rowPitch) In most cases, the application will have
+                // created the VkImage w/ VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT, in which case
+                // the aspectMask to query is the PLANE_0_BIT resource. Otherwise, query the more
+                // generic COLOR_BIT.
+                // Note: For VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT, the image may actually be
+                // emulated with VK_IMAGE_TILING_LINEAR.
+                const VkImageSubresource imageSubresource = {
+                    .aspectMask =
+                        (imageCreateInfo.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT)
+                            ? VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT
+                            : VK_IMAGE_ASPECT_COLOR_BIT,
+                    .mipLevel = 0,
+                    .arrayLayer = 0,
+                };
+                VkSubresourceLayout subResourceLayout = {};
+                enc->vkGetImageSubresourceLayout(device, dedicatedAllocInfoPtr->image,
+                                                 &imageSubresource, &subResourceLayout,
+                                                 true /* do lock */);
+                if (!subResourceLayout.rowPitch) {
+                    mesa_loge("Failed to query stride for VirtGpu resource creation.");
+                    return VK_ERROR_INITIALIZATION_FAILED;
+                }
+
                 bufferBlob = instance->createResource(
                     imageCreateInfo.extent.width, imageCreateInfo.extent.height,
                     subResourceLayout.rowPitch,

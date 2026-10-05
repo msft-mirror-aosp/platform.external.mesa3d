@@ -82,12 +82,6 @@ struct fd_dev_info {
    uint32_t num_slices;    /* gen8+ */
 
    struct {
-      uint32_t RB_DBG_ECO_CNTL;
-      uint32_t RB_DBG_ECO_CNTL_blit;
-      uint32_t RB_RBP_CNTL;
-   } magic;
-
-   struct {
          uint32_t reg;
          uint32_t value;
    } magic_raw[64];
@@ -135,6 +129,17 @@ struct fd_dev_info {
        * replace this with minimum fw version.
        */
       bool indirect_draw_wfm_quirk;
+
+      /* The latest a630_sqe.fw can access PC_AUTO_VERTEX_STRIDE before it's
+       * being written by CP, so we have to write it manually before using
+       * CP_DRAW_AUTO.
+       *
+       * TODO: There may be newer a630_sqe.fw released in the future
+       * which fixes this, if so we should detect it and avoid this
+       * workaround.  Once we have uapi to query fw version, we can
+       * replace this with minimum fw version.
+       */
+      bool draw_auto_stale_stride_quirk;
 
       /* On some GPUs, the depth test needs to be enabled when the
        * depth bounds test is enabled and the depth attachment uses UBWC.
@@ -485,6 +490,9 @@ struct fd_dev_info {
 
 #define FD_QUIRK(info, name) (info)->quirks.name
    struct {
+      /* Set RB_DBG_ECO_CNTL b24 for 2d blits
+       */
+      bool QCTDD04536579 : 1;
       /* movs performs half->full conversion if src_type is half, regardless
        * of dst_type
        */
