@@ -57,11 +57,14 @@ const char *ac_get_family_name(enum radeon_family family)
    CASE(PHOENIX2);
    CASE(STRIX1);
    CASE(STRIX_HALO);
+   CASE(GFX1156);
    CASE(KRACKAN1);
    CASE(GFX1153);
    CASE(GFX1170);
+   CASE(GFX1171);
    CASE(GFX1200);
    CASE(GFX1201);
+   CASE(GFX1210);
 #undef CASE
    default:
       UNREACHABLE("Unknown GPU family");
@@ -70,6 +73,8 @@ const char *ac_get_family_name(enum radeon_family family)
 
 enum amd_gfx_level ac_get_gfx_level(enum radeon_family family)
 {
+   if (family >= CHIP_GFX1210)
+      return GFX12_1;
    if (family >= CHIP_GFX1200)
       return GFX12;
    if (family >= CHIP_GFX1170)
@@ -184,9 +189,12 @@ const char *ac_get_llvm_processor_name(enum radeon_family family)
    case CHIP_KRACKAN1:
       return "gfx1152";
    case CHIP_GFX1153:
+   case CHIP_GFX1156:
       return "gfx1153";
    case CHIP_GFX1170:
       return "gfx1170";
+   case CHIP_GFX1171:
+      return "gfx1171";
    case CHIP_GFX1200:
       return "gfx1200";
    case CHIP_GFX1201:

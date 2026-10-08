@@ -30,6 +30,14 @@ const VkExternalMemoryProperties kk_mtlheap_mem_props = {
    .compatibleHandleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT,
 };
 
+const VkExternalMemoryProperties kk_host_mem_props = {
+   .externalMemoryFeatures = VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT,
+   .exportFromImportedHandleTypes = 0,
+   .compatibleHandleTypes =
+      VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT |
+      VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT,
+};
+
 #ifdef VK_USE_PLATFORM_METAL_EXT
 VKAPI_ATTR VkResult VKAPI_CALL
 kk_GetMemoryMetalHandlePropertiesEXT(
@@ -56,16 +64,38 @@ kk_GetMemoryMetalHandlePropertiesEXT(
 #endif /* VK_USE_PLATFORM_METAL_EXT */
 
 VKAPI_ATTR VkResult VKAPI_CALL
+kk_GetMemoryHostPointerPropertiesEXT(
+   VkDevice device, VkExternalMemoryHandleTypeFlagBits handleType,
+   UNUSED const void *pHandle,
+   VkMemoryHostPointerPropertiesEXT *pMemoryHostPointerProperties)
+{
+   VK_FROM_HANDLE(kk_device, dev, device);
+   struct kk_physical_device *pdev = kk_device_physical(dev);
+
+   switch (handleType) {
+   case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT:
+   case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT:
+      break;
+   default:
+      return vk_error(dev, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+   }
+   pMemoryHostPointerProperties->memoryTypeBits =
+      BITFIELD_MASK(pdev->mem_type_count);
+
+   return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
 kk_AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
                   const VkAllocationCallbacks *pAllocator, VkDeviceMemory *pMem)
 {
    VK_FROM_HANDLE(kk_device, dev, device);
-   struct kk_physical_device *pdev = kk_device_physical(dev);
    struct kk_device_memory *mem;
    VkResult result = VK_SUCCESS;
    const VkImportMemoryMetalHandleInfoEXT *metal_info = vk_find_struct_const(
       pAllocateInfo->pNext, IMPORT_MEMORY_METAL_HANDLE_INFO_EXT);
-   const VkMemoryType *type = &pdev->mem_types[pAllocateInfo->memoryTypeIndex];
+   const VkImportMemoryHostPointerInfoEXT *host_info = vk_find_struct_const(
+      pAllocateInfo->pNext, IMPORT_MEMORY_HOST_POINTER_INFO_EXT);
 
    // TODO_KOSMICKRISP Do the actual memory allocation with alignment requirements
    uint32_t alignment = (1ULL << 12);
@@ -78,32 +108,44 @@ kk_AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
    if (!mem)
       return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   if (metal_info && metal_info->handleType) {
-      /* We only support heaps since that's the backing for all our memory and
-       * simplifies implementation */
-      assert(metal_info->handleType ==
-             VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT);
+   bool import_metal = metal_info && metal_info->handleType;
+   bool import_host = host_info && host_info->handleType;
+
+   if (import_metal || import_host) {
       mem->bo = CALLOC_STRUCT(kk_bo);
       if (!mem->bo) {
          result = vk_errorf(&dev->vk.base, VK_ERROR_OUT_OF_DEVICE_MEMORY, "%m");
          goto fail_alloc;
       }
-      mem->bo->mtl_handle = mtl_retain(metal_info->handle);
-      mem->bo->map =
-         mtl_new_buffer_with_length(mem->bo->mtl_handle, mem->vk.size, 0u);
+
+      if (import_metal) {
+         assert(metal_info->handleType ==
+                VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT);
+
+         /* We only support heaps since that's the backing for all our memory
+          * and simplifies implementation */
+         mem->bo->mtl_handle = mtl_retain(metal_info->handle);
+         mem->bo->map =
+            mtl_new_buffer_with_length(mem->bo->mtl_handle, mem->vk.size, 0u);
+         mem->bo->size_B = mtl_heap_get_size(mem->bo->mtl_handle);
+         kk_device_add_heap_to_residency_set(dev, mem->bo->mtl_handle);
+      } else if (import_host) {
+         /* We can't create a heap from a host pointer. The imported memory will
+          * only be usable for buffers */
+         mem->bo->map = mtl_new_buffer_with_bytes_no_copy(
+            dev->mtl_handle, host_info->pHostPointer, mem->vk.size);
+         mem->bo->size_B = mtl_buffer_get_length(mem->bo->map);
+         kk_device_add_buffer_to_residency_set(dev, mem->bo->map);
+      }
+
       mem->bo->gpu = mtl_buffer_get_gpu_address(mem->bo->map);
       mem->bo->cpu = mtl_get_contents(mem->bo->map);
-      mem->bo->size_B = mtl_heap_get_size(mem->bo->mtl_handle);
-      kk_device_add_heap_to_residency_set(dev, mem->bo->mtl_handle);
    } else {
       result =
          kk_alloc_bo(dev, &dev->vk.base, aligned_size, alignment, &mem->bo);
       if (result != VK_SUCCESS)
          goto fail_alloc;
    }
-
-   struct kk_memory_heap *heap = &pdev->mem_heaps[type->heapIndex];
-   p_atomic_add(&heap->used, mem->bo->size_B);
 
    *pMem = kk_device_memory_to_handle(mem);
 
@@ -120,14 +162,13 @@ kk_FreeMemory(VkDevice device, VkDeviceMemory _mem,
 {
    VK_FROM_HANDLE(kk_device, dev, device);
    VK_FROM_HANDLE(kk_device_memory, mem, _mem);
-   struct kk_physical_device *pdev = kk_device_physical(dev);
 
    if (!mem)
       return;
 
-   const VkMemoryType *type = &pdev->mem_types[mem->vk.memory_type_index];
-   struct kk_memory_heap *heap = &pdev->mem_heaps[type->heapIndex];
-   p_atomic_add(&heap->used, -((int64_t)mem->bo->size_B));
+   /* According to spec, memory is implicitly unmapped upon free */
+   if (mem->map)
+      kk_bo_unmap(dev, mem->bo, mem->map, false);
 
    kk_destroy_bo(dev, mem->bo);
 
@@ -150,6 +191,13 @@ kk_MapMemory2KHR(VkDevice device, const VkMemoryMapInfoKHR *pMemoryMapInfo,
    const VkDeviceSize offset = pMemoryMapInfo->offset;
    const VkDeviceSize size = vk_device_memory_range(
       &mem->vk, pMemoryMapInfo->offset, pMemoryMapInfo->size);
+
+   void *fixed_addr = NULL;
+   if (pMemoryMapInfo->flags & VK_MEMORY_MAP_PLACED_BIT_EXT) {
+      const VkMemoryMapPlacedInfoEXT *placed_info = vk_find_struct_const(
+         pMemoryMapInfo->pNext, MEMORY_MAP_PLACED_INFO_EXT);
+      fixed_addr = placed_info->pPlacedAddress;
+   }
 
    /* From the Vulkan spec version 1.0.32 docs for MapMemory:
     *
@@ -176,9 +224,13 @@ kk_MapMemory2KHR(VkDevice device, const VkMemoryMapInfoKHR *pMemoryMapInfo,
                        "Memory object already mapped.");
    }
 
-   // TODO_KOSMICKRISP Use mmap here to so we can support VK_EXT_map_memory_placed
-   mem->map = mem->bo->cpu;
+   void *mapped_addr = fixed_addr;
+   result = kk_bo_map_placed(dev, mem->bo, &mapped_addr);
+   if (result != VK_SUCCESS)
+      return result;
 
+   assert(!fixed_addr || mapped_addr == fixed_addr);
+   mem->map = mapped_addr;
    *ppData = mem->map + offset;
 
    return result;
@@ -188,16 +240,24 @@ VKAPI_ATTR VkResult VKAPI_CALL
 kk_UnmapMemory2KHR(VkDevice device,
                    const VkMemoryUnmapInfoKHR *pMemoryUnmapInfo)
 {
+   VK_FROM_HANDLE(kk_device, dev, device);
    VK_FROM_HANDLE(kk_device_memory, mem, pMemoryUnmapInfo->memory);
+   VkResult result = VK_SUCCESS;
 
    if (mem == NULL)
-      return VK_SUCCESS;
+      return result;
 
-   // TODO_KOSMICKRISP Use unmap here to so we can support
-   // VK_EXT_map_memory_placed
+   bool reserved = pMemoryUnmapInfo->flags & VK_MEMORY_UNMAP_RESERVE_BIT_EXT;
+
+   result = kk_bo_unmap(dev, mem->bo, mem->map, reserved);
+   if (result != VK_SUCCESS)
+      return result;
+
+   /* According to spec, memory is not unmapped on failure, so we only clear to
+    * NULL on success */
    mem->map = NULL;
 
-   return VK_SUCCESS;
+   return result;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -235,6 +295,10 @@ kk_GetMemoryMetalHandleEXT(
           VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT);
    VK_FROM_HANDLE(kk_device_memory, mem, pGetMetalHandleInfo->memory);
 
+   /* In some cases, such as host pointer imports, we don't have a MTLHeap */
+   if (!mem->bo->mtl_handle)
+      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+
    /* From the Vulkan spec of vkGetMemoryMetalHandleEXT:
     *
     *    "Unless the app retains the handle object returned by the call,
@@ -252,4 +316,11 @@ kk_GetDeviceMemoryOpaqueCaptureAddress(
    VK_FROM_HANDLE(kk_device_memory, mem, pInfo->memory);
 
    return mem->bo->gpu;
+}
+
+void
+kk_device_memory_set_label(struct kk_device_memory *dev_mem, const char *label)
+{
+   if (dev_mem->bo)
+      kk_bo_set_label(dev_mem->bo, label);
 }

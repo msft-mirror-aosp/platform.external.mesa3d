@@ -48,7 +48,7 @@ debug_callback(void *priv, enum nir_spirv_debug_level debuglevel, size_t offset,
    fprintf(stderr, "<%d> at %zu %s\n", debuglevel, offset, message);
 }
 
-static int
+static unsigned
 type_size_vec4(const struct glsl_type *type, bool bindless)
 {
    return glsl_count_attribute_slots(type, false);
@@ -69,6 +69,7 @@ static void
 optimize(nir_shader *nir)
 {
    msl_preprocess_nir(nir);
+   msl_preprocess_nir_workarounds(nir, 0);
 
    nir_lower_compute_system_values_options csv_options = {
       .has_base_global_invocation_id = 0,
@@ -103,8 +104,6 @@ optimize(nir_shader *nir)
    NIR_PASS(_, nir, nir_remove_dead_variables,
             nir_var_shader_in | nir_var_shader_out | nir_var_system_value,
             NULL);
-   NIR_PASS(_, nir, nir_lower_io_vars_to_temporaries,
-            nir_shader_get_entrypoint(nir), nir_var_shader_out);
    nir_lower_compute_system_values_options options = {
       .has_base_global_invocation_id = 0,
    };

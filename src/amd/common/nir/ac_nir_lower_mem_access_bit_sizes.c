@@ -7,6 +7,7 @@
 #include "util/blake3/blake3_impl.h"
 #include "ac_nir.h"
 #include "ac_nir_helpers.h"
+#include "../compiler/aco_nir_call_attribs.h"
 
 #include "nir_builder.h"
 
@@ -59,6 +60,7 @@ set_smem_access_flags(nir_builder *b, nir_intrinsic_instr *intrin, void *cb_data
          return false;
       break;
    case nir_intrinsic_load_ubo:
+   case nir_intrinsic_load_push_constant:
       break;
    default:
       return false;
@@ -120,8 +122,26 @@ fixup_smem_null_descriptor_gfx6(nir_builder *b, nir_intrinsic_instr *intrin, fix
    nir_def *desc = intrin->src[0].ssa;
    b->cursor = nir_after_def(desc);
 
-   /* Use the descriptor BO (or compute scratch BO) as dummy address */
-   nir_def *dummy_0_1 = nir_pack_64_2x32(b, ac_nir_load_arg(b, state->args, state->args->ring_offsets));
+   nir_def *dummy_0_1 = NULL;
+   nir_def *ptr = NULL;
+
+   if (mesa_shader_stage_is_rt(b->shader->info.stage)) {
+      /* Use the RT descriptor pointer */
+      ptr = nir_load_param(b, RT_ARG_DESCRIPTORS);
+   } else if (state->args->ring_offsets.used) {
+      /* Use the descriptor BO (or compute scratch BO) as dummy address */
+      ptr = ac_nir_load_arg(b, state->args, state->args->ring_offsets);
+   } else {
+      /* Can't mitigate the NULL descriptor bug. */
+      return false;
+   }
+
+   if (ptr->num_components == 1) {
+      /* Assume that address32_hi is 0 on GFX6-7. */
+      dummy_0_1 = nir_pack_64_2x32_split(b, ptr, nir_imm_int(b, 0));
+   } else {
+      dummy_0_1 = nir_pack_64_2x32(b, nir_trim_vector(b, ptr, 2));
+   }
 
    /* Get each individual dword of the descriptor */
    nir_def *dw0 = nir_channel(b, desc, 0);
@@ -160,9 +180,8 @@ fixup_smem_robust_oob_gfx6(nir_builder *b, nir_intrinsic_instr *intrin, fixup_me
     * highest possible offset that the current SMEM instruction
     * can use. We know for sure it will not go beyond that.
     */
-   const uint32_t offset_uub =
-      nir_unsigned_upper_bound(b->shader, state->range_ht,
-         nir_scalar_chase_movs(nir_get_scalar(offs, 0)));
+   const uint32_t offset_uub = nir_unsigned_upper_bound(b->shader, state->range_ht,
+                                                        nir_scalar_resolved(offs, 0));
 
    /* We allow the SMEM instruction to read beyond
     * the allocated BO (so they might read from the padding).
@@ -252,7 +271,7 @@ lower_mem_access_cb(nir_intrinsic_op intrin, uint8_t bytes, uint8_t bit_size, ui
 {
    const mem_access_cb_data *cb_data = (mem_access_cb_data *)cb_data_;
    const bool is_load = nir_intrinsic_infos[intrin].has_dest;
-   const bool is_smem = intrin == nir_intrinsic_load_push_constant || (access & ACCESS_SMEM_AMD);
+   const bool is_smem = !!(access & ACCESS_SMEM_AMD);
    const uint32_t combined_align = nir_combined_align(align_mul, align_offset);
    nir_mem_access_size_align res;
 
@@ -337,6 +356,7 @@ lower_mem_access_cb(nir_intrinsic_op intrin, uint8_t bytes, uint8_t bit_size, ui
 
    /* Lower 8/16-bit loads to 32-bit, unless it's a scalar load. */
    const bool supported_subdword = res.num_components == 1 &&
+                                   intrin != nir_intrinsic_load_push_constant &&
                                    (!cb_data->use_llvm || intrin != nir_intrinsic_load_ubo);
 
    if (res.bit_size >= 32 || supported_subdword)

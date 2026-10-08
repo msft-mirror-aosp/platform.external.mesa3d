@@ -43,7 +43,7 @@ try_extract_const_addition(nir_builder *b, opt_offsets_state *state, nir_scalar 
 {
    bool is_unsigned = min == 0;
    assert(is_unsigned || max <= INT32_MAX);
-   nir_scalar val = nir_scalar_chase_movs(*out_val);
+   nir_scalar val = *out_val;
 
    if (!nir_scalar_is_alu(val))
       return false;
@@ -53,8 +53,8 @@ try_extract_const_addition(nir_builder *b, opt_offsets_state *state, nir_scalar 
       return false;
 
    nir_scalar src[2] = {
-      { alu->src[0].src.ssa, alu->src[0].swizzle[val.comp] },
-      { alu->src[1].src.ssa, alu->src[1].swizzle[val.comp] },
+      nir_scalar_chase_alu_src(val, 0),
+      nir_scalar_chase_alu_src(val, 1),
    };
 
    /* Make sure that we aren't taking out an addition that could trigger
@@ -83,7 +83,6 @@ try_extract_const_addition(nir_builder *b, opt_offsets_state *state, nir_scalar 
    }
 
    for (unsigned i = 0; i < 2; ++i) {
-      src[i] = nir_scalar_chase_movs(src[i]);
       if (nir_scalar_is_const(src[i])) {
          int64_t offset;
          if (is_unsigned)
@@ -141,7 +140,7 @@ try_fold_load_store(nir_builder *b,
       return false;
 
    if (!nir_src_is_const(*off_src)) {
-      nir_scalar val = { .def = off_src->ssa, .comp = 0 };
+      nir_scalar val = nir_scalar_resolved(off_src->ssa, 0);
       if (!try_extract_const_addition(b, state, &val, &off_const, min, max, need_nuw))
          return false;
       b->cursor = nir_before_instr(&intrin->instr);
@@ -193,11 +192,12 @@ try_fold_load_store_nv(nir_builder *b,
 
    assert(offset_idx >= 0);
    nir_src src = intrin->src[offset_idx];
+   nir_src *uniform_src = nir_get_io_uniform_offset_src(intrin);
 
    int32_t min = 0;
    uint32_t max = BITFIELD_MASK(offset_bits);
 
-   if (!nir_src_is_const(src)) {
+   if (!nir_src_is_const(src) || (uniform_src && !nir_src_is_const(*uniform_src))) {
       max >>= 1;
       min = ~max;
    }
@@ -211,6 +211,11 @@ try_fold_load_store_nv(nir_builder *b,
       return false;
    }
 
+   /* We don't try to fold the offset for the uniform source on purpose,
+    * because we rely on running nir_opt_offsets before moving in the uniform
+    * source. However, we might run this pass again _after_ that, because we
+    * can eliminate a u2u64 on the _non uniform_ source and therefore might be
+    * able to fold in more constants into base. */
    return try_fold_load_store(b, intrin, state, offset_idx, min, max, false);
 }
 
@@ -387,6 +392,16 @@ process_instr(nir_builder *b, nir_instr *instr, void *s)
       return try_fold_load_store(b, intrin, state, 0, 0, get_max(state, intrin, 0), false);
    case nir_intrinsic_isbewr_nv:
       return try_fold_load_store(b, intrin, state, 1, 0, get_max(state, intrin, 0), false);
+
+   case nir_intrinsic_load_global_intel:
+      return try_fold_load_store(b, intrin, state, 0, 0, UINT32_MAX, false);
+   case nir_intrinsic_store_global_intel:
+      return try_fold_load_store(b, intrin, state, 1, 0, UINT32_MAX, false);
+   case nir_intrinsic_load_global_offset:
+      return try_fold_load_store(b, intrin, state, 1, 0, get_max(state, intrin, state->options->global_max), need_nuw);
+   case nir_intrinsic_store_global_offset:
+      return try_fold_load_store(b, intrin, state, 2, 0, get_max(state, intrin, state->options->global_max), need_nuw);
+
    default:
       return false;
    }

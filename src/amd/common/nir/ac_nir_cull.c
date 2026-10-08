@@ -49,14 +49,12 @@ cull_face_triangle(nir_builder *b, nir_def *pos[3][4], const position_w_info *w_
 
    det = nir_bcsel(b, w_info->w_reflection, nir_fneg(b, det), det);
 
-   nir_def *front_facing_ccw = nir_fgt_imm(b, det, 0.0f);
+   nir_def *det_is_negative = nir_flt_imm(b, det, 0.0f);
    nir_def *zero_area = nir_feq_imm(b, det, 0.0f);
-   nir_def *ccw = nir_load_cull_ccw_amd(b);
-   nir_def *front_facing = nir_ieq(b, front_facing_ccw, ccw);
-   nir_def *cull_front = nir_load_cull_front_face_enabled_amd(b);
-   nir_def *cull_back = nir_load_cull_back_face_enabled_amd(b);
+   nir_def *cull_negative_det = nir_load_cull_face_negative_determinant_enabled_amd(b);
+   nir_def *cull_positive_det = nir_load_cull_face_positive_determinant_enabled_amd(b);
 
-   nir_def *face_culled = nir_bcsel(b, front_facing, cull_front, cull_back);
+   nir_def *face_culled = nir_bcsel(b, det_is_negative, cull_negative_det, cull_positive_det);
    face_culled = nir_ior(b, face_culled, zero_area);
 
    /* Don't reject NaN and +/-infinity, these are tricky.
@@ -170,8 +168,8 @@ cull_small_primitive_triangle(nir_builder *b, bool use_point_tri_intersection,
       vp_translate[chan] = nir_channel(b, vp, 2 + chan);
 
       /* Convert the position to screen-space coordinates. */
-      nir_def *min = nir_ffma(b, bbox_min[chan], vp_scale[chan], vp_translate[chan]);
-      nir_def *max = nir_ffma(b, bbox_max[chan], vp_scale[chan], vp_translate[chan]);
+      nir_def *min = nir_ffma_weak(b, bbox_min[chan], vp_scale[chan], vp_translate[chan]);
+      nir_def *max = nir_ffma_weak(b, bbox_max[chan], vp_scale[chan], vp_translate[chan]);
 
       /* Scale the bounding box according to precision. */
       min = nir_fsub(b, min, small_prim_precision);
@@ -251,7 +249,7 @@ cull_small_primitive_triangle(nir_builder *b, bool use_point_tri_intersection,
             /* Transform the coordinates to screen space. */
             for (unsigned vtx = 0; vtx < 3; ++vtx) {
                for (unsigned chan = 0; chan < 2; ++chan)
-                  screen_pos[vtx][chan] = nir_ffma(b, pos[vtx][chan], vp_scale[chan], vp_translate[chan]);
+                  screen_pos[vtx][chan] = nir_ffma_weak(b, pos[vtx][chan], vp_scale[chan], vp_translate[chan]);
             }
 
             /* small_prim_precision is the rasterization precision in X an Y axes, meaning it's the size of
@@ -301,6 +299,7 @@ call_accept_func(nir_builder *b, nir_def *accepted, ac_nir_cull_accepted accept_
 
 static nir_def *
 ac_nir_cull_triangle(nir_builder *b,
+                     bool skip_face_culling,
                      bool skip_viewport_state_culling,
                      bool use_point_tri_intersection,
                      nir_def *initially_accepted,
@@ -311,7 +310,9 @@ ac_nir_cull_triangle(nir_builder *b,
 {
    nir_def *accepted = initially_accepted;
    accepted = nir_iand(b, accepted, nir_inot(b, w_info->all_w_negative_or_zero_or_nan));
-   accepted = nir_iand(b, accepted, nir_inot(b, cull_face_triangle(b, pos, w_info)));
+
+   if (!skip_face_culling)
+      accepted = nir_iand(b, accepted, nir_inot(b, cull_face_triangle(b, pos, w_info)));
 
    nir_def *bbox_accepted = NULL;
 
@@ -436,8 +437,8 @@ cull_small_primitive_line(nir_builder *b, nir_def *pos[3][4],
          nir_def *vp_scale = nir_channel(b, vp, chan);
          nir_def *vp_translate = nir_channel(b, vp, 2 + chan);
 
-         v0[chan] = nir_ffma(b, pos[0][chan], vp_scale, vp_translate);
-         v1[chan] = nir_ffma(b, pos[1][chan], vp_scale, vp_translate);
+         v0[chan] = nir_ffma_weak(b, pos[0][chan], vp_scale, vp_translate);
+         v1[chan] = nir_ffma_weak(b, pos[1][chan], vp_scale, vp_translate);
       }
 
       /* Rotate the viewport by 45 degrees, so that diamonds become squares. */
@@ -514,6 +515,7 @@ ac_nir_cull_line(nir_builder *b,
 
 nir_def *
 ac_nir_cull_primitive(nir_builder *b,
+                      bool skip_face_culling,
                       bool skip_viewport_state_culling,
                       bool use_point_tri_intersection,
                       nir_def *initially_accepted,
@@ -526,8 +528,9 @@ ac_nir_cull_primitive(nir_builder *b,
    analyze_position_w(b, pos, num_vertices, &w_info);
 
    if (num_vertices == 3) {
-      return ac_nir_cull_triangle(b, skip_viewport_state_culling, use_point_tri_intersection,
-                                  initially_accepted, pos, &w_info, accept_func, state);
+      return ac_nir_cull_triangle(b, skip_face_culling, skip_viewport_state_culling,
+                                  use_point_tri_intersection, initially_accepted, pos, &w_info,
+                                  accept_func, state);
    } else if (num_vertices == 2) {
       return ac_nir_cull_line(b, skip_viewport_state_culling, initially_accepted, pos, &w_info,
                               accept_func, state);

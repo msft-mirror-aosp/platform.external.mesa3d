@@ -67,8 +67,15 @@ interp_fs_input(nir_builder *b, unsigned num_components, uint32_t addr,
          comps[c] = nir_ipa_nv(b, nir_imm_float(b, 0), offset,
                                .base = addr + c * 4,
                                .flags = NAK_AS_U32(flags));
-         if (interp_mode == NAK_INTERP_MODE_PERSPECTIVE)
-            comps[c] = nir_fmul(b, comps[c], inv_w);
+         if (interp_mode == NAK_INTERP_MODE_PERSPECTIVE) {
+            unsigned fp_math_ctrl = b->fp_math_ctrl;
+            b->fp_math_ctrl |= nir_fp_exact;
+            /* It seems critical that this is done as round to zero.
+             * The Surge 2 and Shadow of the Tomb Raider show artifacts if not.
+             */
+            comps[c] = nir_fmul_rtz(b, comps[c], inv_w);
+            b->fp_math_ctrl = fp_math_ctrl;
+         }
       }
       return nir_vec(b, comps, num_components);
    } else if (nak->sm >= 20) {
@@ -201,9 +208,12 @@ lower_fs_input_intrin(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
 
    case nir_intrinsic_load_frag_coord:
    case nir_intrinsic_load_point_coord: {
+      const bool sample_shading =
+         b->shader->info.fs.uses_sample_shading ||
+         (ctx->fs_key && ctx->fs_key->force_sample_shading);
       const enum nak_interp_loc interp_loc =
-         b->shader->info.fs.uses_sample_shading ? NAK_INTERP_LOC_CENTROID
-                                                : NAK_INTERP_LOC_DEFAULT;
+         sample_shading ? NAK_INTERP_LOC_CENTROID
+                        : NAK_INTERP_LOC_DEFAULT;
       const uint32_t addr =
          intrin->intrinsic == nir_intrinsic_load_point_coord ?
          nak_sysval_attr_addr(nak, SYSTEM_VALUE_POINT_COORD) :
@@ -230,7 +240,8 @@ lower_fs_input_intrin(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
       break;
    }
 
-   case nir_intrinsic_load_input: {
+   case nir_intrinsic_load_input:
+   case nir_intrinsic_load_per_primitive_input: {
       const uint16_t addr = fs_input_intrin_addr(intrin, ctx->nak);
       res = load_fs_input(b, intrin->def.num_components, addr, ctx->nak);
       break;

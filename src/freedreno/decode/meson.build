@@ -44,7 +44,7 @@ libfreedreno_cffdec = static_library(
     inc_include,
     inc_src,
   ],
-  c_args : [ no_override_init_args ],
+  c_args : [ no_override_init_args, soong_compat_c_args ],
   gnu_symbol_visibility: 'hidden',
   dependencies: [
     dep_lua,
@@ -65,7 +65,7 @@ libfreedreno_io = static_library(
     'io.h',
   ],
   include_directories: [],
-  c_args : [no_override_init_args],
+  c_args : [no_override_init_args, soong_compat_c_args],
   gnu_symbol_visibility: 'hidden',
   dependencies: [
     dep_libarchive,
@@ -108,7 +108,7 @@ foreach kmd : freedreno_kmds
       inc_include,
       inc_src,
     ],
-    c_args : [no_override_init_args, replay_flags],
+    c_args : [no_override_init_args, soong_compat_c_args, replay_flags],
     gnu_symbol_visibility: 'hidden',
     dependencies: replay_deps,
     link_with: [
@@ -132,7 +132,7 @@ rddecompiler = executable(
     inc_include,
     inc_src,
   ],
-  c_args : [no_override_init_args],
+  c_args : [no_override_init_args, soong_compat_c_args],
   gnu_symbol_visibility: 'hidden',
   dependencies: [
     dep_libdrm,
@@ -182,7 +182,7 @@ cffdump = executable(
     inc_include,
     inc_src,
   ],
-  c_args : [no_override_init_args],
+  c_args : [no_override_init_args, soong_compat_c_args],
   gnu_symbol_visibility: 'hidden',
   dependencies: [
     dep_lua,
@@ -234,6 +234,7 @@ if with_tests
     ['dEQP-VK.draw.indirect_draw.indexed.indirect_draw_count.triangle_list', ['--frame', '0', '--once']],
     ['dEQP-VK.ycbcr.plane_view.image_view.g8_b8_r8_3plane_420_unorm_plane_0-a840', ['--draw', '5']],
     ['dEQP-VK.ycbcr.plane_view.image_view.g8_b8_r8_3plane_420_unorm_plane_0_fragment-a750', ['--draw', '5']],
+    ['dEQP-VK.ray_query.multiple_ray_queries.compute_shader-a840', ['--draw', '10']],
     # Test a lua script to ensure we don't break scripting API
     ['shadow', ['--script', files('scripts/parse-submits.lua')]],
   ]

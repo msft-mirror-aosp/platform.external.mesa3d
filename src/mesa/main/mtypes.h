@@ -993,6 +993,15 @@ struct gl_texture_object
     */
    struct pipe_resource *pt;
 
+   /* Cached flag: whether the extra YUV plane-view / lowering setup in
+    * st_get_sampler_views() and st_get_external_sampler_key() must run for
+    * this texture.  Computed whenever pt/surface_format is assigned
+    * (st_finalize_texture(), st_bind_egl_image(), st_context_teximage(),
+    * st_TextureView()), to avoid re-deriving it on every atom update and
+    * shader variant lookup.
+    */
+   bool needs_yuv_plane_views;
+
    /* Protect modifications of the sampler_views array */
    simple_mtx_t validate_mutex;
 
@@ -3247,6 +3256,9 @@ struct gl_dispatch
     * - ContextLost
     */
    struct _glapi_table *Current;
+
+   struct _glapi_table *Trace;
+   struct _glapi_table *RealPublished;
 };
 
 /**
@@ -3582,8 +3594,6 @@ struct gl_context
     */
    GLboolean HasConfig;
 
-   GLboolean TextureFormatSupported[MESA_FORMAT_COUNT];
-
    GLboolean RasterDiscard;  /**< GL_RASTERIZER_DISCARD */
    GLboolean IntelConservativeRasterization; /**< GL_CONSERVATIVE_RASTERIZATION_INTEL */
    GLboolean ConservativeRasterization; /**< GL_CONSERVATIVE_RASTERIZATION_NV */
@@ -3670,19 +3680,9 @@ extern int MESA_DEBUG_FLAGS;
 /** The MESA_VERBOSE var is a bitmask of these flags */
 enum _verbose
 {
-   VERBOSE_VARRAY		= 0x0001,
-   VERBOSE_TEXTURE		= 0x0002,
-   VERBOSE_MATERIAL		= 0x0004,
-   VERBOSE_PIPELINE		= 0x0008,
-   VERBOSE_DRIVER		= 0x0010,
-   VERBOSE_STATE		= 0x0020,
-   VERBOSE_API			= 0x0040,
-   VERBOSE_DISPLAY_LIST		= 0x0100,
-   VERBOSE_LIGHTING		= 0x0200,
-   VERBOSE_PRIMS		= 0x0400,
-   VERBOSE_VERTS		= 0x0800,
-   VERBOSE_DISASSEM		= 0x1000,
-   VERBOSE_SWAPBUFFERS          = 0x4000
+   VERBOSE_STATE        = 0x0001,
+   VERBOSE_DISPLAY_LIST = 0x0002,
+   VERBOSE_API          = 0x0004,
 };
 
 

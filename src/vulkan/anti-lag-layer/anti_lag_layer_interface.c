@@ -253,8 +253,8 @@ get_device_context(const void *object)
 static VkLayerDeviceCreateInfo *
 get_device_chain_info(const VkDeviceCreateInfo *pCreateInfo, VkLayerFunction func)
 {
-   vk_foreach_struct_const (item, pCreateInfo->pNext) {
-      if (item->sType == VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO &&
+   vk_foreach_struct_const (sType, item, pCreateInfo->pNext) {
+      if (sType == VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO &&
           ((VkLayerDeviceCreateInfo *)item)->function == func)
          return (VkLayerDeviceCreateInfo *)item;
    }
@@ -398,8 +398,12 @@ init_queue_context(device_context *ctx, queue_context *queue_ctx)
 
       result = ctx->vtable.BeginCommandBuffer(query->cmdbuffer, &beginInfo);
       CHECK_RESULT(result, fail)
-      ctx->vtable.CmdWriteTimestamp(query->cmdbuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                    queue_ctx->queryPool, j);
+      if (j % 2 == 0)
+         ctx->vtable.CmdWriteTimestamp(query->cmdbuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                       queue_ctx->queryPool, j);
+      else
+         ctx->vtable.CmdWriteTimestamp(query->cmdbuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                       queue_ctx->queryPool, j);
       result = ctx->vtable.EndCommandBuffer(query->cmdbuffer);
       CHECK_RESULT(result, fail)
    }

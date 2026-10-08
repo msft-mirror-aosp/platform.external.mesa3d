@@ -62,6 +62,19 @@
 #include "vk_sync_dummy.h"
 #include "vk_util.h"
 
+static inline enum pvr_winsys_ctx_priority
+pvr_winsys_from_vk_queue_priority(const VkQueueGlobalPriority priority)
+{
+   switch (priority) {
+   case VK_QUEUE_GLOBAL_PRIORITY_LOW:
+      return PVR_WINSYS_CTX_PRIORITY_LOW;
+   case VK_QUEUE_GLOBAL_PRIORITY_MEDIUM:
+      return PVR_WINSYS_CTX_PRIORITY_MEDIUM;
+   default:
+      UNREACHABLE("Invalid queue global priority.");
+   }
+}
+
 static VkResult pvr_driver_queue_submit(struct vk_queue *queue,
                                         struct vk_queue_submit *submit);
 
@@ -76,6 +89,18 @@ static VkResult pvr_queue_init(struct pvr_device *device,
    struct pvr_render_ctx *gfx_ctx;
    VkResult result;
 
+   const VkDeviceQueueGlobalPriorityCreateInfo *gp =
+      vk_find_struct_const(pCreateInfo->pNext,
+                           DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO);
+
+   const VkQueueGlobalPriority global_priority =
+      gp ? gp->globalPriority : VK_QUEUE_GLOBAL_PRIORITY_MEDIUM;
+
+   if (global_priority == VK_QUEUE_GLOBAL_PRIORITY_REALTIME ||
+       global_priority == VK_QUEUE_GLOBAL_PRIORITY_HIGH) {
+      return VK_ERROR_NOT_PERMITTED;
+   }
+
    *queue = (struct pvr_queue){ 0 };
 
    result =
@@ -89,27 +114,31 @@ static VkResult pvr_queue_init(struct pvr_device *device,
          goto err_vk_queue_finish;
    }
 
-   result = pvr_arch_transfer_ctx_create(device,
-                                         PVR_WINSYS_CTX_PRIORITY_MEDIUM,
-                                         &transfer_ctx);
+   result = pvr_arch_transfer_ctx_create(
+      device,
+      pvr_winsys_from_vk_queue_priority(global_priority),
+      &transfer_ctx);
    if (result != VK_SUCCESS)
       goto err_vk_queue_finish;
 
-   result = pvr_arch_compute_ctx_create(device,
-                                        PVR_WINSYS_CTX_PRIORITY_MEDIUM,
-                                        &compute_ctx);
+   result = pvr_arch_compute_ctx_create(
+      device,
+      pvr_winsys_from_vk_queue_priority(global_priority),
+      &compute_ctx);
    if (result != VK_SUCCESS)
       goto err_transfer_ctx_destroy;
 
-   result = pvr_arch_compute_ctx_create(device,
-                                        PVR_WINSYS_CTX_PRIORITY_MEDIUM,
-                                        &query_ctx);
+   result = pvr_arch_compute_ctx_create(
+      device,
+      pvr_winsys_from_vk_queue_priority(global_priority),
+      &query_ctx);
    if (result != VK_SUCCESS)
       goto err_compute_ctx_destroy;
 
-   result = pvr_arch_render_ctx_create(device,
-                                       PVR_WINSYS_CTX_PRIORITY_MEDIUM,
-                                       &gfx_ctx);
+   result = pvr_arch_render_ctx_create(
+      device,
+      pvr_winsys_from_vk_queue_priority(global_priority),
+      &gfx_ctx);
    if (result != VK_SUCCESS)
       goto err_query_ctx_destroy;
 
@@ -235,8 +264,8 @@ pvr_process_graphics_cmd_for_view(struct pvr_device *device,
    struct vk_sync *frag_signal_sync = NULL;
    VkResult result;
 
-   job->ds.addr =
-      PVR_DEV_ADDR_OFFSET(job->ds.addr, job->ds.layer_size * view_index);
+   job->ds.addr = PVR_DEV_ADDR_OFFSET(job->ds.addr, job->ds.layer_size *
+      (view_index + job->ds.base_array_layer));
    job->view_state.view_index = view_index;
 
    result = vk_sync_create(&device->vk,
@@ -297,7 +326,7 @@ pvr_process_graphics_cmd_for_view(struct pvr_device *device,
        */
       assert(sub_cmd->terminate_ctrl_stream);
       job->ctrl_stream_addr = sub_cmd->terminate_ctrl_stream->vma->dev_addr;
-   } else if (sub_cmd->multiview_enabled) {
+   } else if (sub_cmd->view_index_wanted) {
       original_ctrl_stream_addr = job->ctrl_stream_addr;
       job->ctrl_stream_addr.addr =
          sub_cmd->multiview_ctrl_stream->vma->dev_addr.addr +
@@ -728,10 +757,18 @@ static VkResult pvr_process_event_cmd(struct pvr_device *device,
    };
 }
 
+struct pvr_suspended_data {
+   struct pvr_rt_dataset **rts;
+   bool frag_uses_atomic_ops;
+   bool disable_compute_overlap;
+   bool get_vis_results;
+   const struct pvr_query_pool *query_pool;
+};
+
 static VkResult pvr_process_cmd_buffer(struct pvr_device *device,
                                        struct pvr_queue *queue,
                                        struct pvr_cmd_buffer *cmd_buffer,
-                                       struct pvr_rt_dataset ***suspended_rts)
+                                       struct pvr_suspended_data *suspended_data)
 {
    VkResult result;
 
@@ -766,14 +803,36 @@ static VkResult pvr_process_cmd_buffer(struct pvr_device *device,
                break;
          }
 
-         if (*suspended_rts) {
-            sub_cmd->gfx.job.view_state.rt_datasets = *suspended_rts;
+         if (sub_cmd->is_resume) {
+            sub_cmd->gfx.job.view_state.rt_datasets = suspended_data->rts;
+            sub_cmd->gfx.job.frag_uses_atomic_ops |=
+               suspended_data->frag_uses_atomic_ops;
+            sub_cmd->gfx.job.disable_compute_overlap |=
+               suspended_data->disable_compute_overlap;
+            sub_cmd->gfx.job.get_vis_results |= suspended_data->get_vis_results;
+            if (!sub_cmd->gfx.query_pool) {
+               sub_cmd->gfx.query_pool = suspended_data->query_pool;
+            } else if (suspended_data->query_pool &&
+                       sub_cmd->gfx.query_pool != suspended_data->query_pool) {
+               pvr_finishme(
+                  "Emit a barrier between suspending and resuming jobs with different query pools");
+            }
+         }
 
-            if (sub_cmd->gfx.job.geometry_terminate)
-               *suspended_rts = NULL;
-
-         } else if (!sub_cmd->gfx.job.geometry_terminate) {
-            *suspended_rts = sub_cmd->gfx.job.view_state.rt_datasets;
+         if (sub_cmd->is_suspend) {
+            suspended_data->rts = sub_cmd->gfx.job.view_state.rt_datasets;
+            suspended_data->frag_uses_atomic_ops =
+               sub_cmd->gfx.job.frag_uses_atomic_ops;
+            suspended_data->disable_compute_overlap =
+               sub_cmd->gfx.job.disable_compute_overlap;
+            suspended_data->get_vis_results = sub_cmd->gfx.job.get_vis_results;
+            suspended_data->query_pool = sub_cmd->gfx.query_pool;
+         } else {
+            suspended_data->rts = NULL;
+            suspended_data->frag_uses_atomic_ops = false;
+            suspended_data->disable_compute_overlap = false;
+            suspended_data->get_vis_results = false;
+            suspended_data->query_pool = NULL;
          }
 
          assert(sub_cmd->gfx.job.view_state.rt_datasets);
@@ -1011,19 +1070,19 @@ static VkResult pvr_driver_queue_submit(struct vk_queue *queue,
          return result;
    }
 
-   struct pvr_rt_dataset **suspended_rts = NULL;
+   struct pvr_suspended_data suspended_data = {0};
 
    for (uint32_t i = 0U; i < submit->command_buffer_count; i++) {
       result = pvr_process_cmd_buffer(
          device,
          driver_queue,
          container_of(submit->command_buffers[i], struct pvr_cmd_buffer, vk),
-         &suspended_rts);
+         &suspended_data);
       if (result != VK_SUCCESS)
          return result;
    }
 
-   assert(suspended_rts == NULL && "suspended graphics job never resumed");
+   assert(suspended_data.rts == NULL && "suspended graphics job never resumed");
 
    result = pvr_process_queue_signals(driver_queue,
                                       submit->signals,

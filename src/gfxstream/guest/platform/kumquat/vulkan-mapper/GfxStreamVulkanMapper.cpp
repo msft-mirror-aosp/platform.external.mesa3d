@@ -154,8 +154,23 @@ bool GfxStreamVulkanMapper::initialize(DeviceId& deviceId) {
 #elif DETECT_OS_LINUX
         externalMemoryDeviceExtNames.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
 
+        uint32_t extensionCount = 0;
+        mVk.EnumerateDeviceExtensionProperties(physicalDevices[i], nullptr, &extensionCount,
+                                               nullptr);
+        std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+        mVk.EnumerateDeviceExtensionProperties(physicalDevices[i], nullptr, &extensionCount,
+                                               availableExtensions.data());
+
+        bool dmaBufSupported = false;
+        for (const auto& ext : availableExtensions) {
+            if (strcmp(ext.extensionName, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) == 0) {
+                dmaBufSupported = true;
+                break;
+            }
+        }
+
         // Tesla V-100 doesn't work with dma-buf
-        if (deviceProps.properties.vendorID != kNvidiaVendorId) {
+        if (dmaBufSupported && deviceProps.properties.vendorID != kNvidiaVendorId) {
             externalMemoryDeviceExtNames.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
         }
 #endif
@@ -242,12 +257,16 @@ int32_t GfxStreamVulkanMapper::map(struct VulkanMapperData* mapData) {
         L"",
     };
 
-#elif DETECT_OS_LINUX
+// Builds on Apple, but is not known to work there: MoltenVK does not implement
+// VK_KHR_external_memory_fd.
+#elif DETECT_OS_LINUX || DETECT_OS_APPLE
     VkExternalMemoryHandleTypeFlagBits flagBits;
     if (mapData->handleType == VIRTGPU_KUMQUAT_HANDLE_TYPE_MEM_DMABUF) {
-        flagBits = (enum VkExternalMemoryHandleTypeFlagBits)(uint32_t(VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT));
+        flagBits = (enum VkExternalMemoryHandleTypeFlagBits)(
+            uint32_t(VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT));
     } else {
-        flagBits = (enum VkExternalMemoryHandleTypeFlagBits)(uint32_t(VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT));
+        flagBits = (enum VkExternalMemoryHandleTypeFlagBits)(
+            uint32_t(VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT));
     }
 
     VkImportMemoryFdInfoKHR importInfo{

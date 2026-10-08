@@ -19,6 +19,10 @@ static constexpr int numInts = 1;
 
 #define DRM_FORMAT_R8_BLOB fourcc_code('9', '9', '9', '9')
 
+#ifndef DRM_FORMAT_DEPTH32_STENCIL8
+#define DRM_FORMAT_DEPTH32_STENCIL8 fourcc_code('D', 'F', 'S', '8')
+#endif
+
 template <typename T, typename N>
 T DivideRoundUp(T n, N divisor) {
     const T div = static_cast<T>(divisor);
@@ -52,20 +56,22 @@ std::optional<uint32_t> AhbToDrmFormat(uint32_t ahbFormat) {
         case GFXSTREAM_AHB_FORMAT_R8G8B8_UNORM:
             return DRM_FORMAT_BGR888;
         /*
-        * Confusingly, AHARDWAREBUFFER_FORMAT_RGB_565 is defined as:
-        *
-        * "16-bit packed format that has 5-bit R, 6-bit G, and 5-bit B components, in that
-        *  order, from the  most-sigfinicant bits to the least-significant bits."
-        *
-        * so the order of the components is intentionally not flipped between the pixel
-        * format and the DRM format.
-        */
+         * Confusingly, AHARDWAREBUFFER_FORMAT_RGB_565 is defined as:
+         *
+         * "16-bit packed format that has 5-bit R, 6-bit G, and 5-bit B components, in that
+         *  order, from the  most-sigfinicant bits to the least-significant bits."
+         *
+         * so the order of the components is intentionally not flipped between the pixel
+         * format and the DRM format.
+         */
         case GFXSTREAM_AHB_FORMAT_R5G6B5_UNORM:
             return DRM_FORMAT_RGB565;
         case GFXSTREAM_AHB_FORMAT_B8G8R8A8_UNORM:
             return DRM_FORMAT_ARGB8888;
         case GFXSTREAM_AHB_FORMAT_BLOB:
             return DRM_FORMAT_R8_BLOB;
+        case GFXSTREAM_AHB_FORMAT_D32_FLOAT_S8_UINT:
+            return DRM_FORMAT_DEPTH32_STENCIL8;
         case GFXSTREAM_AHB_FORMAT_R8_UNORM:
             return DRM_FORMAT_R8;
         case GFXSTREAM_AHB_FORMAT_YV12:
@@ -156,6 +162,22 @@ const std::unordered_map<uint32_t, DrmFormatInfo>& GetDrmFormatInfoMap() {
                          .horizontalSubsampling = 1,
                          .verticalSubsampling = 1,
                          .bytesPerPixel = 2,
+                     },
+                 },
+         }},
+        {DRM_FORMAT_DEPTH32_STENCIL8,
+         {
+             .androidFormat = GFXSTREAM_AHB_FORMAT_D32_FLOAT_S8_UINT,
+             .virglFormat = VIRGL_FORMAT_Z32_FLOAT_S8X24_UINT,
+             .isYuv = false,
+             .horizontalAlignmentPixels = 1,
+             .verticalAlignmentPixels = 1,
+             .planes =
+                 {
+                     {
+                         .horizontalSubsampling = 1,
+                         .verticalSubsampling = 1,
+                         .bytesPerPixel = 8,
                      },
                  },
          }},

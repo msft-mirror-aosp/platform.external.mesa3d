@@ -11,17 +11,19 @@
 #include <stdbool.h>
 #include <string.h>
 
-#include "bvh/bvh.h"
+#include "bvh/bvh_defines.h"
 #include "meta/radv_meta.h"
 #include "nir/nir_builder.h"
 #include "nir/radv_meta_nir.h"
+#include "tools/radv_rmv.h"
 #include "util/u_atomic.h"
 #include "vulkan/vulkan_core.h"
+#include "ac_cmdbuf_video.h"
+#include "ac_vcn_enc.h"
 #include "radv_cs.h"
 #include "radv_entrypoints.h"
 #include "radv_perfcounter.h"
 #include "radv_query.h"
-#include "radv_rmv.h"
 #include "radv_sdma.h"
 #include "sid.h"
 #include "vk_acceleration_structure.h"
@@ -46,22 +48,17 @@ gfx10_copy_shader_query_gfx(struct radv_cmd_buffer *cmd_buffer, bool use_gds, ui
    uint32_t src_sel;
    uint64_t src_va;
 
-   if (use_gds) {
-      /* Make sure GDS is idle before copying the value. */
-      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_PS_PARTIAL_FLUSH;
+   /* Make sure GE and/or GDS is idle before copying the value. */
+   cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_VS_PARTIAL_FLUSH | RADV_CMD_FLAG_INV_L2;
+   radv_emit_cache_flush(cmd_buffer, false);
 
+   if (use_gds) {
       src_sel = COPY_DATA_GDS;
       src_va = src_offset;
    } else {
-      /* Make sure GE is idle before copying the value. */
-      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_VS_PARTIAL_FLUSH;
-
       src_sel = COPY_DATA_SRC_MEM;
       src_va = cmd_buffer->state.shader_query_buf_va + src_offset;
    }
-
-   cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_INV_L2;
-   radv_emit_cache_flush(cmd_buffer);
 
    gfx10_copy_shader_query(cmd_buffer->cs, src_sel, src_va, dst_va);
 }
@@ -967,7 +964,7 @@ radv_begin_tfb_query(struct radv_cmd_buffer *cmd_buffer, uint64_t va, uint32_t i
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radv_cmd_stream *cs = cmd_buffer->cs;
 
-   if (pdev->use_ngg_streamout) {
+   if (pdev->info.gfx_level >= GFX11) {
       /* generated prim counter */
       gfx10_copy_shader_query_gfx(cmd_buffer, false, RADV_SHADER_QUERY_PRIM_GEN_OFFSET(index), va);
       ac_emit_cp_write_data_imm(cs->b, V_371_MICRO_ENGINE, va + 4, 0x80000000);
@@ -996,7 +993,7 @@ radv_end_tfb_query(struct radv_cmd_buffer *cmd_buffer, uint64_t va, uint32_t ind
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radv_cmd_stream *cs = cmd_buffer->cs;
 
-   if (pdev->use_ngg_streamout) {
+   if (pdev->info.gfx_level >= GFX11) {
       /* generated prim counter */
       gfx10_copy_shader_query_gfx(cmd_buffer, false, RADV_SHADER_QUERY_PRIM_GEN_OFFSET(index), va + 16);
       ac_emit_cp_write_data_imm(cs->b, V_371_MICRO_ENGINE, va + 20, 0x80000000);
@@ -1789,6 +1786,7 @@ radv_query_shader(struct radv_cmd_buffer *cmd_buffer, VkQueryType query_type, st
                   uint32_t flags, uint32_t pipeline_stats_mask, uint32_t avail_offset, bool uses_emulated_queries)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+   const struct radv_physical_device *pdev = radv_device_physical(device);
    VkPipelineLayout layout;
    VkPipeline pipeline;
    VkResult result;
@@ -1822,7 +1820,9 @@ radv_query_shader(struct radv_cmd_buffer *cmd_buffer, VkQueryType query_type, st
    cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_INV_L2 | RADV_CMD_FLAG_INV_VCACHE;
 
    if (flags & VK_QUERY_RESULT_WAIT_BIT)
-      cmd_buffer->state.flush_bits |= RADV_CMD_FLUSH_AND_INV_FRAMEBUFFER;
+      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_FLUSH_AND_INV_CB | RADV_CMD_FLAG_FLUSH_AND_INV_CB_META |
+                                      RADV_CMD_FLAG_FLUSH_AND_INV_DB |
+                                      (pdev->info.gfx_level < GFX10 ? RADV_CMD_FLAG_FLUSH_AND_INV_DB_META : 0);
 
    radv_unaligned_dispatch(cmd_buffer, count, 1, 1);
 
@@ -1895,7 +1895,7 @@ radv_create_query_pool(struct radv_device *device, const VkQueryPoolCreateInfo *
                                 : sizeof(struct radv_query_pool);
 
    struct radv_query_pool *pool =
-      vk_alloc2(&device->vk.alloc, pAllocator, pool_struct_size, 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+      vk_zalloc2(&device->vk.alloc, pAllocator, pool_struct_size, 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
 
    if (!pool)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
@@ -1972,8 +1972,32 @@ radv_create_query_pool(struct radv_device *device, const VkQueryPoolCreateInfo *
          pool->stride = 16;
       }
       break;
+   case VK_QUERY_TYPE_RESULT_STATUS_ONLY_KHR:
+      {
+         const VkVideoProfileInfoKHR *profile = vk_find_struct_const(pCreateInfo->pNext, VIDEO_PROFILE_INFO_KHR);
+         assert(profile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR ||
+                profile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR ||
+                profile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR);
+      }
+      FALLTHROUGH;
    case VK_QUERY_TYPE_VIDEO_ENCODE_FEEDBACK_KHR:
-      pool->stride = 48;
+      /* base encode feedback size */
+      pool->stride = RADV_ENC_FEEDBACK_PARTITION_SIZE * sizeof(uint32_t);
+      pool->encode_feedback.needs_skip =
+         pool->vk.video_profile.op != VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR ||
+         pdev->info.vcn_ip_version >= VCN_5_0_0;
+
+      if (pool->vk.encode_feedback_flags &
+          (VK_VIDEO_ENCODE_FEEDBACK_AVERAGE_QUANTIZATION_BIT_KHR | VK_VIDEO_ENCODE_FEEDBACK_MIN_QUANTIZATION_BIT_KHR |
+           VK_VIDEO_ENCODE_FEEDBACK_MAX_QUANTIZATION_BIT_KHR | VK_VIDEO_ENCODE_FEEDBACK_INTRA_PIXELS_BIT_KHR |
+           VK_VIDEO_ENCODE_FEEDBACK_INTER_PIXELS_BIT_KHR | VK_VIDEO_ENCODE_FEEDBACK_SKIPPED_PIXELS_BIT_KHR)) {
+         pool->encode_feedback.statistics_offset = pool->stride;
+         pool->stride += sizeof(rvcn_encode_stats_type_0_t);
+      }
+
+      /* status field */
+      pool->encode_feedback.status_offset = pool->stride = align(pool->stride, sizeof(uint64_t));
+      pool->stride += sizeof(uint64_t);
       break;
    default:
       UNREACHABLE("creating unhandled query type");
@@ -2041,6 +2065,7 @@ radv_get_rel_timeout_for_query(VkQueryType type)
    case VK_QUERY_TYPE_PRIMITIVES_GENERATED_EXT:
    case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT:
    case VK_QUERY_TYPE_MESH_PRIMITIVES_GENERATED_EXT:
+   case VK_QUERY_TYPE_RESULT_STATUS_ONLY_KHR:
    case VK_QUERY_TYPE_VIDEO_ENCODE_FEEDBACK_KHR:
       return radv_get_tdr_timeout_for_ip(AMD_IP_GFX) * 2;
    default:
@@ -2366,10 +2391,14 @@ radv_GetQueryPoolResults(VkDevice _device, VkQueryPool queryPool, uint32_t first
          }
          break;
       }
+      case VK_QUERY_TYPE_RESULT_STATUS_ONLY_KHR:
       case VK_QUERY_TYPE_VIDEO_ENCODE_FEEDBACK_KHR: {
-         const bool write_memory = radv_video_write_memory_supported(pdev) == RADV_VIDEO_WRITE_MEMORY_SUPPORT_FULL;
+         const bool write_memory =
+            pdev->info.video_caps.queue[AMD_IP_VCN_ENC].write_memory == AC_VIDEO_WRITE_MEMORY_SUPPORT_FULL;
          uint32_t *src32 = (uint32_t *)src;
-         uint32_t ready_idx = write_memory ? RADV_ENC_FEEDBACK_STATUS_IDX : 1;
+         rvcn_encode_stats_type_0_t *statistics =
+            (rvcn_encode_stats_type_0_t *)(src32 + RADV_ENC_FEEDBACK_PARTITION_SIZE);
+         uint32_t ready_idx = write_memory ? pool->encode_feedback.status_offset / sizeof(uint32_t) : 1;
          uint32_t value;
          do {
             value = p_atomic_read(&src32[ready_idx]);
@@ -2382,35 +2411,42 @@ radv_GetQueryPoolResults(VkDevice _device, VkQueryPool queryPool, uint32_t first
          else if (!available && !(flags & VK_QUERY_RESULT_PARTIAL_BIT))
             result = VK_NOT_READY;
 
-         if (flags & VK_QUERY_RESULT_64_BIT) {
-            uint64_t *dest64 = (uint64_t *)dest;
-            if (available || (flags & VK_QUERY_RESULT_PARTIAL_BIT)) {
-               if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BUFFER_OFFSET_BIT_KHR)
-                  *dest64++ = src32[5];
-               if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BYTES_WRITTEN_BIT_KHR)
-                  *dest64++ = src32[6] - src32[8];
-            }
-            dest += util_bitcount(pool->vk.encode_feedback_flags) * sizeof(uint64_t);
+#define WRITE_DEST(value)                                                                                              \
+   do {                                                                                                                \
+      if (flags & VK_QUERY_RESULT_64_BIT) {                                                                            \
+         *((uint64_t *)dest) = value;                                                                                  \
+         dest += 8;                                                                                                    \
+      } else {                                                                                                         \
+         *((uint32_t *)dest) = value;                                                                                  \
+         dest += 4;                                                                                                    \
+      }                                                                                                                \
+   } while (0)
 
-            if (flags & VK_QUERY_RESULT_WITH_STATUS_BIT_KHR) {
-               *dest64++ = 1;
-               dest += 4;
-            }
-         } else {
-            uint32_t *dest32 = (uint32_t *)dest;
-            if (available || (flags & VK_QUERY_RESULT_PARTIAL_BIT)) {
-               if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BUFFER_OFFSET_BIT_KHR)
-                  *dest32++ = src32[5];
-               if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BYTES_WRITTEN_BIT_KHR)
-                  *dest32++ = src32[6] - src32[8];
-            }
-            dest += util_bitcount(pool->vk.encode_feedback_flags) * sizeof(uint32_t);
-
-            if (flags & VK_QUERY_RESULT_WITH_STATUS_BIT_KHR) {
-               *dest32++ = 1;
-               dest += 4;
-            }
+         if (available || (flags & VK_QUERY_RESULT_PARTIAL_BIT)) {
+            if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BUFFER_OFFSET_BIT_KHR)
+               WRITE_DEST(src32[5]);
+            if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BYTES_WRITTEN_BIT_KHR)
+               WRITE_DEST(src32[6] - src32[8]);
+            if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_AVERAGE_QUANTIZATION_BIT_KHR)
+               WRITE_DEST(statistics->qp_avg_ctb);
+            if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_MIN_QUANTIZATION_BIT_KHR)
+               WRITE_DEST(statistics->qp_min_ctb);
+            if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_MAX_QUANTIZATION_BIT_KHR)
+               WRITE_DEST(statistics->qp_max_ctb);
+            if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_INTRA_PIXELS_BIT_KHR)
+               WRITE_DEST(statistics->pix_intra);
+            if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_INTER_PIXELS_BIT_KHR)
+               WRITE_DEST(statistics->pix_inter + (pool->encode_feedback.needs_skip ? statistics->pix_skip : 0));
+            if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_SKIPPED_PIXELS_BIT_KHR)
+               WRITE_DEST(statistics->pix_skip);
+            if (pool->vk.encode_feedback_flags & VK_VIDEO_ENCODE_FEEDBACK_PICTURE_PARTITION_COUNT_BIT_KHR)
+               WRITE_DEST(src32[12]);
          }
+
+         if (flags & VK_QUERY_RESULT_WITH_STATUS_BIT_KHR)
+            WRITE_DEST(available);
+
+#undef WRITE_DEST
          break;
       }
       default:
@@ -2436,14 +2472,7 @@ static void
 emit_query_flush(struct radv_cmd_buffer *cmd_buffer, struct radv_query_pool *pool)
 {
    if (cmd_buffer->pending_reset_query) {
-      if (pool->size >= RADV_BUFFER_OPS_CS_THRESHOLD) {
-         /* Only need to flush caches if the query pool size is
-          * large enough to be reset using the compute shader
-          * path. Small pools don't need any cache flushes
-          * because we use a CP dma clear.
-          */
-         radv_emit_cache_flush(cmd_buffer);
-      }
+      radv_emit_cache_flush(cmd_buffer, false);
    }
 }
 
@@ -2475,7 +2504,6 @@ radv_CmdCopyQueryPoolResultsToMemoryKHR(VkCommandBuffer commandBuffer, VkQueryPo
    VK_FROM_HANDLE(radv_query_pool, pool, queryPool);
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
-   const struct radv_instance *instance = radv_physical_device_instance(pdev);
    struct radv_cmd_stream *cs = cmd_buffer->cs;
    const uint64_t dst_va = pDstRange->address;
    const uint64_t stride = pDstRange->stride;
@@ -2490,7 +2518,7 @@ radv_CmdCopyQueryPoolResultsToMemoryKHR(VkCommandBuffer commandBuffer, VkQueryPo
    /* Workaround engines that forget to properly specify WAIT_BIT because some driver implicitly
     * synchronizes before query copy.
     */
-   if (instance->drirc.debug.flush_before_query_copy)
+   if (pdev->drirc.debug.flush_before_query_copy)
       cmd_buffer->state.flush_bits |= cmd_buffer->active_query_flush_bits;
 
    /* From the Vulkan spec 1.1.108:
@@ -2606,7 +2634,10 @@ emit_begin_query(struct radv_cmd_buffer *cmd_buffer, struct radv_query_pool *poo
    case VK_QUERY_TYPE_MESH_PRIMITIVES_GENERATED_EXT:
       radv_begin_ms_prim_query(cmd_buffer, va);
       break;
+   case VK_QUERY_TYPE_RESULT_STATUS_ONLY_KHR:
    case VK_QUERY_TYPE_VIDEO_ENCODE_FEEDBACK_KHR:
+      cmd_buffer->video.status_offset = pool->encode_feedback.status_offset;
+      cmd_buffer->video.statistics_offset = pool->encode_feedback.statistics_offset;
       cmd_buffer->video.feedback_query_va = va;
       break;
    default:
@@ -2640,15 +2671,19 @@ emit_end_query(struct radv_cmd_buffer *cmd_buffer, struct radv_query_pool *pool,
    case VK_QUERY_TYPE_MESH_PRIMITIVES_GENERATED_EXT:
       radv_end_ms_prim_query(cmd_buffer, va, avail_va);
       break;
+   case VK_QUERY_TYPE_RESULT_STATUS_ONLY_KHR:
    case VK_QUERY_TYPE_VIDEO_ENCODE_FEEDBACK_KHR:
+      cmd_buffer->video.status_offset = 0;
+      cmd_buffer->video.statistics_offset = 0;
       cmd_buffer->video.feedback_query_va = 0;
       break;
    default:
       UNREACHABLE("ending unhandled query type");
    }
 
-   cmd_buffer->active_query_flush_bits |=
-      RADV_CMD_FLAG_PS_PARTIAL_FLUSH | RADV_CMD_FLAG_CS_PARTIAL_FLUSH | RADV_CMD_FLAG_INV_L2 | RADV_CMD_FLAG_INV_VCACHE;
+   cmd_buffer->active_query_flush_bits |= RADV_CMD_FLAG_VS_PARTIAL_FLUSH | RADV_CMD_FLAG_PS_PARTIAL_FLUSH |
+                                          RADV_CMD_FLAG_CS_PARTIAL_FLUSH | RADV_CMD_FLAG_INV_L2 |
+                                          RADV_CMD_FLAG_INV_VCACHE;
    if (pdev->info.gfx_level >= GFX9) {
       cmd_buffer->active_query_flush_bits |= RADV_CMD_FLAG_FLUSH_AND_INV_CB | RADV_CMD_FLAG_FLUSH_AND_INV_DB;
    }
@@ -2741,7 +2776,6 @@ radv_CmdWriteTimestamp2(VkCommandBuffer commandBuffer, VkPipelineStageFlags2 sta
    VK_FROM_HANDLE(radv_query_pool, pool, queryPool);
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
-   const struct radv_instance *instance = radv_physical_device_instance(pdev);
    const unsigned num_queries = MAX2(util_bitcount(cmd_buffer->state.render.view_mask), 1);
    struct radv_cmd_stream *cs = cmd_buffer->cs;
    const uint64_t va = radv_buffer_get_va(pool->bo);
@@ -2749,10 +2783,8 @@ radv_CmdWriteTimestamp2(VkCommandBuffer commandBuffer, VkPipelineStageFlags2 sta
 
    radv_cs_add_buffer(device->ws, cs->b, pool->bo);
 
-   assert(cmd_buffer->qf != RADV_QUEUE_VIDEO_DEC && cmd_buffer->qf != RADV_QUEUE_VIDEO_ENC);
-
    if (cmd_buffer->qf == RADV_QUEUE_TRANSFER) {
-      if (instance->drirc.debug.flush_before_timestamp_write) {
+      if (pdev->drirc.debug.flush_before_timestamp_write) {
          radv_sdma_emit_nop(device, cs);
       }
 
@@ -2763,12 +2795,21 @@ radv_CmdWriteTimestamp2(VkCommandBuffer commandBuffer, VkPipelineStageFlags2 sta
       return;
    }
 
-   if (instance->drirc.debug.flush_before_timestamp_write) {
-      /* Make sure previously launched waves have finished */
-      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_PS_PARTIAL_FLUSH | RADV_CMD_FLAG_CS_PARTIAL_FLUSH;
+   if (cmd_buffer->qf == RADV_QUEUE_VIDEO_DEC || cmd_buffer->qf == RADV_QUEUE_VIDEO_ENC) {
+      for (unsigned i = 0; i < num_queries; ++i, query_va += pool->stride) {
+         radeon_check_space(device->ws, cs->b, 8);
+         ac_emit_video_write_timestamp(cs->b, cs->hw_ip, query_va);
+      }
+      return;
    }
 
-   radv_emit_cache_flush(cmd_buffer);
+   if (pdev->drirc.debug.flush_before_timestamp_write) {
+      /* Make sure previously launched waves have finished */
+      cmd_buffer->state.flush_bits |=
+         RADV_CMD_FLAG_VS_PARTIAL_FLUSH | RADV_CMD_FLAG_PS_PARTIAL_FLUSH | RADV_CMD_FLAG_CS_PARTIAL_FLUSH;
+   }
+
+   radv_emit_cache_flush(cmd_buffer, false);
 
    ASSERTED unsigned cdw_max = radeon_check_space(device->ws, cs->b, 28 * num_queries);
 
@@ -2777,8 +2818,9 @@ radv_CmdWriteTimestamp2(VkCommandBuffer commandBuffer, VkPipelineStageFlags2 sta
       query_va += pool->stride;
    }
 
-   cmd_buffer->active_query_flush_bits |=
-      RADV_CMD_FLAG_PS_PARTIAL_FLUSH | RADV_CMD_FLAG_CS_PARTIAL_FLUSH | RADV_CMD_FLAG_INV_L2 | RADV_CMD_FLAG_INV_VCACHE;
+   cmd_buffer->active_query_flush_bits |= RADV_CMD_FLAG_VS_PARTIAL_FLUSH | RADV_CMD_FLAG_PS_PARTIAL_FLUSH |
+                                          RADV_CMD_FLAG_CS_PARTIAL_FLUSH | RADV_CMD_FLAG_INV_L2 |
+                                          RADV_CMD_FLAG_INV_VCACHE;
    if (pdev->info.gfx_level >= GFX9) {
       cmd_buffer->active_query_flush_bits |= RADV_CMD_FLAG_FLUSH_AND_INV_CB | RADV_CMD_FLAG_FLUSH_AND_INV_DB;
    }
@@ -2800,7 +2842,7 @@ radv_CmdWriteAccelerationStructuresPropertiesKHR(VkCommandBuffer commandBuffer, 
 
    radv_cs_add_buffer(device->ws, cs->b, pool->bo);
 
-   radv_emit_cache_flush(cmd_buffer);
+   radv_emit_cache_flush(cmd_buffer, false);
 
    ASSERTED unsigned cdw_max = radeon_check_space(device->ws, cs->b, 6 * accelerationStructureCount);
 

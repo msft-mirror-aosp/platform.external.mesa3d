@@ -62,7 +62,7 @@ radv_aco_convert_shader_info(struct aco_shader_info *aco_info, const struct radv
    aco_info->ps.spi_ps_input_ena = radv->ps.spi_ps_input_ena;
    aco_info->ps.spi_ps_input_addr = radv->ps.spi_ps_input_addr;
    aco_info->ps.has_prolog = false;
-   aco_info->image_2d_view_of_3d = compiler_info->image_2d_view_of_3d;
+   aco_info->image_2d_view_of_3d = compiler_info->key.image_2d_view_of_3d;
    aco_info->epilog_pc = radv_args->epilog_pc;
    aco_info->hw_stage = radv_select_hw_stage(radv, compiler_info->ac->gfx_level);
    aco_info->next_stage_pc = radv_args->next_stage_pc;
@@ -108,26 +108,12 @@ radv_aco_convert_ps_epilog_key(struct aco_ps_epilog_info *aco_info, const struct
    aco_info->stencil = radv_args->stencil;
    aco_info->samplemask = radv_args->sample_mask;
 
-   aco_info->alpha_func = COMPARE_FUNC_ALWAYS;
-}
+   aco_info->kill_depth = radv->ignore_depth_output;
+   aco_info->kill_stencil = radv->ignore_stencil_output;
+   aco_info->lower_1bit_sample_mask_to_discard = radv->lower_1bit_sample_mask_to_discard;
+   aco_info->spi_shader_z_format = radv->spi_shader_z_format;
 
-static inline void
-radv_aco_convert_opts(struct aco_compiler_options *aco_info, const struct radv_nir_compiler_options *radv,
-                      const struct radv_shader_args *radv_args, const struct radv_shader_stage_key *stage_key)
-{
-   ASSIGN_FIELD(dump_ir);
-   ASSIGN_FIELD(dump_preoptir);
-   ASSIGN_FIELD(record_asm);
-   ASSIGN_FIELD(record_ir);
-   ASSIGN_FIELD(record_stats);
-   ASSIGN_FIELD(enable_mrt_output_nan_fixup);
-   ASSIGN_FIELD(wgp_mode);
-   aco_info->compiler_info = radv->compiler_info;
-   aco_info->is_opengl = false;
-   aco_info->optimisations_disabled = stage_key->optimisations_disabled;
-   aco_info->gfx_level = radv->gfx_level;
-   aco_info->family = radv->family;
-   aco_info->address32_hi = radv->address32_hi;
+   aco_info->alpha_func = COMPARE_FUNC_ALWAYS;
 }
 #undef ASSIGN_VS_STATE_FIELD
 #undef ASSIGN_VS_STATE_FIELD_CP

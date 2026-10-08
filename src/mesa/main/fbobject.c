@@ -3,6 +3,7 @@
  *
  * Copyright (C) 1999-2008  Brian Paul   All Rights Reserved.
  * Copyright (C) 1999-2009  VMware, Inc.  All Rights Reserved.
+ * Copyright (C) 2026 NXP
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -1066,7 +1067,6 @@ test_attachment_completeness(const struct gl_context *ctx, GLenum format,
          if (_mesa_is_gles(ctx)) {
             switch (texImage->InternalFormat) {
             case GL_SRGB_EXT:
-            case GL_SRGB_ALPHA_EXT:
                att_incomplete("bad internal format");
                att->Complete = GL_FALSE;
                return;
@@ -1427,7 +1427,8 @@ _mesa_test_framebuffer_completeness(struct gl_context *ctx,
          if (!is_format_color_renderable(ctx, attFormat,
                                          texImg->InternalFormat) &&
              !is_legal_depth_format(ctx, f) &&
-             f != GL_STENCIL_INDEX) {
+             f != GL_STENCIL_INDEX &&
+            !util_format_is_yuv(attFormat)) {
             fb->_Status = GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
             fbo_incomplete(ctx, "texture attachment incomplete", -1);
             return;
@@ -1508,7 +1509,7 @@ _mesa_test_framebuffer_completeness(struct gl_context *ctx,
          if (baseFormat == GL_RGB)
             fb->_IsRGB |= (1 << i);
 
-         if (ctx->st->has_indep_blend_func &&
+         if (ctx->st->screen->caps.indep_blend_func &&
              ((baseFormat == GL_RGB) ||
               (baseFormat == GL_LUMINANCE && !util_format_is_luminance(attFormat)) ||
               (baseFormat == GL_INTENSITY && !util_format_is_intensity(attFormat))))
@@ -2908,19 +2909,6 @@ renderbuffer_storage_named(GLuint renderbuffer, GLenum internalFormat,
 {
    GET_CURRENT_CONTEXT(ctx);
 
-   if (MESA_VERBOSE & VERBOSE_API) {
-      if (samples == NO_SAMPLES)
-         _mesa_debug(ctx, "%s(%u, %s, %d, %d)\n",
-                     func, renderbuffer,
-                     _mesa_enum_to_string(internalFormat),
-                     width, height);
-      else
-         _mesa_debug(ctx, "%s(%u, %s, %d, %d, %d)\n",
-                     func, renderbuffer,
-                     _mesa_enum_to_string(internalFormat),
-                     width, height, samples);
-   }
-
    struct gl_renderbuffer *rb = _mesa_lookup_renderbuffer(ctx, renderbuffer);
    if (!rb || rb == &DummyRenderbuffer) {
       /* ID was reserved, but no real renderbuffer object made yet */
@@ -2944,21 +2932,6 @@ renderbuffer_storage_target(GLenum target, GLenum internalFormat,
                             GLsizei storageSamples, const char *func)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_API) {
-      if (samples == NO_SAMPLES)
-         _mesa_debug(ctx, "%s(%s, %s, %d, %d)\n",
-                     func,
-                     _mesa_enum_to_string(target),
-                     _mesa_enum_to_string(internalFormat),
-                     width, height);
-      else
-         _mesa_debug(ctx, "%s(%s, %s, %d, %d, %d)\n",
-                     func,
-                     _mesa_enum_to_string(target),
-                     _mesa_enum_to_string(internalFormat),
-                     width, height, samples);
-   }
 
    if (target != GL_RENDERBUFFER_EXT) {
       _mesa_error(ctx, GL_INVALID_ENUM, "%s(target)", func);
@@ -3338,12 +3311,6 @@ bind_framebuffer(GLenum target, GLuint framebuffer)
    GLboolean bindReadBuf, bindDrawBuf;
    GET_CURRENT_CONTEXT(ctx);
 
-   if (MESA_VERBOSE & VERBOSE_API)
-      _mesa_debug(ctx,
-                  "glBindFramebuffer(%s, %u)\n",
-                  _mesa_enum_to_string(target),
-                  framebuffer);
-
    switch (target) {
    case GL_DRAW_FRAMEBUFFER_EXT:
       bindDrawBuf = GL_TRUE;
@@ -3643,10 +3610,6 @@ _mesa_CheckFramebufferStatus(GLenum target)
 {
    struct gl_framebuffer *fb;
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_API)
-      _mesa_debug(ctx, "glCheckFramebufferStatus(%s)\n",
-                  _mesa_enum_to_string(target));
 
    fb = get_framebuffer_target(ctx, target);
    if (!fb) {
@@ -3997,6 +3960,15 @@ check_textarget(struct gl_context *ctx, int dims, GLenum target,
       err = dims != 3 ||
             (_mesa_is_gles2(ctx) && !ctx->Extensions.OES_texture_3D);
       break;
+   /* GL_EXT_YUV_target: TEXTURE_EXTERNAL_OES is a 2D texture target.
+    * It requires GLES3 and EXT_YUV_target extension.
+    * Note: OES_EGL_image_external also supports TEXTURE_EXTERNAL_OES,
+    * but EXT_YUV_target adds rendering capability.
+    */
+   case GL_TEXTURE_EXTERNAL_OES:
+      err = dims != 2 || !(_mesa_is_gles3(ctx) && ctx->Extensions.EXT_YUV_target &&
+            ctx->Extensions.OES_EGL_image_external);
+      break;
    default:
       _mesa_error(ctx, GL_INVALID_ENUM,
                   "%s(unknown textarget 0x%x)", caller, textarget);
@@ -4304,6 +4276,31 @@ framebuffer_texture_with_dims(int dims, GLenum target, GLuint framebuffer,
    if (texObj) {
       if (!check_textarget(ctx, dims, texObj->Target, textarget, caller))
          return;
+
+      /* GL_EXT_YUV_target: TEXTURE_EXTERNAL_OES can only attach to COLOR_ATTACHMENT0 */
+      if (texObj->Target == GL_TEXTURE_EXTERNAL_OES && attachment != GL_COLOR_ATTACHMENT0) {
+            _mesa_error(ctx, GL_INVALID_OPERATION,
+                        "%s(TEXTURE_EXTERNAL_OES can only attach to COLOR_ATTACHMENT0)",
+                        caller);
+            return;
+      }
+
+      /* GL_EXT_YUV_target spec:
+       * "TEXTURE_EXTERNAL_OES target with RGB color format are not allowed
+       *  with this extension."
+       * Only YUV-format external textures may be used as render targets.
+       * If the texture is surface-based (EGL image) and its pipe format is
+       * not a YUV format, reject the attachment.
+       */
+      if (textarget == GL_TEXTURE_EXTERNAL_OES &&
+          ctx->Extensions.EXT_YUV_target &&
+          texObj->surface_based &&
+          !util_format_is_yuv(texObj->surface_format)) {
+         _mesa_error(ctx, GL_INVALID_OPERATION,
+                     "%s(TEXTURE_EXTERNAL_OES with RGB color format is not "
+                     "allowed with GL_EXT_YUV_target)", caller);
+         return;
+      }
 
       if ((dims == 3) && !check_layer(ctx, texObj->Target, layer, caller))
          return;
@@ -5835,14 +5832,6 @@ _mesa_InvalidateFramebuffer(GLenum target, GLsizei numAttachments,
 {
    struct gl_framebuffer *fb;
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_API) {
-      for (unsigned i = 0; i < numAttachments; i++)
-         _mesa_debug(ctx,
-                     "glInvalidateFramebuffer(%s, %s)\n",
-                     _mesa_enum_to_string(target),
-                     _mesa_enum_to_string(attachments[i]));
-   }
 
    fb = get_framebuffer_target(ctx, target);
    if (!fb) {

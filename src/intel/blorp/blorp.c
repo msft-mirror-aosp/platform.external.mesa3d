@@ -253,16 +253,38 @@ blorp_surface_info_init(struct blorp_batch *batch,
       info->surf.phys_level0_sa.w += surf->tile_x_sa;
       info->surf.phys_level0_sa.h += surf->tile_y_sa;
    }
+
+   if (blorp->isl_dev->requires_padding && !is_dest &&
+       (batch->flags & BLORP_BATCH_SRC_UNPADDED)) {
+      blorp_assert_is_buffer(info->surf, info->view);
+
+      /* Infers the page boundaries for a buffer to image copy based on the
+       * surface address and dimensions, following Vulkan semantics to
+       * determine the extent of the final row.
+       */
+      uint64_t size_B =
+         (uint64_t) info->surf.phys_level0_sa.w *
+            (isl_format_get_layout(info->view.format)->bpb / 8) +
+         (uint64_t) (info->surf.phys_level0_sa.h - 1) *
+            info->surf.row_pitch_B;
+
+      uint64_t mask = blorp->isl_dev->info->mem_alignment - 1;
+      uint64_t address = batch->blorp->get_surface_address(batch, info->addr);
+      info->page_base = address & ~mask;
+      info->page_limit = (address + size_B + mask) & ~mask;
+   }
 }
 
 
 void
-blorp_params_init(struct blorp_params *params)
+blorp_params_init(struct blorp_params *params,
+                  struct blorp_context *blorp)
 {
    memset(params, 0, sizeof(*params));
    params->num_samples = 1;
    params->num_draw_buffers = 1;
    params->num_layers = 1;
+   params->use_efficient_64bit = blorp->config.use_efficient_64bit;
 }
 
 void
@@ -273,7 +295,7 @@ blorp_hiz_op(struct blorp_batch *batch, struct blorp_surf *surf,
    const struct intel_device_info *devinfo = batch->blorp->isl_dev->info;
 
    struct blorp_params params;
-   blorp_params_init(&params);
+   blorp_params_init(&params, batch->blorp);
 
    params.hiz_op = op;
    params.full_surface_hiz_op = true;

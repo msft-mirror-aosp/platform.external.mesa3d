@@ -14,6 +14,43 @@ package {
     default_applicable_licenses: ["external_mesa3d_license"],
 }
 
+python_binary_host {
+    name: "decode_py_binary",
+    main: "decode.py",
+    srcs: [
+        "decode.py",
+        "isa.py",
+    ],
+    libs: [
+        "mako",
+        "pyyaml",
+    ],
+}
+
+python_binary_host {
+    name: "encode_py_binary",
+    main: "encode.py",
+    srcs: [
+        "encode.py",
+        "isa.py",
+    ],
+    libs: [
+        "mako",
+        "pyyaml",
+    ],
+}
+
+cc_library_headers {
+    name: "inc_src_compiler_isaspec",
+    vendor: true,
+    export_include_dirs: select((arch(), os()), {
+        ("arm64", "android"): [
+            ".",
+        ],
+        (default, default): [],
+    }),
+}
+
 cc_defaults {
     name: "isaspec_c_flags",
     vendor: true,
@@ -90,6 +127,7 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
+        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

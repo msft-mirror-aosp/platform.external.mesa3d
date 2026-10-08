@@ -26,7 +26,7 @@
 static bool
 lookup_blorp_shader(struct blorp_batch *batch,
                     const void *key, uint32_t key_size,
-                    uint32_t *kernel_out, void *prog_data_out)
+                    uint64_t *kernel_out, void *prog_data_out)
 {
    struct blorp_context *blorp = batch->blorp;
    struct anv_device *device = blorp->driver_ctx;
@@ -54,7 +54,7 @@ upload_blorp_shader(struct blorp_batch *batch, uint32_t stage,
                     const void *kernel, uint32_t kernel_size,
                     const void *prog_data,
                     uint32_t prog_data_size,
-                    uint32_t *kernel_out, void *prog_data_out)
+                    uint64_t *kernel_out, void *prog_data_out)
 {
    struct blorp_context *blorp = batch->blorp;
    struct anv_device *device = blorp->driver_ctx;
@@ -84,6 +84,14 @@ upload_blorp_shader(struct blorp_batch *batch, uint32_t stage,
    return true;
 }
 
+static uint64_t
+blorp_get_surface_address(struct blorp_batch *blorp_batch,
+                          struct blorp_address address)
+{
+   /* We'll let blorp_surface_reloc write the address. */
+   return 0;
+}
+
 void
 anv_device_init_blorp(struct anv_device *device)
 {
@@ -93,6 +101,7 @@ anv_device_init_blorp(struct anv_device *device)
                   device->physical->compiler, &config);
    device->blorp.lookup_shader = lookup_blorp_shader;
    device->blorp.upload_shader = upload_blorp_shader;
+   device->blorp.get_surface_address = blorp_get_surface_address;
    switch (device->info->verx10) {
    case 70:
       device->blorp.exec = gfx7_blorp_exec;

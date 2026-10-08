@@ -41,10 +41,10 @@ nir_cross3(nir_builder *b, nir_def *x, nir_def *y)
    unsigned yzx[3] = { 1, 2, 0 };
    unsigned zxy[3] = { 2, 0, 1 };
 
-   return nir_ffma(b, nir_swizzle(b, x, yzx, 3),
-                   nir_swizzle(b, y, zxy, 3),
-                   nir_fneg(b, nir_fmul(b, nir_swizzle(b, x, zxy, 3),
-                                        nir_swizzle(b, y, yzx, 3))));
+   return nir_ffma_weak(b, nir_swizzle(b, x, yzx, 3),
+                           nir_swizzle(b, y, zxy, 3),
+                           nir_fneg(b, nir_fmul(b, nir_swizzle(b, x, zxy, 3),
+                                                   nir_swizzle(b, y, yzx, 3))));
 }
 
 nir_def *
@@ -184,27 +184,25 @@ nir_upsample(nir_builder *b, nir_def *hi, nir_def *lo)
 static nir_def *
 build_asin(nir_builder *b, nir_def *x, bool piecewise)
 {
-   if (x->bit_size == 16) {
-      /* The polynomial approximation may not be precise enough to meet half-float
-       * precision requirements. Alternatively, we could implement this using
-       * the formula:
-       *
-       * asin(x) = atan2(x, sqrt(1 - x*x))
-       *
-       * But that is very expensive, so instead we just do the polynomial
-       * approximation in 32-bit math and then we convert the result back to
-       * 16-bit.
-       */
-      return nir_f2f16(b, build_asin(b, nir_f2f32(b, x), piecewise));
-   }
+   /* The polynomial approximation may not be precise enough to meet half-float
+    * precision requirements. Alternatively, we could implement this using
+    * the formula:
+    *
+    * asin(x) = atan2(x, sqrt(1 - x*x))
+    *
+    * But that is very expensive, so instead we enforce the polynomial
+    * approximation in 32-bit math and then the caller can convert the result
+    * back to 16-bit.
+    */
+   assert(x->bit_size != 16);
    nir_def *abs_x = nir_fabs(b, x);
 
-   nir_def *p0_plus_xp1 = nir_ffma_imm12(b, abs_x, -0.0187293, 0.0742610);
+   nir_def *p0_plus_xp1 = nir_ffma_weak_imm12(b, abs_x, -0.0187293, 0.0742610);
 
    nir_def *expr_tail =
-      nir_ffma_imm2(b, abs_x,
-                       nir_ffma_imm2(b, abs_x, p0_plus_xp1, -0.2121144),
-                       1.5707288);
+      nir_ffma_weak_imm2(b, abs_x,
+                            nir_ffma_weak_imm2(b, abs_x, p0_plus_xp1, -0.2121144),
+                            1.5707288);
 
    nir_def *result0 = nir_fmul(b, nir_fsign(b, x),
                       nir_a_minus_bc(b, nir_imm_floatN_t(b, M_PI_2f, x->bit_size),
@@ -217,7 +215,7 @@ build_asin(nir_builder *b, nir_def *x, bool piecewise)
       nir_def *x2 = nir_fmul(b, x, x);
       nir_def *result1 = nir_fmul(b,
                                   x,
-                                  nir_ffma_imm12(b, x2, (1.0/6.0), 1.0));
+                                  nir_ffma_weak_imm12(b, x2, (1.0/6.0), 1.0));
       return nir_bcsel(b,
                        nir_flt_imm(b, abs_x, 0.21502245),
                        result1,
@@ -230,6 +228,10 @@ build_asin(nir_builder *b, nir_def *x, bool piecewise)
 nir_def *
 nir_asin(nir_builder *b, nir_def *x)
 {
+   /* See build_asin for promotion explanation */
+   if (x->bit_size == 16)
+      return nir_f2f16(b, nir_asin(b, nir_f2f32(b, x)));
+
    /* use piecewise approximation to keep low relative error near 0 */
    return build_asin(b, x, true);
 }
@@ -237,6 +239,10 @@ nir_asin(nir_builder *b, nir_def *x)
 nir_def *
 nir_acos(nir_builder *b, nir_def *x)
 {
+   /* Promote acos in a similar fashion to asin to reduce error */
+   if (x->bit_size == 16)
+      return nir_f2f16(b, nir_acos(b, nir_f2f32(b, x)));
+
    /* piecewise approximation not needed to keep low relative error */
    return nir_fsub_imm(b, M_PI_2f, build_asin(b, x, false));
 }
@@ -277,7 +283,7 @@ nir_atan(nir_builder *b, nir_def *y_over_x)
    nir_def *res = nir_imm_floatN_t(b, coeffs[0], bit_size);
 
    for (unsigned i = 1; i < ARRAY_SIZE(coeffs); ++i) {
-      res = nir_ffma_imm2(b, res, x_2, coeffs[i]);
+      res = nir_ffma_weak_imm2(b, res, x_2, coeffs[i]);
    }
 
    /* range-reduction fixup value */
@@ -285,7 +291,7 @@ nir_atan(nir_builder *b, nir_def *y_over_x)
                              nir_imm_floatN_t(b, -M_PI_2, bit_size));
 
    /* multiply through by x while fixing up the range reduction */
-   nir_def *tmp = nir_ffma(b, nir_fabs(b, u), res, bias);
+   nir_def *tmp = nir_ffma_weak(b, nir_fabs(b, u), res, bias);
 
    /* sign fixup */
    return nir_copysign(b, tmp, y_over_x);
@@ -296,6 +302,15 @@ nir_atan2(nir_builder *b, nir_def *y, nir_def *x)
 {
    assert(y->bit_size == x->bit_size);
    const uint32_t bit_size = x->bit_size;
+
+   /* For zero inputs, we end up with intermediate infinities from
+    * frcp(0.0). The final output is not infinity though, so this has to
+    * be well defined even when applications don't request preserving infinities
+    * on their own. Also preserve signed zeros to make the sign of the infinities
+    * well defined.
+    */
+   unsigned old_fp_math_ctrl = b->fp_math_ctrl;
+   b->fp_math_ctrl |= nir_fp_preserve_signed_zero | nir_fp_preserve_inf;
 
    nir_def *zero = nir_imm_floatN_t(b, 0, bit_size);
    nir_def *one = nir_imm_floatN_t(b, 1, bit_size);
@@ -359,7 +374,7 @@ nir_atan2(nir_builder *b, nir_def *y, nir_def *x)
     * coordinate system.
     */
    nir_def *arc =
-      nir_ffma_imm1(b, nir_b2fN(b, flip, bit_size), M_PI_2, nir_atan(b, tan));
+      nir_ffma_weak_imm1(b, nir_b2fN(b, flip, bit_size), M_PI_2, nir_atan(b, tan));
 
    /* Rather convoluted calculation of the sign of the result.  When x < 0 we
     * cannot use fsign because we need to be able to distinguish between
@@ -370,8 +385,11 @@ nir_atan2(nir_builder *b, nir_def *y, nir_def *x)
     * continuous along the whole positive y = 0 half-line, so it won't affect
     * the result significantly.
     */
-   return nir_bcsel(b, nir_flt(b, nir_fmin(b, y, rcp_scaled_t), zero),
-                    nir_fneg(b, arc), arc);
+   nir_def *result = nir_bcsel(b, nir_flt(b, nir_fmin(b, y, rcp_scaled_t), zero),
+                               nir_fneg(b, arc), arc);
+
+   b->fp_math_ctrl = old_fp_math_ctrl;
+   return result;
 }
 
 nir_def *
@@ -402,6 +420,8 @@ nir_build_texture_query(nir_builder *b, nir_tex_instr *tex, nir_texop texop,
    query->texture_index = tex->texture_index;
    query->sampler_index = tex->sampler_index;
    query->can_speculate = tex->can_speculate;
+   query->texture_non_uniform = tex->texture_non_uniform;
+   query->sampler_non_uniform = tex->sampler_non_uniform;
    query->dest_type = dest_type;
 
    if (include_coord) {
@@ -455,4 +475,38 @@ nir_get_texture_lod(nir_builder *b, nir_tex_instr *tex)
 
    /* The LOD is the y component of the result */
    return nir_channel(b, tql, 1);
+}
+
+nir_def *
+nir_tanh_emulated(struct nir_builder *b, nir_def *src)
+{
+   /* tanh(x) := (e^x - e^(-x)) / (e^x + e^(-x))
+    *
+    * We only calculate tanh(abs(x)), and copy the input sign. This has the benifit
+    * that we only have to clamp the input for the e^x term to avoid precision
+    * problems, the e^(-x) will underflow to zero.
+    *
+    * The copysign also gives us signed zero correctness.
+    *
+    * Clamping in both directions would not give 1.0 for infinities with
+    * toward zero rounding, and it would prevent NaN propagation.
+    */
+   nir_def *x = nir_fabs(b, src);
+
+   /* Translate from e^x to 2^(x * log_e).
+    *
+    * We do this early instead of using nir_fexp because
+    * we need to clamp infinities to a value that doesn't
+    * cause RTZ precision issues in the division.
+    */
+   x = nir_fmul_imm(b, x, M_LOG2E);
+
+   nir_def *clamped_x = nir_fmin_imm(b, x, src->bit_size > 16 ? 16.0 : 8.0);
+
+   nir_def *exp_x = nir_fexp2(b, clamped_x);
+   nir_def *exp_neg_x = nir_fexp2(b, nir_fneg(b, x));
+   nir_def *abs_tanh = nir_fdiv(b, nir_fsub(b, exp_x, exp_neg_x),
+                                nir_fadd(b, exp_x, exp_neg_x));
+
+   return nir_copysign(b, abs_tanh, src);
 }

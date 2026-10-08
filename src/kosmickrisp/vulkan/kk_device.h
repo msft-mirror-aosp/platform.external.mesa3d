@@ -42,6 +42,7 @@ struct mtl_sampler_packed {
    enum mtl_sampler_min_mag_filter min_filter;
    enum mtl_sampler_min_mag_filter mag_filter;
    enum mtl_sampler_mip_filter mip_filter;
+   enum mtl_sampler_reduction_mode reduction_mode;
 
    enum mtl_compare_function compare_func;
    float min_lod;
@@ -79,6 +80,7 @@ struct kk_device {
    struct vk_device vk;
 
    mtl_device *mtl_handle;
+   mtl_compiler *mtl_compiler_handle;
 
    /* Dispatch table exposed to the user. Required since we need to record all
     * commands due to Metal limitations */
@@ -93,6 +95,7 @@ struct kk_device {
 
    struct kk_precompiled_cache precompiled_cache;
 
+   bool has_queue;
    struct kk_queue queue;
 
    struct vk_meta_device meta;
@@ -100,9 +103,6 @@ struct kk_device {
    /* Geomtry heap */
    struct kk_bo *heap;
    util_once_flag heap_init_once;
-
-   uint64_t disabled_workarounds;
-   bool gpu_capture_enabled;
 };
 
 VK_DEFINE_HANDLE_CASTS(kk_device, vk.base, VkDevice, VK_OBJECT_TYPE_DEVICE)
@@ -120,6 +120,10 @@ void kk_device_finish_lib(struct kk_device *dev);
 void kk_device_add_heap_to_residency_set(struct kk_device *dev, mtl_heap *heap);
 void kk_device_remove_heap_from_residency_set(struct kk_device *dev,
                                               mtl_heap *heap);
+void kk_device_add_buffer_to_residency_set(struct kk_device *dev,
+                                           mtl_buffer *buffer);
+void kk_device_remove_buffer_from_residency_set(struct kk_device *dev,
+                                                mtl_buffer *buffer);
 void kk_device_make_resources_resident(struct kk_device *dev);
 
 /* Required to create a sampler */
