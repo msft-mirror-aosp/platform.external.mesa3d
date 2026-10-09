@@ -1206,20 +1206,22 @@ struct zink_resource_object {
     * in the ordered cmdbuf which can promote barriers to unordered
     */
    bool ordered_access_is_copied;
+   bool has_ordered_access;
    bool unordered_read;
    bool unordered_write;
    bool unsync_access;
    bool copies_valid;
    bool copies_need_reset; //for use with batch state resets
 
-   struct u_rwlock copy_lock;
-   struct util_dynarray copies[16]; //regions being copied to; for barrier omission
-
    union {
       VkBuffer buffer;
       VkImage image;
    };
    VkDeviceAddress bda;
+   struct zink_bo *bo;
+
+   struct u_rwlock copy_lock;
+   struct util_dynarray copies[16]; //regions being copied to; for barrier omission
 
    struct set surface_cache;
    simple_mtx_t surface_mtx;
@@ -1236,7 +1238,6 @@ struct zink_resource_object {
 
    /* TODO: this should be a union */
    int handle;
-   struct zink_bo *bo;
    // struct {
    struct kopper_displaytarget *dt;
    uint32_t dt_idx;
@@ -1269,18 +1270,27 @@ struct zink_resource {
    struct threaded_resource base;
 
    enum pipe_format internal_format:16;
-
+   bool is_sparse;
+   uint32_t size;
    struct zink_resource_object *obj;
    struct zink_resource *transient; //for msrtt without EXT_multisampled_render_to_single_sampled and format view shadowing
+
+   alignas(64) VkPipelineStageFlagBits gfx_barrier;
+   union {
+      uint16_t bind_count[2]; //gfx, compute
+      uint32_t all_binds;
+   };
+   VkAccessFlagBits barrier_access[2]; //gfx, compute
+   uint32_t vbo_bind_mask;
+   uint8_t vbo_bind_count;
    uint32_t queue;
+
    union {
       struct {
          struct util_range valid_buffer_range;
          struct util_range *real_buffer_range; //only set on tc replace_buffer src
-         uint32_t vbo_bind_mask : PIPE_MAX_ATTRIBS;
          uint8_t ubo_bind_count[2];
          uint8_t ssbo_bind_count[2];
-         uint8_t vbo_bind_count;
          uint8_t so_bind_count; //not counted in all_binds
          bool so_valid;
          uint32_t ubo_bind_mask[MESA_SHADER_MESH_STAGES];
@@ -1308,14 +1318,6 @@ struct zink_resource {
       uint16_t bindless[2]; //tex, img
       uint32_t all_bindless;
    };
-   union {
-      uint16_t bind_count[2]; //gfx, compute
-      uint32_t all_binds;
-   };
-
-   VkPipelineStageFlagBits gfx_barrier;
-   VkAccessFlagBits barrier_access[2]; //gfx, compute
-
    unsigned rebind_count;
 
    VkRect2D damage;
@@ -1739,6 +1741,7 @@ struct zink_context {
    unsigned flags;
 
    pipe_draw_func draw_vbo[2]; //batch changed
+   pipe_draw_buffers_func draw_vbo_buffers[2]; //batch changed
    pipe_draw_vertex_state_func draw_state[2]; //batch changed
    pipe_launch_grid_func launch_grid[2]; //batch changed
    pipe_draw_mesh_tasks_func draw_mesh_tasks[2]; //batch changed
@@ -1845,6 +1848,7 @@ struct zink_context {
    struct pipe_vertex_buffer vertex_buffers[PIPE_MAX_ATTRIBS];
    unsigned vertex_buffers_count;
    bool vertex_buffers_dirty;
+   bool vertex_buffers_unowned;
 
    struct zink_sampler_state *sampler_states[MESA_SHADER_MESH_STAGES][PIPE_MAX_SAMPLERS];
    struct pipe_sampler_view *sampler_views[MESA_SHADER_MESH_STAGES][PIPE_MAX_SAMPLERS];

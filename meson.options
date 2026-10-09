@@ -219,6 +219,14 @@ option(
   value : false,
   description : 'use experimental virtio backend for radeonsi/radv',
 )
+
+option(
+  'panfrost-virtio',
+  type : 'boolean',
+  value : false,
+  description : 'use experimental virtio backend for panfrost',
+)
+
 option(
   'imagination-srv',
   type : 'boolean',
@@ -305,7 +313,7 @@ option(
   type : 'array',
   value : [],
   choices : [
-    'device-select', 'intel-nullhw', 'overlay', 'screenshot', 'anti-lag',
+    'device-select', 'intel-nullhw', 'overlay', 'screenshot',
     'vram-report-limit',
   ],
   description : 'List of vulkan layers to build'
@@ -365,7 +373,7 @@ option(
   'glx',
   type : 'combo',
   value : 'auto',
-  choices : ['auto', 'disabled', 'dri', 'xlib'],
+  choices : ['auto', 'disabled', 'dri'],
   description : 'Build support for GLX platform'
 )
 
@@ -907,4 +915,11 @@ option(
   type : 'boolean',
   value : false,
   description : 'Build panfrost Rust components.'
+)
+
+option(
+  'panfrost-disassemble',
+  type : 'boolean',
+  value : true,
+  description : 'Build panfrost disassemblers. Explicitly setting this option to false will cause the panfrost stack to build without disassemblers. This should be left enabled for distro builds.'
 )

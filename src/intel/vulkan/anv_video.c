@@ -117,8 +117,12 @@ anv_video_patch_encode_session_parameters(struct anv_device *device, struct vk_v
          /* maxTiles = 1x1 */
          pps->flags.tiles_enabled_flag = 0;
 
-         /* rateControlModes is DEFAULT|DISABLED only — no cu_qp_delta path */
-         pps->flags.cu_qp_delta_enabled_flag = 0;
+         /* VDEnc always drives per-CU QP (HuC BRC adjusts the frame QP through
+          * the CU QP delta path and PAK uses fractional QP), so cu_qp_delta
+          * must be signalled in the PPS, so enabling it here keeps them consistent.
+          */
+         pps->flags.cu_qp_delta_enabled_flag = 1;
+         pps->diff_cu_qp_delta_depth = 0;
 
          /* Set 0 where we don't advertise via stdSyntaxFlags */
          pps->flags.weighted_pred_flag = 0;
@@ -322,6 +326,12 @@ video_profile_supported(struct anv_physical_device *pdevice,
 #define ANV_AV1_REF_NAME_BIT(name) \
    (1u << (STD_VIDEO_AV1_REFERENCE_NAME_##name - STD_VIDEO_AV1_REFERENCE_NAME_LAST_FRAME))
 
+static bool
+anv_video_encode_brc_supported(const struct anv_physical_device *pdevice)
+{
+   return pdevice->info.ver >= 12 && pdevice->has_huc;
+}
+
 VkResult
 anv_GetPhysicalDeviceVideoCapabilitiesKHR(VkPhysicalDevice physicalDevice,
                                            const VkVideoProfileInfoKHR *pVideoProfile,
@@ -426,6 +436,15 @@ anv_GetPhysicalDeviceVideoCapabilitiesKHR(VkPhysicalDevice physicalDevice,
       enc_caps->flags = 0;
       enc_caps->rateControlModes = VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DEFAULT_KHR |
                                    VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DISABLED_BIT_KHR;
+
+      if (((pVideoProfile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR) ||
+           (pVideoProfile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR)) &&
+            anv_video_encode_brc_supported(pdevice)) {
+         enc_caps->rateControlModes |= VK_VIDEO_ENCODE_RATE_CONTROL_MODE_CBR_BIT_KHR |
+                                       VK_VIDEO_ENCODE_RATE_CONTROL_MODE_VBR_BIT_KHR;
+         enc_caps->maxBitrate = 160000000;
+      }
+
       enc_caps->maxRateControlLayers = 1;
       enc_caps->maxQualityLevels = 1;
       enc_caps->encodeInputPictureGranularity.width = 32;
@@ -794,6 +813,37 @@ get_h265_video_mem_size(struct anv_video_session *vid, uint32_t mem_idx)
 }
 
 static uint64_t
+get_brc_video_mem_size(struct anv_video_session *vid, uint32_t mem_idx)
+{
+   switch (mem_idx) {
+   case ANV_VID_MEM_BRC_HISTORY:
+      return align64(6080, 4096);
+   case ANV_VID_MEM_BRC_VDENC_STATS:
+      return align64(1216, 4096);
+   case ANV_VID_MEM_BRC_EXEC_SLB:
+      /* - gen12:  MFX_AVC_IMG_STATE(84) + VDENC_IMG_STATE(140) + BBE(4) = 228
+       * - gen125: MFX_AVC_IMG_STATE(84) + VDENC_CMD3(92) +
+       *           VDENC_AVC_IMG_STATE(80) + BBE(4) = 260
+       * Choose the worse one.
+       */
+      if (vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR)
+         return align64(260, 4096);
+      /* HEVC (HCP) slice layout, choose gen125 worst case. */
+      return align64(64 + 576 + 70 * 1152, 4096);
+   case ANV_VID_MEM_BRC_WP_DATA:
+      return 4 * 4096;
+   case ANV_VID_MEM_BRC_PAK_INFO:
+   case ANV_VID_MEM_BRC_PAK_STATS:
+   case ANV_VID_MEM_BRC_DEBUG:
+   case ANV_VID_MEM_BRC_PAK_MMIO_SEM:
+   case ANV_VID_MEM_BRC_HUC_ERR_SEM:
+      return 4096;
+   default:
+      UNREACHABLE("unknown brc memory");
+   }
+}
+
+static uint64_t
 get_vp9_video_mem_size(struct anv_video_session *vid, uint32_t mem_idx)
 {
    uint32_t width_in_ctb =
@@ -853,7 +903,27 @@ get_vp9_video_mem_size(struct anv_video_session *vid, uint32_t mem_idx)
 }
 
 static void
-get_h264_video_session_mem_reqs(struct anv_video_session *vid,
+get_brc_video_session_mem_reqs(struct anv_video_session *vid,
+                               struct __vk_outarray *base,
+                               uint32_t memory_types)
+{
+   vk_outarray(VkVideoSessionMemoryRequirementsKHR) *out = (void *)base;
+
+   for (unsigned i = ANV_VID_MEM_BRC_HISTORY; i < ANV_VID_MEM_BRC_MAX; i++) {
+      uint64_t size = get_brc_video_mem_size(vid, i);
+
+      vk_outarray_append_typed(VkVideoSessionMemoryRequirementsKHR, out, p) {
+         p->memoryBindIndex = i;
+         p->memoryRequirements.size = size;
+         p->memoryRequirements.alignment = 4096;
+         p->memoryRequirements.memoryTypeBits = memory_types;
+      }
+   }
+}
+
+static void
+get_h264_video_session_mem_reqs(struct anv_device *dev,
+                                struct anv_video_session *vid,
                                 VkVideoSessionMemoryRequirementsKHR *mem_reqs,
                                 uint32_t *pVideoSessionMemoryRequirementsCount,
                                 uint32_t memory_types)
@@ -874,10 +944,16 @@ get_h264_video_session_mem_reqs(struct anv_video_session *vid,
          p->memoryRequirements.memoryTypeBits = memory_types;
       }
    }
+
+   if ((vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR) &&
+        anv_video_encode_brc_supported(dev->physical)) {
+      get_brc_video_session_mem_reqs(vid, &out.base, memory_types);
+   }
 }
 
 static void
-get_h265_video_session_mem_reqs(struct anv_video_session *vid,
+get_h265_video_session_mem_reqs(struct anv_device *dev,
+                                struct anv_video_session *vid,
                                 VkVideoSessionMemoryRequirementsKHR *mem_reqs,
                                 uint32_t *pVideoSessionMemoryRequirementsCount,
                                 uint32_t memory_types)
@@ -901,6 +977,11 @@ get_h265_video_session_mem_reqs(struct anv_video_session *vid,
          p->memoryRequirements.alignment = 4096;
          p->memoryRequirements.memoryTypeBits = memory_types;
       }
+   }
+
+   if ((vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR) &&
+        anv_video_encode_brc_supported(dev->physical)) {
+      get_brc_video_session_mem_reqs(vid, &out.base, memory_types);
    }
 }
 
@@ -1180,14 +1261,14 @@ anv_GetVideoSessionMemoryRequirementsKHR(VkDevice _device,
    switch (vid->vk.op) {
    case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR:
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR:
-      get_h264_video_session_mem_reqs(vid,
+      get_h264_video_session_mem_reqs(device, vid,
                                       mem_reqs,
                                       pVideoSessionMemoryRequirementsCount,
                                       memory_types);
       break;
    case VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR:
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR:
-      get_h265_video_session_mem_reqs(vid,
+      get_h265_video_session_mem_reqs(device, vid,
                                       mem_reqs,
                                       pVideoSessionMemoryRequirementsCount,
                                       memory_types);

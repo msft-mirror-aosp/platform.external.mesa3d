@@ -11,6 +11,7 @@
 #define XXH_INLINE_ALL
 #include "util/xxhash.h"
 #include "util/u_cpu_detect.h"
+#include "util/u_draw.h"
 #include "util/u_index_modify.h"
 #include "util/u_upload_mgr.h"
 #include "ac_rtld.h"
@@ -2604,9 +2605,7 @@ static void si_draw(struct pipe_context *ctx,
 
    /* Workaround for a VGT hang when streamout is enabled.
     * It must be done after drawing. */
-   if (((GFX_VERSION == GFX7 && sctx->family == CHIP_HAWAII) ||
-        (GFX_VERSION == GFX8 && (sctx->family == CHIP_TONGA || sctx->family == CHIP_FIJI))) &&
-       si_get_streamout_enable_state(sctx)) {
+   if (sctx->screen->info.has_streamout_vgt_hang_bug && si_get_streamout_enable_state(sctx)) {
       radeon_begin(&sctx->gfx_cs);
       radeon_event_write(V_028A90_VGT_STREAMOUT_SYNC);
       radeon_end();
@@ -2814,6 +2813,7 @@ void GFX(si_init_draw_functions_)(struct si_context *sctx)
    sctx->b.draw_vbo = si_invalid_draw_vbo;
    sctx->b.draw_vertex_state = si_invalid_draw_vertex_state;
    sctx->blitter->draw_rectangle = si_draw_rectangle;
+   sctx->b.draw_vbo_buffers = util_draw_vbo_buffers;
 
    si_init_ia_multi_vgt_param_table(sctx);
 }

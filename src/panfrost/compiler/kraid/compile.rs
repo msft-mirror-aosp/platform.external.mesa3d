@@ -3,7 +3,6 @@
 
 use crate::data_type::NumericType;
 use crate::debug::*;
-use crate::decode::{Args, disassemble};
 use crate::ir::*;
 use crate::model::model_for_gpu_id;
 use crate::ops::OpNop;
@@ -83,10 +82,10 @@ fn nir_opts(arch: u8, merge_wg: bool) -> nir_shader_compiler_options {
             | nir_var_function_temp),
         force_indirect_unrolling_sampler: true,
         scalarize_ddx: true,
-        support_indirect_inputs: (1 << MESA_SHADER_TESS_CTRL)
-            | (1 << MESA_SHADER_TESS_EVAL)
-            | (1 << MESA_SHADER_FRAGMENT),
+        support_indirect_inputs: 0,
         lower_hadd: arch >= 11,
+        lower_hadd64: true,
+        lower_mul_32x16: true,
         discard_is_demote: true,
         has_udot_4x8: true,
         has_udot_4x8_sat: true,
@@ -234,10 +233,10 @@ fn encode_no_psiz_variant(
     dynarray_append_vec(binary, bin);
 }
 
+#[cfg(kraid_disasm)]
 fn print_disassembly(bin: &[u32], arch: u8) {
-    if !DEBUG.contains(DebugFlags::PRINT) {
-        return;
-    }
+    use crate::decode::{Args, disassemble};
+
     let mut lock = std::io::stderr().lock();
     let args = Args {
         arch,
@@ -253,6 +252,13 @@ fn print_disassembly(bin: &[u32], arch: u8) {
         instrs.push(instr);
     }
     let _ = disassemble(&mut lock, &args, &instrs);
+}
+
+#[cfg(not(kraid_disasm))]
+fn print_disassembly(_bin: &[u32], _arch: u8) {
+    eprintln!(
+        "Disassembler disabled, enable it with -Dpanfrost-disassemble=true\n"
+    );
 }
 
 #[unsafe(no_mangle)]
@@ -288,8 +294,8 @@ pub extern "C" fn kraid_compile_nir(
         pass!(s.opt_promote_consts(&mut info.fau));
     }
     pass!(s.opt_exec_units());
-    pass!(s.legalize());
     pass!(s.schedule_for_pressure());
+    pass!(s.legalize());
     // Shader::assign_registers() uses pass!() internally
     s.assign_registers();
     pass!(s.lower_copy());
@@ -311,7 +317,10 @@ pub extern "C" fn kraid_compile_nir(
         pass!(s.lower_blend_call());
 
         let bin = model.encode_shader(&s);
-        print_disassembly(&bin, model.arch());
+        if DEBUG.contains(DebugFlags::PRINT) {
+            print_disassembly(&bin, model.arch());
+        }
+
         let code_size = std::mem::size_of_val(&bin[..]);
         dynarray_append_vec(binary, bin);
 

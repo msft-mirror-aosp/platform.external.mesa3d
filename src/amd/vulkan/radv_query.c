@@ -438,7 +438,7 @@ radv_copy_occlusion_query_result(struct radv_cmd_buffer *cmd_buffer, struct radv
             radeon_check_space(device->ws, cs->b, 7);
 
             /* Waits on the upper word of the last DB entry */
-            radv_cp_wait_mem(cs, WAIT_REG_MEM_GREATER_OR_EQUAL, src_va, 0x80000000, 0xffffffff);
+            ac_emit_cp_wait_mem(cs->b, src_va, 0x80000000, 0xffffffff, WAIT_REG_MEM_GREATER_OR_EQUAL);
          }
       }
    }
@@ -680,7 +680,7 @@ radv_begin_pipeline_stat_query(struct radv_cmd_buffer *cmd_buffer, struct radv_q
 
    radv_update_hw_pipelinestat(cmd_buffer);
 
-   if (radv_cmd_buffer_uses_mec(cmd_buffer)) {
+   if (cmd_buffer->is_mec) {
       uint32_t cs_invoc_offset =
          radv_get_pipelinestat_query_offset(VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT);
       va += cs_invoc_offset;
@@ -758,7 +758,7 @@ radv_end_pipeline_stat_query(struct radv_cmd_buffer *cmd_buffer, struct radv_que
 
    va += pipelinestat_block_size;
 
-   if (radv_cmd_buffer_uses_mec(cmd_buffer)) {
+   if (cmd_buffer->is_mec) {
       uint32_t cs_invoc_offset =
          radv_get_pipelinestat_query_offset(VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT);
       va += cs_invoc_offset;
@@ -838,7 +838,7 @@ radv_copy_pipeline_stat_query_result(struct radv_cmd_buffer *cmd_buffer, struct 
          uint64_t avail_va = va + pool->availability_offset + 4 * query;
 
          /* This waits on the ME. All copies below are done on the ME */
-         radv_cp_wait_mem(cs, WAIT_REG_MEM_EQUAL, avail_va, 1, 0xffffffff);
+         ac_emit_cp_wait_mem(cs->b, avail_va, 1, 0xffffffff, WAIT_REG_MEM_EQUAL);
 
          if (pool->uses_ace && pdev->emulate_mesh_shader_queries) {
             const uint64_t src_va = va + query * pool->stride;
@@ -847,8 +847,8 @@ radv_copy_pipeline_stat_query_result(struct radv_cmd_buffer *cmd_buffer, struct 
 
             radeon_check_space(device->ws, cs->b, 7 * 2);
 
-            radv_cp_wait_mem(cs, WAIT_REG_MEM_GREATER_OR_EQUAL, start_va, 0x80000000, 0xffffffff);
-            radv_cp_wait_mem(cs, WAIT_REG_MEM_GREATER_OR_EQUAL, stop_va, 0x80000000, 0xffffffff);
+            ac_emit_cp_wait_mem(cs->b, start_va, 0x80000000, 0xffffffff, WAIT_REG_MEM_GREATER_OR_EQUAL);
+            ac_emit_cp_wait_mem(cs->b, stop_va, 0x80000000, 0xffffffff, WAIT_REG_MEM_GREATER_OR_EQUAL);
          }
       }
    }
@@ -1091,7 +1091,7 @@ radv_copy_tfb_query_result(struct radv_cmd_buffer *cmd_buffer, struct radv_query
 
          /* Wait on the upper word of all results. */
          for (unsigned j = 0; j < 4; j++, src_va += 8) {
-            radv_cp_wait_mem(cs, WAIT_REG_MEM_GREATER_OR_EQUAL, src_va + 4, 0x80000000, 0xffffffff);
+            ac_emit_cp_wait_mem(cs->b, src_va + 4, 0x80000000, 0xffffffff, WAIT_REG_MEM_GREATER_OR_EQUAL);
          }
       }
    }
@@ -1224,7 +1224,7 @@ radv_copy_timestamp_query_result(struct radv_cmd_buffer *cmd_buffer, struct radv
          /* Wait on the high 32 bits of the timestamp in
           * case the low part is 0xffffffff.
           */
-         radv_cp_wait_mem(cs, WAIT_REG_MEM_NOT_EQUAL, local_src_va + 4, TIMESTAMP_NOT_READY >> 32, 0xffffffff);
+         ac_emit_cp_wait_mem(cs->b, local_src_va + 4, TIMESTAMP_NOT_READY >> 32, 0xffffffff, WAIT_REG_MEM_NOT_EQUAL);
       }
    }
 
@@ -1499,12 +1499,12 @@ radv_copy_pg_query_result(struct radv_cmd_buffer *cmd_buffer, struct radv_query_
          radeon_check_space(device->ws, cs->b, 7 * 4);
 
          /* Wait on the upper word of the PrimitiveStorageNeeded result. */
-         radv_cp_wait_mem(cs, WAIT_REG_MEM_GREATER_OR_EQUAL, src_va + 4, 0x80000000, 0xffffffff);
-         radv_cp_wait_mem(cs, WAIT_REG_MEM_GREATER_OR_EQUAL, src_va + 20, 0x80000000, 0xffffffff);
+         ac_emit_cp_wait_mem(cs->b, src_va + 4, 0x80000000, 0xffffffff, WAIT_REG_MEM_GREATER_OR_EQUAL);
+         ac_emit_cp_wait_mem(cs->b, src_va + 20, 0x80000000, 0xffffffff, WAIT_REG_MEM_GREATER_OR_EQUAL);
 
          if (uses_emulated_queries) {
-            radv_cp_wait_mem(cs, WAIT_REG_MEM_GREATER_OR_EQUAL, src_va + 36, 0x80000000, 0xffffffff);
-            radv_cp_wait_mem(cs, WAIT_REG_MEM_GREATER_OR_EQUAL, src_va + 44, 0x80000000, 0xffffffff);
+            ac_emit_cp_wait_mem(cs->b, src_va + 36, 0x80000000, 0xffffffff, WAIT_REG_MEM_GREATER_OR_EQUAL);
+            ac_emit_cp_wait_mem(cs->b, src_va + 44, 0x80000000, 0xffffffff, WAIT_REG_MEM_GREATER_OR_EQUAL);
          }
       }
    }
@@ -1711,7 +1711,7 @@ radv_copy_ms_prim_query_result(struct radv_cmd_buffer *cmd_buffer, struct radv_q
             uint64_t avail_va = va + pool->availability_offset + 4 * query;
 
             /* This waits on the ME. All copies below are done on the ME */
-            radv_cp_wait_mem(cs, WAIT_REG_MEM_EQUAL, avail_va, 1, 0xffffffff);
+            ac_emit_cp_wait_mem(cs->b, avail_va, 1, 0xffffffff, WAIT_REG_MEM_EQUAL);
          }
       }
 
@@ -1727,8 +1727,8 @@ radv_copy_ms_prim_query_result(struct radv_cmd_buffer *cmd_buffer, struct radv_q
             radeon_check_space(device->ws, cs->b, 7 * 2);
 
             /* Wait on the upper word. */
-            radv_cp_wait_mem(cs, WAIT_REG_MEM_GREATER_OR_EQUAL, src_va + 4, 0x80000000, 0xffffffff);
-            radv_cp_wait_mem(cs, WAIT_REG_MEM_GREATER_OR_EQUAL, src_va + 12, 0x80000000, 0xffffffff);
+            ac_emit_cp_wait_mem(cs->b, src_va + 4, 0x80000000, 0xffffffff, WAIT_REG_MEM_GREATER_OR_EQUAL);
+            ac_emit_cp_wait_mem(cs->b, src_va + 12, 0x80000000, 0xffffffff, WAIT_REG_MEM_GREATER_OR_EQUAL);
          }
       }
 
@@ -2662,13 +2662,13 @@ radv_CmdResetQueryPool(VkCommandBuffer commandBuffer, VkQueryPool queryPool, uin
    radv_meta_begin(cmd_buffer);
 
    flush_bits |= radv_fill_buffer(cmd_buffer, pool->bo, radv_buffer_get_va(pool->bo) + firstQuery * pool->stride,
-                                  queryCount * pool->stride, value);
+                                  queryCount * pool->stride, value, true);
 
    if (pool->vk.query_type == VK_QUERY_TYPE_PIPELINE_STATISTICS ||
        (pool->vk.query_type == VK_QUERY_TYPE_MESH_PRIMITIVES_GENERATED_EXT && pdev->info.gfx_level >= GFX11)) {
-      flush_bits |=
-         radv_fill_buffer(cmd_buffer, pool->bo,
-                          radv_buffer_get_va(pool->bo) + pool->availability_offset + firstQuery * 4, queryCount * 4, 0);
+      flush_bits |= radv_fill_buffer(cmd_buffer, pool->bo,
+                                     radv_buffer_get_va(pool->bo) + pool->availability_offset + firstQuery * 4,
+                                     queryCount * 4, 0, true);
    }
 
    radv_meta_end(cmd_buffer);
@@ -2860,7 +2860,7 @@ radv_CmdWriteTimestamp2(VkCommandBuffer commandBuffer, VkPipelineStageFlags2 sta
 
       for (unsigned i = 0; i < num_queries; ++i, query_va += pool->stride) {
          radeon_check_space(device->ws, cs->b, 3);
-         ac_emit_sdma_write_timestamp(cs->b, query_va);
+         ac_emit_sdma_write_timestamp(cs->b, pdev->info.sdma_ip_version, query_va);
       }
       return;
    }

@@ -1433,26 +1433,38 @@ radv_create_gang_wait_preambles_postambles(struct radv_queue *queue)
     * in a multi-process environment, because task shader dispatches are not
     * meant to be executed on multiple compute engines at the same time.
     */
-   ac_emit_cp_wait_mem(
-      ace_pre_cs->b, ace_wait_va, 1, 0xffffffff,
-      S_3C1_FUNCTION(V_3C1_GREATER_THAN_OR_EQUAL_REFERENCE_VALUE) | S_3C1_OPERATION(V_3C1_WAIT_MEM_PREEMPTABLE));
+
+   uint32_t ace_pre_wait_flags = S_3C1_FUNCTION(V_3C1_GREATER_THAN_OR_EQUAL_REFERENCE_VALUE);
+   if (pdev->info.gfx_level >= GFX9)
+      ace_pre_wait_flags |= S_3C1_OPERATION(V_3C1_WAIT_MEM_PREEMPTABLE);
+   else if (pdev->info.gfx_level == GFX8)
+      ace_pre_wait_flags |= WAIT_REG_MEM_UNCACHED_VI_MEC;
+
+   ac_emit_cp_wait_mem(ace_pre_cs->b, ace_wait_va, 1, 0xffffffff, ace_pre_wait_flags);
    radv_cs_write_data(device, ace_pre_cs, V_371_MICRO_ENGINE, ace_wait_va, 1, &zero, false);
    radv_cs_write_data(device, leader_pre_cs, V_371_MICRO_ENGINE, ace_wait_va, 1, &one, false);
+
    /* Create postambles for gang submission.
     * This ensures that the gang leader waits for the whole gang,
     * which is necessary because the kernel signals the userspace fence
     * as soon as the gang leader is done, which may lead to bugs because the
     * same command buffers could be submitted again while still being executed.
     */
-   const uint32_t leader_engine_sel = ip == AMD_IP_GFX ? V_371_PREFETCH_PARSER : V_371_MICRO_ENGINE;
-   if (ip == AMD_IP_SDMA)
-      ac_emit_sdma_wait_mem(leader_post_cs->b, WAIT_REG_MEM_GREATER_OR_EQUAL, leader_wait_va, 1, 0xffffffff);
-   else
-      ac_emit_cp_wait_mem(
-         leader_post_cs->b, leader_wait_va, 1, 0xffffffff,
-         S_3C1_FUNCTION(V_3C1_GREATER_THAN_OR_EQUAL_REFERENCE_VALUE) | S_3C1_ENGINE_SEL(leader_engine_sel));
-   radv_cs_write_data(device, leader_post_cs, leader_engine_sel, leader_wait_va, 1, &zero, false);
 
+   const uint32_t leader_engine_sel = ip == AMD_IP_GFX ? V_371_PREFETCH_PARSER : V_371_MICRO_ENGINE;
+
+   if (ip == AMD_IP_SDMA) {
+      ac_emit_sdma_wait_mem(leader_post_cs->b, pdev->info.sdma_ip_version, WAIT_REG_MEM_GREATER_OR_EQUAL,
+                            leader_wait_va, 1, 0xffffffff);
+   } else {
+      uint32_t cp_post_wait_flags =
+         S_3C1_FUNCTION(V_3C1_GREATER_THAN_OR_EQUAL_REFERENCE_VALUE) | S_3C1_ENGINE_SEL(leader_engine_sel);
+      if (pdev->info.gfx_level == GFX8 && ip == AMD_IP_COMPUTE)
+         cp_post_wait_flags |= WAIT_REG_MEM_UNCACHED_VI_MEC;
+
+      ac_emit_cp_wait_mem(leader_post_cs->b, leader_wait_va, 1, 0xffffffff, cp_post_wait_flags);
+   }
+   radv_cs_write_data(device, leader_post_cs, leader_engine_sel, leader_wait_va, 1, &zero, false);
    radv_cs_emit_write_event_eop(ace_post_cs, pdev->info.gfx_level, V_028A90_BOTTOM_OF_PIPE_TS, 0, EOP_DST_SEL_MEM,
                                 EOP_INT_SEL_SEND_DATA_AFTER_WR_CONFIRM, EOP_DATA_SEL_VALUE_32BIT, leader_wait_va, 1, 0);
 

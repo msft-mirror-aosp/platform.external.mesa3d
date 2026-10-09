@@ -87,7 +87,10 @@ radv_clear_copy_buffer_options(const struct radv_cmd_buffer *const cmd_buffer)
       .info = &pdev->info,
       .nir_options = &device->compiler_info.nir_options[MESA_SHADER_COMPUTE],
       .addr_user_data = true,
-      .fail_if_slow = true,
+      .is_compute_queue = cmd_buffer->qf == RADV_QUEUE_COMPUTE,
+      /* Don't fail if CP DMA can't use L2. We prefer to use the compute path in that case. */
+      .fail_if_slow =
+         pdev->drirc.performance.buffer_meta_path == RADV_BUFFER_META_PATH_AUTO && pdev->info.cp_dma_use_L2,
    };
 
    return options;
@@ -98,10 +101,13 @@ radv_clear_copy_buffer_info(const struct radv_cmd_buffer *const cmd_buffer, cons
                             const uint64_t dst_va, const uint64_t size, const VkAddressCopyFlagsKHR src_copy_flags,
                             const VkAddressCopyFlagsKHR dst_copy_flags)
 {
+   const struct radv_device *const device = radv_cmd_buffer_device(cmd_buffer);
+   const struct radv_physical_device *const pdev = radv_device_physical(device);
    const ac_cs_clear_copy_buffer_info info = {
       .dst_offset = dst_va,
       .src_offset = src_va,
       .size = size,
+      .dwords_per_thread = radv_buffer_meta_path_get_dwords_per_thread(pdev->drirc.performance.buffer_meta_path),
       .dst_is_vram = dst_copy_flags & VK_ADDRESS_COPY_DEVICE_LOCAL_BIT_KHR,
       .src_is_vram = src_copy_flags & VK_ADDRESS_COPY_DEVICE_LOCAL_BIT_KHR,
       .dst_is_sparse = dst_copy_flags & VK_ADDRESS_COPY_SPARSE_BIT_KHR,
@@ -163,9 +169,27 @@ radv_compute_copy_memory(struct radv_cmd_buffer *cmd_buffer,
    radv_utrace_end_compute_copy_memory(cmd_buffer);
 }
 
+static bool
+radv_prepare_cs_clear_copy_buffer(const struct radv_cmd_buffer *cmd_buffer,
+                                  const ac_cs_clear_copy_buffer_options *options,
+                                  const ac_cs_clear_copy_buffer_info *info, ac_cs_clear_copy_buffer_dispatch *out)
+{
+   const struct radv_device *const device = radv_cmd_buffer_device(cmd_buffer);
+   const struct radv_physical_device *const pdev = radv_device_physical(device);
+   const bool use_compute = ac_prepare_cs_clear_copy_buffer(options, info, out);
+
+   if (pdev->drirc.performance.buffer_meta_path == RADV_BUFFER_META_PATH_CP_DMA && out->cpdma_supported)
+      return false;
+
+   assert(use_compute || !radv_buffer_meta_path_forces_compute(pdev->drirc.performance.buffer_meta_path));
+   assert(use_compute || out->cpdma_supported);
+
+   return use_compute;
+}
+
 static uint32_t
 radv_fill_memory_internal(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *image, uint64_t dst_va,
-                          uint64_t size, uint32_t value, VkAddressCopyFlagsKHR dst_copy_flags)
+                          uint64_t size, uint32_t value, VkAddressCopyFlagsKHR dst_copy_flags, bool cp_coherent)
 {
    assert(!(dst_va & 3));
    assert(!(size & 3));
@@ -185,7 +209,7 @@ radv_fill_memory_internal(struct radv_cmd_buffer *cmd_buffer, const struct radv_
    info.clear_value[0] = value;
    info.clear_value_size = sizeof(uint32_t);
 
-   const bool use_compute = ac_prepare_cs_clear_copy_buffer(&options, &info, &dispatch);
+   const bool use_compute = radv_prepare_cs_clear_copy_buffer(cmd_buffer, &options, &info, &dispatch);
    uint32_t flush_bits = 0;
 
    if (use_compute) {
@@ -195,7 +219,8 @@ radv_fill_memory_internal(struct radv_cmd_buffer *cmd_buffer, const struct radv_
                    radv_src_access_flush(cmd_buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                          VK_ACCESS_2_SHADER_WRITE_BIT, 0, image, NULL);
    } else if (size) {
-      radv_cp_dma_fill_memory(cmd_buffer, dst_va, size, value);
+      radv_cp_dma_fill_memory(cmd_buffer, dst_va, size, value, image || cp_coherent);
+      flush_bits = AC_BARRIER_SYNC_CP_DMA;
    }
 
    return flush_bits;
@@ -203,9 +228,9 @@ radv_fill_memory_internal(struct radv_cmd_buffer *cmd_buffer, const struct radv_
 
 uint32_t
 radv_fill_memory(struct radv_cmd_buffer *cmd_buffer, uint64_t va, uint64_t size, uint32_t value,
-                 VkAddressCopyFlagsKHR copy_flags)
+                 VkAddressCopyFlagsKHR copy_flags, bool cp_coherent)
 {
-   return radv_fill_memory_internal(cmd_buffer, NULL, va, size, value, copy_flags);
+   return radv_fill_memory_internal(cmd_buffer, NULL, va, size, value, copy_flags, cp_coherent);
 }
 
 uint32_t
@@ -220,12 +245,12 @@ radv_fill_image(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *ima
 
    radv_cs_add_buffer(device->ws, cs->b, bo);
 
-   return radv_fill_memory_internal(cmd_buffer, image, va, size, value, copy_flags);
+   return radv_fill_memory_internal(cmd_buffer, image, va, size, value, copy_flags, false);
 }
 
 uint32_t
 radv_fill_buffer(struct radv_cmd_buffer *cmd_buffer, struct radeon_winsys_bo *bo, uint64_t va, uint64_t size,
-                 uint32_t value)
+                 uint32_t value, bool cp_coherent)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const VkAddressCopyFlagsKHR copy_flags = radv_get_copy_flags_from_bo(bo);
@@ -233,7 +258,7 @@ radv_fill_buffer(struct radv_cmd_buffer *cmd_buffer, struct radeon_winsys_bo *bo
 
    radv_cs_add_buffer(device->ws, cs->b, bo);
 
-   return radv_fill_memory(cmd_buffer, va, size, value, copy_flags);
+   return radv_fill_memory(cmd_buffer, va, size, value, copy_flags, cp_coherent);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -249,7 +274,7 @@ radv_CmdFillBuffer(VkCommandBuffer commandBuffer, VkBuffer dstBuffer, VkDeviceSi
 
    fillSize = vk_buffer_range(&dst_buffer->vk, dstOffset, fillSize) & ~3ull;
 
-   radv_fill_buffer(cmd_buffer, dst_buffer->bo, vk_buffer_address(&dst_buffer->vk, dstOffset), fillSize, data);
+   radv_fill_buffer(cmd_buffer, dst_buffer->bo, vk_buffer_address(&dst_buffer->vk, dstOffset), fillSize, data, false);
 
    radv_meta_end(cmd_buffer);
 
@@ -267,7 +292,7 @@ radv_CmdFillMemoryKHR(VkCommandBuffer commandBuffer, const VkDeviceAddressRangeK
 
    radv_meta_begin(cmd_buffer);
 
-   radv_fill_memory(cmd_buffer, pDstRange->address, pDstRange->size, data, dst_copy_flags);
+   radv_fill_memory(cmd_buffer, pDstRange->address, pDstRange->size, data, dst_copy_flags, false);
 
    radv_meta_end(cmd_buffer);
 
@@ -291,7 +316,7 @@ radv_copy_memory(struct radv_cmd_buffer *cmd_buffer, uint64_t src_va, uint64_t d
    ac_cs_clear_copy_buffer_info info =
       radv_clear_copy_buffer_info(cmd_buffer, src_va, dst_va, size, src_copy_flags, dst_copy_flags);
 
-   const bool use_compute = ac_prepare_cs_clear_copy_buffer(&options, &info, &dispatch);
+   const bool use_compute = radv_prepare_cs_clear_copy_buffer(cmd_buffer, &options, &info, &dispatch);
 
    if (use_compute) {
       radv_compute_copy_memory(cmd_buffer, &options, &dispatch, size);
@@ -361,7 +386,6 @@ radv_update_memory_cp(struct radv_cmd_buffer *cmd_buffer, uint64_t va, const voi
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    uint64_t words = size / 4;
-   bool mec = radv_cmd_buffer_uses_mec(cmd_buffer);
    struct radv_cmd_stream *cs = cmd_buffer->cs;
 
    assert(size < RADV_BUFFER_UPDATE_THRESHOLD);
@@ -369,7 +393,8 @@ radv_update_memory_cp(struct radv_cmd_buffer *cmd_buffer, uint64_t va, const voi
    radv_emit_cache_flush(cmd_buffer, false);
    radeon_check_space(device->ws, cs->b, words + 4);
 
-   ac_emit_cp_write_data(cs->b, V_371_MICRO_ENGINE, mec ? V_371_MEMORY : V_371_MEM_GRBM, va, words, data, false);
+   ac_emit_cp_write_data(cs->b, V_371_MICRO_ENGINE, cmd_buffer->is_mec ? V_371_MEMORY : V_371_MEM_GRBM, va, words, data,
+                         false);
 
    if (radv_device_fault_detection_enabled(device))
       radv_cmd_buffer_trace_emit(cmd_buffer);

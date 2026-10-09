@@ -19,6 +19,7 @@
 #include "util/log.h"
 #include "util/macros.h"
 #include "virtio/virtio-gpu/virgl_hw.h"
+#include "vulkan/util/vk_format.h"
 #include "vulkan/vulkan_core.h"
 
 #ifdef VK_USE_PLATFORM_ANDROID_KHR
@@ -699,6 +700,20 @@ static void transformExternalResourceMemoryDedicatedRequirementsForGuest(
     dedicatedReqs->requiresDedicatedAllocation = VK_TRUE;
 }
 
+#if defined(LINUX_GUEST_BUILD)
+static void fillEmulatedLinearSubresourceLayout(const VkImageCreateInfo& createInfo,
+                                                VkSubresourceLayout* pLayout) {
+    uint32_t bpp = vk_format_get_blocksize(createInfo.format);
+    if (bpp == 0) bpp = 4;
+    if (pLayout->rowPitch == 0) {
+        pLayout->rowPitch = ALIGN_POT(createInfo.extent.width * bpp, 256);
+    }
+    pLayout->size = (VkDeviceSize)pLayout->rowPitch * createInfo.extent.height;
+    pLayout->depthPitch = pLayout->size;
+    pLayout->arrayPitch = pLayout->size;
+}
+#endif
+
 void ResourceTracker::transformImageMemoryRequirementsForGuestLocked(VkImage image,
                                                                      VkMemoryRequirements* reqs) {
 #ifdef VK_USE_PLATFORM_FUCHSIA
@@ -709,6 +724,23 @@ void ResourceTracker::transformImageMemoryRequirementsForGuestLocked(VkImage ima
         auto width = info.createInfo.extent.width;
         auto height = info.createInfo.extent.height;
         reqs->size = width * height * 4;
+    }
+#elif defined(LINUX_GUEST_BUILD)
+    auto it = info_VkImage.find(image);
+    if (it == info_VkImage.end()) return;
+    auto& info = it->second;
+    if (info.emulatedDrmFormatModifier && info.external &&
+        (info.externalCreateInfo.handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT)) {
+        VkSubresourceLayout layout = {};
+        if (info.hasExplicitDrmModifier && info.explicitPlaneLayout.size > 0) {
+            layout = info.explicitPlaneLayout;
+        } else {
+            fillEmulatedLinearSubresourceLayout(info.createInfo, &layout);
+        }
+        VkDeviceSize minSize = ALIGN_POT(layout.size, 4096);
+        if (reqs->size < minSize) {
+            reqs->size = minSize;
+        }
     }
 #else
     // Bypass "unused parameter" checks.
@@ -981,8 +1013,12 @@ static void addPendingDescriptorSets(VkCommandBuffer commandBuffer, uint32_t des
     CommandBufferPendingDescriptorSets* pendingSets =
         (CommandBufferPendingDescriptorSets*)cb->userPtr;
 
+    if (!pDescriptorSets) return;
+
     for (uint32_t i = 0; i < descriptorSetCount; ++i) {
-        pendingSets->sets.insert(pDescriptorSets[i]);
+        if (pDescriptorSets[i]) {
+            pendingSets->sets.insert(pDescriptorSets[i]);
+        }
     }
 }
 
@@ -1841,8 +1877,7 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
 
         // Android requirements
         "VK_EXT_pipeline_protected_access",
-        // TODO(b/514638991): Serialization bugs in maintenance6 extension
-        // "VK_KHR_maintenance6",
+        "VK_KHR_maintenance6",
         "VK_KHR_maintenance7",
         "VK_KHR_maintenance8",
         "VK_KHR_maintenance9",
@@ -3930,6 +3965,11 @@ VkResult ResourceTracker::on_vkAllocateMemory(void* context, VkResult input_resu
     VirtGpuResourcePtr bufferBlob = nullptr;
     int importedFd = -1;
 #if defined(LINUX_GUEST_BUILD)
+    hasDedicatedImage =
+        dedicatedAllocInfoPtr && (dedicatedAllocInfoPtr->image != VK_NULL_HANDLE);
+    hasDedicatedBuffer =
+        dedicatedAllocInfoPtr && (dedicatedAllocInfoPtr->buffer != VK_NULL_HANDLE);
+
     // Check for import first; this takes precedence over exportDmabuf in creating the
     // VirtGpuResource
     if (importDmabuf) {
@@ -3950,10 +3990,6 @@ VkResult ResourceTracker::on_vkAllocateMemory(void* context, VkResult input_resu
         importedFd = importFdInfoPtr->fd;
     } else if (exportDmabuf) {
         VirtGpuDevice* instance = VirtGpuDevice::getInstance();
-        hasDedicatedImage =
-            dedicatedAllocInfoPtr && (dedicatedAllocInfoPtr->image != VK_NULL_HANDLE);
-        hasDedicatedBuffer =
-            dedicatedAllocInfoPtr && (dedicatedAllocInfoPtr->buffer != VK_NULL_HANDLE);
 
         if (hasDedicatedImage) {
             VkImageCreateInfo imageCreateInfo;
@@ -4031,9 +4067,8 @@ VkResult ResourceTracker::on_vkAllocateMemory(void* context, VkResult input_resu
                     .arrayLayer = 0,
                 };
                 VkSubresourceLayout subResourceLayout = {};
-                enc->vkGetImageSubresourceLayout(device, dedicatedAllocInfoPtr->image,
-                                                 &imageSubresource, &subResourceLayout,
-                                                 true /* do lock */);
+                on_vkGetImageSubresourceLayout(context, device, dedicatedAllocInfoPtr->image,
+                                               &imageSubresource, &subResourceLayout);
                 if (!subResourceLayout.rowPitch) {
                     mesa_loge("Failed to query stride for VirtGpu resource creation.");
                     return VK_ERROR_INITIALIZATION_FAILED;
@@ -4053,7 +4088,7 @@ VkResult ResourceTracker::on_vkAllocateMemory(void* context, VkResult input_resu
                     return VK_ERROR_OUT_OF_DEVICE_MEMORY;
                 }
             }
-        } else if (hasDedicatedBuffer) {
+        } else {
             uint32_t virglFormat = VIRGL_FORMAT_R8_UNORM;
             const uint32_t target = PIPE_BUFFER;
             uint32_t bind = VIRGL_BIND_LINEAR;
@@ -4107,20 +4142,16 @@ VkResult ResourceTracker::on_vkAllocateMemory(void* context, VkResult input_resu
                     return VK_ERROR_OUT_OF_DEVICE_MEMORY;
                 }
             }
-        } else {
-            mesa_logw(
-                "VkDeviceMemory is not exportable (VkExportMemoryAllocateInfo). Requires "
-                "VkMemoryDedicatedAllocateInfo::image to create external resource.");
         }
     }
 
     if (bufferBlob) {
-        if (hasDedicatedBuffer) {
-            importBufferInfo.buffer = bufferBlob->getResourceHandle();
-            vk_append_struct(&structChainIter, &importBufferInfo);
-        } else {
+        if (hasDedicatedImage) {
             importCbInfo.colorBuffer = bufferBlob->getResourceHandle();
             vk_append_struct(&structChainIter, &importCbInfo);
+        } else {
+            importBufferInfo.buffer = bufferBlob->getResourceHandle();
+            vk_append_struct(&structChainIter, &importBufferInfo);
         }
     }
 #endif
@@ -4426,13 +4457,15 @@ VkResult ResourceTracker::on_vkCreateImage(void* context, VkResult, VkDevice dev
 #if defined(LINUX_GUEST_BUILD)
     VkImageDrmFormatModifierExplicitCreateInfoEXT localDrmFormatModifierInfo;
     VkImageDrmFormatModifierListCreateInfoEXT localDrmFormatModifierList;
+    const VkImageDrmFormatModifierExplicitCreateInfoEXT* drmFmtMod =
+        vk_find_struct_const(pCreateInfo, IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT);
 
     // If the VkImage will be bound to guest-dmabuf memory
     if (extImgCiPtr &&
         (extImgCiPtr->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT)) {
         const wsi_image_create_info* wsiImageCi =
             vk_find_struct_const(pCreateInfo, WSI_IMAGE_CREATE_INFO_MESA);
-        if (wsiImageCi && wsiImageCi->scanout) {
+        if (wsiImageCi) {
             // Linux WSI creates swapchain images with VK_IMAGE_CREATE_ALIAS_BIT. Vulkan spec
             // states: "If the pNext chain includes a VkExternalMemoryImageCreateInfo or
             // VkExternalMemoryImageCreateInfoNV structure whose handleTypes member is not 0, it is
@@ -4441,8 +4474,6 @@ VkResult ResourceTracker::on_vkCreateImage(void* context, VkResult, VkDevice dev
             localCreateInfo.flags &= ~VK_IMAGE_CREATE_ALIAS_BIT;
         }
 
-        const VkImageDrmFormatModifierExplicitCreateInfoEXT* drmFmtMod =
-            vk_find_struct_const(pCreateInfo, IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT);
         const VkImageDrmFormatModifierListCreateInfoEXT* drmFmtModList =
             vk_find_struct_const(pCreateInfo, IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT);
         if ((pCreateInfo->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) &&
@@ -4457,10 +4488,11 @@ VkResult ResourceTracker::on_vkCreateImage(void* context, VkResult, VkDevice dev
             if (doImageDrmFormatModifierEmulation(physicalDevice)) {
                 bool canUseLinearModifier =
                     (drmFmtMod && drmFmtMod->drmFormatModifier == DRM_FORMAT_MOD_LINEAR) ||
-                    std::any_of(
-                        drmFmtModList->pDrmFormatModifiers,
-                        drmFmtModList->pDrmFormatModifiers + drmFmtModList->drmFormatModifierCount,
-                        [](const uint64_t mod) { return mod == DRM_FORMAT_MOD_LINEAR; });
+                    (drmFmtModList &&
+                     std::any_of(
+                         drmFmtModList->pDrmFormatModifiers,
+                         drmFmtModList->pDrmFormatModifiers + drmFmtModList->drmFormatModifierCount,
+                         [](const uint64_t mod) { return mod == DRM_FORMAT_MOD_LINEAR; }));
                 // host doesn't support DRM format modifiers, try emulating
                 if (canUseLinearModifier) {
                     mesa_logd(
@@ -4654,6 +4686,23 @@ VkResult ResourceTracker::on_vkCreateImage(void* context, VkResult, VkDevice dev
         info.external = true;
         info.externalCreateInfo = *extImgCiPtr;
     }
+
+#if defined(LINUX_GUEST_BUILD)
+    auto devIt = info_VkDevice.find(device);
+    if (devIt != info_VkDevice.end()) {
+        info.emulatedDrmFormatModifier =
+            (pCreateInfo->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) &&
+            doImageDrmFormatModifierEmulation(devIt->second.physdev);
+    }
+    if (info.emulatedDrmFormatModifier && drmFmtMod && drmFmtMod->pPlaneLayouts &&
+        drmFmtMod->drmFormatModifierPlaneCount > 0) {
+        info.hasExplicitDrmModifier = true;
+        info.explicitPlaneLayout = drmFmtMod->pPlaneLayouts[0];
+        if (info.explicitPlaneLayout.size == 0) {
+            fillEmulatedLinearSubresourceLayout(info.createInfo, &info.explicitPlaneLayout);
+        }
+    }
+#endif
 
 #ifdef VK_USE_PLATFORM_FUCHSIA
     if (isSysmemBackedMemory) {
@@ -5604,6 +5653,49 @@ VkResult ResourceTracker::on_vkGetImageDrmFormatModifierPropertiesEXT(
 #endif
 }
 
+void ResourceTracker::on_vkGetImageSubresourceLayout(void* context, VkDevice device, VkImage image,
+                                                     const VkImageSubresource* pSubresource,
+                                                     VkSubresourceLayout* pLayout) {
+    if (!pSubresource || !pLayout) return;
+
+    VkEncoder* enc = (VkEncoder*)context;
+#if defined(LINUX_GUEST_BUILD)
+    VkImageSubresource hostSubresource = *pSubresource;
+
+    VkImageCreateInfo imageCreateInfo = {};
+    bool emulatingModifiers = false;
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(mLock);
+        auto it = info_VkImage.find(image);
+        if (it != info_VkImage.end() && it->second.emulatedDrmFormatModifier) {
+            emulatingModifiers = true;
+            imageCreateInfo = it->second.createInfo;
+            if (it->second.hasExplicitDrmModifier) {
+                *pLayout = it->second.explicitPlaneLayout;
+                return;
+            }
+        }
+    }
+
+    if (emulatingModifiers) {
+        if (hostSubresource.aspectMask & (VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT |
+                                          VK_IMAGE_ASPECT_PLANE_0_BIT)) {
+            hostSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        }
+    }
+
+    enc->vkGetImageSubresourceLayout(device, image, &hostSubresource, pLayout, true /* do lock */);
+
+    if (emulatingModifiers && pLayout->rowPitch == 0 && imageCreateInfo.extent.width > 0) {
+        *pLayout = {};
+        fillEmulatedLinearSubresourceLayout(imageCreateInfo, pLayout);
+    }
+#else
+    enc->vkGetImageSubresourceLayout(device, image, pSubresource, pLayout, true /* do lock */);
+#endif
+}
+
 VkResult ResourceTracker::on_vkBindImageMemory(void* context, VkResult, VkDevice device,
                                                VkImage image, VkDeviceMemory memory,
                                                VkDeviceSize memoryOffset) {
@@ -5641,7 +5733,61 @@ VkResult ResourceTracker::on_vkBindImageMemory2(void* context, VkResult, VkDevic
         }
     }
 
-    return enc->vkBindImageMemory2(device, bindingCount, pBindInfos, true /* do lock */);
+    VkResult res = enc->vkBindImageMemory2(device, bindingCount, pBindInfos, true /* do lock */);
+
+    // The host decoder historically treated the `const VkBindMemoryStatus*` as
+    // an input only parameter and did not return individual VkResult values in
+    // the `VkBindMemoryStatus`s. It would be a backwards incompatible change
+    // to update that now. Instead just propagate the overall result to each
+    // individual `VkBindMemoryStatus::pResult` as the spec says that the
+    // `vkBindImageMemory2()` call must return one of the failure results and
+    // that all images are left in an indeterminate state and must not be used:
+    // https://docs.vulkan.org/refpages/latest/refpages/source/vkBindImageMemory2.html.
+    for (uint32_t i = 0; i < bindingCount; i++) {
+        const VkBindMemoryStatus* bindStatus =
+            vk_find_struct_const(&pBindInfos[i], BIND_MEMORY_STATUS);
+        if (bindStatus && bindStatus->pResult) {
+            *bindStatus->pResult = res;
+        }
+    }
+    return res;
+}
+
+VkResult ResourceTracker::on_vkBindImageMemory2KHR(void* context, VkResult input_result,
+                                                   VkDevice device, uint32_t bindingCount,
+                                                   const VkBindImageMemoryInfo* pBindInfos) {
+    return on_vkBindImageMemory2(context, input_result, device, bindingCount, pBindInfos);
+}
+
+VkResult ResourceTracker::on_vkBindBufferMemory2(void* context, VkResult, VkDevice device,
+                                                 uint32_t bindInfoCount,
+                                                 const VkBindBufferMemoryInfo* pBindInfos) {
+    VkEncoder* enc = (VkEncoder*)context;
+
+    VkResult res = enc->vkBindBufferMemory2(device, bindInfoCount, pBindInfos, true /* do lock */);
+
+    // The host decoder historically treated the `const VkBindMemoryStatus*` as
+    // an input only parameter and did not return individual VkResult values in
+    // the `VkBindMemoryStatus`s. It would be a backwards incompatible change
+    // to update that now. Instead just propagate the overall result to each
+    // individual `VkBindMemoryStatus::pResult` as the spec says that the
+    // `vkBindBufferMemory2()` call must return one of the failure results and
+    // that all buffers are left in an indeterminate state and must not be used:
+    // https://docs.vulkan.org/refpages/latest/refpages/source/vkBindBufferMemory2.html
+    for (uint32_t i = 0; i < bindInfoCount; i++) {
+        const VkBindMemoryStatus* bindStatus =
+            vk_find_struct_const(&pBindInfos[i], BIND_MEMORY_STATUS);
+        if (bindStatus && bindStatus->pResult) {
+            *bindStatus->pResult = res;
+        }
+    }
+    return res;
+}
+
+VkResult ResourceTracker::on_vkBindBufferMemory2KHR(void* context, VkResult input_result,
+                                                    VkDevice device, uint32_t bindInfoCount,
+                                                    const VkBindBufferMemoryInfo* pBindInfos) {
+    return on_vkBindBufferMemory2(context, input_result, device, bindInfoCount, pBindInfos);
 }
 
 VkResult ResourceTracker::on_vkCreateBuffer(void* context, VkResult, VkDevice device,
@@ -5675,6 +5821,14 @@ VkResult ResourceTracker::on_vkCreateBuffer(void* context, VkResult, VkDevice de
     if (pDevAddrCi) {
         localDevAddrCi = vk_make_orphan_copy(*pDevAddrCi);
         vk_append_struct(&structChainIter, &localDevAddrCi);
+    }
+
+    VkBufferUsageFlags2CreateInfo localBufUsageFlags2Ci;
+    const VkBufferUsageFlags2CreateInfo* pBufUsageFlags2Ci =
+        vk_find_struct_const(pCreateInfo, BUFFER_USAGE_FLAGS_2_CREATE_INFO);
+    if (pBufUsageFlags2Ci) {
+        localBufUsageFlags2Ci = vk_make_orphan_copy(*pBufUsageFlags2Ci);
+        vk_append_struct(&structChainIter, &localBufUsageFlags2Ci);
     }
 
 #ifdef VK_USE_PLATFORM_FUCHSIA
@@ -7048,16 +7202,20 @@ static void fillEmulatedDrmFormatModPropsList(
     mesa_logd(
         "VkDrmFormatModifierPropertiesListEXT: emulating DRM_FORMAT_MOD_LINEAR with linear tiling "
         "features");
+    uint32_t count = emulatedDrmFmtModPropsList->drmFormatModifierCount;
     emulatedDrmFmtModPropsList->drmFormatModifierCount = 1;
-    if (emulatedDrmFmtModPropsList->pDrmFormatModifierProperties) {
+    if (emulatedDrmFmtModPropsList->pDrmFormatModifierProperties && count > 0) {
+        VkFormatFeatureFlags tilingFeatures =
+            pFormatProperties ? pFormatProperties->linearTilingFeatures : 0;
+        tilingFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                          VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                          VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
         emulatedDrmFmtModPropsList->pDrmFormatModifierProperties[0] = {
             .drmFormatModifier = DRM_FORMAT_MOD_LINEAR,
             .drmFormatModifierPlaneCount = 1,
-            .drmFormatModifierTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
-                                               VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
-                                               VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT,
+            .drmFormatModifierTilingFeatures = tilingFeatures,
         };
-    };
+    }
 }
 #endif
 
@@ -7065,17 +7223,35 @@ void ResourceTracker::on_vkGetPhysicalDeviceFormatProperties2(
     void* context, VkPhysicalDevice physicalDevice, VkFormat format,
     VkFormatProperties2* pFormatProperties) {
     VkEncoder* enc = (VkEncoder*)context;
-    enc->vkGetPhysicalDeviceFormatProperties2(physicalDevice, format, pFormatProperties,
-                                              true /* do lock */);
 
 #ifdef LINUX_GUEST_BUILD
     VkDrmFormatModifierPropertiesListEXT* emulatedDrmFmtModPropsList =
         vk_find_struct(pFormatProperties, DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT);
     if (emulatedDrmFmtModPropsList && doImageDrmFormatModifierEmulation(physicalDevice)) {
+        // Unlink DRM modifier properties from the chain sent to host so host unmarshaler
+        // doesn't write out-of-bounds on unpadded guest buffers.
+        emulatedDrmFmtModPropsList = vk_extract_struct<VkDrmFormatModifierPropertiesListEXT>(
+            pFormatProperties, VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT);
+
+        enc->vkGetPhysicalDeviceFormatProperties2(physicalDevice, format, pFormatProperties,
+                                                  true /* do lock */);
+
+        __vk_append_struct(pFormatProperties, emulatedDrmFmtModPropsList);
+
         fillEmulatedDrmFormatModPropsList(&pFormatProperties->formatProperties,
                                           emulatedDrmFmtModPropsList);
+        return;
     }
 #endif
+
+    enc->vkGetPhysicalDeviceFormatProperties2(physicalDevice, format, pFormatProperties,
+                                              true /* do lock */);
+}
+
+void ResourceTracker::on_vkGetPhysicalDeviceFormatProperties2KHR(
+    void* context, VkPhysicalDevice physicalDevice, VkFormat format,
+    VkFormatProperties2* pFormatProperties) {
+    on_vkGetPhysicalDeviceFormatProperties2(context, physicalDevice, format, pFormatProperties);
 }
 
 VkResult ResourceTracker::on_vkGetPhysicalDeviceImageFormatProperties2(
@@ -7522,6 +7698,26 @@ void ResourceTracker::on_vkCmdBindDescriptorSets(void* context, VkCommandBuffer 
     enc->vkCmdBindDescriptorSets(commandBuffer, pipelineBindPoint, layout, firstSet,
                                  descriptorSetCount, pDescriptorSets, dynamicOffsetCount,
                                  pDynamicOffsets, true /* do lock */);
+}
+
+void ResourceTracker::on_vkCmdBindDescriptorSets2(
+    void* context, VkCommandBuffer commandBuffer,
+    const VkBindDescriptorSetsInfo* pBindDescriptorSetsInfo) {
+    if (!pBindDescriptorSetsInfo) return;
+    VkEncoder* enc = (VkEncoder*)context;
+
+    if (mFeatureInfo.hasVulkanBatchedDescriptorSetUpdate) {
+        addPendingDescriptorSets(commandBuffer, pBindDescriptorSetsInfo->descriptorSetCount,
+                                 pBindDescriptorSetsInfo->pDescriptorSets);
+    }
+
+    enc->vkCmdBindDescriptorSets2(commandBuffer, pBindDescriptorSetsInfo, true /* do lock */);
+}
+
+void ResourceTracker::on_vkCmdBindDescriptorSets2KHR(
+    void* context, VkCommandBuffer commandBuffer,
+    const VkBindDescriptorSetsInfo* pBindDescriptorSetsInfo) {
+    on_vkCmdBindDescriptorSets2(context, commandBuffer, pBindDescriptorSetsInfo);
 }
 
 void ResourceTracker::on_vkCmdPipelineBarrier(

@@ -101,6 +101,11 @@ fn legalize_fixed_srcs(
     for reg in ra::instr_clobbered_regs(b.model(), &instr.op) {
         clobbered.insert_range(reg.byte_range());
     }
+    for dst in instr.dsts() {
+        if let Some(reg) = b.model().op_fixed_dst_reg(&instr.op, dst) {
+            clobbered.insert_range(reg.byte_range());
+        }
+    }
 
     for src_idx in 0..instr.srcs().len() {
         let src = &instr.srcs()[src_idx];
@@ -266,10 +271,17 @@ impl LegalizeFAU<'_> {
                 continue;
             };
 
+            // The hardware doesn't make a distinction between a 64-bit FAU
+            // source with a swizzle which only reads a subset of the bytes
+            // and a source which reads the whole 64-bit FAU.  If it uses
+            // SourceEncoding64 and isn't a small constant, it's 64-bit.
+            let is64 = fau.page != FAUPage::SmallConst
+                && model.op_src_is_64bit(&op, src);
+
             let idx64 = fau.idx >> 1;
             let word = fau.idx & 1;
 
-            if word == 1 && model.op_src_is_64bit(&op, src) {
+            if is64 && word == 1 {
                 self.src64_w1.insert(src_idx);
 
                 // We can't handle .w1 in most 64-bit ops.  If we can't compose
@@ -299,11 +311,7 @@ impl LegalizeFAU<'_> {
             };
 
             slot.use_count += 1;
-            slot.words_used |= if fau.load64 {
-                0b11
-            } else {
-                1 << (fau.idx & 0b1)
-            };
+            slot.words_used |= if is64 { 0b11 } else { 1 << word };
         }
     }
 
