@@ -16,7 +16,8 @@ typedef NSUInteger MTL4TimestampGranularity;
 #define MTL4TimestampGranularityRelaxed ((MTL4TimestampGranularity)0)
 
 typedef NSUInteger MTL4CounterHeapType;
-#define MTL4CounterHeapTypeTimestamp ((MTL4CounterHeapType)0)
+#define MTL4CounterHeapTypeInvalid ((MTL4CounterHeapType)0)
+#define MTL4CounterHeapTypeTimestamp ((MTL4CounterHeapType)1)
 
 typedef NSUInteger MTLSamplerReductionMode;
 
