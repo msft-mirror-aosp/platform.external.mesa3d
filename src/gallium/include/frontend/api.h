@@ -191,6 +191,7 @@ struct st_config_options
    bool force_compat_shaders;
    bool force_glsl_extensions_warn;
    unsigned force_glsl_version;
+   unsigned default_glsl_version;
    bool allow_extra_pp_tokens;
    bool allow_glsl_extension_directive_midshader;
    bool allow_glsl_120_subset_in_110;
@@ -210,6 +211,7 @@ struct st_config_options
    bool allow_draw_out_of_order;
    bool glthread_nop_check_framebuffer_status;
    bool ignore_map_unsynchronized;
+   bool zero_invalidated_buffers;
    bool ignore_discard_framebuffer;
    bool force_integer_tex_nearest;
    bool force_gl_map_buffer_synchronized;

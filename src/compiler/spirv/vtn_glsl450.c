@@ -129,10 +129,22 @@ vtn_nir_alu_op_for_spirv_glsl_opcode(struct vtn_builder *b,
    *extra_fp_math_ctrl = nir_fp_fast_math;
    switch (opcode) {
    case GLSLstd450NMin:
-   case GLSLstd450NMax: {
-      *extra_fp_math_ctrl = nir_fp_preserve_nan | nir_fp_preserve_inf;
+   case GLSLstd450NMax:
+      *extra_fp_math_ctrl |= nir_fp_preserve_nan;
+      FALLTHROUGH;
+   case GLSLstd450FMax:
+   case GLSLstd450FMin: {
+      /* We don't have to preserve infinities according to the VK spec,
+       * but games break without it. Both Unity and Unreal Engine
+       * are affected.
+       */
+      *extra_fp_math_ctrl |= nir_fp_preserve_inf;
+      if (b->options->workarounds.force_nan_preserve_min_max)
+         *extra_fp_math_ctrl |= nir_fp_preserve_nan;
       switch (opcode) {
+      case GLSLstd450FMin:
       case GLSLstd450NMin: return nir_op_fmin;
+      case GLSLstd450FMax:
       case GLSLstd450NMax: return nir_op_fmax;
       default: UNREACHABLE("unhandled");
       }
@@ -154,14 +166,12 @@ vtn_nir_alu_op_for_spirv_glsl_opcode(struct vtn_builder *b,
    case GLSLstd450Log2:          return nir_op_flog2;
    case GLSLstd450Sqrt:          return nir_op_fsqrt;
    case GLSLstd450InverseSqrt:   return nir_op_frsq;
-   case GLSLstd450FMin:          return nir_op_fmin;
    case GLSLstd450UMin:          return nir_op_umin;
    case GLSLstd450SMin:          return nir_op_imin;
-   case GLSLstd450FMax:          return nir_op_fmax;
    case GLSLstd450UMax:          return nir_op_umax;
    case GLSLstd450SMax:          return nir_op_imax;
    case GLSLstd450FMix:          return nir_op_flrp;
-   case GLSLstd450Fma:           return nir_op_ffma;
+   case GLSLstd450Fma:           return nir_op_ffma_weak;
    case GLSLstd450FindILsb:      return nir_op_find_lsb;
    case GLSLstd450FindSMsb:      return nir_op_ifind_msb;
    case GLSLstd450FindUMsb:      return nir_op_ufind_msb;
@@ -342,9 +352,21 @@ handle_glsl450_alu(struct vtn_builder *b, enum GLSLstd450 entrypoint,
       dest->def = nir_flog(nb, src[0]);
       break;
 
-   case GLSLstd450FClamp:
+   case GLSLstd450FClamp: {
+      /* We don't have to preserve infinities according to the VK spec,
+       * but games break without it. Both Unity and Unreal Engine
+       * are affected.
+       */
+      const unsigned save_math_ctrl = nb->fp_math_ctrl;
+      b->nb.fp_math_ctrl = nir_fp_preserve_inf;
+      if (b->options->workarounds.force_nan_preserve_min_max)
+         b->nb.fp_math_ctrl |= nir_fp_preserve_nan;
+
       dest->def = nir_fclamp(nb, src[0], src[1], src[2]);
+
+      nb->fp_math_ctrl = save_math_ctrl;
       break;
+   }
    case GLSLstd450NClamp: {
       const unsigned save_math_ctrl = nb->fp_math_ctrl;
       nb->fp_math_ctrl |= nir_fp_preserve_nan | nir_fp_preserve_inf;
@@ -412,7 +434,7 @@ handle_glsl450_alu(struct vtn_builder *b, enum GLSLstd450 entrypoint,
                             nir_fmul(nb, eta, nir_a_minus_bc(nb, one, n_dot_i, n_dot_i)));
       nir_def *result =
          nir_a_minus_bc(nb, nir_fmul(nb, eta, I),
-                            nir_ffma(nb, eta, n_dot_i, nir_fsqrt(nb, k)),
+                            nir_ffma_weak(nb, eta, n_dot_i, nir_fsqrt(nb, k)),
                             N);
       /* XXX: bcsel, or if statement? */
       dest->def = nir_bcsel(nb, nir_flt(nb, k, zero), zero, result);
@@ -436,60 +458,20 @@ handle_glsl450_alu(struct vtn_builder *b, enum GLSLstd450 entrypoint,
       break;
 
    case GLSLstd450Tanh: {
-      /* tanh(x) := (e^x - e^(-x)) / (e^x + e^(-x))
-       *
-       * We clamp x to [-10, +10] to avoid precision problems.  When x > 10,
-       * e^x dominates the sum, e^(-x) is lost and tanh(x) is 1.0 for 32 bit
-       * floating point.
-       *
-       * For 16-bit precision this we clamp x to [-4.2, +4.2].
-       */
-      const uint32_t bit_size = src[0]->bit_size;
-      const double clamped_x = bit_size > 16 ? 10.0 : 4.2;
-      nir_def *x = nir_fclamp(nb, src[0],
-                                  nir_imm_floatN_t(nb, -clamped_x, bit_size),
-                                  nir_imm_floatN_t(nb, clamped_x, bit_size));
-
-      /* The clamping will filter out NaN values causing an incorrect result.
-       * The comparison is carefully structured to get NaN result for NaN and
-       * get -0 for -0.
-       *
-       *    result = abs(s) > 0.0 ? ... : s;
-       */
-      const unsigned save_math_ctrl = nb->fp_math_ctrl;
-
-      nb->fp_math_ctrl |= nir_fp_preserve_nan | nir_fp_preserve_inf;
-      nir_def *is_regular = nir_flt(nb,
-                                        nir_imm_floatN_t(nb, 0, bit_size),
-                                        nir_fabs(nb, src[0]));
-
-      nb->fp_math_ctrl = save_math_ctrl;
-
-      /* The extra 1.0*s ensures that subnormal inputs are flushed to zero
-       * when that is selected by the shader.
-       */
-      nir_def *flushed = nir_fmul(nb,
-                                      src[0],
-                                      nir_imm_floatN_t(nb, 1.0, bit_size));
-
-      dest->def = nir_bcsel(nb,
-                            is_regular,
-                            nir_fdiv(nb, nir_fsub(nb, nir_fexp(nb, x),
-                                                  nir_fexp(nb, nir_fneg(nb, x))),
-                                     nir_fadd(nb, nir_fexp(nb, x),
-                                              nir_fexp(nb, nir_fneg(nb, x)))),
-                            flushed);
+      dest->def = b->shader->options->has_tanh ?
+                     nir_ftanh(&b->nb, src[0]) :
+                     nir_tanh_emulated(nb, src[0]);
       break;
    }
 
    case GLSLstd450Asinh:
       dest->def = nir_fmul(nb, nir_fsign(nb, src[0]),
          nir_flog(nb, nir_fadd(nb, nir_fabs(nb, src[0]),
-                      nir_fsqrt(nb, nir_ffma_imm2(nb, src[0], src[0], 1.0f)))));
+                      nir_fsqrt(nb, nir_ffma_weak_imm2(nb, src[0], src[0], 1.0f)))));
       break;
    case GLSLstd450Acosh:
       dest->def = nir_flog(nb, nir_fadd(nb, src[0],
-         nir_fsqrt(nb, nir_ffma_imm2(nb, src[0], src[0], -1.0f))));
+         nir_fsqrt(nb, nir_ffma_weak_imm2(nb, src[0], src[0], -1.0f))));
       break;
    case GLSLstd450Atanh: {
       dest->def =

@@ -3,31 +3,84 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <float.h>
+#include <math.h>
+
 #include "brw_cfg.h"
-#include "brw_disasm.h"
 #include "brw_shader.h"
 #include "brw_private.h"
 #include "dev/intel_debug.h"
+#include "gen/gen_names.h"
 #include "util/half_float.h"
 
+static const char *
+conditional_modifier_to_string(unsigned mod)
+{
+   switch (mod) {
+   case BRW_CONDITIONAL_NONE: return "";
+   case BRW_CONDITIONAL_Z:    return ".z";
+   case BRW_CONDITIONAL_NZ:   return ".nz";
+   case BRW_CONDITIONAL_G:    return ".g";
+   case BRW_CONDITIONAL_GE:   return ".ge";
+   case BRW_CONDITIONAL_L:    return ".l";
+   case BRW_CONDITIONAL_LE:   return ".le";
+   case BRW_CONDITIONAL_R:    return ".r";
+   case BRW_CONDITIONAL_O:    return ".o";
+   case BRW_CONDITIONAL_U:    return ".u";
+   default:                   return "";
+   }
+}
+
+static const char *
+brw_lsc_addr_surftype_to_string(unsigned t)
+{
+   switch (t) {
+   case LSC_ADDR_SURFTYPE_FLAT: return "flat";
+   case LSC_ADDR_SURFTYPE_BSS:  return "bss";
+   case LSC_ADDR_SURFTYPE_SS:   return "ss";
+   case LSC_ADDR_SURFTYPE_BTI:  return "bti";
+   default:                     return "<invalid lsc surface>";
+   }
+}
+
+static const char *
+brw_lsc_data_size_to_string(unsigned s)
+{
+   switch (s) {
+   case LSC_DATA_SIZE_D8:      return "d8";
+   case LSC_DATA_SIZE_D16:     return "d16";
+   case LSC_DATA_SIZE_D32:     return "d32";
+   case LSC_DATA_SIZE_D64:     return "d64";
+   case LSC_DATA_SIZE_D8U32:   return "d8u32";
+   case LSC_DATA_SIZE_D16U32:  return "d16u32";
+   case LSC_DATA_SIZE_D16BF32: return "d16bf32";
+   default:                    return "<invalid lsc data size>";
+   }
+}
+
 void
-brw_print_instructions(const brw_shader &s, FILE *file)
+brw_print_instructions(const brw_shader &s, FILE *file, unsigned flags)
 {
    if (s.cfg && s.grf_used == 0) {
-      const brw_def_analysis &defs = s.def_analysis.require();
+      const brw_def_analysis *defs =
+         (flags & BRW_PRINT_DEFS) ? &s.def_analysis.require() : NULL;
+      const bool with_blocks = flags & BRW_PRINT_BLOCKS;
       const brw_register_pressure *rp =
-         INTEL_DEBUG(DEBUG_REG_PRESSURE) ? &s.regpressure_analysis.require() : NULL;
+         (flags & BRW_PRINT_REG_PRESSURE) && INTEL_DEBUG(DEBUG_REG_PRESSURE) ?
+         &s.regpressure_analysis.require() : NULL;
 
       unsigned ip = 0, max_pressure = 0;
       unsigned cf_count = 0;
       foreach_block(block, s.cfg) {
-         fprintf(file, "START B%d", block->num);
-         brw_foreach_list_typed(bblock_link, link, link, &block->parents) {
-            fprintf(file, " <%cB%d",
-                    link->kind == bblock_link_logical ? '-' : '~',
-                    link->block->num);
+         if (with_blocks) {
+            fprintf(file, "START B%d", block->num);
+            brw_foreach_list_typed(bblock_link, link, link, &block->parents) {
+               fprintf(file, " <%cB%d",
+                       link->kind == bblock_link_logical ? '-' : '~',
+                       link->block->num);
+            }
+            fprintf(file, "\n");
          }
-         fprintf(file, "\n");
 
          foreach_inst_in_block(brw_inst, inst, block) {
             /* SHADER_OPCODE_FLOW ends a block, but it does not change the
@@ -46,20 +99,22 @@ brw_print_instructions(const brw_shader &s, FILE *file)
 
             for (unsigned i = 0; i < cf_count; i++)
                fprintf(file, "  ");
-            brw_print_instruction(s, inst, file, &defs);
+            brw_print_instruction(s, inst, file, defs);
             ip++;
 
             if (inst->is_control_flow_begin())
                cf_count += 1;
          }
 
-         fprintf(file, "END B%d", block->num);
-         brw_foreach_list_typed(bblock_link, link, link, &block->children) {
-            fprintf(file, " %c>B%d",
-                    link->kind == bblock_link_logical ? '-' : '~',
-                    link->block->num);
+         if (with_blocks) {
+            fprintf(file, "END B%d", block->num);
+            brw_foreach_list_typed(bblock_link, link, link, &block->children) {
+               fprintf(file, " %c>B%d",
+                       link->kind == bblock_link_logical ? '-' : '~',
+                       link->block->num);
+            }
+            fprintf(file, "\n");
          }
-         fprintf(file, "\n");
       }
       if (rp)
          fprintf(file, "Maximum %3d registers live at once.\n", max_pressure);
@@ -122,6 +177,8 @@ brw_instruction_name(const struct brw_isa_info *isa, const brw_inst *inst)
       return "sin";
    case SHADER_OPCODE_COS:
       return "cos";
+   case SHADER_OPCODE_TANH:
+      return "tanh";
 
    case SHADER_OPCODE_SEND:
       return "send";
@@ -281,6 +338,7 @@ brw_instruction_name(const struct brw_isa_info *isa, const brw_inst *inst)
 
 /**
  * Pretty-print a source for a SHADER_OPCODE_MEMORY_LOGICAL instruction.
+ * Includes the leading ", " source separator.
  *
  * Returns true if the value is fully printed (i.e. an enum) and false if
  * we only printed a label, and the actual source value still needs printing.
@@ -291,21 +349,21 @@ print_memory_logical_source(FILE *file, const brw_inst *inst, unsigned i)
    switch (i) {
    case MEMORY_LOGICAL_BINDING: {
       lsc_addr_surface_type binding_type = inst->as_mem()->binding_type;
-      fprintf(file, " %s", brw_lsc_addr_surftype_to_string(binding_type));
+      fprintf(file, ", %s", brw_lsc_addr_surftype_to_string(binding_type));
       if (binding_type != LSC_ADDR_SURFTYPE_FLAT)
-         fprintf(file, ":");
+         fprintf(file, ": ");
       return inst->src[i].file == BAD_FILE;
    }
    case MEMORY_LOGICAL_ADDRESS:
-      fprintf(file, " addr: ");
+      fprintf(file, ", addr: ");
       return false;
    case MEMORY_LOGICAL_DATA0:
-      fprintf(file, " data0: ");
+      fprintf(file, ", data0: ");
       return false;
    case MEMORY_LOGICAL_DATA1:
       if (inst->src[i].file == BAD_FILE)
          return true;
-      fprintf(file, " data1: ");
+      fprintf(file, ", data1: ");
       return false;
    default:
       UNREACHABLE("invalid source");
@@ -326,7 +384,7 @@ brw_print_instruction(const brw_shader &s, const brw_inst *inst, FILE *file, con
    if (inst->saturate)
       fprintf(file, ".sat");
    if (inst->conditional_mod) {
-      fprintf(file, "%s", conditional_modifier[inst->conditional_mod]);
+      fprintf(file, "%s", conditional_modifier_to_string(inst->conditional_mod));
       if (!inst->predicate &&
           (inst->opcode != BRW_OPCODE_SEL &&
            inst->opcode != BRW_OPCODE_CSEL &&
@@ -336,24 +394,29 @@ brw_print_instruction(const brw_shader &s, const brw_inst *inst, FILE *file, con
                  inst->flag_subreg % 2);
       }
    }
-   fprintf(file, "(%d) ", inst->exec_size);
+   fprintf(file, "(%d)", inst->exec_size);
 
    const brw_send_inst *send = inst->as_send();
 
    if (send && send->mlen) {
-      fprintf(file, "(mlen: %d) ", send->mlen);
+      fprintf(file, " (mlen: %d)", send->mlen);
    }
 
    if (send && send->ex_mlen) {
-      fprintf(file, "(ex_mlen: %d) ", send->ex_mlen);
+      fprintf(file, " (ex_mlen: %d)", send->ex_mlen);
    }
 
    if (inst->eot) {
-      fprintf(file, "(EOT) ");
+      fprintf(file, " (EOT)");
    }
 
    const bool is_send = inst->opcode == BRW_OPCODE_SEND ||
                         inst->opcode == SHADER_OPCODE_SEND;
+
+   const bool omit_dst = inst->dst.file == BAD_FILE && inst->sources == 0;
+
+   if (!omit_dst)
+      fprintf(file, " ");
 
    switch (inst->dst.file) {
    case VGRF:
@@ -368,7 +431,8 @@ brw_print_instruction(const brw_shader &s, const brw_inst *inst, FILE *file, con
          fprintf(file, ".%d", inst->dst.subnr / brw_type_size_bytes(inst->dst.type));
       break;
    case BAD_FILE:
-      fprintf(file, "(null)");
+      if (!omit_dst)
+         fprintf(file, "(null)");
       break;
    case UNIFORM:
       fprintf(file, "***u%d***", inst->dst.nr);
@@ -416,15 +480,17 @@ brw_print_instruction(const brw_shader &s, const brw_inst *inst, FILE *file, con
               inst->dst.offset % reg_size);
    }
 
-   if (!is_send) {
+   if (!is_send && !omit_dst) {
       if (inst->dst.stride != 1)
          fprintf(file, "<%u>", inst->dst.stride);
       fprintf(file, ":%s", brw_reg_type_to_letters(inst->dst.type));
+      if (inst->dst.is_scalar)
+         fprintf(file, ".scalar");
    }
 
    const brw_mem_inst *mem = inst->as_mem();
    if (mem) {
-      fprintf(file, " %s", brw_lsc_op_to_string(mem->lsc_op));
+      fprintf(file, " %s", gen_lsc_opcode_to_string(mem->lsc_op));
 
       static const char *modes[] = {
          [MEMORY_MODE_TYPED]        = "typed",
@@ -449,6 +515,8 @@ brw_print_instruction(const brw_shader &s, const brw_inst *inst, FILE *file, con
          fprintf(file, " volatile");
       if (mem->flags & MEMORY_FLAG_COHERENT_ACCESS)
          fprintf(file, " coherent");
+      if (mem->surface_index)
+         fprintf(file, " surf_idx: %hhu", mem->surface_index);
    }
 
    const brw_tex_inst *tex = inst->as_tex();
@@ -460,9 +528,9 @@ brw_print_instruction(const brw_shader &s, const brw_inst *inst, FILE *file, con
       if (mem) {
          if (print_memory_logical_source(file, inst, i))
             continue;
+      } else {
+         fprintf(file, ", ");
       }
-
-      fprintf(file, ", ");
 
       if (tex_payload) {
          switch (i) {
@@ -515,35 +583,53 @@ brw_print_instruction(const brw_shader &s, const brw_inst *inst, FILE *file, con
          break;
       case IMM:
          switch (inst->src[i].type) {
+         /* NaN payload bits don't survive a round-trip through a decimal
+          * string, so print NaNs as their raw bits.
+          */
          case BRW_TYPE_HF:
-            fprintf(file, "%-ghf", _mesa_half_to_float(inst->src[i].ud & 0xffff));
+            if (isnan(_mesa_half_to_float(inst->src[i].ud & 0xffff))) {
+               fprintf(file, "0x%04x:HF /* %-g */", inst->src[i].ud & 0xffff,
+                       _mesa_half_to_float(inst->src[i].ud & 0xffff));
+            } else {
+               fprintf(file, "%-g:HF", _mesa_half_to_float(inst->src[i].ud & 0xffff));
+            }
             break;
          case BRW_TYPE_F:
-            fprintf(file, "%-gf", inst->src[i].f);
+            if (isnan(inst->src[i].f)) {
+               fprintf(file, "0x%08x:F /* %-g */", inst->src[i].ud,
+                       inst->src[i].f);
+            } else {
+               fprintf(file, "%.*g:F", FLT_DECIMAL_DIG, inst->src[i].f);
+            }
             break;
          case BRW_TYPE_DF:
-            fprintf(file, "%fdf", inst->src[i].df);
+            if (isnan(inst->src[i].df)) {
+               fprintf(file, "0x%016" PRIx64 ":DF /* %-g */", inst->src[i].u64,
+                       inst->src[i].df);
+            } else {
+               fprintf(file, "%.*g:DF", DBL_DECIMAL_DIG, inst->src[i].df);
+            }
             break;
          case BRW_TYPE_W:
-            fprintf(file, "%dw", (int)(int16_t)inst->src[i].d);
+            fprintf(file, "%d:W", (int)(int16_t)inst->src[i].d);
             break;
          case BRW_TYPE_D:
-            fprintf(file, "%dd", inst->src[i].d);
+            fprintf(file, "%d:D", inst->src[i].d);
             break;
          case BRW_TYPE_UW:
-            fprintf(file, "%duw", inst->src[i].ud & 0xffff);
+            fprintf(file, "%d:UW", inst->src[i].ud & 0xffff);
             break;
          case BRW_TYPE_UD:
-            fprintf(file, "%uu", inst->src[i].ud);
+            fprintf(file, "%u:UD", inst->src[i].ud);
             break;
          case BRW_TYPE_Q:
-            fprintf(file, "%" PRId64 "q", inst->src[i].d64);
+            fprintf(file, "%" PRId64 ":Q", inst->src[i].d64);
             break;
          case BRW_TYPE_UQ:
-            fprintf(file, "%" PRIu64 "uq", inst->src[i].u64);
+            fprintf(file, "%" PRIu64 ":UQ", inst->src[i].u64);
             break;
          case BRW_TYPE_VF:
-            fprintf(file, "[%-gF, %-gF, %-gF, %-gF]",
+            fprintf(file, "[%-g, %-g, %-g, %-g]:VF",
                     brw_vf_to_float((inst->src[i].ud >>  0) & 0xff),
                     brw_vf_to_float((inst->src[i].ud >>  8) & 0xff),
                     brw_vf_to_float((inst->src[i].ud >> 16) & 0xff),
@@ -551,7 +637,7 @@ brw_print_instruction(const brw_shader &s, const brw_inst *inst, FILE *file, con
             break;
          case BRW_TYPE_V:
          case BRW_TYPE_UV:
-            fprintf(file, "%08x%s", inst->src[i].ud,
+            fprintf(file, "%08x:%s", inst->src[i].ud,
                     inst->src[i].type == BRW_TYPE_V ? "V" : "UV");
             break;
          default:
@@ -615,6 +701,8 @@ brw_print_instruction(const brw_shader &s, const brw_inst *inst, FILE *file, con
          }
 
          fprintf(file, ":%s", brw_reg_type_to_letters(inst->src[i].type));
+         if (inst->src[i].is_scalar)
+            fprintf(file, ".scalar");
       }
 
       if (inst->opcode == SHADER_OPCODE_QUAD_SWAP && i == 1) {
@@ -657,46 +745,23 @@ brw_print_instruction(const brw_shader &s, const brw_inst *inst, FILE *file, con
    if (inst->has_no_mask_send_params)
       fprintf(file, " NoMaskParams");
 
-   if (send && send->desc)
+   if (send && send->efficient_64bit && send->combined_desc)
+      fprintf(file, " CombinedDesc 0x%016" PRIx64, send->combined_desc);
+
+   if (send && !send->efficient_64bit && send->desc)
       fprintf(file, " Desc 0x%08x", send->desc);
 
-   if (send && send->ex_desc)
+   if (send && !send->efficient_64bit && send->ex_desc)
       fprintf(file, " ExDesc 0x%08x", send->ex_desc);
 
-   if (send && send->ex_desc_imm)
+   if (send && !send->efficient_64bit && send->ex_desc_imm)
       fprintf(file, " ExDescImmInst 0x%08x", send->offset);
 
    if (inst->sched.regdist || inst->sched.mode) {
       fprintf(file, " { ");
-      brw_print_swsb(file, s.devinfo, inst->sched);
+      gen_print_swsb(s.devinfo, file, inst->sched);
       fprintf(file, " }");
    }
 
    fprintf(file, "\n");
-}
-
-
-void
-brw_print_swsb(FILE *f, const struct intel_device_info *devinfo, const tgl_swsb swsb)
-{
-   if (swsb.regdist) {
-      fprintf(f, "%s@%d",
-              (devinfo && devinfo->verx10 < 125 ? "" :
-               swsb.pipe == TGL_PIPE_FLOAT ? "F" :
-               swsb.pipe == TGL_PIPE_INT ? "I" :
-               swsb.pipe == TGL_PIPE_LONG ? "L" :
-               swsb.pipe == TGL_PIPE_ALL ? "A"  :
-               swsb.pipe == TGL_PIPE_MATH ? "M" :
-               swsb.pipe == TGL_PIPE_SCALAR ? "S" : "" ),
-              swsb.regdist);
-   }
-
-   if (swsb.mode) {
-      if (swsb.regdist)
-          fprintf(f, " ");
-
-      fprintf(f, "$%d%s", swsb.sbid,
-              (swsb.mode & TGL_SBID_SET ? "" :
-               swsb.mode & TGL_SBID_DST ? ".dst" : ".src"));
-   }
 }

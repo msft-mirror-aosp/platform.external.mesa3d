@@ -114,7 +114,7 @@ st_mesa_format_to_pipe_format(const struct st_context *st,
                           mesaFormat == PIPE_FORMAT_ASTC_5x5_SRGB;
 
       /* If we're only emulating ASTC void extents, use the original format */
-      if (st->astc_void_extents_need_denorm_flush &&
+      if (st->screen->caps.astc_void_extents_need_denorm_flush &&
           (is_5x5 ? st->has_astc_5x5_ldr : st->has_astc_2d_ldr))
          return mesaFormat;
 
@@ -1269,11 +1269,11 @@ st_choose_matching_format_noverify(struct st_context *st,
    if (swapBytes && !_mesa_swap_bytes_in_type_enum(&type))
       return PIPE_FORMAT_NONE;
 
-   mesa_format mesa_format = _mesa_format_from_format_and_type(format, type);
-   if (_mesa_format_is_mesa_array_format(mesa_format))
-      mesa_format = _mesa_format_from_array_format(mesa_format);
-   if (mesa_format != MESA_FORMAT_NONE)
-      return st_mesa_format_to_pipe_format(st, mesa_format);
+   mesa_format mesa_conv_format = _mesa_format_from_format_and_type(format, type);
+   if (_mesa_format_is_mesa_array_format(mesa_conv_format))
+      mesa_conv_format = _mesa_format_from_array_format(mesa_conv_format);
+   if (mesa_conv_format != MESA_FORMAT_NONE)
+      return st_mesa_format_to_pipe_format(st, mesa_conv_format);
 
    return PIPE_FORMAT_NONE;
 }

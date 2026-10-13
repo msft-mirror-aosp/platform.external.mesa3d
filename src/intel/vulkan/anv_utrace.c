@@ -79,7 +79,7 @@ command_buffers_count_utraces(struct anv_device *device,
       if (u_trace_has_points(&cmd_buffers[i]->trace)) {
          utraces++;
          if (!(cmd_buffers[i]->usage_flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT))
-            *utrace_copies += list_length(&cmd_buffers[i]->trace.trace_chunks);
+            (*utrace_copies)++;
       }
    }
 
@@ -97,7 +97,6 @@ anv_utrace_delete_submit(struct u_trace_context *utctx, void *submit_data)
    intel_ds_flush_data_fini(&submit->ds);
 
    anv_state_stream_finish(&submit->dynamic_state_stream);
-   anv_state_stream_finish(&submit->general_state_stream);
 
    anv_async_submit_fini(&submit->base);
 
@@ -189,9 +188,7 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
    struct anv_batch *batch = &submit->base.batch;
    if (utrace_copies > 0) {
       anv_state_stream_init(&submit->dynamic_state_stream,
-                            &device->dynamic_state_pool, 16384);
-      anv_state_stream_init(&submit->general_state_stream,
-                            &device->general_state_pool, 16384);
+                            anv_device_get_dynamic_state_pool(device), 16384);
 
       /* Only engine class where we support timestamp copies
        *
@@ -211,7 +208,7 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
                intel_ds_queue_flush_data(&queue->ds, &cmd_buffers[i]->trace,
                                          &submit->ds, device->vk.current_frame, false);
             } else {
-               num_traces += cmd_buffers[i]->trace.num_traces;
+               num_traces += u_trace_num_events(&cmd_buffers[i]->trace);
                u_trace_clone_append(u_trace_begin_iterator(&cmd_buffers[i]->trace),
                                     u_trace_end_iterator(&cmd_buffers[i]->trace),
                                     &submit->ds.trace,
@@ -237,7 +234,6 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
          submit->simple_state = (struct anv_simple_shader) {
             .device               = device,
             .dynamic_state_stream = &submit->dynamic_state_stream,
-            .general_state_stream = &submit->general_state_stream,
             .batch                = batch,
             .kernel               = copy_kernel,
          };
@@ -245,12 +241,12 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
 
          uint32_t num_traces = 0;
          for (uint32_t i = 0; i < cmd_buffer_count; i++) {
-            num_traces += cmd_buffers[i]->trace.num_traces;
+            num_traces += u_trace_num_events(&cmd_buffers[i]->trace);
             if (cmd_buffers[i]->usage_flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT) {
                intel_ds_queue_flush_data(&queue->ds, &cmd_buffers[i]->trace,
                                          &submit->ds, device->vk.current_frame, false);
             } else {
-               num_traces += cmd_buffers[i]->trace.num_traces;
+               num_traces += u_trace_num_events(&cmd_buffers[i]->trace);
                u_trace_clone_append(u_trace_begin_iterator(&cmd_buffers[i]->trace),
                                     u_trace_end_iterator(&cmd_buffers[i]->trace),
                                     &submit->ds.trace,
@@ -319,7 +315,7 @@ anv_utrace_destroy_buffer(struct u_trace_context *utctx, void *timestamps)
    anv_bo_pool_free(&device->utrace_bo_pool, bo);
 }
 
-static void
+static bool
 anv_utrace_record_ts(struct u_trace *ut, void *cs,
                      void *timestamps, uint64_t offset_B,
                      uint32_t flags)
@@ -374,6 +370,8 @@ anv_utrace_record_ts(struct u_trace *ut, void *cs,
       cmd_buffer->state.last_compute_walker = NULL;
       cmd_buffer->state.last_indirect_dispatch = NULL;
    }
+
+   return true;
 }
 
 static uint64_t

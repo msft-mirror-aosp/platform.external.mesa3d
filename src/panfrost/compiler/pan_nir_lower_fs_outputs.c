@@ -88,7 +88,8 @@ gather_output_intrin(nir_builder *b, nir_intrinsic_instr *intrin, void *_data)
 }
 
 bool
-pan_nir_lower_fs_outputs(nir_shader *shader, bool skip_atest)
+pan_nir_lower_fs_outputs(nir_shader *shader, bool skip_atest,
+                         unsigned fragcolor_nr_cbufs)
 {
    nir_function_impl *impl = nir_shader_get_entrypoint(shader);
 
@@ -137,7 +138,7 @@ pan_nir_lower_fs_outputs(nir_shader *shader, bool skip_atest)
     */
    nir_def *alpha;
    if (color0 && glsl_type_is_float_16_32(color0->type))
-      alpha = nir_f2f32(b, nir_channel(b, nir_load_var(b, color0), 3));
+      alpha = nir_channel(b, nir_load_var(b, color0), 3);
    else
       alpha = nir_imm_float(b, 1.0f);
 
@@ -147,7 +148,7 @@ pan_nir_lower_fs_outputs(nir_shader *shader, bool skip_atest)
     * skipped for pure integer framebuffers, so the issue is moot.
     */
    if (!skip_atest)
-      coverage = nir_atest_pan(b, coverage, nir_f2f32(b, alpha));
+      coverage = nir_atest_pan(b, coverage, alpha);
 
    /* We discard depth/stencil writes if early fragment tests is forced. */
    if ((out.depth || out.stencil) && !shader->info.fs.early_fragment_tests) {
@@ -175,10 +176,20 @@ pan_nir_lower_fs_outputs(nir_shader *shader, bool skip_atest)
       coverage = nir_zs_emit_pan(b, coverage, depth, stencil, .flags = flags);
    }
 
+   /* Clear the COLOR output bit if present */
+   if (out.color[0])
+      shader->info.outputs_written &= ~BITFIELD64_BIT(FRAG_RESULT_COLOR);
+
    for (unsigned i = 0; i < 8; i++) {
       nir_variable **color = out.color[0] ? out.color : out.data[i];
       if (!color[0])
          continue;
+
+      /* Only broadcast gl_FragColor to the bound cbufs */
+      if (out.color[0] && i >= fragcolor_nr_cbufs)
+         break;
+
+      shader->info.outputs_written |= BITFIELD64_BIT(FRAG_RESULT_DATA0 + i);
 
       nir_def *color0 = nir_load_var(b, color[0]);
       nir_alu_type color0_type =
@@ -193,6 +204,11 @@ pan_nir_lower_fs_outputs(nir_shader *shader, bool skip_atest)
          nir_blend2_pan(b, coverage, desc, color0, color1,
                         .src_type = color0_type, .dest_type = color1_type,
                         .io_semantics.location = FRAG_RESULT_DATA0 + i);
+         /* gl_FragColor usually broadcasts to all render targets, but if we are
+          * using gl_SecondaryFragColorEXT we must only write to the first one.
+          */
+         if (out.color[0])
+            break;
       } else {
          nir_blend_pan(b, coverage, desc, color0, .src_type = color0_type,
                        .io_semantics.location = FRAG_RESULT_DATA0 + i);

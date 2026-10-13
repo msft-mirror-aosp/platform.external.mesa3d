@@ -551,9 +551,11 @@ lower_shared_to_var(nir_builder *b, nir_intrinsic_instr *intr, void *data)
          
          if (intr->intrinsic == nir_intrinsic_shared_atomic_swap)
             nir_def_rewrite_uses(&intr->def, nir_deref_atomic_swap(b, 32, &deref->def, intr->src[1].ssa, intr->src[2].ssa,
+                                                                   .access = nir_intrinsic_access(intr),
                                                                    .atomic_op = nir_intrinsic_atomic_op(intr)));
          else
             nir_def_rewrite_uses(&intr->def, nir_deref_atomic(b, 32, &deref->def, intr->src[1].ssa,
+                                                              .access = nir_intrinsic_access(intr),
                                                               .atomic_op = nir_intrinsic_atomic_op(intr)));
          break;
       }
@@ -2205,13 +2207,13 @@ add_def_to_worklist(nir_def *def, void *state)
 {
    nir_foreach_use_including_if(src, def) {
       if (nir_src_is_if(src)) {
-         nir_if *nif = nir_src_parent_if(src);
+         nir_if *nif = nir_src_use_if(src);
          nir_foreach_block_in_cf_node(block, &nif->cf_node) {
             nir_foreach_instr(instr, block)
                nir_instr_worklist_push_tail(state, instr);
          }
       } else
-         nir_instr_worklist_push_tail(state, nir_src_parent_instr(src));
+         nir_instr_worklist_push_tail(state, nir_src_use_instr(src));
    }
    return true;
 }

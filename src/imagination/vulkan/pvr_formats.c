@@ -262,12 +262,10 @@ pvr_get_image_format_features2(struct pvr_physical_device *pdevice,
       vk_format_get_ycbcr_info(vk_format);
 
    if (pvr_format->bind & PVR_BIND_SAMPLER_VIEW) {
-      if (vk_tiling == VK_IMAGE_TILING_OPTIMAL) {
-         const uint32_t first_component_size =
-            vk_format_get_component_bits(vk_format,
-                                         UTIL_FORMAT_COLORSPACE_RGB,
-                                         0);
+      const uint32_t first_component_size =
+         vk_format_get_component_bits(vk_format, UTIL_FORMAT_COLORSPACE_RGB, 0);
 
+      if (vk_tiling == VK_IMAGE_TILING_OPTIMAL) {
          flags |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT |
                   VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT |
                   VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
@@ -288,6 +286,12 @@ pvr_get_image_format_features2(struct pvr_physical_device *pdevice,
          flags |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT |
                   VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT |
                   VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
+
+         if (!vk_format_is_int(vk_format) &&
+             !vk_format_is_depth_or_stencil(vk_format) &&
+             first_component_size < 32) {
+            flags |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_LINEAR_2D_BIT_IMG;
+         }
 
          if (ycbcr_info) {
             flags |= VK_FORMAT_FEATURE_2_COSITED_CHROMA_SAMPLES_BIT;
@@ -529,8 +533,8 @@ void pvr_GetPhysicalDeviceFormatProperties2(
       .bufferFeatures = vk_format_features2_to_features(buffer2),
    };
 
-   vk_foreach_struct (ext, pFormatProperties->pNext) {
-      switch (ext->sType) {
+   vk_foreach_struct (sType, ext, pFormatProperties->pNext) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3: {
          VkFormatProperties3 *pFormatProperties3 = (VkFormatProperties3 *)ext;
          pFormatProperties3->linearTilingFeatures = linear2;
@@ -543,7 +547,7 @@ void pvr_GetPhysicalDeviceFormatProperties2(
          pvr_get_drm_format_modifier_properties_list(pdevice, format, ext);
          break;
       default:
-         vk_debug_ignored_stype(ext->sType);
+         vk_debug_ignored_stype(sType);
          break;
       }
    }
@@ -743,7 +747,8 @@ pvr_get_image_format_properties(struct pvr_physical_device *pdevice,
       break;
 
    default:
-      UNREACHABLE("Invalid image type.");
+      result = vk_error(pdevice, VK_ERROR_FORMAT_NOT_SUPPORTED);
+      goto err_unsupported_format;
    }
 
    /* The spec says maxMipLevels may be 1 when tiling is VK_IMAGE_TILING_LINEAR
@@ -808,10 +813,10 @@ VkResult pvr_GetPhysicalDeviceImageFormatProperties2(
       return result;
 
    /* Extract input structs */
-   vk_foreach_struct_const (ext, pImageFormatInfo->pNext) {
-      switch (ext->sType) {
+   vk_foreach_struct_const (sType, ext, pImageFormatInfo->pNext) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO:
-         external_info = (const void *)ext;
+         external_info = ext;
          break;
       case VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO:
          break;
@@ -822,25 +827,24 @@ VkResult pvr_GetPhysicalDeviceImageFormatProperties2(
           */
          break;
       default:
-         vk_debug_ignored_stype(ext->sType);
+         vk_debug_ignored_stype(sType);
          break;
       }
    }
 
    /* Extract output structs */
-   vk_foreach_struct (ext, pImageFormatProperties->pNext) {
-      switch (ext->sType) {
+   vk_foreach_struct (sType, ext, pImageFormatProperties->pNext) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES:
-         external_props = (void *)ext;
+         external_props = ext;
          break;
       case VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_IMAGE_FORMAT_PROPERTIES: {
-         VkSamplerYcbcrConversionImageFormatProperties *ycbcr_props =
-            (void *)ext;
+         VkSamplerYcbcrConversionImageFormatProperties *ycbcr_props = ext;
          ycbcr_props->combinedImageSamplerDescriptorCount = 1;
          break;
       }
       default:
-         vk_debug_ignored_stype(ext->sType);
+         vk_debug_ignored_stype(sType);
          break;
       }
    }
@@ -1163,4 +1167,67 @@ uint32_t pvr_pbe_pixel_size(enum pvr_transfer_pbe_pixel_src pbe_format)
    }
 
    return 0;
+}
+
+unsigned pvr_pbe_format_num_sample_components(enum pvr_transfer_pbe_pixel_src format)
+{
+   switch (format) {
+   case PVR_TRANSFER_PBE_PIXEL_SRC_MOV_BY45:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_CONV_D24_D32:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_CONV_D32U_D32F:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_CONV_D32_D24S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_DMRG_D32_D24S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_DMRG_D32U_D24S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SMRG_D24S8_D32S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SWAP_LMSB:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_CONV_S8D24_D24S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_Y_UV_INTERLEAVED:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_YVU_PACKED:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_Y_U_V:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_YUV_PACKED:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SMRG_S8_D32S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SMRG_S8_D24S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_RAW32:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_F32:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_D24S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_S8D24:
+      return 1;
+
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SMRG_D32S8_D32S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SU32U32:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_US32S32:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_RAW64:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_F32X2:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_D32S8:
+      return 2;
+
+   case PVR_TRANSFER_PBE_PIXEL_SRC_UU8888:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_US8888:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_UU16U16:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_US16S16:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SU8888:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SS8888:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SU16U16:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SS16S16:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_S4XU32:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_U4XS32:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_UU1010102:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SU1010102:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_RBSWAP_UU1010102:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_RBSWAP_SU1010102:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_F16F16:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_U16NORM:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_S16NORM:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_F16_U8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_SMRG_D24S8_D24S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_DMRG_D24S8_D24S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_DMRG_D32S8_D32S8:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_RAW128:
+   case PVR_TRANSFER_PBE_PIXEL_SRC_F32X4:
+      return 4;
+
+   default:
+      UNREACHABLE("Unsupported transfer PBE pixel format");
+      return 4;
+   }
 }

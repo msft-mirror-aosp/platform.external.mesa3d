@@ -340,14 +340,22 @@ CDX12EncHMFT::IsSupported( const GUID *Api )
        *Api == CODECAPI_AVEncVideoEncodeQP || *Api == CODECAPI_AVEncVideoMinQP || *Api == CODECAPI_AVEncVideoForceKeyFrame ||
        *Api == CODECAPI_AVEncH264SPSID || *Api == CODECAPI_AVEncH264PPSID || *Api == CODECAPI_AVEncVideoTemporalLayerCount ||
        *Api == CODECAPI_AVEncVideoSelectLayer || *Api == CODECAPI_AVEncVideoEncodeFrameTypeQP ||
-       *Api == CODECAPI_AVEncSliceControlMode || *Api == CODECAPI_AVEncSliceControlSize ||
        *Api == CODECAPI_AVEncVideoMaxNumRefFrame || *Api == CODECAPI_AVEncVideoMeanAbsoluteDifference ||
        *Api == CODECAPI_AVEncVideoMaxQP || *Api == CODECAPI_AVScenarioInfo || *Api == CODECAPI_AVEncVideoROIEnabled ||
        *Api == CODECAPI_AVEncVideoLTRBufferControl || *Api == CODECAPI_AVEncVideoMarkLTRFrame ||
-       *Api == CODECAPI_AVEncVideoUseLTRFrame || *Api == CODECAPI_AVEncSliceGenerationMode )
+       *Api == CODECAPI_AVEncVideoUseLTRFrame )
    {
       hr = S_OK;
       return hr;
+   }
+
+   if( m_EncoderCapabilities.m_bHWSupportsAppControlledSlicePartitioning )
+   {
+      if( *Api == CODECAPI_AVEncSliceControlMode || *Api == CODECAPI_AVEncSliceControlSize )
+      {
+         hr = S_OK;
+         return hr;
+      }   
    }
 
    if( m_EncoderCapabilities.m_HWSupportsIntraRefreshModes != PIPE_VIDEO_ENC_INTRA_REFRESH_NONE )
@@ -610,12 +618,12 @@ CDX12EncHMFT::GetParameterRange( const GUID *Api, VARIANT *ValueMin, VARIANT *Va
    }
    else if( *Api == CODECAPI_AVEncVideoMaxQP )
    {
-      // range [0, 51]
+      // range [0, HMFT_MAX_QP]
       ValueMin->vt = VT_UI4;
       ValueMin->ulVal = 0;
 
       ValueMax->vt = VT_UI4;
-      ValueMax->ulVal = AVC_MAX_QP;
+      ValueMax->ulVal = HMFT_MAX_QP;
 
       SteppingDelta->vt = VT_UI4;
       SteppingDelta->ulVal = 1;
@@ -624,12 +632,12 @@ CDX12EncHMFT::GetParameterRange( const GUID *Api, VARIANT *ValueMin, VARIANT *Va
    }
    else if( *Api == CODECAPI_AVEncVideoMinQP )
    {
-      // range [0, 51]
+      // range [0, HMFT_MAX_QP]
       ValueMin->vt = VT_UI4;
       ValueMin->ulVal = 0;
 
       ValueMax->vt = VT_UI4;
-      ValueMax->ulVal = AVC_MAX_QP;
+      ValueMax->ulVal = HMFT_MAX_QP;
 
       SteppingDelta->vt = VT_UI4;
       SteppingDelta->ulVal = 1;
@@ -958,7 +966,11 @@ CDX12EncHMFT::GetValue( const GUID *Api, VARIANT *Value )
       hevcDeltaQPSettings.dataType = CODEC_API_QP_MAP_INT8;
       hevcDeltaQPSettings.minValue = static_cast<INT16>( m_uiMinQP );
       hevcDeltaQPSettings.maxValue = static_cast<INT16>( m_uiMaxQP );
+#if defined( INPUTQPSETTINGS_HAS_STEPS )
+      hevcDeltaQPSettings.steps = 1;
+#else
       hevcDeltaQPSettings.step = 1;
+#endif
 
       SAFEARRAYBOUND bound = { static_cast<ULONG>( sizeof( hevcDeltaQPSettings ) ),
                                static_cast<LONG>( 0 ) };       // cElements , lower bound
@@ -1163,7 +1175,7 @@ CDX12EncHMFT::SetValue( const GUID *Api, VARIANT *Value )
          {
             CHECKHR_GOTO( E_INVALIDARG, done );
          }
-         m_bLowLatency = Value->boolVal;
+         m_bLowLatency = Value->boolVal == VARIANT_TRUE ? TRUE : FALSE;
          if( ( m_eScenarioInfo == eAVScenarioInfo_DisplayRemoting ) ||
              ( m_eScenarioInfo == eAVScenarioInfo_DisplayRemotingWithFeatureMap ) ||
              ( m_eScenarioInfo == eAVScenarioInfo_CameraRecord ) || ( m_eScenarioInfo == eAVScenarioInfo_VideoConference ) ||
@@ -1189,7 +1201,7 @@ CDX12EncHMFT::SetValue( const GUID *Api, VARIANT *Value )
       {
          CHECKHR_GOTO( E_INVALIDARG, done );
       }
-      m_bCabacEnable = Value->boolVal;
+      m_bCabacEnable = Value->boolVal == VARIANT_TRUE ? TRUE : FALSE;
    }
    else if( *Api == CODECAPI_AVEnableInLoopDeblockFilter )
    {
@@ -1266,7 +1278,7 @@ CDX12EncHMFT::SetValue( const GUID *Api, VARIANT *Value )
    {
       UINT32 uiFrameQP = ( (UINT32) Value->ullVal ) & 0xFFFF;
       debug_printf( "[dx12 hmft 0x%p] SET CODECAPI_AVEncVideoEncodeQP - %u\n", this, uiFrameQP );
-      if( Value->vt != VT_UI8 || ( ( ( (UINT32) Value->ullVal ) & 0xFFFF ) > AVC_MAX_QP ) ||
+      if( Value->vt != VT_UI8 || ( ( ( (UINT32) Value->ullVal ) & 0xFFFF ) > HMFT_MAX_QP ) ||
           m_uiRateControlMode != eAVEncCommonRateControlMode_Quality )
       {
          CHECKHR_GOTO( E_INVALIDARG, done );
@@ -1277,9 +1289,9 @@ CDX12EncHMFT::SetValue( const GUID *Api, VARIANT *Value )
       m_uiEncodeFrameTypeBQP[m_uiSelectedLayer] = uiFrameQP;
 
       // validate frame QPs are within H.264-allowed limits
-      if( AVC_MAX_QP < uiFrameQP )
+      if( HMFT_MAX_QP < uiFrameQP )
       {
-         MFE_ERROR( "[dx12 hmft 0x%p] The QP set in CODECAPI_AVEncVideoEncodeQP is greater than 51", this );
+         MFE_ERROR( "[dx12 hmft 0x%p] The QP set in CODECAPI_AVEncVideoEncodeQP is greater than %d", this, HMFT_MAX_QP );
          CHECKHR_GOTO( E_INVALIDARG, done );
       }
 
@@ -1299,35 +1311,37 @@ CDX12EncHMFT::SetValue( const GUID *Api, VARIANT *Value )
          CHECKHR_GOTO( E_INVALIDARG, done );
       }
 
-      m_uiEncodeFrameTypeIQP[m_uiSelectedLayer] = (UINT32) ( Value->ullVal & 0xFFFF );
-      m_uiEncodeFrameTypePQP[m_uiSelectedLayer] = (UINT32) ( ( Value->ullVal >> 16 ) & 0xFFFF );
-      m_uiEncodeFrameTypeBQP[m_uiSelectedLayer] = (UINT32) ( ( Value->ullVal >> 32 ) & 0xFFFF );
+      const UINT32 uiFrameTypeIQP = (UINT32) ( Value->ullVal & 0xFFFF );
+      const UINT32 uiFrameTypePQP = (UINT32) ( ( Value->ullVal >> 16 ) & 0xFFFF );
+      const UINT32 uiFrameTypeBQP = (UINT32) ( ( Value->ullVal >> 32 ) & 0xFFFF );
 
       // Validate that the frame QPs are within H.264-allowed limits
       // We need to perform this check here because there are places
       // later in the MFT layer that assume that if frame QPs have been set that they
       // are within the valid range
-      if( AVC_MAX_QP < m_uiEncodeFrameTypeIQP[m_uiSelectedLayer] || AVC_MAX_QP < m_uiEncodeFrameTypePQP[m_uiSelectedLayer] ||
-          AVC_MAX_QP < m_uiEncodeFrameTypeBQP[m_uiSelectedLayer] )
+      if( HMFT_MAX_QP < uiFrameTypeIQP || HMFT_MAX_QP < uiFrameTypePQP || HMFT_MAX_QP < uiFrameTypeBQP )
       {
-         MFE_ERROR( "[dx12 hmft 0x%p] At least one of the QPs set in CODECAPI_AVEncVideoEncodeFrameTypeQP is greater than 51",
-                    this );
+         MFE_ERROR( "[dx12 hmft 0x%p] At least one of the QPs set in CODECAPI_AVEncVideoEncodeFrameTypeQP is greater than %d",
+                    this, HMFT_MAX_QP );
          CHECKHR_GOTO( E_INVALIDARG, done );
       }
 
       // validate frame QP settings against the right range of [MinQP, MaxQP] if exists
       if( ( TRUE == m_bMaxQPSet &&
-            ( m_uiMaxQP < m_uiEncodeFrameTypeIQP[m_uiSelectedLayer] || m_uiMaxQP < m_uiEncodeFrameTypePQP[m_uiSelectedLayer] ||
-              m_uiMaxQP < m_uiEncodeFrameTypeBQP[m_uiSelectedLayer] ) ) ||
+            ( m_uiMaxQP < uiFrameTypeIQP || m_uiMaxQP < uiFrameTypePQP || m_uiMaxQP < uiFrameTypeBQP ) ) ||
           ( TRUE == m_bMinQPSet &&
-            ( m_uiMinQP > m_uiEncodeFrameTypeIQP[m_uiSelectedLayer] || m_uiMinQP > m_uiEncodeFrameTypePQP[m_uiSelectedLayer] ||
-              m_uiMinQP > m_uiEncodeFrameTypeBQP[m_uiSelectedLayer] ) ) )
+            ( m_uiMinQP > uiFrameTypeIQP || m_uiMinQP > uiFrameTypePQP || m_uiMinQP > uiFrameTypeBQP ) ) )
       {
          MFE_ERROR(
             "[dx12 hmft 0x%p] At least one of the QPs set in CODECAPI_AVEncVideoEncodeFrameTypeQP is outside min and max values",
             this );
          CHECKHR_GOTO( E_INVALIDARG, done );
       }
+
+      m_uiEncodeFrameTypeIQP[m_uiSelectedLayer] = uiFrameTypeIQP;
+      m_uiEncodeFrameTypePQP[m_uiSelectedLayer] = uiFrameTypePQP;
+      m_uiEncodeFrameTypeBQP[m_uiSelectedLayer] = uiFrameTypeBQP;
+
       // only when it succeeds, set the flag to TRUE
       debug_printf( "[dx12 hmft 0x%p] SET CODECAPI_AVEncVideoEncodeFrameTypeQP - %u, %u, %u (I, P, B)\n",
                     this,
@@ -1339,7 +1353,7 @@ CDX12EncHMFT::SetValue( const GUID *Api, VARIANT *Value )
    else if( *Api == CODECAPI_AVEncVideoMinQP )
    {
       debug_printf( "[dx12 hmft 0x%p] SET CODECAPI_AVEncVideoMinQP - %u\n", this, Value->ulVal );
-      if( Value->vt != VT_UI4 || ( Value->ulVal > AVC_MAX_QP ) )
+      if( Value->vt != VT_UI4 || ( Value->ulVal > HMFT_MAX_QP ) )
       {
          CHECKHR_GOTO( E_INVALIDARG, done );
       }
@@ -1368,7 +1382,7 @@ CDX12EncHMFT::SetValue( const GUID *Api, VARIANT *Value )
    else if( *Api == CODECAPI_AVEncVideoMaxQP )
    {
       debug_printf( "[dx12 hmft 0x%p] SET CODECAPI_AVEncVideoMaxQP - %u\n", this, Value->ulVal );
-      if( Value->vt != VT_UI4 )
+      if( Value->vt != VT_UI4 || ( Value->ulVal > HMFT_MAX_QP ) )
       {
          CHECKHR_GOTO( E_INVALIDARG, done );
       }

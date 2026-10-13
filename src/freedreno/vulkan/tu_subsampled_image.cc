@@ -123,8 +123,10 @@ tu_emit_subsampled_metadata(struct tu_cmd_buffer *cmd,
 nir_def *
 tu_get_subsampled_coordinates(nir_builder *b,
                               nir_def *coords,
-                              nir_def *descriptor)
+                              nir_def *descriptor,
+                              bool can_speculate)
 {
+   gl_access_qualifier access = can_speculate ? ACCESS_CAN_SPECULATE : (gl_access_qualifier)0;
    nir_def *layer;
    if (coords->num_components > 2)
       layer = nir_f2u16(b, nir_channel(b, coords, 2));
@@ -137,11 +139,13 @@ tu_get_subsampled_coordinates(nir_builder *b,
    nir_def *hdr0 =
       nir_load_ubo(b, 4, 32, descriptor,
                    nir_ishl_imm(b, nir_u2u32(b, layer_offset), 4),
+                   .access = access,
                    .align_mul = 16,
                    .align_offset = 0,
                    .range = TU_SUBSAMPLED_MAX_LAYERS * sizeof(struct tu_subsampled_metadata));
    nir_def *bin_stride =
       nir_load_ubo(b, 1, 32, descriptor, nir_ishl_imm(b, nir_u2u32(b, nir_iadd_imm(b, layer_offset, 1)), 4),
+                   .access = access,
                    .align_mul = 16,
                    .align_offset = 0,
                    .range = TU_SUBSAMPLED_MAX_LAYERS * sizeof(struct tu_subsampled_metadata));
@@ -149,7 +153,7 @@ tu_get_subsampled_coordinates(nir_builder *b,
    nir_def *hdr_scale = nir_channels(b, hdr0, 0x3);
    nir_def *hdr_offset = nir_channels(b, hdr0, 0xc);
 
-   nir_def *bin = nir_f2u16(b, nir_ffma(b, coords, hdr_scale, hdr_offset));
+   nir_def *bin = nir_f2u16(b, nir_ffma_weak(b, coords, hdr_scale, hdr_offset));
    nir_def *bin_idx = nir_iadd(b, nir_imul(b, nir_channel(b, bin, 1),
                                            nir_u2u16(b, bin_stride)),
                                nir_channel(b, bin, 0));
@@ -159,6 +163,7 @@ tu_get_subsampled_coordinates(nir_builder *b,
 
    nir_def *bin_data =
       nir_load_ubo(b, 4, 32, descriptor, nir_ishl_imm(b, nir_u2u32(b, bin_idx), 4),
+                   .access = access,
                    .align_mul = 16,
                    .align_offset = 0,
                    .range = TU_SUBSAMPLED_MAX_LAYERS * sizeof(struct tu_subsampled_metadata));
@@ -166,7 +171,7 @@ tu_get_subsampled_coordinates(nir_builder *b,
    nir_def *bin_scale = nir_channels(b, bin_data, 0x3);
    nir_def *bin_offset = nir_channels(b, bin_data, 0xc);
 
-   return nir_ffma(b, coords, bin_scale, bin_offset);
+   return nir_ffma_weak(b, coords, bin_scale, bin_offset);
 }
 
 /* Calculate the y coordinate in subsampled space of a given number of tiles
@@ -401,10 +406,20 @@ tu_calc_subsampled_aprons(VkRect2D *dst,
                if (!(other_tile->visible_views & (1u << view)))
                    continue;
 
-               /* If they are next to each other then neither needs an apron. */
+               /* If they are next to each other then neither needs an apron.
+                * This means that their left and right edges touch and they
+                * vertically overlap.
+                */
                if (tile->subsampled_pos[view].offset.x +
                    tile->subsampled_pos[view].extent.width ==
-                   other_tile->subsampled_pos[view].offset.x)
+                   other_tile->subsampled_pos[view].offset.x &&
+                   /* check vertical overlap */
+                   tile->subsampled_pos[view].offset.y +
+                   tile->subsampled_pos[view].extent.height >=
+                   other_tile->subsampled_pos[view].offset.y &&
+                   other_tile->subsampled_pos[view].offset.y +
+                   other_tile->subsampled_pos[view].extent.height >=
+                   tile->subsampled_pos[view].offset.y)
                   continue;
 
                /* If other_tile isn't entirely to the right of tile, it is not
@@ -500,10 +515,20 @@ tu_calc_subsampled_aprons(VkRect2D *dst,
                if (!(other_tile->visible_views & (1u << view)))
                    continue;
 
-               /* If both are next to each other then neither needs an apron. */
+               /* If both are next to each other then neither needs an apron.
+                * This means that their top and bottom edges touch and they
+                * horizontally overlap.
+                */
                if (tile->subsampled_pos[view].offset.y +
                    tile->subsampled_pos[view].extent.height ==
-                   other_tile->subsampled_pos[view].offset.y)
+                   other_tile->subsampled_pos[view].offset.y &&
+                   /* Check horizontal overlap. */
+                   tile->subsampled_pos[view].offset.x +
+                   tile->subsampled_pos[view].extent.width >=
+                   other_tile->subsampled_pos[view].offset.x &&
+                   other_tile->subsampled_pos[view].offset.x +
+                   other_tile->subsampled_pos[view].extent.width >=
+                   tile->subsampled_pos[view].offset.x)
                   continue;
 
                VkExtent2D frag_area = get_effective_frag_area(tile, view);

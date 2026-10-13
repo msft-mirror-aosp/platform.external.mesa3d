@@ -21,9 +21,9 @@
 #include "vk_format.h"
 #include "vk_image.h"
 
-static const VkImageUsageFlags RADV_IMAGE_USAGE_WRITE_BITS =
-   VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-   VK_IMAGE_USAGE_STORAGE_BIT;
+#define RADV_IMAGE_USAGE_WRITE_BITS                                                                                   \
+   (VK_IMAGE_USAGE_2_TRANSFER_DST_BIT_KHR | VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR |                               \
+    VK_IMAGE_USAGE_2_DEPTH_STENCIL_ATTACHMENT_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR)
 
 struct radv_image_plane {
    VkFormat format;
@@ -117,6 +117,16 @@ radv_image_has_dcc(const struct radv_image *image)
 }
 
 /**
+ * Return whether the image has display DCC for scanout surfaces.
+ */
+static inline bool
+radv_image_has_display_dcc(const struct radv_image *image)
+{
+   return image->planes[0].surface.display_dcc_offset &&
+          image->planes[0].surface.display_dcc_offset != image->planes[0].surface.meta_offset;
+}
+
+/**
  * Return whether the image is TC-compatible CMASK.
  */
 static inline bool
@@ -179,7 +189,7 @@ radv_image_has_vrs_htile(const struct radv_device *device, const struct radv_ima
 
    /* Any depth buffer can potentially use VRS on GFX10.3. */
    return gfx_level == GFX10_3 && device->vk.enabled_features.attachmentFragmentShadingRate &&
-          radv_image_has_htile(image) && (image->vk.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+          radv_image_has_htile(image) && (image->vk.usage & VK_IMAGE_USAGE_2_DEPTH_STENCIL_ATTACHMENT_BIT_KHR);
 }
 
 /**
@@ -391,7 +401,7 @@ radv_image_get_iterate256(const struct radv_device *device, struct radv_image *i
 }
 
 bool radv_are_formats_dcc_compatible(const struct radv_physical_device *pdev, const void *pNext, VkFormat format,
-                                     VkImageCreateFlags flags, bool *sign_reinterpret);
+                                     VkImageCreateFlags2KHR flags, bool *sign_reinterpret);
 
 bool radv_image_use_dcc_predication(const struct radv_device *device, const struct radv_image *image);
 
@@ -451,8 +461,7 @@ enum radv_fmask_compression radv_layout_fmask_compression(const struct radv_devi
                                                           const struct radv_image *image, VkImageLayout layout,
                                                           unsigned queue_mask);
 
-unsigned radv_image_queue_family_mask(const struct radv_image *image, enum radv_queue_family family,
-                                      enum radv_queue_family queue_family);
+unsigned radv_image_queue_family_mask(const struct radv_image *image, enum radv_queue_family qf);
 
 bool radv_image_is_renderable(const struct radv_image *image);
 

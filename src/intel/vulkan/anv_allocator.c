@@ -346,8 +346,8 @@ anv_block_pool_init(struct anv_block_pool *pool,
                     struct anv_device *device,
                     const char *name,
                     uint64_t start_address,
-                    uint32_t initial_size,
-                    uint32_t max_size)
+                    uint64_t initial_size,
+                    uint64_t max_size)
 {
    VkResult result;
 
@@ -491,6 +491,11 @@ anv_device_has_perf_improvement_with_2mb_pages(struct anv_device *device)
 static bool
 anv_device_has_perf_improvement_with_64k_pages(struct anv_device *device)
 {
+   /* Whether to reduce page count at the cost of increased memory footprint.
+    * On MTL(Xe KMD only)/LNL platforms, there is a large perf penalty from
+    * page misses. On PTL platforms, there is a large perf penalty from IOMMU
+    * TLB thrashing.
+    */
    if (device->info->has_local_mem || device->info->verx10 < 110)
       return false;
 
@@ -1234,7 +1239,16 @@ anv_state_reserved_array_pool_free(struct anv_state_reserved_array_pool *pool,
    simple_mtx_lock(&pool->mutex);
    BITSET_SET(pool->states, idx);
    simple_mtx_unlock(&pool->mutex);
- }
+}
+
+void
+anv_state_reserved_array_pool_index_free(struct anv_state_reserved_array_pool *pool,
+                                         uint32_t index)
+{
+   simple_mtx_lock(&pool->mutex);
+   BITSET_SET(pool->states, index);
+   simple_mtx_unlock(&pool->mutex);
+}
 
 void
 anv_bo_pool_init(struct anv_bo_pool *pool, struct anv_device *device,
@@ -1360,7 +1374,7 @@ anv_scratch_pool_finish(struct anv_device *device, struct anv_scratch_pool *pool
 
    for (unsigned i = 0; i < 16; i++) {
       if (pool->surf_states[i].map != NULL) {
-         anv_state_pool_free(&device->scratch_surface_state_pool,
+         anv_state_pool_free(anv_device_get_scratch_surface_state_pool(device),
                              pool->surf_states[i]);
       }
    }
@@ -1456,7 +1470,7 @@ anv_scratch_pool_get_surf(struct anv_device *device,
    struct anv_address addr = { .bo = bo };
 
    struct anv_state state =
-      anv_state_pool_alloc(&device->scratch_surface_state_pool,
+      anv_state_pool_alloc(anv_device_get_scratch_surface_state_pool(device),
                            device->isl_dev.ss.size, 64);
 
    isl_surf_usage_flags_t usage =
@@ -1475,7 +1489,7 @@ anv_scratch_pool_get_surf(struct anv_device *device,
 
    uint32_t current = p_atomic_cmpxchg(&pool->surfs[bucket], 0, state.offset);
    if (current) {
-      anv_state_pool_free(&device->scratch_surface_state_pool, state);
+      anv_state_pool_free(anv_device_get_scratch_surface_state_pool(device), state);
       return current;
    } else {
       pool->surf_states[bucket] = state;
@@ -1497,10 +1511,11 @@ anv_shader_get_scratch_surf(struct anv_batch *batch,
       &device->protected_scratch_pool : &device->scratch_pool;
    struct anv_bo *bo =
       anv_scratch_pool_alloc(device, pool, stage, total_scratch);
-   anv_reloc_list_add_bo(batch->relocs, bo);
+   if (batch != NULL)
+      anv_reloc_list_add_bo(batch->relocs, bo);
    uint32_t ret = anv_scratch_pool_get_surf(device, pool, total_scratch);
 
-   return ret >> ANV_SCRATCH_SPACE_SHIFT;
+   return device->physical->uses_efficient_64bit ? ret : (ret >> ANV_SCRATCH_SPACE_SHIFT);
 }
 
 VkResult
@@ -1681,22 +1696,14 @@ anv_device_alloc_bo(struct anv_device *device,
       size = align64(size, 4096);
    }
 
-   /* Round up allocations to 2MB intervals so long as increase doesn't
-    * increase allocation by more than 1.33%. This reduces page
-    * count at the cost of increased memory footprint. Only apply on
-    * MTL(Xe KMD only)/LNL platforms, which incur largest perf penalty from
-    * page misses.
+   /* Try to allocate memory in multiples of 2MB, as this allows us to use
+    * 2MB pages rather than the less-efficient 4K pages.
     */
-   if (align64(size, 2 * 1024 * 1024) <= (size * 4 / 3) &&
-       anv_device_has_perf_improvement_with_2mb_pages_oversubscription(device))
-      size = align64(size, 2 * 1024 * 1024);
-   /* bos larger than 1MB can't be allocated with slab but to reduce pages we
-    * could align size to 64k pages to gain performance with minimum memory
-    * waste.
-    */
-   else if ((size > (1 * 1024 * 1024)) &&
-            anv_device_has_perf_improvement_with_64k_pages(device))
-      size = align64(size, 64 * 1024);
+   if (device->physical->drirc.perf.alloc_oversubscription) {
+      if (size >= 1 * 1024 * 1024 &&
+          anv_device_has_perf_improvement_with_2mb_pages_oversubscription(device))
+         size = align64(size, 2 * 1024 * 1024);
+   }
 
    const struct intel_memory_class_instance *regions[2];
    uint32_t nregions = 0;

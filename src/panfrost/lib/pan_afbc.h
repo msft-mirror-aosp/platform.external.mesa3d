@@ -3,6 +3,7 @@
  * Copyright (C) 2014 Broadcom
  * Copyright (C) 2018-2019 Alyssa Rosenzweig
  * Copyright (C) 2019-2020 Collabora, Ltd.
+ * Copyright (C) 2026 Arm Ltd.
  * SPDX-License-Identifier: MIT
  */
 
@@ -471,6 +472,8 @@ pan_afbc_unswizzled_format(unsigned arch, enum pipe_format format)
       return PIPE_FORMAT_R5G6B5_UNORM;
 
    case PIPE_FORMAT_B5G5R5A1_UNORM:
+   case PIPE_FORMAT_B5G5R5X1_UNORM:
+   case PIPE_FORMAT_R5G5B5X1_UNORM:
       return PIPE_FORMAT_R5G5B5A1_UNORM;
 
    case PIPE_FORMAT_R10G10B10X2_UNORM:
@@ -479,10 +482,15 @@ pan_afbc_unswizzled_format(unsigned arch, enum pipe_format format)
       return PIPE_FORMAT_R10G10B10A2_UNORM;
 
    case PIPE_FORMAT_B4G4R4A4_UNORM:
+   case PIPE_FORMAT_B4G4R4X4_UNORM:
+   case PIPE_FORMAT_R4G4B4X4_UNORM:
       return PIPE_FORMAT_R4G4B4A4_UNORM;
    case PIPE_FORMAT_A4B4G4R4_UNORM:
       /* v7 can only support AFBC for RGB and BGR */
       return arch == 7 ? format : PIPE_FORMAT_R4G4B4A4_UNORM;
+
+   case PIPE_FORMAT_R16G16B16X16_UNORM:
+      return PIPE_FORMAT_R16G16B16A16_UNORM;
 
    default:
       return format;
@@ -557,6 +565,7 @@ pan_afbc_format(unsigned arch, enum pipe_format format, unsigned plane_idx)
    case PIPE_FORMAT_R16G16_UNORM:
    case PIPE_FORMAT_R16G16B16_UNORM:
    case PIPE_FORMAT_R16G16B16A16_UNORM:
+   case PIPE_FORMAT_R16G16B16X16_UNORM:
       if (arch < 10)
          return PAN_AFBC_MODE_INVALID;
       else
@@ -637,21 +646,103 @@ pan_afbc_can_ytr(enum pipe_format format)
 }
 
 static inline bool
-pan_afbc_can_split(unsigned arch, enum pan_afbc_mode mode, uint64_t modifier)
+pan_afbc_check_params(enum pan_afbc_mode mode, uint64_t modifier)
 {
    unsigned block_width = pan_afbc_superblock_width(modifier);
+   bool is_split = modifier & AFBC_FORMAT_MOD_SPLIT;
 
-   if (arch < 6)
-      return false;
-
-   if (block_width == 16) {
-      return true;
-   } else if (block_width == 32) {
-      return (mode == PAN_AFBC_MODE_R8G8B8A8 ||
-              mode == PAN_AFBC_MODE_R10G10B10A2);
+   /* YTR is not useful on RGB formats, nor with one- or two-channel
+    * formats */
+   bool is_ytr = modifier & AFBC_FORMAT_MOD_YTR;
+   switch (mode) {
+   case PAN_AFBC_MODE_YUV420_6C8:
+   case PAN_AFBC_MODE_YUV420_2C8:
+   case PAN_AFBC_MODE_YUV420_1C8:
+   case PAN_AFBC_MODE_YUV420_6C10:
+   case PAN_AFBC_MODE_YUV420_2C10:
+   case PAN_AFBC_MODE_YUV420_1C10:
+   case PAN_AFBC_MODE_YUV422_4C8:
+   case PAN_AFBC_MODE_YUV422_2C8:
+   case PAN_AFBC_MODE_YUV422_1C8:
+   case PAN_AFBC_MODE_YUV422_4C10:
+   case PAN_AFBC_MODE_YUV422_2C10:
+   case PAN_AFBC_MODE_YUV422_1C10:
+   case PAN_AFBC_MODE_R8:
+   case PAN_AFBC_MODE_R8G8:
+   case PAN_AFBC_MODE_R16:
+   case PAN_AFBC_MODE_R16G16:
+      if (is_ytr)
+         return false;
+      break;
+   default:
+      break;
    }
 
-   return false;
+   /* 16x16 superblocks are universally compatible */
+   if (block_width == 16)
+      return true;
+
+   /* 64x4 blocks are only usable for multi-planar YUV formats,
+    * and not in block-split mode. */
+   if (block_width == 64) {
+      switch (mode) {
+      case PAN_AFBC_MODE_YUV420_2C8:
+      case PAN_AFBC_MODE_YUV420_1C8:
+      case PAN_AFBC_MODE_YUV420_2C10:
+      case PAN_AFBC_MODE_YUV420_1C10:
+      case PAN_AFBC_MODE_YUV422_2C8:
+      case PAN_AFBC_MODE_YUV422_1C8:
+      case PAN_AFBC_MODE_YUV422_2C10:
+      case PAN_AFBC_MODE_YUV422_1C10:
+         return !is_split;
+      default:
+         return false;
+      }
+   }
+
+   assert(block_width == 32);
+
+   /* 32x8 superblocks have different requirements based on the format:
+    * block-split mode is required for effective bpp >16, and prohibited
+    * for effective bpp <= 16. */
+   switch (mode) {
+   case PAN_AFBC_MODE_R8G8B8:
+   case PAN_AFBC_MODE_R8G8B8A8:
+   case PAN_AFBC_MODE_R10G10B10A2:
+   case PAN_AFBC_MODE_R11G11B10:
+   case PAN_AFBC_MODE_R16G16:
+   case PAN_AFBC_MODE_R16G16B16:
+   case PAN_AFBC_MODE_R16G16B16A16:
+      return is_split;
+   case PAN_AFBC_MODE_R8:
+   case PAN_AFBC_MODE_R8G8:
+   case PAN_AFBC_MODE_R5G6B5:
+   case PAN_AFBC_MODE_R4G4B4A4:
+   case PAN_AFBC_MODE_R5G5B5A1:
+   case PAN_AFBC_MODE_R16:
+   case PAN_AFBC_MODE_YUV420_6C8:
+   case PAN_AFBC_MODE_YUV420_6C10:
+   case PAN_AFBC_MODE_YUV422_4C8:
+   case PAN_AFBC_MODE_YUV422_4C10:
+      return !is_split;
+   /* The following split luma/chroma layouts require
+    * AFBC_FORMAT_MOD_BLOCK_SIZE_32x8_64x4 to be usable, since the luma
+    * planes require non-split 32x8, and the chroma planes require 64x4.
+    */
+   case PAN_AFBC_MODE_YUV420_1C8:
+   case PAN_AFBC_MODE_YUV420_1C10:
+   case PAN_AFBC_MODE_YUV422_1C8:
+   case PAN_AFBC_MODE_YUV422_1C10:
+      return !is_split;
+   case PAN_AFBC_MODE_YUV420_2C8:
+   case PAN_AFBC_MODE_YUV420_2C10:
+   case PAN_AFBC_MODE_YUV422_2C8:
+   case PAN_AFBC_MODE_YUV422_2C10:
+      return false;
+   default:
+      assert(!"unknown mode in pan_afbc_check_params()");
+      return false;
+   }
 }
 
 /* Only support packing for RGB formats for now. */
@@ -672,6 +763,15 @@ static inline bool
 pan_afbc_can_tile(unsigned arch)
 {
    return arch >= 7;
+}
+
+/*
+ * Check if a gen supports AFBC with split-block mode.
+ */
+static inline bool
+pan_afbc_can_split(unsigned arch)
+{
+   return arch >= 6;
 }
 
 #if PAN_ARCH >= 9
@@ -711,6 +811,32 @@ pan_afbc_compression_mode(enum pan_afbc_mode mode)
    case PAN_AFBC_MODE_R16G16B16A16:
       return MALI_AFBC_COMPRESSION_MODE_R16G16B16A16;
 #endif
+#if PAN_ARCH >= 14
+   case PAN_AFBC_MODE_YUV420_6C8:
+      return MALI_AFBC_COMPRESSION_MODE_Y8U8V8_420;
+   case PAN_AFBC_MODE_YUV420_2C8:
+      return MALI_AFBC_COMPRESSION_MODE_R8G8;
+   case PAN_AFBC_MODE_YUV420_1C8:
+      return MALI_AFBC_COMPRESSION_MODE_R8;
+   case PAN_AFBC_MODE_YUV420_6C10:
+      return MALI_AFBC_COMPRESSION_MODE_Y10U10V10_420;
+   case PAN_AFBC_MODE_YUV420_2C10:
+      return MALI_AFBC_COMPRESSION_MODE_R10G10;
+   case PAN_AFBC_MODE_YUV420_1C10:
+      return MALI_AFBC_COMPRESSION_MODE_R10;
+   case PAN_AFBC_MODE_YUV422_4C8:
+      return MALI_AFBC_COMPRESSION_MODE_Y8U8Y8V8_422;
+   case PAN_AFBC_MODE_YUV422_2C8:
+      return MALI_AFBC_COMPRESSION_MODE_R8G8;
+   case PAN_AFBC_MODE_YUV422_1C8:
+      return MALI_AFBC_COMPRESSION_MODE_R8;
+   case PAN_AFBC_MODE_YUV422_4C10:
+      return MALI_AFBC_COMPRESSION_MODE_Y10U10Y10V10_422;
+   case PAN_AFBC_MODE_YUV422_2C10:
+      return MALI_AFBC_COMPRESSION_MODE_R10G10;
+   case PAN_AFBC_MODE_YUV422_1C10:
+      return MALI_AFBC_COMPRESSION_MODE_R10;
+#else
    case PAN_AFBC_MODE_YUV420_6C8:
       return MALI_AFBC_COMPRESSION_MODE_YUV420_6C8;
    case PAN_AFBC_MODE_YUV420_2C8:
@@ -735,6 +861,7 @@ pan_afbc_compression_mode(enum pan_afbc_mode mode)
       return MALI_AFBC_COMPRESSION_MODE_YUV422_2C10;
    case PAN_AFBC_MODE_YUV422_1C10:
       return MALI_AFBC_COMPRESSION_MODE_YUV422_1C10;
+#endif /* PAN_ARCH >= 14 */
 #if PAN_ARCH == 9
    case PAN_AFBC_MODE_R16:
    case PAN_AFBC_MODE_R16G16:

@@ -41,6 +41,7 @@ struct blt_imginfo
    unsigned downsample_x : 1; /* Downsample in x direction */
    unsigned downsample_y : 1; /* Downsample in y direction */
    unsigned use_ts:1;
+   unsigned srgb : 1;
    struct etna_reloc addr;
    struct etna_reloc ts_addr;
    uint32_t format; /* BLT_FORMAT_* */
@@ -72,6 +73,7 @@ struct blt_clear_op
 struct blt_imgcopy_op
 {
    unsigned flip_y:1;
+   unsigned downsample_one_sample:1;
    struct blt_imginfo src;
    struct blt_imginfo dest;
    uint16_t src_x;

@@ -59,13 +59,16 @@ nir_def *
 nir_get_texture_lod(nir_builder *b, nir_tex_instr *tex);
 
 nir_def *
+nir_tanh_emulated(struct nir_builder *nb, nir_def *src);
+
+nir_def *
 nir_get_texture_size(nir_builder *b, nir_tex_instr *tex);
 
 static inline nir_def *
 nir_fisnan(nir_builder *b, nir_def *x)
 {
    unsigned old_fp_math_ctrl = b->fp_math_ctrl;
-   b->fp_math_ctrl |= nir_fp_exact;
+   b->fp_math_ctrl |= nir_fp_preserve_inf | nir_fp_preserve_nan;
    nir_def *res = nir_fneu(b, x, x);
    b->fp_math_ctrl = old_fp_math_ctrl;
    return res;
@@ -191,12 +194,6 @@ static inline nir_def *
 nir_fast_normalize(nir_builder *b, nir_def *vec)
 {
    return nir_fdiv(b, vec, nir_fast_length(b, vec));
-}
-
-static inline nir_def *
-nir_fmad(nir_builder *b, nir_def *x, nir_def *y, nir_def *z)
-{
-   return nir_fadd(b, nir_fmul(b, x, y), z);
 }
 
 static inline nir_def *

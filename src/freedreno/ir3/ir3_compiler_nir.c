@@ -726,7 +726,7 @@ emit_alu(struct ir3_context *ctx, nir_alu_instr *alu)
    case nir_op_fsub:
       dst = ir3_ADD_F_rpt(b, dst_sz, src[0], 0, src[1], IR3_REG_FNEG);
       break;
-   case nir_op_ffma:
+   case nir_op_fmad:
       /* The scalar ALU doesn't support mad, so expand to mul+add so that we
        * don't unnecessarily fall back to non-earlypreamble. This is safe
        * because at least on a6xx+ mad is unfused.
@@ -870,7 +870,7 @@ emit_alu(struct ir3_context *ctx, nir_alu_instr *alu)
    case nir_op_imad24_ir3:
       if (use_shared) {
          dst = ir3_ADD_U_rpt(b, dst_sz,
-                             ir3_MUL_U24_rpt(b, dst_sz, src[0], 0, src[1], 0),
+                             ir3_MUL_S24_rpt(b, dst_sz, src[0], 0, src[1], 0),
                              0, src[2], 0);
       } else {
          dst = ir3_MAD_S24_rpt(b, dst_sz, src[0], 0, src[1], 0, src[2], 0);
@@ -1247,7 +1247,7 @@ emit_intrinsic_copy_global_to_uniform(struct ir3_context *ctx,
 
    struct ir3_instruction *a1 = NULL;
    unsigned dst_imm = dst;
-   if (dst > 256) {
+   if (dst >= 256) {
       a1 = ir3_create_addr1(&ctx->build, dst);
       dst_imm = 0;
    }
@@ -2094,6 +2094,7 @@ emit_control_barrier(struct ir3_context *ctx)
 
    struct ir3_builder *b = &ctx->build;
    struct ir3_instruction *barrier = ir3_BAR(b);
+   ir3_dst_create(barrier, REG_A0_X, IR3_REG_HALF);
    barrier->cat7.g = true;
    if (ctx->compiler->gen < 6)
       barrier->cat7.l = true;
@@ -2909,11 +2910,13 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
       ir3_split_dest(b, dst, ctx->tess_coord, 0, 2);
       break;
 
-   case nir_intrinsic_store_global_ir3:
-      ctx->funcs->emit_intrinsic_store_global_ir3(ctx, intr);
+   case nir_intrinsic_store_global:
+   case nir_intrinsic_store_global_offset:
+      ctx->funcs->emit_intrinsic_store_global(ctx, intr);
       break;
-   case nir_intrinsic_load_global_ir3:
-      ctx->funcs->emit_intrinsic_load_global_ir3(ctx, intr, dst);
+   case nir_intrinsic_load_global:
+   case nir_intrinsic_load_global_offset:
+      ctx->funcs->emit_intrinsic_load_global(ctx, intr, dst);
       break;
 
    case nir_intrinsic_load_ubo:
@@ -3028,28 +3031,16 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
       break;
    case nir_intrinsic_load_base_vertex:
    case nir_intrinsic_load_first_vertex:
-      if (!ctx->basevertex) {
-         ctx->basevertex = create_driver_param(ctx, IR3_DP_VS(vtxid_base));
-      }
-      dst[0] = ctx->basevertex;
+      dst[0] = create_driver_param(ctx, IR3_DP_VS(vtxid_base));
       break;
    case nir_intrinsic_load_is_indexed_draw:
-      if (!ctx->is_indexed_draw) {
-         ctx->is_indexed_draw = create_driver_param(ctx, IR3_DP_VS(is_indexed_draw));
-      }
-      dst[0] = ctx->is_indexed_draw;
+      dst[0] = create_driver_param(ctx, IR3_DP_VS(is_indexed_draw));
       break;
    case nir_intrinsic_load_draw_id:
-      if (!ctx->draw_id) {
-         ctx->draw_id = create_driver_param(ctx, IR3_DP_VS(draw_id));
-      }
-      dst[0] = ctx->draw_id;
+      dst[0] = create_driver_param(ctx, IR3_DP_VS(draw_id));
       break;
    case nir_intrinsic_load_base_instance:
-      if (!ctx->base_instance) {
-         ctx->base_instance = create_driver_param(ctx, IR3_DP_VS(instid_base));
-      }
-      dst[0] = ctx->base_instance;
+      dst[0] = create_driver_param(ctx, IR3_DP_VS(instid_base));
       break;
    case nir_intrinsic_load_view_index:
       if (!ctx->view_index) {
@@ -3487,6 +3478,12 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
 
       make_dst_dummy(sam);
       array_insert(ctx->block, ctx->block->keeps, sam);
+
+      if (ctx->so->type == MESA_SHADER_FRAGMENT &&
+          ir3_prefetch_sam_needs_helpers(ctx->compiler, sam)) {
+         ctx->so->need_pixlod = true;
+      }
+
       break;
    }
    case nir_intrinsic_prefetch_tex_ir3: {
@@ -3506,8 +3503,6 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
       break;
    }
    case nir_intrinsic_prefetch_ubo_ir3: {
-      if (!ir3_bindless_resource(intr->src[0]))
-         break;
       struct ir3_instruction *offset = create_immed(b, 0);
       struct ir3_instruction *idx = ir3_get_src(ctx, &intr->src[0])[0];
       struct ir3_instruction *ldc = ir3_LDC(b, idx, 0, offset, 0);
@@ -3520,6 +3515,20 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
 
       make_dst_dummy(ldc);
       array_insert(ctx->block, ctx->block->keeps, ldc);
+      break;
+   }
+   case nir_intrinsic_resbase_ir3: {
+      struct ir3_instruction *ibo = ir3_ssbo_to_ibo(ctx, intr->src[0]);
+      struct ir3_instruction *resbase = ir3_RESBASE(b, ibo, 0);
+      resbase->cat6.iim_val = 1;
+      resbase->cat6.d = 1;
+      resbase->cat6.type = TYPE_U32;
+      resbase->cat6.typed = false;
+      /* resbase has no writemask and always writes out 2 components */
+      resbase->dsts[0]->wrmask = MASK(2);
+      ir3_handle_bindless_cat6(resbase, intr->src[0]);
+      ir3_handle_nonuniform(resbase, intr);
+      ir3_split_dest(b, dst, resbase, 0, 2);
       break;
    }
    case nir_intrinsic_rotate:
@@ -3609,7 +3618,6 @@ get_tex_dest_type(nir_tex_instr *tex)
    case nir_type_bool32:
    case nir_type_uint32:
       return TYPE_U32;
-   case nir_type_bool16:
    case nir_type_uint16:
       return TYPE_U16;
    case nir_type_invalid:
@@ -3667,7 +3675,8 @@ get_tex_samp_tex_src(struct ir3_context *ctx, nir_tex_instr *tex)
                                    texture2_idx >= 0 ? &tex->src[texture2_idx].src : NULL,
                                    sampler2_idx >= 0 ? &tex->src[sampler2_idx].src : NULL);
 
-      if (tex->texture_non_uniform || tex->sampler_non_uniform)
+      if (tex->texture_non_uniform || tex->sampler_non_uniform ||
+          tex->texture_2_non_uniform || tex->sampler_2_non_uniform)
          info.flags |= IR3_INSTR_NONUNIF;
    } else {
       info.flags |= IR3_INSTR_S2EN;
@@ -5170,6 +5179,9 @@ setup_input(struct ir3_context *ctx, nir_intrinsic_instr *intr)
          unsigned idx = (n * 4) + i + frac;
          ctx->last_dst[i] = ctx->inputs[idx];
       }
+
+      if (slot >= VERT_ATTRIB_GENERIC0)
+         so->attr_in = MAX2(so->attr_in, slot - VERT_ATTRIB_GENERIC0 + 1);
    }
 }
 
@@ -5375,6 +5387,8 @@ setup_output(struct ir3_context *ctx, nir_intrinsic_instr *intr)
       case VARYING_SLOT_CLIP_DIST1:
       case VARYING_SLOT_CLIP_VERTEX:
       case VARYING_SLOT_LAYER:
+      /* no hw edge flags, and gallium has no way to decline the output */
+      case VARYING_SLOT_EDGE:
          break;
       default:
          if (slot >= VARYING_SLOT_VAR0)
@@ -5588,6 +5602,7 @@ emit_instructions(struct ir3_context *ctx)
       struct ir3_builder build = ir3_builder_at(ir3_after_block(block));
 
       struct ir3_instruction *barrier = ir3_BAR(&build);
+      ir3_dst_create(barrier, REG_A0_X, IR3_REG_HALF);
       barrier->flags = IR3_INSTR_SS | IR3_INSTR_SY;
       barrier->barrier_class = IR3_BARRIER_EVERYTHING;
       array_insert(block, block->keeps, barrier);
@@ -5796,6 +5811,8 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
       ret = -1;
       goto out;
    }
+
+   bool is_preamble_speculatable = ir3_nir_is_preamble_speculatable(ctx->s);
 
    emit_instructions(ctx);
 
@@ -6185,9 +6202,9 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
    /* We need to do legalize after (for frag shader's) the "bary.f"
     * offsets (inloc) have been assigned.
     */
-   IR3_PASS(ir, ir3_legalize, so, &max_bary);
+   IR3_PASS(ir, ir3_legalize, so, &max_bary, is_preamble_speculatable);
 
-   if (ctx->compiler->cs_lock_unlock_quirk && ir3_shader_compute(so)) {
+   if (ctx->compiler->info->props.cs_lock_unlock_quirk && ir3_shader_compute(so)) {
       struct ir3_instruction *end = ir3_find_end(so->ir);
       struct ir3_instruction *lock =
          ir3_build_instr(&ctx->build, OPC_LOCK, 0, 0);
@@ -6236,9 +6253,9 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
    if (so->type == MESA_SHADER_FRAGMENT) {
       so->empty = is_empty(ir) && so->outputs_count == 0 &&
                   so->num_sampler_prefetch == 0;
-      so->writes_only_color = !ctx->s->info.writes_memory && !so->has_kill &&
-                              !so->writes_pos && !so->writes_smask &&
-                              !so->writes_stencilref;
+      so->has_no_side_effects = !ctx->s->info.writes_memory;
+      so->has_no_ds_effects = !so->has_kill && !so->writes_pos &&
+                              !so->writes_smask && !so->writes_stencilref;
    }
 
    if (mesa_shader_stage_is_compute(so->type)) {

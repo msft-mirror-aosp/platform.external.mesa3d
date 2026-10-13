@@ -29,6 +29,20 @@ license {
 }
 
 cc_defaults {
+    name: "_trial_c",
+    vendor: true,
+    host_supported: true,
+    cppflags: [
+        "-Werror=missing-prototypes",
+    ] + select((arch(), os()), {
+        ("arm64", "android"): [
+            "-Wno-unused-function",
+        ],
+        (default, default): [],
+    }),
+}
+
+cc_defaults {
     name: "_trial_msvc",
     vendor: true,
     host_supported: true,
@@ -43,6 +57,43 @@ cc_defaults {
         "-Werror=pointer-arith",
         "-Werror=vla",
         "-Wgnu-pointer-arith",
+    ],
+}
+
+cc_defaults {
+    name: "_trial_soong_c",
+    vendor: true,
+    host_supported: true,
+    cflags: [
+        "-Werror=date-time",
+        "-Werror=gnu-alignof-expression",
+        "-Werror=ignored-qualifiers",
+        "-Werror=implicit-fallthrough",
+        "-Werror=pragma-pack",
+        "-Werror=pragma-pack-suspicious-include",
+        "-Werror=sizeof-array-div",
+        "-Werror=string-plus-int",
+        "-Werror=unreachable-code-loop-increment",
+    ],
+    cppflags: [
+        "-Werror=date-time",
+        "-Werror=gnu-alignof-expression",
+        "-Werror=ignored-qualifiers",
+        "-Werror=implicit-fallthrough",
+        "-Werror=pragma-pack",
+        "-Werror=pragma-pack-suspicious-include",
+        "-Werror=sizeof-array-div",
+        "-Werror=string-plus-int",
+        "-Werror=unreachable-code-loop-increment",
+    ],
+}
+
+cc_defaults {
+    name: "_trial_soong_cpp",
+    vendor: true,
+    host_supported: true,
+    cppflags: [
+        "-D_LIBCPP_ENABLE_THREAD_SAFETY_ANNOTATIONS",
     ],
 }
 
@@ -87,7 +138,6 @@ cc_defaults {
         "-DHAVE_FUNC_ATTRIBUTE_FORMAT",
         "-DHAVE_FUNC_ATTRIBUTE_MALLOC",
         "-DHAVE_FUNC_ATTRIBUTE_NORETURN",
-        "-DHAVE_FUNC_ATTRIBUTE_OPTIMIZE",
         "-DHAVE_FUNC_ATTRIBUTE_PACKED",
         "-DHAVE_FUNC_ATTRIBUTE_PURE",
         "-DHAVE_FUNC_ATTRIBUTE_RETURNS_NONNULL",
@@ -96,7 +146,6 @@ cc_defaults {
         "-DHAVE_FUNC_ATTRIBUTE_WARN_UNUSED_RESULT",
         "-DHAVE_FUNC_ATTRIBUTE_WEAK",
         "-DHAVE_GFX_COMPUTE",
-        "-DHAVE_ISSIGNALING",
         "-DHAVE_LIBDRM",
         "-DHAVE_LINUX_FUTEX_H",
         "-DHAVE_MKOSTEMP",
@@ -107,8 +156,7 @@ cc_defaults {
         "-DHAVE_POSIX_FALLOCATE",
         "-DHAVE_POSIX_MEMALIGN",
         "-DHAVE_PTHREAD",
-        "-DHAVE_RANDOM_R",
-        "-DHAVE_RENDERDOC_INTEGRATION=true",
+        "-DHAVE_RENDERDOC_INTEGRATION=1",
         "-DHAVE_STRTOD_L",
         "-DHAVE_STRTOF",
         "-DHAVE_STRTOK_R",
@@ -116,6 +164,7 @@ cc_defaults {
         "-DHAVE_SYSCONF",
         "-DHAVE_SYS_INOTIFY_H",
         "-DHAVE_SYS_SHM_H",
+        "-DHAVE_ZLIB",
         "-DHAVE_ZSTD",
         "-DHAVE___BUILTIN_ADD_OVERFLOW",
         "-DHAVE___BUILTIN_BSWAP32",
@@ -136,8 +185,7 @@ cc_defaults {
         "-DMESA_DEBUG=0",
         "-DMESA_LLVM_VERSION_STRING=\"16.0\"",
         "-DMESA_SYSTEM_HAS_KMS_DRM=1",
-        "-DPACKAGE_BUGREPORT=\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\"",
-        "-DPACKAGE_VERSION=\"26.2.0-devel\"",
+        "-DPACKAGE_VERSION=\"26.3.0-devel\"",
         "-DTHREAD_SANITIZER=0",
         "-DUSE_GCC_ATOMIC_BUILTINS",
         "-DUSE_LIBGLVND=0",
@@ -167,7 +215,6 @@ cc_defaults {
         "-Wformat-security",
         "-Wimplicit-fallthrough",
         "-Wmisleading-indentation",
-        "-Wno-error=maybe-uninitialized",
         "-Wno-format-truncation",
         "-Wno-microsoft-enum-value",
         "-Wno-missing-field-initializers",
@@ -186,7 +233,6 @@ cc_defaults {
             "-DHAVE_LINUX_UDMABUF_H",
             "-DHAVE_MEMFD_CREATE",
             "-DHAVE_REALLOCARRAY",
-            "-DHAVE_SYS_SYSCTL_H",
             "-DHAVE_THRD_CREATE",
             "-DHAVE_XLOCALE_H",
             "-fno-emulated-tls",
@@ -221,27 +267,37 @@ cc_defaults {
             "-msse2",
             "-mstackrealign",
         ],
+        ("x86_64", "linux_glibc"): [
+            "-DALLOW_KCMP",
+            "-DHAVE_FUNC_ATTRIBUTE_OPTIMIZE",
+            "-DHAVE_GNU_QSORT_R",
+            "-DHAVE_ISSIGNALING",
+            "-DHAVE_RANDOM_R",
+            "-DHAVE_SECURE_GETENV",
+            "-D__INTRODUCED_IN(api_level)=",
+            "-Wno-error=maybe-uninitialized",
+        ],
+        ("x86_64", "linux_musl"): [
+            "-DALLOW_KCMP",
+            "-DHAVE_FUNC_ATTRIBUTE_OPTIMIZE",
+            "-DHAVE_GNU_QSORT_R",
+            "-DHAVE_ISSIGNALING",
+            "-DHAVE_RANDOM_R",
+            "-DHAVE_SECURE_GETENV",
+            "-D__INTRODUCED_IN(api_level)=",
+            "-Wno-error=maybe-uninitialized",
+        ],
+        ("arm64", "linux_musl"): [
+            "-DALLOW_KCMP",
+            "-DHAVE_FUNC_ATTRIBUTE_OPTIMIZE",
+            "-DHAVE_GNU_QSORT_R",
+            "-DHAVE_ISSIGNALING",
+            "-DHAVE_RANDOM_R",
+            "-DHAVE_SECURE_GETENV",
+            "-D__INTRODUCED_IN(api_level)=",
+            "-Wno-error=maybe-uninitialized",
+        ],
         (default, default): [],
-    }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
-        ("x86_64", "linux_glibc", default): [
-            "-DALLOW_KCMP",
-            "-DHAVE_GNU_QSORT_R",
-            "-DHAVE_SECURE_GETENV",
-            "-D__INTRODUCED_IN(api_level)=",
-        ],
-        ("x86_64", "linux_musl", default): [
-            "-DALLOW_KCMP",
-            "-DHAVE_GNU_QSORT_R",
-            "-DHAVE_SECURE_GETENV",
-            "-D__INTRODUCED_IN(api_level)=",
-        ],
-        ("arm64", "linux_musl", default): [
-            "-DALLOW_KCMP",
-            "-DHAVE_GNU_QSORT_R",
-            "-DHAVE_SECURE_GETENV",
-            "-D__INTRODUCED_IN(api_level)=",
-        ],
-        (default, default, default): [],
     }),
     target: {
         host: {
@@ -291,7 +347,6 @@ cc_defaults {
         "-DHAVE_FUNC_ATTRIBUTE_FORMAT",
         "-DHAVE_FUNC_ATTRIBUTE_MALLOC",
         "-DHAVE_FUNC_ATTRIBUTE_NORETURN",
-        "-DHAVE_FUNC_ATTRIBUTE_OPTIMIZE",
         "-DHAVE_FUNC_ATTRIBUTE_PACKED",
         "-DHAVE_FUNC_ATTRIBUTE_PURE",
         "-DHAVE_FUNC_ATTRIBUTE_RETURNS_NONNULL",
@@ -300,7 +355,6 @@ cc_defaults {
         "-DHAVE_FUNC_ATTRIBUTE_WARN_UNUSED_RESULT",
         "-DHAVE_FUNC_ATTRIBUTE_WEAK",
         "-DHAVE_GFX_COMPUTE",
-        "-DHAVE_ISSIGNALING",
         "-DHAVE_LIBDRM",
         "-DHAVE_LINUX_FUTEX_H",
         "-DHAVE_MKOSTEMP",
@@ -311,8 +365,7 @@ cc_defaults {
         "-DHAVE_POSIX_FALLOCATE",
         "-DHAVE_POSIX_MEMALIGN",
         "-DHAVE_PTHREAD",
-        "-DHAVE_RANDOM_R",
-        "-DHAVE_RENDERDOC_INTEGRATION=true",
+        "-DHAVE_RENDERDOC_INTEGRATION=1",
         "-DHAVE_STRTOD_L",
         "-DHAVE_STRTOF",
         "-DHAVE_STRTOK_R",
@@ -320,6 +373,7 @@ cc_defaults {
         "-DHAVE_SYSCONF",
         "-DHAVE_SYS_INOTIFY_H",
         "-DHAVE_SYS_SHM_H",
+        "-DHAVE_ZLIB",
         "-DHAVE_ZSTD",
         "-DHAVE___BUILTIN_ADD_OVERFLOW",
         "-DHAVE___BUILTIN_BSWAP32",
@@ -340,8 +394,7 @@ cc_defaults {
         "-DMESA_DEBUG=0",
         "-DMESA_LLVM_VERSION_STRING=\"16.0\"",
         "-DMESA_SYSTEM_HAS_KMS_DRM=1",
-        "-DPACKAGE_BUGREPORT=\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\"",
-        "-DPACKAGE_VERSION=\"26.2.0-devel\"",
+        "-DPACKAGE_VERSION=\"26.3.0-devel\"",
         "-DTHREAD_SANITIZER=0",
         "-DUSE_GCC_ATOMIC_BUILTINS",
         "-DUSE_LIBGLVND=0",
@@ -365,7 +418,6 @@ cc_defaults {
         "-Werror=return-type",
         "-Wformat-security",
         "-Wmisleading-indentation",
-        "-Wno-error=maybe-uninitialized",
         "-Wno-format-truncation",
         "-Wno-microsoft-enum-value",
         "-Wno-missing-field-initializers",
@@ -383,7 +435,6 @@ cc_defaults {
             "-DHAVE_LINUX_UDMABUF_H",
             "-DHAVE_MEMFD_CREATE",
             "-DHAVE_REALLOCARRAY",
-            "-DHAVE_SYS_SYSCTL_H",
             "-DHAVE_THRD_CREATE",
             "-DHAVE_XLOCALE_H",
             "-fno-emulated-tls",
@@ -418,27 +469,37 @@ cc_defaults {
             "-msse2",
             "-mstackrealign",
         ],
+        ("x86_64", "linux_glibc"): [
+            "-DALLOW_KCMP",
+            "-DHAVE_FUNC_ATTRIBUTE_OPTIMIZE",
+            "-DHAVE_GNU_QSORT_R",
+            "-DHAVE_ISSIGNALING",
+            "-DHAVE_RANDOM_R",
+            "-DHAVE_SECURE_GETENV",
+            "-D__INTRODUCED_IN(api_level)=",
+            "-Wno-error=maybe-uninitialized",
+        ],
+        ("x86_64", "linux_musl"): [
+            "-DALLOW_KCMP",
+            "-DHAVE_FUNC_ATTRIBUTE_OPTIMIZE",
+            "-DHAVE_GNU_QSORT_R",
+            "-DHAVE_ISSIGNALING",
+            "-DHAVE_RANDOM_R",
+            "-DHAVE_SECURE_GETENV",
+            "-D__INTRODUCED_IN(api_level)=",
+            "-Wno-error=maybe-uninitialized",
+        ],
+        ("arm64", "linux_musl"): [
+            "-DALLOW_KCMP",
+            "-DHAVE_FUNC_ATTRIBUTE_OPTIMIZE",
+            "-DHAVE_GNU_QSORT_R",
+            "-DHAVE_ISSIGNALING",
+            "-DHAVE_RANDOM_R",
+            "-DHAVE_SECURE_GETENV",
+            "-D__INTRODUCED_IN(api_level)=",
+            "-Wno-error=maybe-uninitialized",
+        ],
         (default, default): [],
-    }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
-        ("x86_64", "linux_glibc", default): [
-            "-DALLOW_KCMP",
-            "-DHAVE_GNU_QSORT_R",
-            "-DHAVE_SECURE_GETENV",
-            "-D__INTRODUCED_IN(api_level)=",
-        ],
-        ("x86_64", "linux_musl", default): [
-            "-DALLOW_KCMP",
-            "-DHAVE_GNU_QSORT_R",
-            "-DHAVE_SECURE_GETENV",
-            "-D__INTRODUCED_IN(api_level)=",
-        ],
-        ("arm64", "linux_musl", default): [
-            "-DALLOW_KCMP",
-            "-DHAVE_GNU_QSORT_R",
-            "-DHAVE_SECURE_GETENV",
-            "-D__INTRODUCED_IN(api_level)=",
-        ],
-        (default, default, default): [],
     }),
     target: {
         host: {
@@ -469,6 +530,17 @@ cc_defaults {
     ldflags: [
         "-Wl,-Bsymbolic",
     ],
+}
+
+cc_defaults {
+    name: "ld_args_build_id",
+    vendor: true,
+    ldflags: select((arch(), os()), {
+        ("arm64", "android"): [
+            "-Wl,--build-id=sha1",
+        ],
+        (default, default): [],
+    }),
 }
 
 cc_defaults {
@@ -574,7 +646,7 @@ cc_library_headers {
     vendor: true,
     host_supported: true,
     export_include_dirs: [
-        "src/virtio/virtgpu_kumquat_ffi/include",
+        "src/virtio/magma-gpu-rs/ffi/virtgpu_kumquat_ffi/include",
     ],
 }
 

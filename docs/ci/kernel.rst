@@ -50,6 +50,35 @@ Kconfigs location
 | x86-64     | kernel/configs/mesa3d-ci_x86_64.config\@gfx-ci/linux | arch/x86/configs/x86_64_defconfig   |
 +------------+------------------------------------------------------+-------------------------------------+
 
+.. _output-kernel-build-jobs:
+
+Output structure of the kernel build jobs
+-----------------------------------------
+
+The build jobs of the ``gfx-ci/linux`` repo are expected to generate the following
+directory structure, accessible on an HTTP or S3-compatible server:
+
+  * **${KERNEL_IMAGE_BASE}/**: May be overridden by an upstream pipeline (default:
+    ``https://$S3_HOST/$S3_KERNEL_BUCKET/$KERNEL_REPO/$KERNEL_TAG``)
+
+      * **x86_64/**:
+
+         * **modules.tar**: The result of ``make modules_install``
+         * **bzImage**
+
+      * **arm64/**:
+
+         * **modules.tar**: The result of ``make modules_install``
+         * **Image**
+         * **Image.gz**
+         * **\*.dtb**: All the DTBs compiled for the arm64 architecture
+
+      * **arm32/**:
+
+         * **modules.tar**: The result of ``make modules_install``
+         * **zImage**
+         * **\*.dtb**: All the DTBs compiled for the armhf architecture
+
 Updating image tags
 -------------------
 
@@ -59,23 +88,22 @@ Every kernel uprev should update the following tag:
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 - **KERNEL_TAG** to use the new kernel
 
-Development routine
--------------------
+Creating new kernel branches / updating the kernel
+--------------------------------------------------
 
 1. Compile the newer kernel locally for each platform.
 2. Compile device trees for ARM platforms
 3. Update Kconfigs. Are new Kconfigs necessary? Is CONFIG_XYZ_BLA deprecated? Does the ``merge_config.sh`` override an important config?
 4. Push a new development branch to `Kernel repository`_ based on the latest kernel tag used in GitLab CI
-5. Hack ``build-kernel.sh`` script to clone kernel from your development branch
-6. Update image tags. See `Updating image tags`_
-7. Run the entire CI pipeline, all the automatic jobs should be green. If some job is red or taking too long, you will need to investigate it and probably ask for help.
+5. Run the ``mesa-main`` manual job found in the generated pipeline
+6. Open merge requests to keep developing the branch
 
 When the Kernel uprev is stable
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 1. Push a new tag to Mesa CI `Kernel repository`_
-2. Update KERNEL_URL ``debian/x86_test-gl`` job definition
-3. Open a merge request, if it is not opened yet
+2. Update ``KERNEL_TAG`` in Mesa's ``.gitlab-ci/image-tags.yml``
+3. Submit the change in a merge request
 
 Tips and Tricks
 ---------------
@@ -113,3 +141,24 @@ Sometimes a job may turn to red for reasons unrelated to the kernel update, e.g.
 LAVA ``tftp`` timeout, problems with the freedesktop servers etc.
 So it is important to see the reason why the job turned red, and retry it if an
 infrastructure error has happened.
+
+Try your own kernel out
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Trying out your own kernel is pretty straightforward. First, take the tree you
+want to test, and cherry-pick the closest -for-mesa-ci branch from gfx-ci/linux.
+For example, if you're based against 7.1 and the newest gfx-ci kernel is 6.19,
+you'll want to cherry-pick every commit in the v6.19-for-mesa-ci branch that
+isn't in the stable kernels. These commits are a mix of adding CI pipeline
+support, and fixups required to run on our devices. Push this to your fork on
+gitlab.freedesktop.org. Push a unique tag as well, e.g. fix-gpu-reset-abc1234.
+The tag is important so that you can iterate without getting defeated by
+caching.
+
+Once your kernel is built (i.e. the pipeline in your branch has completed),
+change ``KERNEL_TAG`` and ``KERNEL_REPO`` in Mesa's
+``.gitlab-ci/image-tags.yml`` to refer to this, e.g.
+``KERNEL_TAG: "fix-gpu-reset-abc1234"`` and
+``KERNEL_REPO: "hopeless-optimist/linux"``.
+
+Push this Mesa branch, and run your pipeline as usual.

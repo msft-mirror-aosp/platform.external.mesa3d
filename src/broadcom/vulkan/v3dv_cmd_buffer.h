@@ -33,6 +33,7 @@
 #include "vk_command_pool.h"
 #include "vk_sync.h"
 #include "util/set.h"
+#include "util/perf/u_trace.h"
 
 struct v3dv_buffer;
 struct v3dv_descriptor_set;
@@ -289,6 +290,10 @@ struct v3dv_job {
 
    /* Perfmons with last job sync for CSD and CL jobs */
    struct v3dv_perf_query *perf;
+
+   /* tagging each job with a number for perfetto render stages */
+   uint32_t id;
+   struct v3dv_queue *queue;
 };
 
 void v3dv_job_init(struct v3dv_job *job,
@@ -655,6 +660,11 @@ struct v3dv_cmd_buffer {
          /* The current descriptor pool for the copy query results output buffer */
          VkDescriptorPool dspool;
       } query;
+      struct {
+         /* Cached TFU stride-0 fill source BO. */
+         struct v3dv_bo *src_bo;
+         uint32_t data;
+      } tfu_fill;
    } meta;
 
    /* List of jobs in the command buffer. For primary command buffers it
@@ -663,6 +673,15 @@ struct v3dv_cmd_buffer {
     * buffer via vkCmdExecuteCommands.
     */
    struct list_head jobs;
+
+   /* For vulkan perfetto render stages */
+   struct u_trace trace;
+   struct v3dv_job trace_marker_job;
+
+   /* Bitmask of v3dv_queue_type this cmd_buffer submitted jobs to, tracked
+    * for the cmdbuf trace marker's end-timestamp to wait on all of them.
+    */
+   uint8_t trace_queue_mask;
 };
 
 struct v3dv_job *v3dv_cmd_buffer_start_job(struct v3dv_cmd_buffer *cmd_buffer,
@@ -706,13 +725,16 @@ void v3dv_cmd_buffer_copy_query_results(struct v3dv_cmd_buffer *cmd_buffer,
 void v3dv_cmd_buffer_add_tfu_job(struct v3dv_cmd_buffer *cmd_buffer,
                                  struct drm_v3d_submit_tfu *tfu);
 
-void v3dv_cmd_buffer_rewrite_indirect_csd_job(struct v3dv_device *device,
-                                              struct v3dv_csd_indirect_cpu_job_info *info,
-                                              const uint32_t *wg_counts);
-
 void v3dv_cmd_buffer_add_private_obj(struct v3dv_cmd_buffer *cmd_buffer,
                                      uint64_t obj,
                                      v3dv_cmd_buffer_private_obj_destroy_cb destroy_cb);
+
+/* Generic destroy callback for v3dv_bo private objects added via
+ * v3dv_cmd_buffer_add_private_obj.
+ */
+void v3dv_cmd_buffer_destroy_bo_cb(VkDevice _device,
+                                   uint64_t pobj,
+                                   VkAllocationCallbacks *alloc);
 
 void v3dv_merge_barrier_state(struct v3dv_barrier_state *dst,
                               struct v3dv_barrier_state *src);
@@ -785,5 +807,13 @@ v3dv_cmd_buffer_get_descriptor_state(struct v3dv_cmd_buffer *cmd_buffer,
 
 VK_DEFINE_HANDLE_CASTS(v3dv_cmd_buffer, vk.base, VkCommandBuffer,
                        VK_OBJECT_TYPE_COMMAND_BUFFER)
+
+static inline uint64_t
+job_get_cmd_buffer_vk_handle(struct v3dv_job *job)
+{
+   assert(job);
+   return job->cmd_buffer ?
+     vk_object_to_u64_handle(&job->cmd_buffer->vk.base) : 0;
+}
 
 #endif /* V3DV_CMD_BUFFER_H */

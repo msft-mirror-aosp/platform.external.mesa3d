@@ -165,6 +165,7 @@ struct ir3_ubo_range {
    struct ir3_ubo_info ubo;
    uint32_t offset;     /* start offset to push in the const register file */
    uint32_t start, end; /* range of block that's actually used */
+   bool can_speculate;
 };
 
 struct ir3_ubo_analysis_state {
@@ -226,7 +227,9 @@ enum ir3_const_alloc_type {
    IR3_CONST_ALLOC_PRIMITIVE_PARAM = 10,
    /* Common, mapping from varying location to offset. */
    IR3_CONST_ALLOC_PRIMITIVE_MAP = 11,
-   IR3_CONST_ALLOC_MAX = 12,
+   /* For SSBO emulation */
+   IR3_CONST_ALLOC_BINDLESS_BASE_ADDRS = 12,
+   IR3_CONST_ALLOC_MAX = 13,
 };
 
 struct ir3_const_allocation {
@@ -627,8 +630,8 @@ struct ir3_shader_output {
    uint8_t slot;
    uint8_t regid;
    uint8_t view;
-   uint8_t aliased_components : 4;
-   bool half : 1;
+   uint8_t aliased_components;
+   bool half;
 };
 
 /**
@@ -691,6 +694,8 @@ struct ir3_shader_variant {
     */
    struct ir3_imm_const_state imm_state;
 
+   struct ir3_shader_options shader_options;
+
    /*
     * The following macros are used by the shader disk cache save/
     * restore paths to serialize/deserialize the variant.  Any
@@ -705,8 +710,6 @@ struct ir3_shader_variant {
    struct ir3_info info;
 
    char blake3_str[BLAKE3_HEX_LEN];
-
-   struct ir3_shader_options shader_options;
 
    uint32_t constant_data_size;
 
@@ -807,7 +810,17 @@ struct ir3_shader_variant {
       bool rasterflat : 1; /* special handling for emit->rasterflat */
       bool half       : 1;
       bool flat       : 1;
-   } inputs[32 + 2]; /* +POSITION +FACE */
+      /* inputs[] array is sized for 32 FS input varyings plus sysvals.  Vulkan
+       * says that the built-ins (face, coord, etc.) count against the input
+       * components limit, so we shouldn't need to have space for them, but GL
+       * lacks that clarity.  Regardless, the IJs shouldn't count against the
+       * input components limit, which is fine since sysvals don't take up
+       * total_in slots.
+       *
+       * FS sysval list: FRAG_COORD, FACE, SAMPLE_ID, SAMPLE_MASK_IN,
+       * FRAG_SHADING_RATE
+       */
+   } inputs[32 + IJ_COUNT + 5];
    bool reads_primid;
    bool reads_shading_rate;
    bool reads_smask;
@@ -824,6 +837,11 @@ struct ir3_shader_variant {
     * ie. SP_VS_PARAM_REG.TOTALVSOUTVAR)
     */
    unsigned varying_in;
+
+   /* For vertex shaders, the number of generic attribute slots (i.e. 1 plus the
+    * max VERT_ATTRIB_GENERICn).
+    */
+   unsigned attr_in;
 
    /* Remapping table to map Image and SSBO to hw state: */
    struct ir3_ibo_mapping image_mapping;
@@ -874,8 +892,8 @@ struct ir3_shader_variant {
    bool post_depth_coverage;
 
    bool empty;
-   /* Doesn't have side-effects, no kill, no D/S write, etc. */
-   bool writes_only_color;
+   bool has_no_side_effects;
+   bool has_no_ds_effects;
 
    /* Are we using split or merged register file? */
    bool mergedregs;
@@ -951,11 +969,13 @@ struct ir3_shader_variant {
          bool color_is_dual_source : 1;
          bool uses_fbfetch_output  : 1;
          bool fbfetch_coherent     : 1;
+         bool yuv_color            : 1;
          enum gl_frag_depth_layout depth_layout;
       } fs;
       struct {
          unsigned req_local_mem;
          bool force_linear_dispatch;
+         bool round_robin_mode;
          uint32_t local_invocation_id;
          uint32_t work_group_id;
       } cs;
@@ -1216,7 +1236,7 @@ void ir3_shader_disasm_options(struct ir3_shader_variant *so, uint32_t *bin,
                                struct ir3_disasm_options *options);
 uint64_t ir3_shader_outputs(const struct ir3_shader *so);
 
-int ir3_glsl_type_size(const struct glsl_type *type, bool bindless);
+unsigned ir3_glsl_type_size(const struct glsl_type *type, bool bindless);
 
 void ir3_shader_get_subgroup_size(const struct ir3_compiler *compiler,
                                   const struct ir3_shader_options *options,
@@ -1345,7 +1365,7 @@ ir3_link_add(struct ir3_shader_linkage *l, uint8_t slot, uint8_t regid_,
 {
    for (unsigned j = 0; j < util_last_bit(compmask); j++) {
       uint8_t comploc = loc + j;
-      l->varmask[comploc / 32] |= 1 << (comploc % 32);
+      l->varmask[comploc / 32] |= UINT32_C(1) << (comploc % 32);
    }
 
    l->max_loc = MAX2(l->max_loc, loc + util_last_bit(compmask));

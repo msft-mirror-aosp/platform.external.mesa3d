@@ -25,6 +25,8 @@ extern "C" {
 #define ACO_MAX_VERTEX_ATTRIBS 32
 #define ACO_MAX_VBS            32
 
+#define ACO_SPI_SHADER_Z_FORMAT_UNKNOWN 0xff
+
 struct aco_vs_prolog_info {
    struct ac_arg inputs;
 
@@ -74,6 +76,8 @@ struct aco_ps_epilog_info {
    bool kill_depth;
    bool kill_stencil;
    bool kill_samplemask;
+   bool lower_1bit_sample_mask_to_discard;
+   uint8_t spi_shader_z_format;
 
    struct ac_arg alpha_reference;
    struct ac_arg depth;
@@ -91,15 +95,15 @@ struct aco_ps_prolog_info {
    bool force_linear_sample_interp;
    bool force_persp_center_interp;
    bool force_linear_center_interp;
+   bool uses_persp_centroid;
+   bool uses_linear_centroid;
 
    unsigned samplemask_log_ps_iter;
-   bool get_frag_coord_from_pixel_coord;
-   bool pixel_center_integer;
    bool force_samplemask_to_helper_invocation;
    unsigned num_interp_inputs;
    unsigned colors_read;
-   int color_interp_vgpr_index[2];
-   int color_attr_index[2];
+   uint8_t color_attr_index[2];
+   enum ac_color_interp color_interp[2];
    bool color_two_side;
    bool needs_wqm;
 

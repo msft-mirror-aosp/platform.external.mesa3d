@@ -18,7 +18,7 @@
 #include "radv_queue.h"
 #include "radv_shader.h"
 
-#include "radv_debug.h"
+#include "tools/radv_debug.h"
 #include "wsi_common.h"
 
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
@@ -52,12 +52,24 @@ radv_wsi_get_prime_blit_queue(VkDevice _device)
       return &device->private_sdma_queue->vk;
    }
 
-   if (pdev->info.gfx_level >= GFX9 && !(instance->debug_flags & RADV_DEBUG_NO_DMA_BLIT)) {
+   if (pdev->info.gfx_level >= GFX9 && !RADV_DEBUG(instance, NO_DMA_BLIT)) {
 
-      pdev->vk_queue_to_radv[pdev->num_queues++] = RADV_QUEUE_TRANSFER;
+      uint32_t queue_family_index = pdev->num_queues;
+      for (uint32_t i = 0; i < pdev->num_queues; i++) {
+         if (pdev->vk_queue_to_radv[i] == RADV_QUEUE_TRANSFER) {
+            queue_family_index = i;
+            break;
+         }
+      }
+
+      if (queue_family_index == pdev->num_queues) {
+         assert(pdev->num_queues < RADV_MAX_QUEUE_FAMILIES);
+         pdev->vk_queue_to_radv[pdev->num_queues++] = RADV_QUEUE_TRANSFER;
+      }
+
       const VkDeviceQueueCreateInfo queue_create = {
          .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-         .queueFamilyIndex = pdev->num_queues - 1,
+         .queueFamilyIndex = queue_family_index,
          .queueCount = 1,
       };
 
@@ -85,11 +97,11 @@ radv_init_wsi(struct radv_physical_device *pdev)
 
    VkResult result =
       wsi_device_init(&pdev->wsi_device, radv_physical_device_to_handle(pdev), radv_wsi_proc_addr, &instance->vk.alloc,
-                      pdev->master_fd, &instance->drirc.options, &(struct wsi_device_options){.sw_device = false});
+                      pdev->wsi_master_fd, &pdev->drirc.options, &(struct wsi_device_options){.sw_device = false});
    if (result != VK_SUCCESS)
       return result;
 
-   pdev->wsi_device.supports_modifiers = pdev->info.gfx_level >= GFX9;
+   pdev->wsi_device.supports_modifiers = true;
    pdev->wsi_device.set_memory_ownership = radv_wsi_set_memory_ownership;
    pdev->wsi_device.get_blit_queue = radv_wsi_get_prime_blit_queue;
 
@@ -97,7 +109,7 @@ radv_init_wsi(struct radv_physical_device *pdev)
       pdev->wsi_device.supports_protected[i] = radv_tmz_enabled(pdev);
    }
 
-   wsi_device_setup_syncobj_fd(&pdev->wsi_device, pdev->local_fd);
+   wsi_device_setup_syncobj_fd(&pdev->wsi_device, pdev->wsi_syncobj_fd);
 
    pdev->vk.wsi_device = &pdev->wsi_device;
 
@@ -108,6 +120,9 @@ void
 radv_finish_wsi(struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
+
+   if (!pdev->vk.wsi_device)
+      return;
 
    pdev->vk.wsi_device = NULL;
    wsi_device_finish(&pdev->wsi_device, &instance->vk.alloc);

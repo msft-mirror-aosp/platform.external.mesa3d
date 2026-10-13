@@ -334,8 +334,6 @@ llvmpipe_resource_create_all(struct pipe_screen *_screen,
 
             madvise(lpr->tex_data, lpr->size_required, MADV_DONTNEED);
 #endif
-
-            lpr->residency = calloc(DIV_ROUND_UP(lpr->size_required, 64 * 1024 * sizeof(uint32_t) * 8), sizeof(uint32_t));
          }
       }
    } else {
@@ -383,6 +381,12 @@ llvmpipe_resource_create_all(struct pipe_screen *_screen,
          madvise(lpr->data, lpr->size_required, MADV_DONTNEED);
 #endif
       }
+   }
+
+   if (templat->flags & PIPE_RESOURCE_FLAG_SPARSE) {
+      uint64_t residency_granularity = 64;
+      os_get_page_size(&residency_granularity);
+      lpr->residency = calloc(DIV_ROUND_UP(lpr->size_required, residency_granularity * sizeof(uint32_t) * 8), sizeof(uint32_t));
    }
 
    lpr->id = id_counter++;
@@ -779,6 +783,7 @@ llvmpipe_resource_from_handle(struct pipe_screen *_screen,
                                     (struct pipe_memory_allocation**)&alloc,
                                     &size, true)) {
          void *data = (char*)alloc->cpu_addr + whandle->offset;
+         whandle->size = size;
          lpr->dt = winsys->displaytarget_create_mapped(winsys, template->bind,
                                                        template->format, template->width0, template->height0,
                                                        whandle->stride, data, whandle);
@@ -788,7 +793,6 @@ llvmpipe_resource_from_handle(struct pipe_screen *_screen,
          lpr->dmabuf = true;
          lpr->tex_data = data;
          lpr->row_stride[0] = whandle->stride;
-         whandle->size = size;
       } else
 #endif
       {
@@ -1360,7 +1364,7 @@ llvmpipe_allocate_memory(struct pipe_screen *_screen, uint64_t size)
 
    mtx_unlock(&screen->mem_mutex);
 #else
-   mem->cpu_addr = malloc(mem->size);
+   mem->cpu_addr = os_malloc_aligned(mem->size, alignment);
    mem->fd = -1;
    mem->type = LLVMPIPE_MEMORY_FD_TYPE_INVALID;
 #endif
@@ -1387,7 +1391,7 @@ llvmpipe_free_memory(struct pipe_screen *pscreen,
    if (mem->cpu_addr != MAP_FAILED)
       munmap(mem->cpu_addr, mem->size);
 #else
-   free(mem->cpu_addr);
+   os_free_aligned(mem->cpu_addr);
 #endif
 
    FREE(mem);
@@ -1671,11 +1675,17 @@ llvmpipe_resource_bind_sparse(struct llvmpipe_resource *lpr,
    if (!ok)
       return false;
 
-   if (is_texture) {
+   if (lpr->residency) {
+      uint64_t residency_granularity = 64;
+      os_get_page_size(&residency_granularity);
+
+      uint32_t start = offset / residency_granularity;
+      uint32_t end = start + size / residency_granularity - 1;
+
       if (mem)
-         BITSET_SET(lpr->residency, offset / (64 * 1024));
+         BITSET_SET_RANGE(lpr->residency, start, end);
       else
-         BITSET_CLEAR(lpr->residency, offset / (64 * 1024));
+         BITSET_CLEAR_RANGE(lpr->residency, start, end);
    }
 
    return true;

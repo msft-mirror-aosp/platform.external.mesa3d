@@ -1,3 +1,4 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_python//python:defs.bzl", "py_binary")
 
 package(default_visibility = ["//visibility:public"])
@@ -7,7 +8,8 @@ py_binary(
     srcs = ["py_llvm_config.py"],
 )
 
-py_binary(
-    name = "py_glslangValidator",
-    srcs = ["py_glslangValidator.py"],
+cc_library(
+    name = "mtl4_compat_headers",
+    hdrs = glob(["include/Metal/*.h"]),
+    includes = ["include"],
 )

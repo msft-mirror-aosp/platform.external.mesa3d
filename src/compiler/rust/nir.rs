@@ -2,11 +2,16 @@
 // SPDX-License-Identifier: MIT
 
 use crate::bindings::*;
+use crate::memstream::MemStream;
 
 use std::ffi::{c_void, CStr};
+use std::io;
 use std::marker::PhantomData;
 use std::mem::offset_of;
 use std::str;
+
+unsafe impl Send for nir_shader_compiler_options {}
+unsafe impl Sync for nir_shader_compiler_options {}
 
 pub struct ExecListIter<'a, T> {
     n: &'a exec_node,
@@ -81,6 +86,12 @@ impl ALUType {
     pub const UINT: Self = Self(nir_type_uint);
     pub const BOOL: Self = Self(nir_type_bool);
     pub const FLOAT: Self = Self(nir_type_float);
+    pub const INVALID: Self = Self(nir_type_invalid);
+
+    pub const INT8: Self = Self(nir_type_int8);
+    pub const UINT8: Self = Self(nir_type_uint8);
+    pub const FLOAT16: Self = Self(nir_type_float16);
+    pub const FLOAT32: Self = Self(nir_type_float32);
 
     pub fn new(base: Self, bit_size: u8) -> Self {
         assert!(bit_size.is_power_of_two());
@@ -222,6 +233,14 @@ impl nir_alu_instr {
     pub fn get_src(&self, idx: usize) -> &nir_alu_src {
         &self.srcs_as_slice()[idx]
     }
+
+    pub fn output_type(&self) -> ALUType {
+        ALUType(self.info().output_type)
+    }
+
+    pub fn input_type(&self, src_idx: usize) -> ALUType {
+        ALUType(self.info().input_types[src_idx])
+    }
 }
 
 impl nir_op_info {
@@ -273,6 +292,15 @@ impl nir_intrinsic_instr {
         let idx = self.info().index_map[name];
         assert!(idx > 0);
         self.const_index[usize::from(idx - 1)] as u32
+    }
+
+    /// Reads a multi-word index (`size > 1` in nir_intrinsics.py) into an array
+    pub fn get_const_index_words<const N: usize>(&self, name: u32) -> [u32; N] {
+        let name: usize = name.try_into().unwrap();
+        let idx = self.info().index_map[name];
+        assert!(idx > 0);
+        let start = usize::from(idx - 1);
+        std::array::from_fn(|i| self.const_index[start + i] as u32)
     }
 
     pub fn base(&self) -> i32 {
@@ -360,6 +388,12 @@ impl nir_intrinsic_instr {
 
     pub fn memory_modes(&self) -> nir_variable_mode {
         self.get_const_index(NIR_INTRINSIC_MEMORY_MODES)
+    }
+
+    pub fn io_semantics(&self) -> nir_io_semantics {
+        // A bitfield struct spanning two const_index slots, so reinterpret it
+        let words = self.get_const_index_words::<2>(NIR_INTRINSIC_IO_SEMANTICS);
+        unsafe { std::mem::transmute(words) }
     }
 
     pub fn flags(&self) -> u32 {
@@ -524,6 +558,16 @@ impl nir_block {
     pub fn parent(&self) -> &nir_cf_node {
         self.cf_node.parent().unwrap()
     }
+
+    pub fn cf_tree_next(&self) -> Option<&nir_block> {
+        let self_ptr = self as *const _ as *mut _;
+        unsafe { nir_block_cf_tree_next(self_ptr).as_ref() }
+    }
+
+    pub fn cf_tree_prev(&self) -> Option<&nir_block> {
+        let self_ptr = self as *const _ as *mut _;
+        unsafe { nir_block_cf_tree_prev(self_ptr).as_ref() }
+    }
 }
 
 impl nir_if {
@@ -607,9 +651,57 @@ impl nir_cf_node {
     }
 }
 
+struct BlockFwdIter<'a> {
+    block: Option<&'a nir_block>,
+}
+
+impl<'a> Iterator for BlockFwdIter<'a> {
+    type Item = &'a nir_block;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(block) = self.block {
+            self.block = block.cf_tree_next();
+            Some(block)
+        } else {
+            None
+        }
+    }
+}
+
+struct BlockRevIter<'a> {
+    block: Option<&'a nir_block>,
+}
+
+impl<'a> Iterator for BlockRevIter<'a> {
+    type Item = &'a nir_block;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(block) = self.block {
+            self.block = block.cf_tree_prev();
+            Some(block)
+        } else {
+            None
+        }
+    }
+}
+
 impl nir_function_impl {
     pub fn iter_body(&self) -> ExecListIter<'_, nir_cf_node> {
         ExecListIter::new(&self.body, offset_of!(nir_cf_node, node))
+    }
+
+    pub fn iter_blocks(&self) -> impl Iterator<Item = &nir_block> {
+        let self_ptr = self as *const _ as *mut _;
+        BlockFwdIter {
+            block: unsafe { nir_start_block(self_ptr).as_ref() },
+        }
+    }
+
+    pub fn iter_blocks_rev(&self) -> impl Iterator<Item = &nir_block> {
+        let self_ptr = self as *const _ as *mut _;
+        BlockRevIter {
+            block: unsafe { nir_impl_last_block(self_ptr).as_ref() },
+        }
     }
 
     pub fn end_block(&self) -> &nir_block {
@@ -634,5 +726,15 @@ impl nir_shader {
 
     pub fn iter_variables(&self) -> ExecListIter<'_, nir_variable> {
         ExecListIter::new(&self.variables, offset_of!(nir_variable, node))
+    }
+
+    pub fn get_entrypoint(&self) -> Option<&nir_function_impl> {
+        unsafe { nir_shader_get_entrypoint(self).as_ref() }
+    }
+
+    pub fn to_string(&mut self) -> io::Result<String> {
+        let mut stream = MemStream::new()?;
+        unsafe { nir_print_shader(self, stream.c_file()) };
+        stream.take_utf8_string_lossy()
     }
 }

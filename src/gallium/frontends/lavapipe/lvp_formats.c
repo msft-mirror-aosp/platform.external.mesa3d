@@ -253,10 +253,10 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceFormatProperties2(
       perf->optimal = VK_FALSE;
 
 #if DETECT_OS_LINUX
-   vk_foreach_struct(ext, pFormatProperties->pNext) {
-      switch ((unsigned)ext->sType) {
+   vk_foreach_struct(sType, ext, pFormatProperties->pNext) {
+      switch ((unsigned)sType) {
       case VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT: {
-         struct VkDrmFormatModifierPropertiesListEXT *modlist = (void *)ext;
+         struct VkDrmFormatModifierPropertiesListEXT *modlist = ext;
          modlist->drmFormatModifierCount = 0;
          if (pFormatProperties->formatProperties.optimalTilingFeatures) {
             modlist->drmFormatModifierCount = 1;
@@ -270,7 +270,7 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceFormatProperties2(
          break;
       }
       case VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_2_EXT: {
-         struct VkDrmFormatModifierPropertiesList2EXT *modlist = (void *)ext;
+         struct VkDrmFormatModifierPropertiesList2EXT *modlist = ext;
          modlist->drmFormatModifierCount = 0;
          if (format_props.optimalTilingFeatures) {
             modlist->drmFormatModifierCount = 1;
@@ -317,11 +317,8 @@ static VkResult lvp_get_image_format_properties(struct lvp_physical_device *phys
                                              &format_props);
    if (info->tiling == VK_IMAGE_TILING_LINEAR) {
       format_feature_flags = format_props.linearTilingFeatures;
-   } else if (info->tiling == VK_IMAGE_TILING_OPTIMAL) {
-      format_feature_flags = format_props.optimalTilingFeatures;
-   } else if (info->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
-      if (vk_format_get_plane_count (info->format) > 1)
-        goto unsupported;
+   } else if (info->tiling == VK_IMAGE_TILING_OPTIMAL ||
+              info->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
       format_feature_flags = format_props.optimalTilingFeatures;
    } else {
       UNREACHABLE("bad VkImageTiling");
@@ -453,10 +450,10 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_GetPhysicalDeviceImageFormatProperties2(
    if (result != VK_SUCCESS)
       return result;
 
-   vk_foreach_struct_const(s, base_info->pNext) {
-      switch (s->sType) {
+   vk_foreach_struct_const(sType, s, base_info->pNext) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO:
-         external_info = (const void *) s;
+         external_info = s;
          break;
       default:
          break;
@@ -464,16 +461,16 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_GetPhysicalDeviceImageFormatProperties2(
    }
 
    /* Extract output structs */
-   vk_foreach_struct(s, base_props->pNext) {
-      switch (s->sType) {
+   vk_foreach_struct(sType, s, base_props->pNext) {
+      switch (sType) {
       case VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES:
-         external_props = (void *) s;
+         external_props = s;
          break;
       case VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_IMAGE_FORMAT_PROPERTIES:
-         ycbcr_props = (void *) s;
+         ycbcr_props = s;
          break;
       case VK_STRUCTURE_TYPE_HOST_IMAGE_COPY_DEVICE_PERFORMANCE_QUERY_EXT:
-         hic = (void*)s;
+         hic = s;
          hic->optimalDeviceAccess = VK_TRUE;
          hic->identicalMemoryLayout = VK_TRUE;
          break;
