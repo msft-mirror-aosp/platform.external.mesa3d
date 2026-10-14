@@ -11476,7 +11476,10 @@ cc_library(
         "src/util/u_string.h",
         "src/util/u_thread.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = ["-Wno-implicit-function-declaration"] + select({
+        "@platforms//os:linux": ["-fstack-clash-protection"],
+        "//conditions:default": [],
+    }),
     defines = select({
         "@platforms//os:linux": [
             "ALLOW_KCMP",
