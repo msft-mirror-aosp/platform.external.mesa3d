@@ -39,8 +39,8 @@
   "platforms": {
     "linux-x64": {
       "meson_options": {
-        "-Dcpp_args": "-DUSE_UNW_DYNAMIC_FDE",
-        "-Dc_args": "-DUSE_UNW_DYNAMIC_FDE",
+        "-Dcpp_args": "-DUSE_UNW_DYNAMIC_FDE -fstack-clash-protection",
+        "-Dc_args": "-DUSE_UNW_DYNAMIC_FDE -fstack-clash-protection",
         "-Dcpp_link_args": "-Wl,-rpath,'$ORIGIN/:$ORIGIN/lib64:$ORIGIN/../lib64:$ORIGIN/../../lib64:$ORIGIN/../../../lib64'",
         "-Dc_link_args": "-Wl,-rpath,'$ORIGIN/:$ORIGIN/lib64:$ORIGIN/../lib64:$ORIGIN/../../lib64:$ORIGIN/../../../lib64'",
         "-Dglx-direct": "false"
