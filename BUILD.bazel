@@ -7,6 +7,22 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:objc_library.bzl", "objc_library")
 load("@rules_python//python:defs.bzl", "py_binary")
 
+config_setting(
+    name = "is_linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "is_linux_aarch64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:arm64",
+    ],
+)
+
 alias(
     name = "00-mesa-defaults",
     actual = "@lavapipe_bazel_deps//:python3",
@@ -1604,12 +1620,13 @@ cc_library(
         "src/util/blake3/blake3.c",
         "src/util/blake3/blake3_dispatch.c",
     ] + select({
-        "@platforms//os:linux": [
+        ":is_linux_x86_64": [
             "src/util/blake3/blake3_avx2_x86-64_unix.S",
             "src/util/blake3/blake3_avx512_x86-64_unix.S",
             "src/util/blake3/blake3_sse2_x86-64_unix.S",
             "src/util/blake3/blake3_sse41_x86-64_unix.S",
         ],
+        ":is_linux_aarch64": ["src/util/blake3/blake3_neon.c"],
         "@platforms//os:macos": ["src/util/blake3/blake3_neon.c"],
         "//conditions:default": [],
     }) + ["src/util/blake3/blake3_portable.c"],
@@ -8294,7 +8311,9 @@ cc_library(
         "src/util/u_thread.h",
     ],
     copts = ["-Wno-implicit-function-declaration"] + select({
-        "@platforms//os:linux": ["-msse4.1"],
+        ":is_linux_x86_64": ["-msse4.1"],
+        "//conditions:default": [],
+    }) + select({
         "@platforms//os:windows": [
             "/wd4018",
             "/wd4056",
