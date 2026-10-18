@@ -1155,6 +1155,18 @@ cc_binary(
 ]]
 
 cc_opt_alias(
+    name = "libvulkan_lvp_so_opt",
+    actual = ":libvulkan_lvp.so",
+    target_compatible_with = ["@platforms//os:linux"],
+)
+
+cc_opt_alias(
+    name = "libvulkan_lvp_dylib_opt",
+    actual = ":libvulkan_lvp.dylib",
+    target_compatible_with = ["@platforms//os:macos"],
+)
+
+cc_opt_alias(
     name = "libvulkan_lvp_dll_opt",
     actual = ":libvulkan_lvp.dll",
     target_compatible_with = ["@platforms//os:windows"],
@@ -1163,8 +1175,8 @@ cc_opt_alias(
 alias(
     name = "vulkan_lvp",
     actual = select({
-        "@platforms//os:linux": ":libvulkan_lvp.so",
-        "@platforms//os:macos": ":libvulkan_lvp.dylib",
+        "@platforms//os:linux": ":libvulkan_lvp_so_opt",
+        "@platforms//os:macos": ":libvulkan_lvp_dylib_opt",
         "@platforms//os:windows": ":libvulkan_lvp_dll_opt",
     }),
     visibility = ["//visibility:public"],
