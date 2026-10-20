@@ -21,6 +21,8 @@
     // "meson_options": A dictionary of Meson feature flags and settings.
     // These are passed to the `meson setup` command.
     "meson_options": {
+      "-Dbuildtype": "release",
+      "-Db_ndebug": "true",
       "-Dvulkan-drivers": "swrast",
       "-Dgallium-drivers": "llvmpipe",
       "-Dopengl": "true",
