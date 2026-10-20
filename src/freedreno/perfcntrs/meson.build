@@ -17,14 +17,10 @@ libfreedreno_perfcntrs = static_library(
   'freedreno_perfcntrs',
   [libfreedreno_perfcntrs_files, freedreno_xml_header_files],
   include_directories : [inc_freedreno, inc_include, inc_src],
-  c_args : [no_override_init_args, soong_compat_c_args],
+  c_args : [no_override_init_args],
   gnu_symbol_visibility : 'hidden',
   link_with : [libfreedreno_common],
-  dependencies : [
-    dep_libdrm,
-    idep_mesautil,
-    idep_nir_headers,
-  ],
+  dependencies : idep_nir_headers,
   build_by_default : false,
 )
 

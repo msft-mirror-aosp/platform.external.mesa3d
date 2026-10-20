@@ -114,12 +114,10 @@ rc_constants_add_immediate_vec4(struct rc_constant_list *c, const float *data)
 
 /**
  * Add an immediate scalar to the constant list, while trying to avoid
- * duplicates. If negate is non-NULL, reuse an existing negated value and
- * return the source negate mask needed to recover data.
+ * duplicates.
  */
 unsigned
-rc_constants_add_immediate_scalar(struct rc_constant_list *c, float data, unsigned *swizzle,
-                                  unsigned *negate)
+rc_constants_add_immediate_scalar(struct rc_constant_list *c, float data, unsigned *swizzle)
 {
    unsigned index, free_comp;
    int free_index = -1;
@@ -132,13 +130,6 @@ rc_constants_add_immediate_scalar(struct rc_constant_list *c, float data, unsign
             if (c->Constants[index].UseMask & 1 << comp) {
                if (c->Constants[index].u.Immediate[comp] == data) {
                   *swizzle = RC_MAKE_SWIZZLE_SMEAR(comp);
-                  if (negate)
-                     *negate = RC_MASK_NONE;
-                  return index;
-               }
-               if (negate && c->Constants[index].u.Immediate[comp] == -data) {
-                  *swizzle = RC_MAKE_SWIZZLE_SMEAR(comp);
-                  *negate = RC_MASK_XYZW;
                   return index;
                }
             } else {
@@ -155,8 +146,6 @@ rc_constants_add_immediate_scalar(struct rc_constant_list *c, float data, unsign
       c->Constants[free_index].u.Immediate[free_comp] = data;
       c->Constants[free_index].UseMask |= 1 << free_comp;
       *swizzle = RC_MAKE_SWIZZLE_SMEAR(free_comp);
-      if (negate)
-         *negate = RC_MASK_NONE;
       return free_index;
    }
 
@@ -165,8 +154,6 @@ rc_constants_add_immediate_scalar(struct rc_constant_list *c, float data, unsign
    constant.UseMask = RC_MASK_X;
    constant.u.Immediate[0] = data;
    *swizzle = RC_SWIZZLE_XXXX;
-   if (negate)
-      *negate = RC_MASK_NONE;
 
    return rc_constants_add(c, &constant);
 }

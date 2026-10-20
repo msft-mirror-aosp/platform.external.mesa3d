@@ -37,9 +37,6 @@
 #include "util/hash_table.h"
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
-#include "util/u_transfer_helper.h"
-
-#include "etnaviv_transfer.h"
 
 static enum etna_surface_layout modifier_to_layout(uint64_t modifier)
 {
@@ -85,21 +82,11 @@ static uint64_t etna_resource_modifier(struct etna_resource *rsc)
    return layout_to_modifier(rsc->layout);
 }
 
-bool
-etna_resource_needs_rb_swap(const struct etna_screen *screen,
-                            const struct etna_resource *rsc)
-{
-   return rsc->shared && translate_pe_format_rb_swap(rsc->base.format, screen);
-}
-
 static bool
 etna_resource_is_render_compatible(struct pipe_screen *pscreen,
                                    struct etna_resource *rsc)
 {
    struct etna_screen *screen = etna_screen(pscreen);
-
-   if (etna_resource_needs_rb_swap(screen, rsc))
-      return false;
 
    if (rsc->layout == ETNA_LAYOUT_LINEAR) {
       if (!VIV_FEATURE(screen, ETNA_FEATURE_LINEAR_PE))
@@ -121,8 +108,8 @@ etna_resource_is_render_compatible(struct pipe_screen *pscreen,
 }
 
 struct etna_resource *
-etna_resource_alloc_render_shadow(struct pipe_context *pctx,
-                                  struct pipe_resource *prsc)
+etna_resource_get_render_compatible(struct pipe_context *pctx,
+                                    struct pipe_resource *prsc)
 {
    struct etna_context *ctx = etna_context(pctx);
    struct etna_screen *screen = ctx->screen;
@@ -132,7 +119,11 @@ etna_resource_alloc_render_shadow(struct pipe_context *pctx,
    struct pipe_resource templat;
    unsigned layout;
 
-   assert(!res->render);
+   if (res->render)
+      return etna_resource(res->render);
+
+   if (etna_resource_is_render_compatible(pctx->screen, res))
+      return res;
 
    layout = ETNA_LAYOUT_TILED;
    if (need_multitiled)
@@ -269,7 +260,6 @@ etna_screen_resource_alloc_ts(struct pipe_screen *pscreen,
       close(handle.handle);
    } else {
       rsc->ts_bo = etna_bo_new(screen->dev, ts_bo_size, DRM_ETNA_GEM_CACHE_WC);
-      lvl->ts_needs_clear = true;
    }
 
    if (unlikely(!rsc->ts_bo)) {
@@ -301,6 +291,8 @@ etna_screen_can_create_resource(struct pipe_screen *pscreen,
                                 const struct pipe_resource *templat)
 {
    struct etna_screen *screen = etna_screen(pscreen);
+   if (!translate_samples_to_xyscale(templat->nr_samples, NULL, NULL))
+      return false;
 
    /* templat->bind is not set here, so we must use the minimum sizes */
    uint max_size =
@@ -495,7 +487,6 @@ etna_resource_alloc(struct pipe_screen *pscreen, unsigned layout,
    rsc->base = *templat;
    rsc->base.screen = pscreen;
    rsc->base.nr_samples = templat->nr_samples;
-   rsc->internal_format = templat->format;
    rsc->layout = layout;
    rsc->modifier = modifier;
    rsc->halign = halign;
@@ -533,11 +524,9 @@ etna_resource_alloc(struct pipe_screen *pscreen, unsigned layout,
       }
    }
 
-   rsc->render_compatible = etna_resource_is_render_compatible(pscreen, rsc);
-
    /* Allocate TS for the resource if it is renderable and may use TS */
    if ((templat->bind & (PIPE_BIND_RENDER_TARGET | PIPE_BIND_DEPTH_STENCIL)) &&
-       rsc->render_compatible &&
+       etna_resource_is_render_compatible(pscreen, rsc) &&
        etna_resource_can_use_ts(screen, rsc))
       etna_screen_resource_alloc_ts(pscreen, rsc, modifier);
 
@@ -631,18 +620,16 @@ static const uint64_t priority_to_modifier[] = {
 
 static uint64_t
 select_best_modifier(const struct etna_screen * screen,
-                     const struct pipe_resource *templat,
                      const uint64_t *modifiers, const unsigned count)
 {
-   bool can_supertile = screen->specs.can_supertile &&
-                        etna_resource_hw_tileable(screen->specs.use_blt, templat);
    enum modifier_priority prio = MODIFIER_PRIORITY_INVALID;
    uint64_t best_modifier, base_modifier;
 
    for (int i = 0; i < count; i++) {
       switch (modifiers[i] & ~VIVANTE_MOD_EXT_MASK) {
       case DRM_FORMAT_MOD_VIVANTE_SUPER_TILED:
-         if ((screen->specs.pe_multitiled) || !can_supertile)
+         if ((screen->specs.pe_multitiled) ||
+             !screen->specs.can_supertile)
             break;
          prio = MAX2(prio, MODIFIER_PRIORITY_SUPER_TILED);
          break;
@@ -652,7 +639,7 @@ select_best_modifier(const struct etna_screen * screen,
          prio = MAX2(prio, MODIFIER_PRIORITY_TILED);
          break;
       case DRM_FORMAT_MOD_VIVANTE_SPLIT_SUPER_TILED:
-         if ((screen->specs.pixel_pipes < 2) || !can_supertile)
+         if ((screen->specs.pixel_pipes < 2) || !screen->specs.can_supertile)
             break;
          prio = MAX2(prio, MODIFIER_PRIORITY_SPLIT_SUPER_TILED);
          break;
@@ -709,7 +696,7 @@ etna_resource_create_modifiers(struct pipe_screen *pscreen,
 {
    struct etna_screen *screen = etna_screen(pscreen);
    struct pipe_resource tmpl = *templat;
-   uint64_t modifier = select_best_modifier(screen, templat, modifiers, count);
+   uint64_t modifier = select_best_modifier(screen, modifiers, count);
 
    if (modifier == DRM_FORMAT_MOD_INVALID)
       return NULL;
@@ -844,12 +831,10 @@ etna_resource_from_handle(struct pipe_screen *pscreen,
    if (modifier == DRM_FORMAT_MOD_INVALID)
       modifier = DRM_FORMAT_MOD_LINEAR;
 
-   rsc->internal_format = tmpl->format;
    rsc->layout = modifier_to_layout(modifier);
    rsc->modifier = modifier;
 
    rsc->shared = true;
-   rsc->shared_native_order = true;
    if (usage & PIPE_HANDLE_USAGE_EXPLICIT_FLUSH)
       rsc->explicit_flush = true;
 
@@ -871,8 +856,6 @@ etna_resource_from_handle(struct pipe_screen *pscreen,
    level->layer_stride = level->stride * util_format_get_nblocksy(prsc->format,
                                                                   level->padded_height);
    level->size = level->layer_stride;
-
-   rsc->render_compatible = etna_resource_is_render_compatible(pscreen, rsc);
 
    if (screen->ro)
       rsc->scanout = renderonly_create_gpu_import_for_resource(prsc, screen->ro,
@@ -954,13 +937,7 @@ etna_resource_get_handle(struct pipe_screen *pscreen,
    }
    handle->modifier = etna_resource_modifier(rsc);
 
-   /* Mark as shared. Data is in native byte order at export time (either
-    * empty or CPU-written). draw_vbo will set shared_native_order = false
-    * when the PE renders to this resource. */
    rsc->shared = true;
-   rsc->shared_native_order = true;
-   rsc->render_compatible = etna_resource_is_render_compatible(pscreen, rsc);
-
    if (!(usage & PIPE_HANDLE_USAGE_EXPLICIT_FLUSH))
       rsc->explicit_flush = false;
 
@@ -1179,56 +1156,16 @@ etna_resource_set_damage_region(struct pipe_screen *pscreen,
    rsc->num_damage = nrects;
 }
 
-static enum pipe_format
-etna_resource_get_internal_format(struct pipe_resource *prsc)
-{
-   if (prsc->target == PIPE_BUFFER)
-      return prsc->format;
-
-   return etna_resource(prsc)->internal_format;
-}
-
-static void
-etna_resource_set_stencil(struct pipe_resource *prsc,
-                          struct pipe_resource *stencil)
-{
-   etna_resource(prsc)->separate_stencil = etna_resource(stencil);
-}
-
-static struct pipe_resource *
-etna_resource_get_stencil(struct pipe_resource *prsrc)
-{
-   if (prsrc->target == PIPE_BUFFER)
-      return NULL;
-
-   return (struct pipe_resource *)etna_resource(prsrc)->separate_stencil;
-}
-
-static const struct u_transfer_vtbl transfer_vtbl = {
-   .resource_create = etna_resource_create,
-   .resource_destroy = etna_resource_destroy,
-   .transfer_map = etna_texture_map,
-   .transfer_flush_region = etna_transfer_flush_region,
-   .transfer_unmap = etna_texture_unmap,
-   .get_internal_format = etna_resource_get_internal_format,
-   .set_stencil = etna_resource_set_stencil,
-   .get_stencil = etna_resource_get_stencil,
-};
-
 void
 etna_resource_screen_init(struct pipe_screen *pscreen)
 {
    pscreen->can_create_resource = etna_screen_can_create_resource;
-   pscreen->resource_create = u_transfer_helper_resource_create;
+   pscreen->resource_create = etna_resource_create;
    pscreen->resource_create_with_modifiers = etna_resource_create_modifiers;
    pscreen->resource_from_handle = etna_resource_from_handle;
    pscreen->resource_get_handle = etna_resource_get_handle;
    pscreen->resource_get_param = etna_resource_get_param;
    pscreen->resource_changed = etna_resource_changed;
-   pscreen->resource_destroy = u_transfer_helper_resource_destroy;
+   pscreen->resource_destroy = etna_resource_destroy;
    pscreen->set_damage_region = etna_resource_set_damage_region;
-
-   pscreen->transfer_helper =
-      u_transfer_helper_create(&transfer_vtbl,
-                               U_TRANSFER_HELPER_Z32F_S8_IN_Z24S8);
 }

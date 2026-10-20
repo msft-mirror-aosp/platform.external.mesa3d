@@ -132,9 +132,6 @@ struct spirv_to_nir_options {
        * game bugs.
        */
       bool lower_terminate_to_discard;
-
-      /* Whether OpFMin/OpFMax/OpFClamp should behave like the NMax versions. */
-      bool force_nan_preserve_min_max;
    } workarounds;
 
    /* In Debug Builds, instead of emitting an OS break on failure, just return NULL from
@@ -148,14 +145,6 @@ struct spirv_to_nir_options {
 
    /* If GroupNonUniform capability is used, set this api subgroup size. */
    uint8_t group_non_uniform_subgroup_size;
-
-   /* Don't look at MESA_SPIRV_READ_PATH for replacements */
-   bool ignore_replacement;
-
-   /* Whether to store the DXBC/DXIL shader hash put in the SPIRV by
-    * vkd3d-proton
-    */
-   bool store_dxbc_dxil_hashes;
 };
 
 enum spirv_verify_result {

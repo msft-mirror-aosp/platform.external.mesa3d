@@ -14,66 +14,6 @@ package {
     default_applicable_licenses: ["external_mesa3d_license"],
 }
 
-filegroup {
-    name: "files_drirc",
-    srcs: [
-        "00-lavapipe-defaults.conf",
-    ],
-}
-
-python_binary_host {
-    name: "lvp_drirc_py_binary",
-    main: "lvp_drirc_gen.py",
-    srcs: [
-        ":drirc_gen.py",
-        "lvp_drirc_gen.py",
-    ],
-    libs: [
-        "mako",
-        "pyyaml",
-    ],
-}
-
-genrule {
-    name: "lvp_drirc_headers",
-    out: [
-        "src/gallium/frontends/lavapipe/lvp_drirc.h",
-    ],
-    srcs: [
-        "00-lavapipe-defaults.conf",
-    ],
-    tools: [
-        "lvp_drirc_py_binary",
-    ],
-    export_include_dirs: [
-        "src",
-        "src/gallium",
-        "src/gallium/frontends",
-        "src/gallium/frontends/lavapipe",
-    ],
-    cmd: "$(location lvp_drirc_py_binary) --import-path $(genDir)/src/util " +
-        "--drirc-src $(genDir)/src/gallium/frontends/lavapipe/lvp_drirc.c " +
-        "--drirc-hdr $(location src/gallium/frontends/lavapipe/lvp_drirc.h) " +
-        "--validate $(location 00-lavapipe-defaults.conf)",
-}
-
-genrule {
-    name: "lvp_drirc_impl",
-    out: [
-        "src/gallium/frontends/lavapipe/lvp_drirc.c",
-    ],
-    srcs: [
-        "00-lavapipe-defaults.conf",
-    ],
-    tools: [
-        "lvp_drirc_py_binary",
-    ],
-    cmd: "$(location lvp_drirc_py_binary) --import-path $(genDir)/src/util " +
-        "--drirc-src $(location src/gallium/frontends/lavapipe/lvp_drirc.c) " +
-        "--drirc-hdr $(genDir)/src/gallium/frontends/lavapipe/lvp_drirc.h " +
-        "--validate $(location 00-lavapipe-defaults.conf)",
-}
-
 genrule {
     name: "lvp_entrypoints_headers",
     out: [
@@ -146,7 +86,6 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
-        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -178,7 +117,6 @@ cc_library_static {
         "builtin_types.h",
         "git_sha1.h",
         "ir_expression_operation.h",
-        "lvp_drirc_headers",
         "lvp_entrypoints_headers",
         "nir_builder_opcodes.h",
         "nir_intrinsics.h",
@@ -191,19 +129,18 @@ cc_library_static {
         "vk_cmd_queue_headers",
         "vk_common_entrypoints_headers",
         "vk_dispatch_table_headers",
-        "vk_dispatch_trampolines_headers",
         "vk_enum_to_str_headers",
         "vk_extensions_headers",
-        "vk_format_info_headers",
         "vk_physical_device_features_headers",
         "vk_physical_device_properties_headers",
         "vk_struct_type_cast",
         "wsi_entrypoints_headers",
     ],
+    generated_sources: [
+        "lvp_entrypoints_impl",
+    ],
     srcs: [
         ":liblvp_files",
-        ":lvp_drirc_impl",
-        ":lvp_entrypoints_impl",
         "lvp_acceleration_structure.c",
         "lvp_cmd_buffer.c",
         "lvp_descriptor_set.c",
@@ -263,7 +200,6 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
-        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -272,7 +208,6 @@ cc_library_static {
             "liblog",
             "libnativewindow",
             "libsync",
-            "libui",
         ],
         default: [],
     }),

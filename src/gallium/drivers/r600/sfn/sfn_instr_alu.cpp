@@ -737,15 +737,19 @@ AluInstr::replace_dest(PRegister new_dest, UNUSED AluInstr *move_instr)
 }
 
 void
-AluInstr::pin_registers()
+AluInstr::pin_dest_to_chan()
 {
-   if (m_dest)
-      m_dest->pin_to_chan();
+   if (!m_dest)
+      return;
 
-   for (auto& src : m_src) {
-      if (auto reg = src->as_register())
-         reg->pin_to_chan();
-   }
+   auto p = m_dest->pin();
+   if (p == pin_fully || p == pin_chan || p == pin_chgr || p == pin_array)
+      return;
+
+   if (p != pin_group)
+      m_dest->set_pin(pin_chan);
+   else
+      m_dest->set_pin(pin_chgr);
 }
 
 bool
@@ -959,7 +963,7 @@ AluInstr::split(AluGroup& group)
       else
          instr = new AluInstr(opcode, dest_slot, src, {});
       instr->set_blockid(block_id(), index());
-      instr->pin_registers();
+      instr->pin_dest_to_chan();
 
       if (k == 0 || !m_alu_flags.test(alu_64bit_op)) {
          if (has_source_mod(nsrc * k + 0, mod_neg))
@@ -1952,11 +1956,11 @@ AluInstr::from_nir(nir_alu_instr *alu, Shader& shader)
    case nir_op_unpack_64_2x32_split_y:
       return emit_unpack_64_2x32_split(*alu, 1, shader);
 
-   case nir_op_fmad:
+   case nir_op_ffma:
       if (!shader.has_flag(Shader::sh_legacy_math_rules))
          return emit_alu_op3(*alu, op3_muladd_ieee, shader);
       FALLTHROUGH;
-   case nir_op_fmadz:
+   case nir_op_ffmaz:
       return emit_alu_op3(*alu, op3_muladd, shader);
 
    case nir_op_mov:

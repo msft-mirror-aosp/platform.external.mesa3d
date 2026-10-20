@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2008-2026 The Khronos Group Inc.
+ * Copyright (c) 2008-2020 The Khronos Group Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,20 +23,24 @@
 extern "C" {
 #endif
 
-#if !defined(CL_API_ENTRY)
-    #define CL_API_ENTRY
-#endif
-#if !defined(CL_API_CALL)
-    #if defined(_WIN32) && !defined(__aarch64__) && !defined(__arm64__)
-        #define CL_API_CALL __stdcall
-    #else
+#if defined(_WIN32)
+    #if !defined(CL_API_ENTRY)
+        #define CL_API_ENTRY
+    #endif
+    #if !defined(CL_API_CALL)
+        #define CL_API_CALL     __stdcall
+    #endif
+    #if !defined(CL_CALLBACK)
+        #define CL_CALLBACK     __stdcall
+    #endif
+#else
+    #if !defined(CL_API_ENTRY)
+        #define CL_API_ENTRY
+    #endif
+    #if !defined(CL_API_CALL)
         #define CL_API_CALL
     #endif
-#endif
-#if !defined(CL_CALLBACK)
-    #if defined(_WIN32) && !defined(__aarch64__) && !defined(__arm64__)
-        #define CL_CALLBACK __stdcall
-    #else
+    #if !defined(CL_CALLBACK)
         #define CL_CALLBACK
     #endif
 #endif
@@ -67,7 +71,6 @@ extern "C" {
 #define CL_API_SUFFIX__VERSION_2_1 CL_API_SUFFIX_COMMON
 #define CL_API_SUFFIX__VERSION_2_2 CL_API_SUFFIX_COMMON
 #define CL_API_SUFFIX__VERSION_3_0 CL_API_SUFFIX_COMMON
-#define CL_API_SUFFIX__VERSION_3_1 CL_API_SUFFIX_COMMON
 #define CL_API_SUFFIX__EXPERIMENTAL CL_API_SUFFIX_COMMON
 
 

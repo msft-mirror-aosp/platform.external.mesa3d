@@ -258,8 +258,7 @@ public:
    static void remove_jd(LLVMOrcJITDylibRef jd) {
       using llvm::orc::ExecutionSession;
       using llvm::orc::JITDylib;
-      if (!jit) return;
-      auto& es = jit->lljit->getExecutionSession();
+      auto& es = LPJit::get_instance()->lljit->getExecutionSession();
       ExitOnErr(es.removeJITDylib(* ::unwrap(jd)));
    }
 
@@ -300,7 +299,6 @@ LPJit* LPJit::jit = NULL;
 void lpjit_exit()
 {
    delete LPJit::jit;
-   LPJit::jit = nullptr;
 }
 
 LLVMErrorRef module_transform(void *Ctx, LLVMModuleRef mod) {
@@ -559,7 +557,6 @@ init_gallivm_state(struct gallivm_state *gallivm, const char *name,
 
    gallivm->_ts_context = context->tsref;
    gallivm->context = context->ref;
-   gallivm->context_mutex = context->mutex;
 
    gallivm->module_name = LPJit::get_unique_name(name);
    gallivm->module = LLVMModuleCreateWithNameInContext(gallivm->module_name,
@@ -594,25 +591,11 @@ gallivm_create(const char *name, lp_context_ref *context,
 }
 
 void
-gallivm_destroy_locked(struct gallivm_state *gallivm)
+gallivm_destroy(struct gallivm_state *gallivm)
 {
    LPJit::remove_jd(gallivm->_per_module_jd);
    gallivm->_per_module_jd = nullptr;
    FREE(gallivm);
-}
-
-void
-gallivm_destroy(struct gallivm_state *gallivm)
-{
-   /* Serialize LLVMContext teardown against concurrent compiles. */
-   simple_mtx_t *mutex = gallivm->context_mutex;
-   if (mutex)
-      simple_mtx_lock(mutex);
-
-   gallivm_destroy_locked(gallivm);
-
-   if (mutex)
-      simple_mtx_unlock(mutex);
 }
 
 void

@@ -317,6 +317,15 @@ _mesa_BlendFuncSeparate( GLenum sfactorRGB, GLenum dfactorRGB,
 {
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glBlendFuncSeparate %s %s %s %s\n",
+                  _mesa_enum_to_string(sfactorRGB),
+                  _mesa_enum_to_string(dfactorRGB),
+                  _mesa_enum_to_string(sfactorA),
+                  _mesa_enum_to_string(dfactorA));
+
+
+
    if (skip_blend_state_update(ctx, sfactorRGB, dfactorRGB, sfactorA, dfactorA))
       return;
 
@@ -519,6 +528,10 @@ _mesa_BlendEquation( GLenum mode )
    bool changed = false;
    enum pipe_advanced_blend_mode advanced_mode = advanced_blend_mode(ctx, mode);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glBlendEquation(%s)\n",
+                  _mesa_enum_to_string(mode));
+
    if (ctx->Color._BlendEquationPerBuffer) {
       /* Check all per-buffer states */
       for (buf = 0; buf < numBuffers; buf++) {
@@ -595,6 +608,10 @@ _mesa_BlendEquationiARB(GLuint buf, GLenum mode)
 {
    GET_CURRENT_CONTEXT(ctx);
    enum pipe_advanced_blend_mode advanced_mode = advanced_blend_mode(ctx, mode);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glBlendEquationi(%u, %s)\n",
+                  buf, _mesa_enum_to_string(mode));
 
    if (buf >= ctx->Const.MaxDrawBuffers) {
       _mesa_error(ctx, GL_INVALID_VALUE, "glBlendEquationi(buffer=%u)",
@@ -688,6 +705,11 @@ _mesa_BlendEquationSeparate(GLenum modeRGB, GLenum modeA)
 {
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glBlendEquationSeparateEXT(%s %s)\n",
+                  _mesa_enum_to_string(modeRGB),
+                  _mesa_enum_to_string(modeA));
+
    blend_equation_separate(ctx, modeRGB, modeA, false);
 }
 
@@ -742,6 +764,11 @@ void GLAPIENTRY
 _mesa_BlendEquationSeparateiARB(GLuint buf, GLenum modeRGB, GLenum modeA)
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glBlendEquationSeparatei(%u, %s %s)\n", buf,
+                  _mesa_enum_to_string(modeRGB),
+                  _mesa_enum_to_string(modeA));
 
    if (buf >= ctx->Const.MaxDrawBuffers) {
       _mesa_error(ctx, GL_INVALID_VALUE, "glBlendEquationSeparatei(buffer=%u)",
@@ -806,6 +833,10 @@ void GLAPIENTRY
 _mesa_AlphaFunc( GLenum func, GLclampf ref )
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glAlphaFunc(%s, %f)\n",
+                  _mesa_enum_to_string(func), ref);
 
    if (ctx->Color.AlphaFunc == func && ctx->Color.AlphaRefUnclamped == ref)
       return; /* no change */
@@ -905,6 +936,9 @@ _mesa_LogicOp( GLenum opcode )
 {
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glLogicOp(%s)\n", _mesa_enum_to_string(opcode));
+
    logic_op(ctx, opcode, false);
 }
 
@@ -951,6 +985,10 @@ _mesa_ColorMask( GLboolean red, GLboolean green,
 {
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glColorMask(%d, %d, %d, %d)\n",
+                  red, green, blue, alpha);
+
    GLbitfield mask = (!!red) |
                      ((!!green) << 1) |
                      ((!!blue) << 2) |
@@ -975,6 +1013,10 @@ _mesa_ColorMaski(GLuint buf, GLboolean red, GLboolean green,
                  GLboolean blue, GLboolean alpha)
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glColorMaski %u %d %d %d %d\n",
+                  buf, red, green, blue, alpha);
 
    if (buf >= ctx->Const.MaxDrawBuffers) {
       _mesa_error(ctx, GL_INVALID_VALUE, "glColorMaski(buf=%u)", buf);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2026 Broadcom. All Rights Reserved.
+ * Copyright (c) 2009-2024 Broadcom. All Rights Reserved.
  * The term “Broadcom” refers to Broadcom Inc.
  * and/or its subsidiaries.
  * SPDX-License-Identifier: MIT
@@ -40,6 +40,16 @@
 #define SVGA3D_FLAGS_UPPER_32(svga3d_flags) (svga3d_flags >> 32)
 #define SVGA3D_FLAGS_LOWER_32(svga3d_flags) \
    (svga3d_flags & ((uint64_t)UINT32_MAX))
+
+struct vmw_region
+{
+   uint32_t handle;
+   uint64_t map_handle;
+   void *data;
+   uint32_t map_count;
+   int drm_fd;
+   uint32_t size;
+};
 
 uint32_t
 vmw_region_size(struct vmw_region *region)
@@ -87,7 +97,7 @@ vmw_ioctl_extended_context_create(struct vmw_winsys_screen *vws,
    if (ret)
       return -1;
 
-   vmw_printf("%s Context id is %d\n", __func__, c_arg.rep.cid);
+   vmw_printf("Context id is %d\n", c_arg.cid);
    return c_arg.rep.cid;
 }
 
@@ -190,7 +200,7 @@ vmw_ioctl_gb_surface_create(struct vmw_winsys_screen *vws,
    struct vmw_region *region = NULL;
    int ret;
 
-   vmw_printf("%s flags %lx format %d\n", __func__, flags, format);
+   vmw_printf("%s flags %d format %d\n", __func__, flags, format);
 
    if (p_region) {
       region = CALLOC_STRUCT(vmw_region);
@@ -293,7 +303,7 @@ vmw_ioctl_gb_surface_create(struct vmw_winsys_screen *vws,
       *p_region = region;
    }
 
-   vmw_printf("%s Surface id is %d\n", __func__, rep->handle);
+   vmw_printf("Surface id is %d\n", rep->sid);
    return rep->handle;
 
 out_fail_create:
@@ -447,7 +457,7 @@ vmw_ioctl_gb_surface_ref(struct vmw_winsys_screen *vws,
       *numMipLevels = rep->creq.mip_levels;
    }
 
-   vmw_printf("%s flags %lx format %d\n", __func__, *flags, *format);
+   vmw_printf("%s flags %d format %d\n", __func__, *flags, *format);
 
    if (needs_unref)
       vmw_ioctl_surface_destroy(vws, *handle);
@@ -611,7 +621,8 @@ vmw_ioctl_region_create(struct vmw_winsys_screen *vws, uint32_t size)
    region->size = size;
    region->drm_fd = vws->ioctl.drm_fd;
 
-   vmw_printf("%s: handle = %u\n", __func__, region->handle);
+   vmw_printf("   gmrId = %u, offset = %u\n",
+              region->ptr.gmrId, region->ptr.offset);
 
    return region;
 
@@ -625,7 +636,8 @@ vmw_ioctl_region_destroy(struct vmw_region *region)
 {
    struct drm_vmw_unref_dmabuf_arg arg;
 
-   vmw_printf("%s: handle = %u\n", __func__, region->handle);
+   vmw_printf("%s: gmrId = %u, offset = %u\n", __func__,
+              region->ptr.gmrId, region->ptr.offset);
 
    if (region->data) {
       os_munmap(region->data, region->size);
@@ -651,7 +663,8 @@ vmw_ioctl_region_map(struct vmw_region *region)
 {
    void *map;
 
-   vmw_printf("%s: handle = %u\n", __func__, region->handle);
+   vmw_printf("%s: gmrId = %u, offset = %u\n", __func__,
+              region->ptr.gmrId, region->ptr.offset);
 
    if (region->data == NULL) {
       map = os_mmap(NULL, region->size, PROT_READ | PROT_WRITE, MAP_SHARED,
@@ -676,7 +689,8 @@ vmw_ioctl_region_map(struct vmw_region *region)
 void
 vmw_ioctl_region_unmap(struct vmw_region *region)
 {
-   vmw_printf("%s: handle = %u\n", __func__, region->handle);
+   vmw_printf("%s: gmrId = %u, offset = %u\n", __func__,
+              region->ptr.gmrId, region->ptr.offset);
 
    --region->map_count;
    os_munmap(region->data, region->size);
@@ -950,13 +964,6 @@ vmw_ioctl_parse_caps(struct vmw_winsys_screen *vws,
    return 0;
 }
 
-static inline bool
-vmw_ioctl_have_version(drmVersionPtr version, int major, int minor)
-{
-   return version->version_major > major ||
-      (version->version_major == major && version->version_minor >= minor);
-}
-
 bool
 vmw_ioctl_init(struct vmw_winsys_screen *vws)
 {
@@ -976,16 +983,24 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
    if (!version)
       goto out_no_version;
 
-   have_drm_2_5 = vmw_ioctl_have_version(version, 2, 5);
-   vws->ioctl.have_drm_2_6 = vmw_ioctl_have_version(version, 2, 6);
-   vws->ioctl.have_drm_2_9 = vmw_ioctl_have_version(version, 2, 9);
-   vws->ioctl.have_drm_2_15 = vmw_ioctl_have_version(version, 2, 15);
-   vws->ioctl.have_drm_2_16 = vmw_ioctl_have_version(version, 2, 16);
-   vws->ioctl.have_drm_2_17 = vmw_ioctl_have_version(version, 2, 17);
-   vws->ioctl.have_drm_2_18 = vmw_ioctl_have_version(version, 2, 18);
-   vws->ioctl.have_drm_2_19 = vmw_ioctl_have_version(version, 2, 19);
-   vws->ioctl.have_drm_2_20 = vmw_ioctl_have_version(version, 2, 20);
-   vws->ioctl.have_drm_2_21 = vmw_ioctl_have_version(version, 2, 21);
+   have_drm_2_5 = version->version_major > 2 ||
+      (version->version_major == 2 && version->version_minor > 4);
+   vws->ioctl.have_drm_2_6 = version->version_major > 2 ||
+      (version->version_major == 2 && version->version_minor > 5);
+   vws->ioctl.have_drm_2_9 = version->version_major > 2 ||
+      (version->version_major == 2 && version->version_minor > 8);
+   vws->ioctl.have_drm_2_15 = version->version_major > 2 ||
+      (version->version_major == 2 && version->version_minor > 14);
+   vws->ioctl.have_drm_2_16 = version->version_major > 2 ||
+      (version->version_major == 2 && version->version_minor > 15);
+   vws->ioctl.have_drm_2_17 = version->version_major > 2 ||
+      (version->version_major == 2 && version->version_minor > 16);
+   vws->ioctl.have_drm_2_18 = version->version_major > 2 ||
+      (version->version_major == 2 && version->version_minor > 17);
+   vws->ioctl.have_drm_2_19 = version->version_major > 2 ||
+      (version->version_major == 2 && version->version_minor > 18);
+   vws->ioctl.have_drm_2_20 = version->version_major > 2 ||
+      (version->version_major == 2 && version->version_minor > 19);
 
    vws->ioctl.drm_execbuf_version = vws->ioctl.have_drm_2_9 ? 2 : 1;
 

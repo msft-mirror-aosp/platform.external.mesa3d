@@ -7,7 +7,6 @@
 
 #include "util/u_debug.h"
 #include "bi_debug.h"
-#include "bifrost_compile.h"
 
 
 /* clang-format off */
@@ -41,13 +40,6 @@ unsigned bifrost_debug = 0;
 void
 bifrost_init_debug_options() {
    bifrost_debug = debug_get_option_bifrost_debug();
-}
-
-uint32_t
-bifrost_get_compiler_flags()
-{
-   bifrost_init_debug_options();
-   return bifrost_debug;
 }
 
 bool

@@ -64,11 +64,7 @@ CDX12EncHMFT::Shutdown( void )
    {
       m_bShutdown = true;
       OnFlush();
-      CleanupEncoder( false );
-      if( m_spEventQueue )
-      {
-         (void) m_spEventQueue->Shutdown();
-      }
+      CleanupEncoder();
    }
 
    MFE_INFO( "[dx12 hmft 0x%p] Shutdown - hr=0x%x", this, hr );

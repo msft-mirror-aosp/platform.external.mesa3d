@@ -17,7 +17,6 @@ class LowerIsel : public testing::Test {
    LowerIsel()
    {
       mem_ctx = ralloc_context(NULL);
-      arch = 9;
       reg = bi_register(1);
       x = bi_register(2);
       y = bi_register(3);
@@ -30,7 +29,6 @@ class LowerIsel : public testing::Test {
    }
 
    void *mem_ctx;
-   unsigned arch;
    bi_index reg, x, y, z;
 };
 

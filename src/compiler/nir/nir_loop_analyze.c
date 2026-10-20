@@ -26,11 +26,6 @@
 #include "util/ralloc.h"
 #include "nir.h"
 #include "nir_constant_expressions.h"
-#include "nir_search_helpers.h"
-
-#define IS_UNIFORM_UNKNOWN 0
-#define IS_UNIFORM_TRUE    1
-#define IS_UNIFORM_FALSE   2
 
 typedef struct {
    /* The loop we store information for */
@@ -101,10 +96,6 @@ instr_cost(loop_info_state *state, nir_instr *instr,
       return 0;
    } else if (nir_op_is_vec_or_mov(alu->op)) {
       /* movs and vecs are likely free. */
-      return 0;
-   } else if ((alu->op == nir_op_fmul || alu->op == nir_op_fmulz) &&
-              is_only_used_by_fadd(alu)) {
-      /* If we can fuse fma/mad, do not count the mul. */
       return 0;
    }
 
@@ -203,46 +194,30 @@ is_only_uniform_src(nir_src *src)
 {
    nir_instr *instr = nir_def_instr(src->ssa);
 
-   /* Lookup memoized result */
-   if (instr->pass_flags == IS_UNIFORM_TRUE)
-      return true;
-   if (instr->pass_flags == IS_UNIFORM_FALSE)
-      return false;
-
-   bool result = true;
    switch (instr->type) {
    case nir_instr_type_alu: {
       /* Return true if all sources return true. */
       nir_alu_instr *alu = nir_instr_as_alu(instr);
       for (unsigned i = 0; i < nir_op_infos[alu->op].num_inputs; i++) {
-         if (!is_only_uniform_src(&alu->src[i].src)) {
-            result = false;
-            break;
-         }
+         if (!is_only_uniform_src(&alu->src[i].src))
+            return false;
       }
-      break;
+      return true;
    }
 
    case nir_instr_type_intrinsic: {
       nir_intrinsic_instr *inst = nir_instr_as_intrinsic(instr);
       /* current uniform inline only support load ubo */
-      result = (inst->intrinsic == nir_intrinsic_load_ubo);
-      break;
+      return inst->intrinsic == nir_intrinsic_load_ubo;
    }
 
    case nir_instr_type_load_const:
       /* Always return true for constants. */
-      result = true;
-      break;
+      return true;
 
    default:
-      result = false;
-      break;
+      return false;
    }
-   /* Store memoized result */
-   instr->pass_flags = result ? IS_UNIFORM_TRUE : IS_UNIFORM_FALSE;
-
-   return result;
 }
 
 static bool
@@ -427,8 +402,7 @@ find_array_access_via_induction(loop_info_state *state,
 }
 
 static void
-guess_loop_limit_by_intrinsic(loop_info_state *state, nir_intrinsic_instr *intrin,
-                              nir_scalar *ind, unsigned *min_loop_count)
+guess_loop_limit_by_intrinsic(loop_info_state *state, nir_intrinsic_instr *intrin, unsigned *min_loop_count)
 {
    /* Check for arrays variably-indexed by a loop induction variable. */
    if (intrin->intrinsic == nir_intrinsic_load_deref ||
@@ -440,40 +414,27 @@ guess_loop_limit_by_intrinsic(loop_info_state *state, nir_intrinsic_instr *intri
          find_array_access_via_induction(state,
                                          nir_src_as_deref(intrin->src[0]),
                                          &array_idx);
-      if (array_idx) {
-         if (*min_loop_count > array_size) {
-            nir_scalar lp_ind = { array_idx->basis, 0 };
-            *ind = lp_ind;
-            *min_loop_count = array_size;
-         }
-      }
+      if (array_idx)
+         *min_loop_count = MIN2(*min_loop_count, array_size);
 
       if (intrin->intrinsic == nir_intrinsic_copy_deref) {
          array_size =
             find_array_access_via_induction(state,
                                             nir_src_as_deref(intrin->src[1]),
                                             &array_idx);
-         if (array_idx) {
-            if (*min_loop_count > array_size) {
-               nir_scalar lp_ind = { array_idx->basis, 0 };
-               *ind = lp_ind;
-               *min_loop_count = array_size;
-            }
-         }
+         if (array_idx)
+            *min_loop_count = MIN2(*min_loop_count, array_size);
       }
    }
 }
 
 static void
-guess_loop_limit_by_tex(loop_info_state *state, nir_tex_instr *tex,
-                        nir_scalar *ind, unsigned *min_loop_count)
+guess_loop_limit_by_tex(loop_info_state *state, nir_tex_instr *tex, unsigned *min_loop_count)
 {
    nir_def *sample = nir_get_tex_src(tex, nir_tex_src_ms_index);
    if (sample) {
       nir_loop_induction_variable *var = get_loop_var(sample, state);
       if (var) {
-         nir_scalar lp_ind = { var->basis, 0 };
-         *ind = lp_ind;
          const nir_function_impl *impl = nir_cf_node_get_function(&state->loop->cf_node);
          const nir_shader_compiler_options *options = impl->function->shader->options;
          *min_loop_count = MIN2(*min_loop_count, options->max_samples);
@@ -482,7 +443,7 @@ guess_loop_limit_by_tex(loop_info_state *state, nir_tex_instr *tex,
 }
 
 static unsigned
-guess_loop_limit(loop_info_state *state, nir_scalar *ind)
+guess_loop_limit(loop_info_state *state)
 {
    unsigned min_loop_count = UINT_MAX;
 
@@ -490,12 +451,10 @@ guess_loop_limit(loop_info_state *state, nir_scalar *ind)
       nir_foreach_instr(instr, block) {
          switch (instr->type) {
          case nir_instr_type_intrinsic:
-            guess_loop_limit_by_intrinsic(state, nir_instr_as_intrinsic(instr),
-                                          ind, &min_loop_count);
+            guess_loop_limit_by_intrinsic(state, nir_instr_as_intrinsic(instr), &min_loop_count);
             break;
          case nir_instr_type_tex:
-            guess_loop_limit_by_tex(state, nir_instr_as_tex(instr), ind,
-                                    &min_loop_count);
+            guess_loop_limit_by_tex(state, nir_instr_as_tex(instr), &min_loop_count);
             break;
          default:
             break;
@@ -1166,7 +1125,6 @@ find_trip_count(loop_info_state *state, unsigned execution_mode,
 
       bool limit_rhs;
       nir_scalar basic_ind = { NULL, 0 };
-      nir_scalar terminator_ind = { NULL, 0 };
       nir_scalar limit;
 
       if ((alu_op == nir_op_inot || alu_op == nir_op_ieq || alu_op == nir_op_ior) &&
@@ -1220,12 +1178,8 @@ find_trip_count(loop_info_state *state, unsigned execution_mode,
          trip_count_known = false;
 
          if (!try_find_limit(limit, &limit_val, alu_op, invert_cond, terminator, state)) {
-            /* Guess loop limit based on array access, and get the induction
-             * var from the array access which is not necessarily the same
-             * induction var used by the loop terminator.
-             */
-            terminator_ind = basic_ind;
-            unsigned guessed_loop_limit = guess_loop_limit(state, &basic_ind);
+            /* Guess loop limit based on array access */
+            unsigned guessed_loop_limit = guess_loop_limit(state);
             if (guessed_loop_limit) {
                limit_val = nir_const_value_for_uint(guessed_loop_limit,
                                                     basic_ind.def->bit_size);
@@ -1247,7 +1201,6 @@ find_trip_count(loop_info_state *state, unsigned execution_mode,
        */
 
       nir_loop_induction_variable *lv = get_loop_var(basic_ind.def, state);
-      terminator->init_src = lv->init_src;
 
       /* The basic induction var might be a vector but, because we guarantee
        * earlier that the phi source has a scalar swizzle, we can take the
@@ -1260,7 +1213,7 @@ find_trip_count(loop_info_state *state, unsigned execution_mode,
       };
 
       nir_alu_instr *step_alu =
-         nir_instr_as_alu(nir_src_use_instr(&lv->update_src->src));
+         nir_instr_as_alu(nir_src_parent_instr(&lv->update_src->src));
 
       /* If the comparision is of unsigned type we don't necessarily need to
        * know the initial value to be able to calculate the max number of
@@ -1309,27 +1262,13 @@ find_trip_count(loop_info_state *state, unsigned execution_mode,
       }
       nir_const_value step_val = nir_scalar_as_const_value(alu_s);
 
-      int iterations;
-      if (guessed_trip_count && terminator_ind.def != basic_ind.def) {
-         /* TODO: expand to support additional step combinations where needed */
-         if (step_alu->op != nir_op_iadd ||
-             (nir_const_value_as_int(step_val, basic_ind.def->bit_size) <= 0) ||
-             (nir_const_value_as_int(initial_val, basic_ind.def->bit_size) < 0)) {
-            iterations = -1;
-         } else {
-            iterations = get_iteration(nir_op_ilt, initial_val, step_val,
-                                       limit_val, false,
-                                       basic_ind.def->bit_size, execution_mode);
-         }
-      } else {
-         iterations = calculate_iterations(nir_get_scalar(lv->basis, basic_ind.comp), limit,
-                                           initial_val, step_val, limit_val,
-                                           step_alu, cond,
-                                           alu_op, limit_rhs,
-                                           invert_cond,
-                                           execution_mode,
-                                           max_unroll_iterations);
-      }
+      int iterations = calculate_iterations(nir_get_scalar(lv->basis, basic_ind.comp), limit,
+                                            initial_val, step_val, limit_val,
+                                            step_alu, cond,
+                                            alu_op, limit_rhs,
+                                            invert_cond,
+                                            execution_mode,
+                                            max_unroll_iterations);
 
       /* Where we not able to calculate the iteration count */
       if (iterations == -1) {
@@ -1583,10 +1522,6 @@ nir_loop_analyze_impl(nir_function_impl *impl,
 {
    struct hash_table *range_ht = _mesa_pointer_hash_table_create(NULL);
    nir_metadata_require(impl, nir_metadata_block_index);
-
-   /* Clear pass_flags before using it for memoization */
-   nir_shader *shader = impl->function->shader;
-   nir_shader_clear_pass_flags(shader);
 
    foreach_list_typed(nir_cf_node, node, node, &impl->body)
       process_loops(node, indirect_mask, force_unroll_sampler_indirect, range_ht);

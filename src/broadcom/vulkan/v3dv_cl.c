@@ -24,8 +24,6 @@
 #include "v3dv_device.h"
 #include "v3dv_cmd_buffer.h"
 
-#include "broadcom/common/v3d_limits.h"
-
 /* We don't expect that the packets we use in this file change across hw
  * versions, so we just explicitly set the V3D_VERSION and include v3dx_pack
  * here
@@ -51,7 +49,7 @@ v3dv_cl_destroy(struct v3dv_cl *cl)
    list_for_each_entry_safe(struct v3dv_bo, bo, &cl->bo_list, list_link) {
       assert(cl->job);
       list_del(&bo->list_link);
-      v3dv_bo_free(cl->job->device, bo, 0);
+      v3dv_bo_free(cl->job->device, bo);
    }
 
    /* Leave the CL in a reset state to catch use after destroy instances */
@@ -92,16 +90,12 @@ cl_alloc_bo(struct v3dv_cl *cl, uint32_t space, enum
    /* If we are growing, double the BO allocation size to reduce the number
     * of allocations with large command buffers. This has a very significant
     * impact on the number of draw calls per second reported by vkoverhead.
-    * Cap the doubling so that command buffers recording an extreme number
-    * of draws do not grow ever larger CL BOs until memory exhaustion.
     */
    space = align(space + unusable_space, devinfo->page_size);
    if (cl->bo)
-      space = MAX2(MIN2(cl->bo->size * 2, V3D_CL_MAX_GROW_SIZE), space);
+      space = MAX2(cl->bo->size * 2, space);
 
-   struct v3dv_bo *bo = v3dv_bo_alloc(cl->job->device, space, "CL", true,
-                                      VK_OBJECT_TYPE_COMMAND_BUFFER,
-                                      job_get_cmd_buffer_vk_handle(cl->job));
+   struct v3dv_bo *bo = v3dv_bo_alloc(cl->job->device, space, "CL", true);
    if (!bo) {
       mesa_loge("failed to allocate memory for command list\n");
       v3dv_flag_oom(NULL, cl->job);

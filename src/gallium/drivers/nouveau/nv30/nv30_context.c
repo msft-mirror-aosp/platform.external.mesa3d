@@ -35,14 +35,13 @@
 #include "nv30/nv30_state.h"
 #include "nv30/nv30_winsys.h"
 
-static bool
+static void
 nv30_context_kick_notify(struct nouveau_pushbuf *push)
 {
    struct nouveau_pushbuf_priv *p = push->user_priv;
    struct nouveau_screen *screen = p->screen;
 
-   if (!_nouveau_fence_next(p->context))
-      return false;
+   _nouveau_fence_next(p->context);
    _nouveau_fence_update(screen, true);
 
    if (push->bufctx) {
@@ -63,8 +62,6 @@ nv30_context_kick_notify(struct nouveau_pushbuf *push)
          }
       }
    }
-
-   return true;
 }
 
 static void
@@ -76,8 +73,7 @@ nv30_context_flush(struct pipe_context *pipe, struct pipe_fence_handle **fence,
 
    if (fence)
       nouveau_fence_ref(nv30->base.fence,
-                        (struct nouveau_fence **)fence,
-                        nv30->base.screen);
+                        (struct nouveau_fence **)fence);
 
    PUSH_KICK(push);
 
@@ -169,8 +165,6 @@ nv30_context_destroy(struct pipe_context *pipe)
    nv30_framebuffer_init(pipe, NULL, nv30->fb_cbufs, &nv30->fb_zsbuf);
    util_unreference_framebuffer_state(&nv30->framebuffer);
 
-   nouveau_pushbuf_bufctx(nv30->base.pushbuf, NULL);
-   PUSH_KICK(nv30->base.pushbuf);
    nouveau_bufctx_del(&nv30->bufctx);
 
    if (nv30->screen->cur_ctx == nv30)
@@ -261,10 +255,7 @@ nv30_context_create(struct pipe_screen *pscreen, void *priv, unsigned ctxflags)
    }
 
    nouveau_context_init_vdec(&nv30->base);
-   if (!nouveau_fence_new(&nv30->base, &nv30->base.fence)) {
-      nv30_context_destroy(pipe);
-      return NULL;
-   }
+   nouveau_fence_new(&nv30->base, &nv30->base.fence);
 
    return pipe;
 }

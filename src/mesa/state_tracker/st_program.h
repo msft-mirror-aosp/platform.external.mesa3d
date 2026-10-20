@@ -65,7 +65,6 @@ struct st_external_sampler_key
    GLuint bt709;
    GLuint bt2020;
    GLuint yuv_full_range;
-   GLuint external_y2y;
 };
 
 static inline struct st_external_sampler_key
@@ -76,17 +75,14 @@ st_get_external_sampler_key(struct st_context *st, struct gl_program *prog)
 
    memset(&key, 0, sizeof(key));
 
-   /* Set Y2Y samplers from the stored bitfield */
-   key.external_y2y = prog->Y2YSamplersUsed;
-
    while (unlikely(mask)) {
       unsigned unit = u_bit_scan(&mask);
       struct gl_texture_object *stObj =
             st_get_texture_object(st->ctx, prog, unit);
       enum pipe_format format = st_get_view_format(stObj);
 
-      /* if no extra YUV plane views are needed, there's nothing to lower */
-      if (!stObj->needs_yuv_plane_views)
+      /* if resource format matches then YUV wasn't lowered */
+      if (format == stObj->pt->format)
          continue;
 
       switch (format) {
@@ -269,14 +265,6 @@ struct st_fp_variant_key
    /** needed for ATI_fragment_shader */
    GLuint fog:2;
 
-   /**
-    * ATI_fragment_shader fog: the fog coordinate is fed by the fixed-function
-    * vertex program as signed eye-space Z and must have abs() applied per
-    * fragment (GL_EYE_PLANE_ABSOLUTE_NV distance mode).  See mesa #15407 and
-    * _mesa_fog_coord_needs_deferred_abs().
-    */
-   GLuint fog_coord_abs:1;
-
    /** for OpenGL 1.0 on modern hardware */
    GLuint lower_two_sided_color:1;
 
@@ -389,7 +377,7 @@ static inline unsigned
 st_get_generic_varying_index(struct st_context *st, GLuint attr)
 {
    return tgsi_get_generic_gl_varying_index((gl_varying_slot)attr,
-                                            st->screen->caps.tgsi_texcoord);
+                                            st->needs_texcoord_semantic);
 }
 
 extern void

@@ -14,7 +14,6 @@
 #include <string>
 #include <variant>
 #include <vector>
-#include "util/macros.h"
 
 namespace pps
 {
@@ -29,19 +28,6 @@ struct CounterGroup {
    std::vector<CounterGroup> subgroups;
 };
 
-
-/// Mirrors perfetto::protos::pbzero::GpuCounterDescriptor::GpuCounterGroup.
-enum Perfettogrp : uint32_t {
-   UNCLASSIFIED = 0,
-   SYSTEM = 1,
-   VERTICES = 2,
-   FRAGMENTS = 3,
-   PRIMITIVES = 4,
-   MEMORY = 5,
-   COMPUTE = 6,
-   RAYTRACING = 7,
-};
-
 class Driver;
 
 class Counter
@@ -54,10 +40,6 @@ class Counter
       Byte,
       Hertz,
       None,
-      Primitive,
-      Instruction,
-      Pixel,
-      Fragment
    };
 
    using Value = std::variant<int64_t, double>;
@@ -108,10 +90,6 @@ class Counter
 
    /// The unit of the counter
    Units units;
-
-   /// Bitfield representing the groups this counter belongs to
-   /// Counter can belong to multiple groups
-   uint32_t group_mask = BITFIELD_BIT(UNCLASSIFIED);
 };
 
 /// @param get New getter function for this counter

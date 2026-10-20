@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2026 Collabora, Ltd.
- * Copyright (C) 2026 Arm Ltd.
  * SPDX-License-Identifier: MIT
  */
 #include "pan_fb.h"
@@ -74,6 +73,20 @@ GENX(pan_select_fb_tile_size)(struct pan_fb_layout *fb)
 #else
    assert(fb->tile_rt_alloc_B <= fb->tile_rt_budget_B * 2 && "tile too big");
 #endif
+}
+
+/**
+ * Returns true if there's enough space in the tile buffer for at least two
+ * Z/S tiles.
+ */
+static inline bool
+pan_fb_can_pipeline_zs(const struct pan_fb_layout *fb)
+{
+   const uint32_t z_B_per_px = sizeof(float) * fb->sample_count;
+   const uint32_t z_B_per_tile = z_B_per_px * fb->tile_size_px;
+
+   /* The budget is already half the available Z space */
+   return z_B_per_tile < fb->tile_z_budget_B;
 }
 
 static void
@@ -363,6 +376,13 @@ GENX(pan_fill_fb_info)(const struct pan_fb_desc_info *info,
 }
 
 #if PAN_ARCH >= 5
+static bool
+target_has_clear(const struct pan_fb_load_target *target)
+{
+   return target->in_bounds_load == PAN_FB_LOAD_CLEAR ||
+          target->border_load == PAN_FB_LOAD_CLEAR;
+}
+
 static enum mali_msaa
 translate_msaa_copy_op(const struct pan_fb_layout *fb,
                        const struct pan_image_view *iview,
@@ -393,6 +413,11 @@ translate_msaa_copy_op(const struct pan_fb_layout *fb,
    }
 }
 
+struct pan_fb_clean_tile {
+   uint8_t rts;
+   bool zs, s;
+};
+
 static bool
 pan_fb_load_target_always(const struct pan_fb_load_target *target)
 {
@@ -409,8 +434,8 @@ pan_fb_store_target_always(const struct pan_fb_store_target *target)
    return target->store && target->always;
 }
 
-struct pan_fb_clean_tile
-GENX(pan_fb_get_clean_tile)(const struct pan_fb_desc_info *info)
+static struct pan_fb_clean_tile
+pan_fb_get_clean_tile(const struct pan_fb_desc_info *info)
 {
    const struct pan_fb_layout *fb = info->fb;
    const struct pan_fb_load *load = info->load;
@@ -478,8 +503,7 @@ GENX(pan_fb_get_clean_tile)(const struct pan_fb_desc_info *info)
 static void
 emit_zs_crc_desc(const struct pan_fb_desc_info *info,
                  const struct pan_fb_clean_tile ct,
-                 struct mali_zs_crc_extension_packed *zs_crc,
-                 const struct pan_crc crc)
+                 struct mali_zs_crc_extension_packed *zs_crc)
 {
    const struct pan_fb_layout *fb = info->fb;
    const struct pan_fb_store *store = info->store;
@@ -508,22 +532,7 @@ emit_zs_crc_desc(const struct pan_fb_desc_info *info,
 #endif
       }
 
-      if (crc.index != -1) {
-         const struct pan_image_view *rt = info->store->rts[crc.index].iview;
-         const struct pan_image_plane_ref pref =
-            pan_image_view_get_color_plane(rt);
-         const struct pan_image_plane *plane =
-            pref.image->planes[pref.plane_idx];
-         const struct pan_image_slice_layout *slice =
-            &plane->layout.slices[rt->first_level];
-
-         cfg.crc.base = plane->base + slice->crc.offset_B;
-         cfg.crc.row_stride = slice->crc.stride_B;
-#if PAN_ARCH >= 7
-         cfg.crc.render_target = crc.index;
-         cfg.crc.clear_color = crc.clear_color;
-#endif
-      }
+      /* TODO CRC */
    }
 
    if (store && store->zs.store) {
@@ -531,10 +540,10 @@ emit_zs_crc_desc(const struct pan_fb_desc_info *info,
       const struct pan_mod_handler *mod_handler =
          pan_image_view_get_zs_plane(iview).image->mod_handler;
 
-      assert(info->layer < pan_image_view_layer_or_3d_slice_count(iview));
+      assert(info->layer < pan_image_view_get_layer_count(iview));
       const struct pan_attachment_info att = {
          .iview = iview,
-         .layer_or_z_slice = iview->first_layer_or_z_slice + info->layer,
+         .layer_or_z_slice = iview->first_layer + info->layer,
          .fb_tile_size_px = fb->tile_size_px,
       };
 
@@ -548,10 +557,10 @@ emit_zs_crc_desc(const struct pan_fb_desc_info *info,
       const struct pan_mod_handler *mod_handler =
          pan_image_view_get_s_plane(iview).image->mod_handler;
 
-      assert(info->layer < pan_image_view_layer_or_3d_slice_count(iview));
+      assert(info->layer < pan_image_view_get_layer_count(iview));
       const struct pan_attachment_info att = {
          .iview = iview,
-         .layer_or_z_slice = iview->first_layer_or_z_slice + info->layer,
+         .layer_or_z_slice = iview->first_layer + info->layer,
          .fb_tile_size_px = fb->tile_size_px,
       };
 
@@ -559,6 +568,8 @@ emit_zs_crc_desc(const struct pan_fb_desc_info *info,
       mod_handler->emit_s_attachment(&att, &s_part);
       pan_merge(zs_crc, &s_part, ZS_CRC_EXTENSION);
    }
+
+   /* TODO: CRC */
 }
 
 static void
@@ -602,7 +613,7 @@ emit_rgb_rt_desc(const struct pan_fb_desc_info *info,
       cfg.clean_pixel_write_enable = !!(ct.rts & BITFIELD_BIT(rt));
 #endif
 
-      if (load && pan_target_has_clear(&load->rts[rt])) {
+      if (load && target_has_clear(&load->rts[rt])) {
          uint32_t packed[4] = {};
          pan_pack_color(GENX(pan_blendable_formats), packed,
                         &load->rts[rt].clear.color, fb->rt_formats[rt],
@@ -623,10 +634,10 @@ emit_rgb_rt_desc(const struct pan_fb_desc_info *info,
       const struct pan_mod_handler *mod_handler =
          pan_image_view_get_color_plane(iview).image->mod_handler;
 
-      assert(info->layer < pan_image_view_layer_or_3d_slice_count(iview));
+      assert(info->layer < pan_image_view_get_layer_count(iview));
       const struct pan_attachment_info att = {
          .iview = iview,
-         .layer_or_z_slice = iview->first_layer_or_z_slice + info->layer,
+         .layer_or_z_slice = iview->first_layer + info->layer,
          .fb_tile_size_px = fb->tile_size_px,
       };
 
@@ -637,155 +648,36 @@ emit_rgb_rt_desc(const struct pan_fb_desc_info *info,
    pan_merge(rgb_rt, &desc, RGB_RENDER_TARGET);
 }
 
-static void
-emit_rts(const struct pan_fb_desc_info *info,
-         struct mali_rgb_render_target_packed *rts)
+#if PAN_ARCH >= 6
+/* All GPUs starting from Bifrost are affected by issue TSIX-2033:
+ *
+ *      Forcing clean_tile_writes breaks INTERSECT readbacks
+ *
+ * To workaround, use the pre-frame shader mode ALWAYS instead of INTERSECT if
+ * clean_tile_write_enable is set on either one of the color, depth or stencil
+ * buffers. Since INTERSECT is a hint that the hardware may ignore, this
+ * cannot affect correctness, only performance. */
+
+static enum mali_pre_post_frame_shader_mode
+pan_fix_frame_shader_mode(enum mali_pre_post_frame_shader_mode mode,
+                          bool force_clean_tile)
 {
-   const struct pan_fb_layout *fb = info->fb;
-   const struct pan_fb_clean_tile ct = GENX(pan_fb_get_clean_tile)(info);
-
-   uint32_t tile_rt_offset_B = 0;
-   for (unsigned rt = 0; rt < fb->rt_count; rt++) {
-      emit_rgb_rt_desc(info, ct, rt, tile_rt_offset_B, rts);
-      rts++;
-
-      if (fb->rt_formats[rt] != PIPE_FORMAT_NONE) {
-         tile_rt_offset_B += pan_bytes_per_pixel_tib(fb->rt_formats[rt]) *
-                             fb->tile_size_px * fb->sample_count;
-      }
-   }
-   assert(tile_rt_offset_B <= fb->tile_rt_alloc_B);
-}
-
-static bool
-pan_fb_store_target_should_crc(const struct pan_fb_layout *fb,
-                               const struct pan_fb_store_target *rt,
-                               unsigned tile_size)
-{
-   if (!rt->store || rt->crc_header_addr == 0 ||
-       !GENX(pan_image_view_can_crc)(rt->iview, tile_size))
-      return false;
-
-#if PAN_ARCH == 10
-   const struct pan_image *image =
-      pan_image_view_get_color_plane(rt->iview).image;
-
-   /* CRC validity covers the entire mip-0 CRC table. */
-   if (image->props.extent_px.width != fb->width_px ||
-       image->props.extent_px.height != fb->height_px)
-      return false;
-#endif
-
-   return true;
-}
-
-static int
-pan_fb_select_crc_rt(const struct pan_fb_desc_info *info, unsigned tile_size)
-{
-   /* Hardware generates CRCs for only one color render target. Select the first
-    * eligible target; CRC state for other stored targets must be invalidated.
-    */
-   const int no_crc_rt = -1;
-   if (!info->store || tile_size < 16 * 16)
-      return no_crc_rt;
-
-   for (unsigned i = 0; i < info->fb->rt_count; i++)
-      if (pan_fb_store_target_should_crc(info->fb, &info->store->rts[i],
-                                         tile_size))
-         return i;
-
-   return no_crc_rt;
-}
-
-bool
-GENX(pan_fb_get_crc_rt_info)(const struct pan_fb_desc_info *info,
-                             struct pan_fb_crc_rt_info *out)
-{
-   out->rt = pan_fb_select_crc_rt(info, info->fb->tile_size_px);
-   out->header_addr =
-      out->rt != -1 ? info->store->rts[out->rt].crc_header_addr : 0;
-   return out->header_addr != 0;
-}
-
-bool
-GENX(pan_fb_needs_zs_crc_ext)(const struct pan_fb_desc_info *info)
-{
-   return info->force_zs_crc_ext || pan_fb_has_zs(info->fb) ||
-          pan_fb_select_crc_rt(info, info->fb->tile_size_px) != -1;
-}
-
-#if PAN_ARCH >= 7
-static uint64_t
-pan_fb_crc_clear_color(const struct pan_fb_desc_info *info)
-{
-   uint64_t hash = 0;
-
-   if (info->load) {
-      for (unsigned i = 0; i < info->fb->rt_count; i++) {
-         const struct pan_fb_load_target *rt = &info->load->rts[i];
-
-         if (!pan_target_has_clear(rt))
-            continue;
-
-         uint32_t packed_clear[4] = {0};
-         pan_pack_color(GENX(pan_blendable_formats), packed_clear,
-                        &rt->clear.color, info->fb->rt_formats[i],
-                        false /* dithered */);
-
-         hash ^= pan_crc_clear_color_hash_rt(i, packed_clear);
-      }
-   }
-
-   return pan_crc_clear_color_pack(hash);
+   if (force_clean_tile && mode == MALI_PRE_POST_FRAME_SHADER_MODE_INTERSECT)
+      return MALI_PRE_POST_FRAME_SHADER_MODE_ALWAYS;
+   else
+      return mode;
 }
 #endif
 
-#if PAN_ARCH >= 14
 uint32_t
-GENX(pan_emit_fb_desc)(const struct pan_fb_desc_info *info,
-                       const struct pan_fb_descs *out)
-{
-   const struct pan_fb_layout *fb = info->fb;
-   struct pan_crc crc = {.index = pan_fb_select_crc_rt(info, fb->tile_size_px)};
-   if (crc.index != -1) {
-      crc.read = true;
-      crc.write = true;
-      crc.clear_color = pan_fb_crc_clear_color(info);
-      crc.empty_tile_read = fb->rt_count == 1;
-      crc.empty_tile_write = true;
-   }
-
-   if (GENX(pan_fb_needs_zs_crc_ext)(info)) {
-      emit_zs_crc_desc(info, GENX(pan_fb_get_clean_tile)(info), out->zs_crc,
-                       crc);
-   }
-
-   emit_rts(info, out->rts);
-
-   return 0;
-}
-#else /* PAN_ARCH < 14 */
-uint32_t
-GENX(pan_emit_fb_desc)(const struct pan_fb_desc_info *info,
-                       const struct pan_fb_descs *out)
+GENX(pan_emit_fb_desc)(const struct pan_fb_desc_info *info, void *out)
 {
    const struct pan_fb_layout *fb = info->fb;
    const struct pan_fb_load *load = info->load;
    const struct pan_fb_store *store = info->store;
-   const struct pan_fb_clean_tile ct = GENX(pan_fb_get_clean_tile)(info);
+   const struct pan_fb_clean_tile ct = pan_fb_get_clean_tile(info);
 
-   struct pan_crc crc = {.index = pan_fb_select_crc_rt(info, fb->tile_size_px)};
-   if (crc.index != -1) {
-      crc.read = true;
-      crc.write = true;
-#if PAN_ARCH >= 7
-      crc.clear_color = pan_fb_crc_clear_color(info);
-      crc.empty_tile_read = fb->rt_count == 1;
-      crc.empty_tile_write = true;
-#endif
-   }
-
-   const bool has_zs_crc_ext = GENX(pan_fb_needs_zs_crc_ext)(info);
+   const bool has_zs_crc_ext = pan_fb_has_zs(fb);
 
    struct mali_framebuffer_packed fbd = {};
 
@@ -796,13 +688,10 @@ GENX(pan_emit_fb_desc)(const struct pan_fb_desc_info *info,
 
    pan_section_pack(&fbd, FRAMEBUFFER, PARAMETERS, cfg) {
 #if PAN_ARCH >= 6
-      /* Pre-frame shaders that preload a CRC-enabled RT must run in ALWAYS
-       * mode. */
-      const bool force_clean_tile = ct.rts || ct.zs || ct.s || crc.index != -1;
       cfg.pre_frame_0 = pan_fix_frame_shader_mode(info->frame_shaders.modes[0],
-                                                  force_clean_tile);
+                                                  ct.rts || ct.zs || ct.s);
       cfg.pre_frame_1 = pan_fix_frame_shader_mode(info->frame_shaders.modes[1],
-                                                  force_clean_tile);
+                                                  ct.rts || ct.zs || ct.s);
       cfg.post_frame = info->frame_shaders.modes[2];
       cfg.frame_shader_dcds = info->frame_shaders.dcd_pointer;
 
@@ -867,15 +756,15 @@ GENX(pan_emit_fb_desc)(const struct pan_fb_desc_info *info,
       cfg.color_buffer_allocation = fb->tile_rt_alloc_B;
 
       if (fb->s_format != PIPE_FORMAT_NONE) {
-         cfg.s_clear =
-            load && pan_target_has_clear(&load->s) ? load->s.clear.stencil : 0;
+         cfg.s_clear = load && target_has_clear(&load->s) ?
+                       load->s.clear.stencil : 0;
          cfg.s_write_enable = store && store->s.store;
       }
 
       if (fb->z_format != PIPE_FORMAT_NONE) {
          cfg.z_internal_format = pan_get_z_internal_format(fb->z_format);
-         cfg.z_clear =
-            load && pan_target_has_clear(&load->z) ? load->z.clear.depth : 0;
+         cfg.z_clear = load && target_has_clear(&load->z) ?
+                       load->z.clear.depth : 0;
          cfg.z_write_enable = store && store->zs.store;
       } else {
          /* Default to 24 bit depth if there's no surface. */
@@ -888,15 +777,6 @@ GENX(pan_emit_fb_desc)(const struct pan_fb_desc_info *info,
       }
 
       cfg.has_zs_crc_extension = has_zs_crc_ext;
-
-      if (pan_crc_is_enabled(&crc)) {
-         cfg.crc_read_enable = crc.read;
-         cfg.crc_write_enable = crc.write;
-#if PAN_ARCH >= 7
-         cfg.empty_tile_read_enable = crc.empty_tile_read;
-         cfg.empty_tile_write_enable = crc.empty_tile_write;
-#endif
-      }
 
 #if PAN_ARCH >= 6
       cfg.tiler = PAN_ARCH >= 9 ? info->tiler_ctx->valhall.desc
@@ -912,13 +792,29 @@ GENX(pan_emit_fb_desc)(const struct pan_fb_desc_info *info,
    pan_section_pack(&fbd, FRAMEBUFFER, TILER_WEIGHTS, w);
 #endif
 
-   memcpy(out->fbd, &fbd, sizeof(fbd));
+   memcpy(out, &fbd, sizeof(fbd));
+   out += sizeof(fbd);
 
    if (has_zs_crc_ext) {
-      emit_zs_crc_desc(info, ct, out->zs_crc, crc);
+      struct mali_zs_crc_extension_packed zs_crc;
+      emit_zs_crc_desc(info, ct, &zs_crc);
+      memcpy(out, &zs_crc, sizeof(zs_crc));
+      out += sizeof(zs_crc);
    }
 
-   emit_rts(info, out->rts);
+   uint32_t tile_rt_offset_B = 0;
+   for (unsigned rt = 0; rt < fb->rt_count; rt++) {
+      struct mali_rgb_render_target_packed rgb_rt;
+      emit_rgb_rt_desc(info, ct, rt, tile_rt_offset_B, &rgb_rt);
+      memcpy(out, &rgb_rt, sizeof(rgb_rt));
+      out += sizeof(rgb_rt);
+
+      if (fb->rt_formats[rt] != PIPE_FORMAT_NONE) {
+         tile_rt_offset_B += pan_bytes_per_pixel_tib(fb->rt_formats[rt]) *
+                             fb->tile_size_px * fb->sample_count;
+      }
+   }
+   assert(tile_rt_offset_B <= fb->tile_rt_alloc_B);
 
    struct mali_framebuffer_pointer_packed tag;
    pan_pack(&tag, FRAMEBUFFER_POINTER, cfg) {
@@ -927,5 +823,4 @@ GENX(pan_emit_fb_desc)(const struct pan_fb_desc_info *info,
    }
    return tag.opaque[0];
 }
-#endif /* PAN_ARCH >= 14 */
-#endif /* PAN_ARCH >= 5 */
+#endif

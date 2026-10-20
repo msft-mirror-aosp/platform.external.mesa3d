@@ -10,8 +10,8 @@
 
 #include "vn_buffer.h"
 
-#include "vn_protocol_driver_buffer.h"
-#include "vn_protocol_driver_buffer_view.h"
+#include "venus-protocol/vn_protocol_driver_buffer.h"
+#include "venus-protocol/vn_protocol_driver_buffer_view.h"
 
 #include "vn_device.h"
 #include "vn_device_memory.h"
@@ -57,10 +57,10 @@ vn_buffer_get_cache_index(const VkBufferCreateInfo *create_info,
     * usage must not be 0
     */
    uint64_t usage = (uint64_t)create_info->usage;
-   vk_foreach_struct_const(sType, pnext, create_info->pNext) {
-      switch (sType) {
+   vk_foreach_struct_const(pnext, create_info->pNext) {
+      switch (pnext->sType) {
       case VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO: {
-         const VkBufferUsageFlags2CreateInfo *usage2 = pnext;
+         const VkBufferUsageFlags2CreateInfo *usage2 = (void *)pnext;
          usage = (uint64_t)usage2->usage;
          break;
       }
@@ -224,24 +224,27 @@ vn_copy_cached_memory_requirements(
    const struct vn_buffer_memory_requirements *cached,
    VkMemoryRequirements2 *out_mem_req)
 {
-   vk_foreach_struct(stype, src, out_mem_req) {
-      switch (stype) {
-      case VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2: {
-         VkMemoryRequirements2 *reqs2 = src;
-         reqs2->memoryRequirements = cached->memory.memoryRequirements;
+   union {
+      VkBaseOutStructure *pnext;
+      VkMemoryRequirements2 *two;
+      VkMemoryDedicatedRequirements *dedicated;
+   } u = { .two = out_mem_req };
+
+   while (u.pnext) {
+      switch (u.pnext->sType) {
+      case VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2:
+         u.two->memoryRequirements = cached->memory.memoryRequirements;
          break;
-      }
-      case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
-         VkMemoryDedicatedRequirements *dedicated = src;
-         dedicated->prefersDedicatedAllocation =
+      case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS:
+         u.dedicated->prefersDedicatedAllocation =
             cached->dedicated.prefersDedicatedAllocation;
-         dedicated->requiresDedicatedAllocation =
+         u.dedicated->requiresDedicatedAllocation =
             cached->dedicated.requiresDedicatedAllocation;
          break;
-      }
       default:
          break;
       }
+      u.pnext = u.pnext->pNext;
    }
 }
 
@@ -338,11 +341,11 @@ vn_buffer_fix_create_info(
    struct vn_buffer_create_info *local_info)
 {
    local_info->create = *create_info;
-   void *cur = &local_info->create;
+   VkBaseOutStructure *cur = (void *)&local_info->create;
 
-   vk_foreach_struct_const(sType, src, create_info->pNext) {
+   vk_foreach_struct_const(src, create_info->pNext) {
       void *next = NULL;
-      switch (sType) {
+      switch (src->sType) {
       case VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO:
          memcpy(&local_info->external, src, sizeof(local_info->external));
          local_info->external.handleTypes = renderer_handle_type;
@@ -361,12 +364,12 @@ vn_buffer_fix_create_info(
       }
 
       if (next) {
-         vk_pnext_set_next(cur, next);
+         cur->pNext = next;
          cur = next;
       }
    }
 
-   vk_pnext_set_next(cur, NULL);
+   cur->pNext = NULL;
 
    return &local_info->create;
 }

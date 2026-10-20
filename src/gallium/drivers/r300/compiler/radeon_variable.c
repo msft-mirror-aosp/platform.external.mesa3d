@@ -7,18 +7,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "memory_pool.h"
 #include "radeon_compiler_util.h"
 #include "radeon_dataflow.h"
+#include "radeon_list.h"
 #include "radeon_opcodes.h"
 #include "radeon_program.h"
-
-static struct util_dynarray *
-alloc_dynarray(struct radeon_compiler *c)
-{
-   struct util_dynarray *array = linear_alloc(c->Pool, struct util_dynarray);
-   util_dynarray_init(array, c->Pool);
-   return array;
-}
 
 /**
  * Rewrite the index and writemask for the destination register of var
@@ -29,7 +23,7 @@ void
 rc_variable_change_dst(struct rc_variable *var, unsigned int new_index, unsigned int new_writemask)
 {
    struct rc_variable *var_ptr;
-   struct util_dynarray *readers;
+   struct rc_list *readers;
    unsigned int old_mask = rc_variable_writemask_sum(var);
    unsigned int conversion_swizzle = rc_make_conversion_swizzle(old_mask, new_writemask);
 
@@ -52,8 +46,8 @@ rc_variable_change_dst(struct rc_variable *var, unsigned int new_index, unsigned
 
    readers = rc_variable_readers_union(var);
 
-   util_dynarray_foreach(readers, struct rc_reader *, reader_ptr) {
-      struct rc_reader *reader = *reader_ptr;
+   for (; readers; readers = readers->Next) {
+      struct rc_reader *reader = readers->Item;
       if (reader->Inst->Type == RC_INSTRUCTION_NORMAL) {
          reader->U.I.Src->Index = new_index;
          reader->U.I.Src->Swizzle =
@@ -214,7 +208,7 @@ struct rc_variable *
 rc_variable(struct radeon_compiler *c, unsigned int DstFile, unsigned int DstIndex,
             unsigned int DstWriteMask, struct rc_reader_data *reader_data)
 {
-   struct rc_variable *new = linear_alloc(c->Pool, struct rc_variable);
+   struct rc_variable *new = memory_pool_malloc(&c->Pool, sizeof(struct rc_variable));
    memset(new, 0, sizeof(struct rc_variable));
    new->C = c;
    new->Dst.File = DstFile;
@@ -229,22 +223,23 @@ rc_variable(struct radeon_compiler *c, unsigned int DstFile, unsigned int DstInd
 }
 
 static void
-get_variable_helper(struct util_dynarray *variable_list, struct rc_variable *variable)
+get_variable_helper(struct rc_list **variable_list, struct rc_variable *variable)
 {
-   util_dynarray_foreach(variable_list, struct rc_variable *, variable_ptr) {
+   struct rc_list *list_ptr;
+   for (list_ptr = *variable_list; list_ptr; list_ptr = list_ptr->Next) {
       struct rc_variable *var;
-      for (var = *variable_ptr; var; var = var->Friend) {
+      for (var = list_ptr->Item; var; var = var->Friend) {
          if (readers_intersect(var, variable)) {
             rc_variable_add_friend(var, variable);
             return;
          }
       }
    }
-   util_dynarray_append(variable_list, variable);
+   rc_list_add(variable_list, rc_list(&variable->C->Pool, variable));
 }
 
 static void
-get_variable_pair_helper(struct util_dynarray *variable_list, struct radeon_compiler *c,
+get_variable_pair_helper(struct rc_list **variable_list, struct radeon_compiler *c,
                          struct rc_instruction *inst, struct rc_pair_sub_instruction *sub_inst)
 {
    struct rc_reader_data reader_data;
@@ -310,11 +305,11 @@ cmpfunc_variable_by_ip(const void *a, const void *b)
  * definition-use chain.  Any two variables that share a reader are considered
  * "friends" and they are linked together via the Friend attribute.
  */
-struct util_dynarray *
+struct rc_list *
 rc_get_variables(struct radeon_compiler *c)
 {
    struct rc_instruction *inst;
-   struct util_dynarray *variable_list = alloc_dynarray(c);
+   struct rc_list *variable_list = NULL;
 
    /* We search for the variables in two loops in order to get it right in
     * the following specific case
@@ -366,7 +361,7 @@ rc_get_variables(struct radeon_compiler *c)
          }
          new_var = rc_variable(c, inst->U.I.DstReg.File, inst->U.I.DstReg.Index,
                                inst->U.I.DstReg.WriteMask, &reader_data);
-         get_variable_helper(variable_list, new_var);
+         get_variable_helper(&variable_list, new_var);
       }
    }
 
@@ -374,15 +369,29 @@ rc_get_variables(struct radeon_compiler *c)
    for (inst = c->Program.Instructions.Next; inst != &c->Program.Instructions; inst = inst->Next) {
       if (inst->Type != RC_INSTRUCTION_NORMAL) {
          needs_sorting = true;
-         get_variable_pair_helper(variable_list, c, inst, &inst->U.P.RGB);
-         get_variable_pair_helper(variable_list, c, inst, &inst->U.P.Alpha);
+         get_variable_pair_helper(&variable_list, c, inst, &inst->U.P.RGB);
+         get_variable_pair_helper(&variable_list, c, inst, &inst->U.P.Alpha);
       }
    }
 
-   if (needs_sorting && variable_list->size != 0)
-      qsort(variable_list->data,
-            util_dynarray_num_elements(variable_list, struct rc_variable *),
-            sizeof(struct rc_variable *), cmpfunc_variable_by_ip);
+   if (variable_list && needs_sorting) {
+      unsigned int count = rc_list_count(variable_list);
+      struct rc_variable **variables =
+         memory_pool_malloc(&c->Pool, sizeof(struct rc_variable *) * count);
+
+      struct rc_list *current = variable_list;
+      for (unsigned int i = 0; current; i++, current = current->Next) {
+         struct rc_variable *var = current->Item;
+         variables[i] = var;
+      }
+
+      qsort(variables, count, sizeof(struct rc_variable *), cmpfunc_variable_by_ip);
+
+      current = variable_list;
+      for (unsigned int i = 0; current; i++, current = current->Next) {
+         current->Item = variables[i];
+      }
+   }
 
    return variable_list;
 }
@@ -407,18 +416,18 @@ rc_variable_writemask_sum(struct rc_variable *var)
  * that read from two different variable friends are only included once in
  * this list.
  */
-struct util_dynarray *
+struct rc_list *
 rc_variable_readers_union(struct rc_variable *var)
 {
-   struct util_dynarray *readers = alloc_dynarray(var->C);
-
+   struct rc_list *list = NULL;
    while (var) {
       unsigned int i;
       for (i = 0; i < var->ReaderCount; i++) {
+         struct rc_list *temp;
          struct rc_reader *a = &var->Readers[i];
          unsigned int match = 0;
-         util_dynarray_foreach(readers, struct rc_reader *, reader_ptr) {
-            struct rc_reader *b = *reader_ptr;
+         for (temp = list; temp; temp = temp->Next) {
+            struct rc_reader *b = temp->Item;
             if (a->Inst->Type != b->Inst->Type) {
                continue;
             }
@@ -438,11 +447,11 @@ rc_variable_readers_union(struct rc_variable *var)
          if (match) {
             continue;
          }
-         util_dynarray_append(readers, a);
+         rc_list_add(&list, rc_list(&var->C->Pool, a));
       }
       var = var->Friend;
    }
-   return readers;
+   return list;
 }
 
 static unsigned int
@@ -470,21 +479,21 @@ variable_writes_src(struct rc_variable *var, unsigned int src_type, void *src)
    return 0;
 }
 
-struct util_dynarray *
-rc_variable_list_get_writers(struct util_dynarray *var_list, unsigned int src_type, void *src)
+struct rc_list *
+rc_variable_list_get_writers(struct rc_list *var_list, unsigned int src_type, void *src)
 {
-   struct util_dynarray *writer_list = NULL;
-
-   util_dynarray_foreach(var_list, struct rc_variable *, variable_ptr) {
-      struct rc_variable *var = *variable_ptr;
+   struct rc_list *list_ptr;
+   struct rc_list *writer_list = NULL;
+   for (list_ptr = var_list; list_ptr; list_ptr = list_ptr->Next) {
+      struct rc_variable *var = list_ptr->Item;
       while (var) {
          if (variable_writes_src(var, src_type, src)) {
             struct rc_variable *friend;
-            writer_list = alloc_dynarray(var->C);
-            util_dynarray_append(writer_list, var);
+            rc_list_add(&writer_list, rc_list(&var->C->Pool, var));
             for (friend = var->Friend; friend; friend = friend->Friend) {
-               if (variable_writes_src(friend, src_type, src))
-                  util_dynarray_append(writer_list, friend);
+               if (variable_writes_src(friend, src_type, src)) {
+                  rc_list_add(&writer_list, rc_list(&var->C->Pool, friend));
+               }
             }
             /* Once we have identified the variable and its
              * friends that write this source, we can stop
@@ -504,17 +513,12 @@ rc_variable_list_get_writers(struct util_dynarray *var_list, unsigned int src_ty
    return writer_list;
 }
 
-struct util_dynarray *
-rc_variable_list_get_writers_one_reader(struct util_dynarray *var_list, unsigned int src_type,
-                                        void *src)
+struct rc_list *
+rc_variable_list_get_writers_one_reader(struct rc_list *var_list, unsigned int src_type, void *src)
 {
-   struct util_dynarray *writer_list = rc_variable_list_get_writers(var_list, src_type, src);
-   if (!writer_list)
-      return NULL;
-
-   struct rc_variable *writer = rc_variable_list_first(writer_list);
-   struct util_dynarray *reader_list = rc_variable_readers_union(writer);
-   if (util_dynarray_num_elements(reader_list, struct rc_reader *) > 1) {
+   struct rc_list *writer_list = rc_variable_list_get_writers(var_list, src_type, src);
+   struct rc_list *reader_list = rc_variable_readers_union(writer_list->Item);
+   if (rc_list_count(reader_list) > 1) {
       return NULL;
    } else {
       return writer_list;

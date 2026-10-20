@@ -29,6 +29,10 @@ struct radv_ray_tracing_pipeline {
 
    uint32_t stack_size;
    uint32_t traversal_stack_size;
+
+   /* set if any shaders from this pipeline require robustness2 in the merged traversal shader */
+   bool traversal_storage_robustness2 : 1;
+   bool traversal_uniform_robustness2 : 1;
 };
 
 RADV_DECL_PIPELINE_DOWNCAST(ray_tracing, RADV_PIPELINE_RAY_TRACING)
@@ -94,7 +98,6 @@ struct radv_ray_tracing_stage_info {
 struct radv_ray_tracing_stage {
    struct vk_pipeline_cache_object *nir;
    struct radv_shader *shader;
-   struct radv_shader_stage_key key;
    mesa_shader_stage stage;
    uint32_t stack_size;
    bool needs_nir;
@@ -110,6 +113,8 @@ struct radv_ray_tracing_state_key {
 
    uint32_t group_count;
    struct radv_ray_tracing_group *groups;
+
+   struct radv_shader_stage_key stage_keys[MESA_VULKAN_SHADER_STAGES];
 };
 
 void radv_destroy_ray_tracing_pipeline(struct radv_device *device, struct radv_ray_tracing_pipeline *pipeline);

@@ -15,7 +15,6 @@ use rusticl_opencl_gen::*;
 use std::borrow::Borrow;
 use std::ffi::c_void;
 use std::ffi::CStr;
-use std::fmt::Debug;
 use std::iter::Product;
 
 macro_rules! cl_callback {
@@ -225,12 +224,6 @@ pub struct CLVec<T> {
     vals: [T; 3],
 }
 
-impl<T: Debug> Debug for CLVec<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.vals.fmt(f)
-    }
-}
-
 impl<T: Copy> CLVec<T> {
     pub fn new(vals: [T; 3]) -> Self {
         Self { vals: vals }
@@ -385,7 +378,7 @@ where
 #[allow(non_snake_case)]
 pub mod IdpAccelProps {
     use rusticl_opencl_gen::cl_bool;
-    use rusticl_opencl_gen::cl_device_integer_dot_product_acceleration_properties;
+    use rusticl_opencl_gen::cl_device_integer_dot_product_acceleration_properties_khr;
     pub fn new(
         signed_accelerated: cl_bool,
         unsigned_accelerated: cl_bool,
@@ -393,8 +386,8 @@ pub mod IdpAccelProps {
         accumulating_saturating_signed_accelerated: cl_bool,
         accumulating_saturating_unsigned_accelerated: cl_bool,
         accumulating_saturating_mixed_signedness_accelerated: cl_bool,
-    ) -> cl_device_integer_dot_product_acceleration_properties {
-        cl_device_integer_dot_product_acceleration_properties {
+    ) -> cl_device_integer_dot_product_acceleration_properties_khr {
+        cl_device_integer_dot_product_acceleration_properties_khr {
             signed_accelerated,
             unsigned_accelerated,
             mixed_signedness_accelerated,

@@ -24,7 +24,10 @@
 #ifndef DZN_NIR_H
 #define DZN_NIR_H
 
-#include <directx/dxgiformat.h>
+#define D3D12_IGNORE_SDK_LAYERS
+#define COBJMACROS
+#include <unknwn.h>
+#include <directx/d3d12.h>
 
 #include "nir.h"
 

@@ -51,7 +51,7 @@ pub struct SampleOffset {
 }
 
 impl SampleLayout {
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_choose_sample_layout(samples: u32) -> SampleLayout {
         Self::choose_sample_layout(samples)
     }
@@ -80,7 +80,7 @@ impl SampleLayout {
         }
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_sample_layout_samples(self) -> u32 {
         self.samples()
     }
@@ -98,7 +98,7 @@ impl SampleLayout {
         }
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_px_extent_sa(self) -> Extent4D<units::Samples> {
         self.px_extent_sa()
     }
@@ -140,7 +140,7 @@ impl SampleLayout {
         SampleOffset { x, y }
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_sample_offset(self, s: u8) -> SampleOffset {
         self.sa_offset(s)
     }
@@ -188,7 +188,7 @@ pub struct Image {
 }
 
 impl Image {
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_init(
         dev: &nil_rs_bindings::nv_device_info,
         image_out: *mut Self,
@@ -204,7 +204,7 @@ impl Image {
         .is_ok()
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_init_planar(
         dev: &nil_rs_bindings::nv_device_info,
         image_out: *mut Self,
@@ -323,7 +323,6 @@ impl Image {
             assert!((info.usage & IMAGE_USAGE_SPARSE_RESIDENCY_BIT) == 0);
             let mut min_tiling = Tiling::choose(
                 dev,
-                info.dim,
                 info.extent_px,
                 info.format,
                 sample_layout,
@@ -333,7 +332,6 @@ impl Image {
             for p in 0..infos.len() {
                 let plane_tiling = Tiling::choose(
                     dev,
-                    infos[p].dim,
                     infos[p].extent_px,
                     infos[p].format,
                     sample_layout,
@@ -351,7 +349,6 @@ impl Image {
         } else {
             Tiling::choose(
                 dev,
-                info.dim,
                 info.extent_px,
                 info.format,
                 sample_layout,
@@ -493,7 +490,7 @@ impl Image {
             .to_B(self.format, self.sample_layout)
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_level_extent_px(
         &self,
         level: u32,
@@ -506,7 +503,7 @@ impl Image {
         self.extent_px.minify(level)
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_level_layer_offset_B(
         &self,
         level: u32,
@@ -522,7 +519,7 @@ impl Image {
             + u64::from(layer) * self.array_stride_B
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_mip_tail_offset_B(&self) -> u64 {
         self.mip_tail_offset_B()
     }
@@ -532,7 +529,7 @@ impl Image {
         self.levels[self.mip_tail_first_lod as usize].offset_B
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_mip_tail_size_B(&self) -> u32 {
         self.mip_tail_size_B()
     }
@@ -543,7 +540,7 @@ impl Image {
             .unwrap()
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_level_extent_sa(
         &self,
         level: u32,
@@ -555,7 +552,7 @@ impl Image {
         self.level_extent_px(level).to_sa(self.sample_layout)
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_level_layer_size_B(&self, level: u32) -> u64 {
         self.level_layer_size_B(level)
     }
@@ -577,7 +574,7 @@ impl Image {
         }
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_level_size_B(&self, level: u32) -> u64 {
         self.level_size_B(level)
     }
@@ -596,7 +593,7 @@ impl Image {
         }
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_level_depth_stride_B(&self, level: u32) -> u64 {
         self.level_depth_stride_B(level)
     }
@@ -612,7 +609,7 @@ impl Image {
         (lvl_ext_B.width * lvl_ext_B.height).into()
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_for_level(
         &self,
         level: u32,
@@ -663,7 +660,7 @@ impl Image {
         }
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_level_as_uncompressed(
         &self,
         level: u32,
@@ -699,7 +696,7 @@ impl Image {
         image_out
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_3d_level_as_2d_array(
         &self,
         level: u32,
@@ -756,7 +753,7 @@ impl Image {
     fn gb202_choose_pte_kind(_format: Format, compressed: bool) -> u8 {
         use nvidia_headers::hwref::tu102::mmu::*;
         if compressed {
-            NV_MMU_PTE_KIND_GENERIC_MEMORY_COMPRESSIBLE
+            NV_MMU_PTE_KIND_GENERIC_MEMORY_COMPRESSIBLE_DISABLE_PLC
         } else {
             NV_MMU_PTE_KIND_GENERIC_MEMORY
         }
@@ -801,7 +798,7 @@ impl Image {
             }
             PIPE_FORMAT_Z32_FLOAT => {
                 if compressed {
-                    NV_MMU_PTE_KIND_GENERIC_MEMORY_COMPRESSIBLE
+                    NV_MMU_PTE_KIND_GENERIC_MEMORY_COMPRESSIBLE_DISABLE_PLC
                 } else {
                     NV_MMU_PTE_KIND_GENERIC_MEMORY
                 }
@@ -815,7 +812,7 @@ impl Image {
             }
             _ => {
                 if compressed {
-                    NV_MMU_PTE_KIND_GENERIC_MEMORY_COMPRESSIBLE
+                    NV_MMU_PTE_KIND_GENERIC_MEMORY_COMPRESSIBLE_DISABLE_PLC
                 } else {
                     NV_MMU_PTE_KIND_GENERIC_MEMORY
                 }
@@ -924,7 +921,7 @@ impl Image {
         .unwrap()
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_msaa_image_as_sa(&self) -> Self {
         self.msaa_as_samples()
     }
@@ -945,7 +942,7 @@ impl Image {
         out
     }
 
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_image_level_z_offset_B(
         &self,
         level: u32,

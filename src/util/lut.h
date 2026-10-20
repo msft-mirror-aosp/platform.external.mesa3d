@@ -6,13 +6,8 @@
 #pragma once
 
 #include <assert.h>
-#include <stdbool.h>
 #include <stdint.h>
 #include "util/macros.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /*
  * Represents a boolean lookup table in sum-of-minterms form. These are
@@ -66,8 +61,6 @@ util_lut2_invert_source(util_lut2 l, unsigned s)
 {
    return (util_lut2)(util_lut3_invert_source((util_lut3)l, s) & 0xf);
 }
-
-util_lut3 util_lut3_parse(const char *s, bool *ok);
 #endif
 
 /*
@@ -109,10 +102,6 @@ util_lut3_swap_sources(util_lut3 l, unsigned a, unsigned b)
    UNREACHABLE("invalid source selection");
 }
 
+
 /* Finding minimal string forms of LUTs is tricky, so we precompute. */
 extern const char *util_lut3_to_str[256];
-
-#ifdef __cplusplus
-} /* extern "C" */
-#endif
-

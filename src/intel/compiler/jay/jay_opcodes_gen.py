@@ -44,11 +44,6 @@ struct jay_opcode_info {
 
    /** op(a, b, c, ...) = op(b, a, c, ...) */
    bool _2src_commutative;
-
-   /** Whether this operation requires NoMask and therefore can only appear in
-    * uniform control flow
-    */
-   bool no_mask;
 };
 
 extern const struct jay_opcode_info jay_opcode_infos[JAY_NUM_OPCODES];
@@ -66,7 +61,7 @@ const struct jay_opcode_info jay_opcode_infos[JAY_NUM_OPCODES] = {
       .name = "${opcode}",
       .num_srcs = ${op.num_srcs},
       .src_mods = ${bin(op.negate)},
-% for mod in ["sat", "cmod", "side_effects", "_2src_commutative", "no_mask"]:
+% for mod in ["sat", "cmod", "side_effects", "_2src_commutative"]:
 % if getattr(op, mod):
       .${mod} = true,
 % endif

@@ -109,11 +109,13 @@ static void
 delete_transform_feedback(struct gl_context *ctx,
                              struct gl_transform_feedback_object *obj)
 {
-   for (unsigned i = 0; i < ARRAY_SIZE(obj->draw_count); i++)
+   unsigned i;
+
+   for (i = 0; i < ARRAY_SIZE(obj->draw_count); i++)
       pipe_so_target_reference(&obj->draw_count[i], NULL);
 
    /* Unreference targets. */
-   for (unsigned i = 0; i < obj->num_targets; i++) {
+   for (i = 0; i < obj->num_targets; i++) {
       pipe_so_target_reference(&obj->targets[i], NULL);
    }
 

@@ -1003,7 +1003,7 @@ impl Descriptor {
     }
 }
 
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "C" fn nil_image_view_descriptor(
     dev: &nil_rs_bindings::nv_device_info,
     image: &Image,
@@ -1013,7 +1013,7 @@ pub extern "C" fn nil_image_view_descriptor(
     Descriptor::image_view(dev, image, view, base_address)
 }
 
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "C" fn nil_buffer_descriptor(
     dev: &nil_rs_bindings::nv_device_info,
     base_address: u64,
@@ -1023,7 +1023,7 @@ pub extern "C" fn nil_buffer_descriptor(
     Descriptor::buffer(dev, base_address, format, num_elements)
 }
 
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "C" fn nil_null_descriptor(
     dev: &nil_rs_bindings::nv_device_info,
     zero_page_address: u64,

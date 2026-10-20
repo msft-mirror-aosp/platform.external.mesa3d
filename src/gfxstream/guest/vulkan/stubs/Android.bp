@@ -38,10 +38,7 @@ cc_library_static {
     host_supported: true,
     cpp_std: "c++17",
     defaults: [
-        "_trial_c",
         "_trial_msvc",
-        "_trial_soong_c",
-        "_trial_soong_cpp",
         "aosp_mesa3d_cpp_project_args",
         "gfxstream_guest_args",
     ],

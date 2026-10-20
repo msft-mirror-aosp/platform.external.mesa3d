@@ -55,7 +55,7 @@ emit(struct fd_ringbuffer *ring, mesa_shader_stage type,
       OUT_RING(ring, info->dwords[i]);
 }
 
-static unsigned
+static int
 ir2_glsl_type_size(const struct glsl_type *type, bool bindless)
 {
    return glsl_count_attribute_slots(type, false);
@@ -75,21 +75,8 @@ fd2_shader_state_create(struct pipe_context *pctx,
    so->type = so->nir->info.stage;
    so->is_a20x = is_a20x(fd_context(pctx)->screen);
 
-   /* TGSI still arrives as IO variables, GLSL is lowered by the state
-    * tracker because we ask for nir_io_has_intrinsics
-    */
-   if (!so->nir->info.io_lowered) {
-      NIR_PASS(_, so->nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
-                 ir2_glsl_type_size, 0);
-      /* nir_lower_io leaves the derefs behind, so they have to be dropped
-       * before the variables they reference can be
-       */
-      NIR_PASS(_, so->nir, nir_opt_dce);
-      NIR_PASS(_, so->nir, nir_remove_dead_variables,
-               nir_var_shader_in | nir_var_shader_out,
-               &(nir_remove_dead_variables_options){});
-      so->nir->info.io_lowered = true;
-   }
+   NIR_PASS(_, so->nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
+              ir2_glsl_type_size, 0);
 
    if (ir2_optimize_nir(so->nir, true))
       goto fail;

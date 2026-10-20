@@ -504,7 +504,7 @@ fd_get_device_reset_status(struct pipe_context *pctx)
    return status;
 }
 
-static bool
+static void
 fd_trace_record_ts(struct u_trace *ut, void *cs, void *timestamps,
                    uint64_t offset_B, uint32_t flags)
 {
@@ -515,13 +515,11 @@ fd_trace_record_ts(struct u_trace *ut, void *cs, void *timestamps,
    if (ring->cur == batch->last_timestamp_cmd) {
       uint64_t *ts = fd_bo_map(fd_resource(buffer)->bo) + offset_B;
       *ts = U_TRACE_NO_TIMESTAMP;
-      return true;
+      return;
    }
 
    batch->ctx->record_timestamp(ring, fd_resource(buffer)->bo, offset_B);
    batch->last_timestamp_cmd = ring->cur;
-
-   return true;
 }
 
 static uint64_t

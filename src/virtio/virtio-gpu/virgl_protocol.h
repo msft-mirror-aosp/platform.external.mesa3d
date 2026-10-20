@@ -58,16 +58,6 @@ struct virgl_resource_layout
     } planes[VIRGL_RESOURCE_MAX_PLANES];
 };
 
-#define VIRGL_MAX_FORMATS_MODIFIERS	128
-struct virgl_gbm_format_modifier
-{
-   uint64_t num;
-   struct {
-      uint64_t modifier;
-      uint64_t virgl_format;
-   } formats[VIRGL_MAX_FORMATS_MODIFIERS];
-};
-
 enum virgl_object_type {
    VIRGL_OBJECT_NULL,
    VIRGL_OBJECT_BLEND,
@@ -154,7 +144,6 @@ enum virgl_context_cmd {
 
    VIRGL_CCMD_CLEAR_SURFACE,
    VIRGL_CCMD_GET_PIPE_RESOURCE_LAYOUT,
-   VIRGL_CCMD_QUERY_GBM_FORMAT_MODIFIER,
 
    VIRGL_MAX_COMMANDS
 };
@@ -809,9 +798,5 @@ enum vrend_tweak_type {
 #define VIRGL_RESOURCE_LAYOUT_SIZE           2
 #define VIRGL_RESOURCE_LAYOUT_HANDLE_OUT     1
 #define VIRGL_RESOURCE_LAYOUT_HANDLE_TARGET  2
-
-/* VIRGL_CCMD_QUERY_GBM_FORMAT_MODIFIER */
-#define VIRGL_QUERY_FORMAT_MODIFIER_SIZE     1
-#define VIRGL_QUERY_FORMAT_MODIFIER_HANDLE   1
 
 #endif

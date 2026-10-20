@@ -1,6 +1,5 @@
 /*
  * Copyright 2024 Google LLC
- * Copyright 2026 NXP
  * SPDX-License-Identifier: MIT
  */
 
@@ -8,7 +7,6 @@
 #define PANVK_UTRACE_H
 
 #include "util/perf/u_trace.h"
-#include "util/u_dynarray.h"
 
 #include "panvk_macros.h"
 #include "panvk_mempool.h"
@@ -22,7 +20,7 @@ struct panvk_utrace_flush_data {
    struct vk_sync *sync;
    uint64_t wait_value;
 
-   struct util_dynarray clone_cs_bufs;
+   struct panvk_utrace_buf *clone_cs_root;
    bool free_self;
 };
 
@@ -73,17 +71,11 @@ void panvk_per_arch(utrace_copy_buffer)(struct u_trace_context *utctx,
                                         uint64_t to_offset, uint64_t size_B);
 
 struct cs_builder;
-
-/* Context threaded through the clone CS builder so it can allocate all CS
- * chunks from the utrace copy heap on demand. */
-struct panvk_utrace_clone_cs_ctx {
-   struct panvk_device *dev;
-   struct util_dynarray cs_bufs;
-};
+struct cs_buffer;
 
 void panvk_per_arch(utrace_clone_init_builder)(struct cs_builder *b,
                                                struct panvk_device *dev,
-                                               struct panvk_utrace_clone_cs_ctx *ctx);
+                                               const struct cs_buffer *cs_root);
 void panvk_per_arch(utrace_clone_finish_builder)(struct cs_builder *b);
 
 #else /* PAN_ARCH >= 10 */

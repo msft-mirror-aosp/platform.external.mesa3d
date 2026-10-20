@@ -1,6 +1,5 @@
 /*
  * Copyright © 2024 Collabora Ltd.
- * Copyright © 2026 NXP
  * SPDX-License-Identifier: MIT
  */
 
@@ -19,7 +18,6 @@
 #include "pan_trace.h"
 
 #include "util/bitscan.h"
-#include "util/log.h"
 #include "vk_drm_syncobj.h"
 #include "vk_log.h"
 
@@ -47,9 +45,6 @@ finish_render_desc_ringbuf(struct panvk_gpu_queue *queue)
    }
 
    if (ringbuf->addr.dev) {
-      panvk_address_binding_report(dev, NULL, ringbuf->addr.dev, ringbuf->size,
-                                   VK_DEVICE_ADDRESS_BINDING_TYPE_UNBIND_EXT);
-
       struct pan_kmod_vm_op op = {
          .type = PAN_KMOD_VM_OP_TYPE_UNMAP,
          .va = {
@@ -156,9 +151,6 @@ init_render_desc_ringbuf(struct panvk_gpu_queue *queue)
 
    ringbuf->addr.dev = dev_addr;
 
-   panvk_address_binding_report(dev, NULL, ringbuf->addr.dev, ringbuf->size,
-                                VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT);
-
    if (dev->debug.decode_ctx) {
       pandecode_inject_mmap(dev->debug.decode_ctx, ringbuf->addr.dev,
                             ringbuf->addr.host, ringbuf->size, NULL);
@@ -196,10 +188,6 @@ finish_subqueue_tracing(struct panvk_gpu_queue *queue,
 
    if (subq->tracebuf.addr.dev) {
       uint64_t pgsize = panvk_get_gpu_page_size(dev);
-
-      panvk_address_binding_report(dev, NULL, subq->tracebuf.addr.dev,
-                                   subq->tracebuf.size,
-                                   VK_DEVICE_ADDRESS_BINDING_TYPE_UNBIND_EXT);
 
       pandecode_inject_free(dev->debug.decode_ctx, subq->tracebuf.addr.dev,
                             subq->tracebuf.size);
@@ -302,10 +290,6 @@ init_subqueue_tracing(struct panvk_gpu_queue *queue,
    }
 
    subq->tracebuf.addr.dev = dev_addr;
-
-   panvk_address_binding_report(dev, NULL, subq->tracebuf.addr.dev,
-                                subq->tracebuf.size,
-                                VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT);
 
    if (dev->debug.decode_ctx) {
       pandecode_inject_mmap(dev->debug.decode_ctx, subq->tracebuf.addr.dev,
@@ -733,12 +717,7 @@ init_tiler(struct panvk_gpu_queue *queue)
    tiler_heap->chunk_size = phys_dev->csf.tiler.chunk_size;
 
    alloc_info.size = get_fbd_size(true, MAX_RTS);
-#if PAN_ARCH >= 14
-   const unsigned fbds_alignment = alignof(struct panvk_fb_layer_state);
-#else
-   const unsigned fbds_alignment = pan_alignment(FRAMEBUFFER);
-#endif
-   alloc_info.alignment = fbds_alignment;
+   alloc_info.alignment = pan_alignment(FRAMEBUFFER);
    tiler_heap->oom_fbd = panvk_pool_alloc_mem(&dev->mempools.rw, alloc_info);
    if (!panvk_priv_mem_check_alloc(tiler_heap->oom_fbd)) {
       result = panvk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
@@ -1111,18 +1090,24 @@ panvk_queue_submit_init_cmdbufs(struct panvk_queue_submit *submit,
          struct u_trace clone_ut;
          if (!(cmdbuf->flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)) {
             u_trace_init(&clone_ut, &dev->utrace.utctx);
+
+            const uint64_t root_buf_size = sizeof(uint64_t) * 1024;
+            struct panvk_utrace_buf *cs_root_buf =
+               panvk_utrace_create_buffer(&dev->utrace.utctx, root_buf_size);
+            assert(cs_root_buf);
             /* For every sq, the cs buffer needs to be freed. */
             free_data = true;
 
-            /* The clone CS builder allocates all of its chunks (including the
-             * root) from the utrace copy heap via alloc_clone_cs_buffer(). */
-            struct panvk_utrace_clone_cs_ctx clone_ctx = {
-               .dev = dev,
+            const struct cs_buffer cs_root = (struct cs_buffer){
+               .cpu = cs_root_buf->host,
+               .gpu = cs_root_buf->dev,
+               .capacity = root_buf_size / sizeof(uint64_t),
             };
-            util_dynarray_init(&clone_ctx.cs_bufs, NULL);
+
+            submit->utrace.data[j]->clone_cs_root = cs_root_buf;
             struct cs_builder clone_builder;
             panvk_per_arch(utrace_clone_init_builder)(&clone_builder, dev,
-                                                      &clone_ctx);
+                                                      &cs_root);
 
             u_trace_clone_append(
                u_trace_begin_iterator(ut), u_trace_end_iterator(ut), &clone_ut,
@@ -1130,25 +1115,15 @@ panvk_queue_submit_init_cmdbufs(struct panvk_queue_submit *submit,
 
             panvk_per_arch(utrace_clone_finish_builder)(&clone_builder);
 
-            submit->utrace.data[j]->clone_cs_bufs = clone_ctx.cs_bufs;
+            submit->qsubmits[submit->qsubmit_count++] =
+               (struct drm_panthor_queue_submit){
+                  .queue_index = j,
+                  .stream_size = cs_root_chunk_size(&clone_builder),
+                  .stream_addr = cs_root_chunk_gpu_addr(&clone_builder),
+                  .latest_flush = flush_id,
+               };
 
-            /* A mid-build overflow allocation failure leaves the builder
-             * invalid; flush the original instead of submitting a broken CS. */
-            if (!cs_is_valid(&clone_builder)) {
-               mesa_loge("utrace: clone CS builder invalid (allocation failed "
-                         "mid-build); dropping trace for this submit");
-               u_trace_fini(&clone_ut);
-            } else {
-               submit->qsubmits[submit->qsubmit_count++] =
-                  (struct drm_panthor_queue_submit){
-                     .queue_index = j,
-                     .stream_size = cs_root_chunk_size(&clone_builder),
-                     .stream_addr = cs_root_chunk_gpu_addr(&clone_builder),
-                     .latest_flush = flush_id,
-                  };
-
-               ut = &clone_ut;
-            }
+            ut = &clone_ut;
          }
 
          u_trace_flush(ut, submit->utrace.data[j], dev->vk.current_frame,
@@ -1354,11 +1329,6 @@ panvk_per_arch(gpu_queue_submit)(struct vk_queue *vk_queue, struct vk_queue_subm
 
    if (vk_queue_is_lost(vk_queue))
       return VK_ERROR_DEVICE_LOST;
-
-   if (vk_queue_submit_has_bind(vk_submit)) {
-      struct panvk_gpu_queue *queue = container_of(vk_queue, struct panvk_gpu_queue, vk);
-      return panvk_queue_vm_bind(vk_queue, vk_submit, queue->syncobj_handle);
-   }
 
    panvk_queue_submit_init(&submit, vk_queue);
    panvk_queue_submit_init_storage(&submit, vk_submit, &stack_storage);

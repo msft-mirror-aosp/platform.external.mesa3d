@@ -71,8 +71,7 @@ bool zink_tracing = false;
 #else
 #include <unistd.h>
 #if DETECT_OS_APPLE
-/* See the vulkan-loader-rpath meson option for how to specify rpath at build time. */
-#define VK_LIBNAME "@rpath/libvulkan.1.dylib"
+#define VK_LIBNAME "libvulkan.1.dylib"
 #elif DETECT_OS_ANDROID
 #define VK_LIBNAME "libvulkan.so"
 #else
@@ -319,7 +318,7 @@ disk_cache_init(struct zink_screen *screen)
    const struct build_id_note *note =
        build_id_find_nhdr_for_addr(disk_cache_init);
    unsigned build_id_len = build_id_length(note);
-   assert(note && build_id_len <= BUILD_ID_EXPECTED_HASH_LENGTH);
+   assert(note && build_id_len == BUILD_ID_EXPECTED_HASH_LENGTH);
    _mesa_blake3_update(&ctx, build_id_data(note), build_id_len);
 #endif
 
@@ -632,8 +631,6 @@ zink_init_shader_caps(struct zink_screen *screen)
          screen->info.feats12.shaderFloat16 ||
          (screen->info.have_KHR_shader_float16_int8 &&
           screen->info.shader_float16_int8_feats.shaderFloat16);
-      caps->fp16_no_denorms = caps->fp16 && !screen->info.props12.shaderDenormPreserveFloat16
-         && screen->info.props12.shaderDenormFlushToZeroFloat16;
       caps->glsl_16bit_load_dst = true;
 
       caps->int16 = screen->info.feats.features.shaderInt16;
@@ -727,23 +724,6 @@ zink_init_screen_caps(struct zink_screen *screen)
    struct pipe_caps *caps = (struct pipe_caps *)&screen->base.caps;
 
    u_init_pipe_screen_caps(&screen->base, screen->is_cpu ? 0 : 1);
-
-   /* Vulkan spec says the builtins count, so make GL count them towards
-    * link-failing.
-    *
-    * "The number of input and output locations available for a shader input or
-    *  output interface depend on the shader stage as described in Shader Input
-    *  and Output Locations.  All variables in both the built-in interface block
-    *  and the user-defined variable interface count against these limits."
-    *
-    * MESA_SHADER_TESS_CTRL is left as default, because that mask is the
-    * per-patch built-ins rather than fixed-function outputs, and the limit it
-    * applies to is maxTessellationControlPerVertexOutputComponents.
-    */
-   caps->ignored_output_varyings[MESA_SHADER_VERTEX] =
-   caps->ignored_output_varyings[MESA_SHADER_TESS_EVAL] =
-   caps->ignored_output_varyings[MESA_SHADER_GEOMETRY] =
-   caps->ignored_output_varyings[MESA_SHADER_MESH] = 0;
 
    caps->null_textures = screen->info.rb_image_feats.robustImageAccess;
    /* support OVR_multiview and OVR_multiview2 */
@@ -903,8 +883,7 @@ zink_init_screen_caps(struct zink_screen *screen)
 
    caps->programmable_sample_locations =
       screen->info.have_EXT_sample_locations &&
-      screen->info.sample_locations_props.variableSampleLocations &&
-      screen->info.dynamic_state3_feats.extendedDynamicState3SampleLocationsEnable;
+      screen->info.sample_locations_props.variableSampleLocations;
 
    caps->query_time_elapsed = screen->timestamp_valid_bits > 0;
 
@@ -1154,7 +1133,9 @@ zink_init_screen_caps(struct zink_screen *screen)
 
    caps->viewport_transform_lowered = true;
 
-   caps->point_size_fixed = PIPE_POINT_SIZE_LOWER_USER_ONLY;
+   caps->point_size_fixed =
+      screen->info.have_KHR_maintenance5 ?
+      PIPE_POINT_SIZE_LOWER_USER_ONLY : PIPE_POINT_SIZE_LOWER_ALWAYS;
    caps->flatshade = false;
    caps->alpha_test = false;
    caps->clip_planes = 0;
@@ -1165,22 +1146,6 @@ zink_init_screen_caps(struct zink_screen *screen)
    /* need to reserve up to 60 of our varying components and 16 slots for streamout */
    caps->max_varyings =
       MIN2(screen->info.props.limits.maxVertexOutputComponents / 4 / 2, 16);
-
-   /* On drivers that report a maxVertexOutputComponents value of 64 the
-    * streamout reservation can lead to the max_varyings falling below the spec
-    * required minimum value. However on specific drivers as long as the
-    * outputs above this limit are only used for streamout this will still work
-    * (this is due to these drivers also not supporting geometry and
-    * tessellation shaders). So configure a value that meets the spec minimum
-    * value.
-    */
-   if ((zink_driverid(screen) == VK_DRIVER_ID_IMAGINATION_OPEN_SOURCE_MESA ||
-        zink_driverid(screen) == VK_DRIVER_ID_MESA_TURNIP) &&
-       screen->info.props.limits.maxVertexOutputComponents == 64){
-      assert(screen->info.feats.features.geometryShader == VK_FALSE);
-      assert(screen->info.feats.features.tessellationShader == VK_FALSE);
-      caps->max_varyings = 16;
-   }
 
    caps->dmabuf =
 #if defined(HAVE_LIBDRM) && (DETECT_OS_LINUX || DETECT_OS_BSD)
@@ -1246,10 +1211,6 @@ zink_init_screen_caps(struct zink_screen *screen)
 
    caps->max_texture_lod_bias = screen->info.props.limits.maxSamplerLodBias;
 
-   /* supporting negative offsets in software is non-trivial */
-   if (zink_driverid(screen) != VK_DRIVER_ID_MESA_LLVMPIPE)
-      caps->signed_vertex_buffer_offset = screen->info.have_KHR_device_address_commands;
-
    /* not about to deal with mesh + non-optimal */
    caps->mesh_shader = screen->info.have_EXT_mesh_shader && screen->optimal_keys;
 
@@ -1296,24 +1257,6 @@ zink_init_screen_caps(struct zink_screen *screen)
          caps->shader_subgroup_supported_stages = screen->info.subgroup.supportedStages & BITFIELD_MASK(MESA_SHADER_STAGES);
       caps->shader_subgroup_supported_features = screen->info.subgroup.supportedOperations & PIPE_SHADER_SUBGROUP_FEATURE_MASK;
       caps->shader_subgroup_quad_all_stages = screen->info.subgroup.quadOperationsInAllStages;
-   }
-
-   /* Vulkan supports only 4 byte clears */
-   caps->hw_clear_buffer_sizes = 4;
-
-   switch (screen->info.props.deviceType) {
-   case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
-      caps->device_type = PIPE_DEVICE_TYPE_INTEGRATED_GPU;
-      break;
-   case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
-      caps->device_type = PIPE_DEVICE_TYPE_DISCRETE_GPU;
-      break;
-   case VK_PHYSICAL_DEVICE_TYPE_CPU:
-      caps->device_type = PIPE_DEVICE_TYPE_CPU;
-      break;
-   default:
-      caps->device_type = PIPE_DEVICE_TYPE_UNKNOWN;
-      break;
    }
 }
 
@@ -1848,14 +1791,6 @@ choose_pdev(struct zink_screen *screen, int64_t dev_major, int64_t dev_minor, ui
       else
          idx = zink_get_display_device(screen, pdev_count, pdevs, dev_major,
                                        dev_minor);
-      /* Not all Vulkan implementations expose DRM device information through
-       * VK_EXT_physical_device_drm. When DRM matching is requested with a
-       * valid render node and only a single Vulkan physical device is
-       * available, select that device rather than failing due to the lack
-       * of DRM metadata.
-       */
-      if (idx == -1 && !adapter_luid && !cpu && pdev_count == 1)
-         idx = 0;
 
       if (idx != -1)
          /* valid cpu device */
@@ -1915,7 +1850,7 @@ update_queue_props(struct zink_screen *screen)
       mesa_loge("ZINK: failed to allocate props!");
       return;
    }
-
+      
    VKSCR(GetPhysicalDeviceQueueFamilyProperties)(screen->pdev, &num_queues, props);
 
    bool found_gfx = false;
@@ -2281,9 +2216,6 @@ retry:
       }
 
       if (screen->info.have_EXT_image_drm_format_modifier && mod_props.drmFormatModifierCount) {
-         /* The A8_UNORM workaround below can retry this query for the same pformat. */
-         ralloc_free(screen->modifier_props[pformat].pDrmFormatModifierProperties);
-
          screen->modifier_props[pformat].drmFormatModifierCount = mod_props.drmFormatModifierCount;
          screen->modifier_props[pformat].pDrmFormatModifierProperties = ralloc_array(screen, VkDrmFormatModifierPropertiesEXT, mod_props.drmFormatModifierCount);
          if (mod_props.pDrmFormatModifierProperties) {
@@ -2977,8 +2909,6 @@ init_driver_workarounds(struct zink_screen *screen)
    case VK_DRIVER_ID_MESA_V3DV:
    case VK_DRIVER_ID_MESA_PANVK:
    case VK_DRIVER_ID_MESA_NVK:
-   case VK_DRIVER_ID_MESA_KOSMICKRISP:
-   case VK_DRIVER_ID_QUALCOMM_PROPRIETARY:
       screen->driver_workarounds.implicit_sync = false;
       break;
    default:
@@ -3040,6 +2970,8 @@ init_driver_workarounds(struct zink_screen *screen)
       /* performance */
       screen->info.border_color_feats.customBorderColorWithoutFormat = VK_FALSE;
    }
+   if (!screen->info.have_KHR_maintenance5)
+      screen->driver_workarounds.missing_a8_unorm = true;
 
    if ((!screen->info.have_EXT_line_rasterization ||
         !screen->info.line_rast_feats.stippledBresenhamLines) &&
@@ -3149,13 +3081,11 @@ init_driver_workarounds(struct zink_screen *screen)
    case VK_DRIVER_ID_MESA_TURNIP:
    case VK_DRIVER_ID_MESA_PANVK:
    case VK_DRIVER_ID_MESA_V3DV:
-   case VK_DRIVER_ID_IMAGINATION_OPEN_SOURCE_MESA:
    case VK_DRIVER_ID_IMAGINATION_PROPRIETARY:
    case VK_DRIVER_ID_QUALCOMM_PROPRIETARY:
    case VK_DRIVER_ID_BROADCOM_PROPRIETARY:
    case VK_DRIVER_ID_ARM_PROPRIETARY:
    case VK_DRIVER_ID_MESA_HONEYKRISP:
-   case VK_DRIVER_ID_MESA_KOSMICKRISP:
       screen->driver_workarounds.track_renderpasses = true; //screen->info.primgen_feats.primitivesGeneratedQueryWithRasterizerDiscard
       break;
    default:
@@ -3174,7 +3104,6 @@ init_driver_workarounds(struct zink_screen *screen)
    case VK_DRIVER_ID_MESA_LLVMPIPE:
    case VK_DRIVER_ID_MESA_PANVK:
    case VK_DRIVER_ID_ARM_PROPRIETARY:
-   case VK_DRIVER_ID_QUALCOMM_PROPRIETARY:
       screen->driver_workarounds.can_do_invalid_linear_modifier = true;
       break;
    default:
@@ -3201,10 +3130,6 @@ init_driver_workarounds(struct zink_screen *screen)
       /* this has bad perf on AMD */
       screen->info.have_KHR_push_descriptor = false;
       /* Interpolation is not consistent between two triangles of a rectangle. */
-      screen->driver_workarounds.inconsistent_interpolation = true;
-      break;
-   case VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA:
-   case VK_DRIVER_ID_MESA_TURNIP:
       screen->driver_workarounds.inconsistent_interpolation = true;
       break;
    default:
@@ -3248,15 +3173,8 @@ init_driver_workarounds(struct zink_screen *screen)
    if (zink_debug & ZINK_DEBUG_NOGENERAL)
       screen->driver_workarounds.general_layout = false;
 
-   if (!screen->info.have_EXT_vertex_input_dynamic_state || !screen->info.have_EXT_transform_feedback)
-      screen->info.have_KHR_device_address_commands = false;
-
    if (!screen->resizable_bar)
       screen->info.have_EXT_host_image_copy = false;
-
-   /* required for SSO usage */
-   if (!screen->info.have_KHR_maintenance11)
-      screen->info.have_EXT_shader_object = false;
 
    /* msrtss being enabled for all singlesampled images has a massive memory usage implication on this
     * driver. temporary, could be removed after the driver handles shadow images better. */
@@ -3333,6 +3251,7 @@ init_optimal_keys(struct zink_screen *screen)
       screen->info.have_EXT_graphics_pipeline_library = false;
 
    if (!screen->optimal_keys ||
+       !screen->info.have_KHR_maintenance5 ||
       /* EXT_shader_object needs either dynamic feedback loop or per-app enablement */
        (!screen->driconf.zink_shader_object_enable && !screen->info.have_EXT_attachment_feedback_loop_dynamic_state))
       screen->info.have_EXT_shader_object = false;
@@ -3498,8 +3417,8 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    }
 
    if (config) {
-      driParseConfigFiles(config->options, config->options_info,
-                          &(driConfigFileParseParams) { .driverName = "zink" });
+      driParseConfigFiles(config->options, config->options_info, 0, "zink",
+                          NULL, NULL, NULL, 0, NULL, 0);
       screen->driconf.dual_color_blend_by_location = driQueryOptionb(config->options, "dual_color_blend_by_location");
       //screen->driconf.inline_uniforms = driQueryOptionb(config->options, "radeonsi_inline_uniforms");
       screen->driconf.emulate_point_smooth = driQueryOptionb(config->options, "zink_emulate_point_smooth");
@@ -3620,6 +3539,8 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
       /* determine if vis vram is roughly equal to total vram */
       if (biggest_vis_vram > biggest_vram * 0.9)
          screen->resizable_bar = true;
+      if (biggest_vis_vram >= 8ULL * 1024ULL * 1024ULL * 1024ULL)
+         screen->always_cached_upload = true;
    }
 
    setup_renderdoc(screen);

@@ -37,7 +37,6 @@
 #include "pipe/p_state.h"
 #include "pipe/p_context.h"
 #include "pipe/p_screen.h"
-#include "util/os_misc.h"
 #include "util/u_debug.h"
 #include "util/u_inlines.h"
 #include "util/format/u_format.h"
@@ -374,7 +373,6 @@ crocus_init_screen_caps(struct crocus_screen *screen)
    caps->max_texture_gather_offset = devinfo->ver >= 7 ? 31 :
       (devinfo->ver == 6 ? 7 : 0);
    caps->max_vertex_streams = devinfo->ver >= 7 ? 4 : 1;
-   caps->device_type = PIPE_DEVICE_TYPE_INTEGRATED_GPU;
    caps->vendor_id = 0x8086;
    caps->device_id = screen->pci_id;
 
@@ -385,9 +383,8 @@ crocus_init_screen_caps(struct crocus_screen *screen)
    const unsigned gpu_mappable_megabytes =
       (screen->aperture_threshold) / (1024 * 1024);
 
-   uint64_t system_memory_bytes =
-      os_get_gpu_heap_size(screen->driconf.heap_memory_percent, NULL);
-   if (!system_memory_bytes) {
+   uint64_t system_memory_bytes;
+   if (!os_get_total_physical_memory(&system_memory_bytes)) {
       caps->video_memory = -1;
    } else {
       const unsigned system_memory_megabytes =
@@ -575,8 +572,8 @@ crocus_screen_create(int fd, const struct pipe_screen_config *config)
    screen->aperture_bytes = get_aperture_size(fd);
    screen->aperture_threshold = screen->aperture_bytes * 3 / 4;
 
-   driParseConfigFiles(config->options, config->options_info,
-                       &(driConfigFileParseParams) { .driverName = "crocus" });
+   driParseConfigFiles(config->options, config->options_info, 0, "crocus",
+                       NULL, NULL, NULL, 0, NULL, 0);
 
    bool bo_reuse = false;
    int bo_reuse_mode = driQueryOptioni(config->options, "bo_reuse");
@@ -607,11 +604,6 @@ crocus_screen_create(int fd, const struct pipe_screen_config *config)
    screen->driconf.lower_depth_range_rate =
       driQueryOptionf(config->options, "lower_depth_range_rate");
 
-   screen->driconf.heap_memory_percent =
-      driQueryOptionf(config->options, "heap_memory_percent");
-   if (screen->driconf.heap_memory_percent == OS_GPU_HEAP_SIZE_HEURISTIC)
-      screen->driconf.heap_memory_percent = 1.0f;
-
    screen->precompile = debug_get_bool_option("shader_precompile", true);
 
    isl_device_init(&screen->isl_dev, &screen->devinfo);
@@ -621,8 +613,6 @@ crocus_screen_create(int fd, const struct pipe_screen_config *config)
    screen->compiler->shader_perf_log = crocus_shader_perf_log;
    screen->compiler->supports_shader_constants = false;
    screen->compiler->constant_buffer_0_is_relative = true;
-   screen->compiler->limit_trig_input_range =
-      screen->driconf.limit_trig_input_range;
 
    if (screen->devinfo.ver >= 7) {
       screen->l3_config_3d = crocus_get_default_l3_config(&screen->devinfo, false);

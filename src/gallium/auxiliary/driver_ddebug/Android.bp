@@ -15,12 +15,11 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium",
+    name: "files_libgallium_2",
     srcs: [
         "dd_context.c",
         "dd_draw.c",
         "dd_screen.c",
-        "dd_util.c",
     ],
 }
 

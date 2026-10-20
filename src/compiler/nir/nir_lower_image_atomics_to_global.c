@@ -46,7 +46,6 @@ lower(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    b->cursor = nir_before_instr(&intr->instr);
    nir_atomic_op atomic_op = nir_intrinsic_atomic_op(intr);
    enum pipe_format format = nir_intrinsic_format(intr);
-   unsigned num_comps = intr->def.num_components;
    unsigned bit_size = intr->def.bit_size;
 
    if (state->filter && !state->filter(intr, state->data))
@@ -66,7 +65,7 @@ lower(nir_builder *b, nir_intrinsic_instr *intr, void *data)
       else
          format_type = UTIL_FORMAT_TYPE_UNSIGNED;
 
-      format = util_format_get_array(format_type, bit_size, num_comps, false,
+      format = util_format_get_array(format_type, bit_size, 1, false,
                                      type_ != nir_type_float);
    }
 
@@ -90,12 +89,10 @@ lower(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    nir_def *global;
    if (swap) {
       global = nir_global_atomic_swap(b, bit_size, address, intr->src[3].ssa,
-                                      intr->src[4].ssa, .atomic_op = atomic_op,
-                                      .access = nir_intrinsic_access(intr));
+                                      intr->src[4].ssa, .atomic_op = atomic_op);
    } else {
       global = nir_global_atomic(b, bit_size, address, intr->src[3].ssa,
-                                 .atomic_op = atomic_op,
-                                 .access = nir_intrinsic_access(intr));
+                                 .atomic_op = atomic_op);
    }
 
    b->shader->info.use_lowered_image_to_global = true;

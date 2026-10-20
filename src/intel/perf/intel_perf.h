@@ -99,10 +99,6 @@ enum ENUM_PACKED intel_perf_counter_units {
    INTEL_PERF_COUNTER_UNITS_MAX
 };
 
-const char *intel_perf_counter_type_name(enum intel_perf_counter_type type);
-const char *intel_perf_counter_data_type_name( enum intel_perf_counter_data_type type);
-const char *intel_perf_counter_units_name(enum intel_perf_counter_units units);
-
 struct intel_pipeline_stat {
    uint32_t reg;
    uint32_t numerator;
@@ -444,18 +440,6 @@ enum intel_perf_features {
 struct intel_perf_config {
    /* Have extended metrics been enabled */
    bool enable_all_metrics;
-
-   /* Whether to use the metrics library to handle performance queries. */
-   bool use_metrics_library;
-   struct {
-      void *lib;
-      void *context;
-      void *api;
-      void *callbacks;
-      void *destroy_context_func;
-      uint32_t gpu_report_size;
-      uint32_t api_report_size;
-   } metrics_library;
 
    enum intel_perf_features features_supported;
 

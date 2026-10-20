@@ -50,7 +50,7 @@
         "python3": "@lavapipe_bazel_deps//:python3",
         "wayland-scanner": "@wayland//:wayland-scanner",
         // TODO(joshuaduong): These lavapipe deps should be built from source.
-        "glslangValidator": "@glslang//:glslangValidator",
+        "glslangValidator": "@lavapipe_bazel_deps//:py_glslangValidator",
         "llvm-config": "@lavapipe_bazel_deps//:py_llvm_config"
       },
       "dependencies": {

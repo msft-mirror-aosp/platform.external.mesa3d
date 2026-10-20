@@ -2287,12 +2287,6 @@ static const struct wp_presentation_listener presentation_listener = {
    presentation_handle_clock_id,
 };
 
-#if defined(WL_FIXES_ACK_GLOBAL_REMOVE)
-#define MESA_WL_FIXES_VERSION 2
-#elif defined(WL_FIXES_INTERFACE)
-#define MESA_WL_FIXES_VERSION 1
-#endif
-
 static void
 registry_handle_global_drm(void *data, struct wl_registry *registry,
                            uint32_t name, const char *interface,
@@ -2318,10 +2312,9 @@ registry_handle_global_drm(void *data, struct wl_registry *registry,
          wl_registry_bind(registry, name, &wp_presentation_interface, 1);
       wp_presentation_add_listener(dri2_dpy->wp_presentation,
                                    &presentation_listener, dri2_dpy);
-#ifdef MESA_WL_FIXES_VERSION
+#ifdef WL_FIXES_INTERFACE
    } else if (strcmp(interface, wl_fixes_interface.name) == 0) {
-      dri2_dpy->wl_fixes = wl_registry_bind(registry, name, &wl_fixes_interface,
-                                            MIN2(version, MESA_WL_FIXES_VERSION));
+      dri2_dpy->wl_fixes = wl_registry_bind(registry, name, &wl_fixes_interface, 1);
 #endif
    }
 }
@@ -2330,13 +2323,6 @@ static void
 registry_handle_global_remove(void *data, struct wl_registry *registry,
                               uint32_t name)
 {
-#ifdef WL_FIXES_ACK_GLOBAL_REMOVE
-   struct dri2_egl_display *dri2_dpy = data;
-
-   if (dri2_dpy->wl_fixes && wl_fixes_get_version(dri2_dpy->wl_fixes) >= WL_FIXES_ACK_GLOBAL_REMOVE_SINCE_VERSION) {
-      wl_fixes_ack_global_remove(dri2_dpy->wl_fixes, registry, name);
-   }
-#endif
 }
 
 static const struct wl_registry_listener registry_listener_drm = {
@@ -3168,10 +3154,9 @@ registry_handle_global_swrast(void *data, struct wl_registry *registry,
          wl_registry_bind(registry, name, &wp_presentation_interface, 1);
       wp_presentation_add_listener(dri2_dpy->wp_presentation,
                                    &presentation_listener, dri2_dpy);
-#ifdef MESA_WL_FIXES_VERSION
+#ifdef WL_FIXES_INTERFACE
    } else if (strcmp(interface, wl_fixes_interface.name) == 0) {
-      dri2_dpy->wl_fixes = wl_registry_bind(registry, name, &wl_fixes_interface,
-                                            MIN2(version, MESA_WL_FIXES_VERSION));
+      dri2_dpy->wl_fixes = wl_registry_bind(registry, name, &wl_fixes_interface, 1);
 #endif
    }
 

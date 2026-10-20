@@ -442,20 +442,16 @@ lower_mem_store(nir_builder *b, nir_intrinsic_instr *intrin,
             break;
          case nir_intrinsic_store_global:
             nir_global_atomic(b, 32, chunk_offset, iand_mask,
-                              .atomic_op = nir_atomic_op_iand,
-                              .access = nir_intrinsic_access(intrin));
+                              .atomic_op = nir_atomic_op_iand);
             nir_global_atomic(b, 32, chunk_offset, data,
-                              .atomic_op = nir_atomic_op_ior,
-                              .access = nir_intrinsic_access(intrin));
+                              .atomic_op = nir_atomic_op_ior);
             break;
          case nir_intrinsic_store_shared:
             nir_shared_atomic(b, 32, chunk_offset, iand_mask,
                               .atomic_op = nir_atomic_op_iand,
-                              .access = nir_intrinsic_access(intrin),
                               .base = nir_intrinsic_base(intrin));
             nir_shared_atomic(b, 32, chunk_offset, data,
                               .atomic_op = nir_atomic_op_ior,
-                              .access = nir_intrinsic_access(intrin),
                               .base = nir_intrinsic_base(intrin));
             break;
          case nir_intrinsic_store_scratch: {
@@ -506,8 +502,6 @@ intrin_to_variable_mode(nir_intrinsic_op intrin)
    case nir_intrinsic_load_global:
    case nir_intrinsic_load_global_bounded:
    case nir_intrinsic_store_global:
-   case nir_intrinsic_load_global_offset:
-   case nir_intrinsic_store_global_offset:
       return nir_var_mem_global;
 
    case nir_intrinsic_load_global_constant:
@@ -552,7 +546,6 @@ lower_mem_access_instr(nir_builder *b, nir_intrinsic_instr *intrin, void *_data)
    case nir_intrinsic_load_push_constant:
    case nir_intrinsic_load_global:
    case nir_intrinsic_load_global_bounded:
-   case nir_intrinsic_load_global_offset:
    case nir_intrinsic_load_global_constant:
    case nir_intrinsic_load_global_constant_bounded:
    case nir_intrinsic_load_global_constant_offset:
@@ -567,7 +560,6 @@ lower_mem_access_instr(nir_builder *b, nir_intrinsic_instr *intrin, void *_data)
       return lower_mem_load(b, intrin, state->callback, state->cb_data);
 
    case nir_intrinsic_store_global:
-   case nir_intrinsic_store_global_offset:
    case nir_intrinsic_store_ssbo:
    case nir_intrinsic_store_shared:
    case nir_intrinsic_store_scratch:

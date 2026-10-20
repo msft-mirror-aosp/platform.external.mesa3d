@@ -21,12 +21,13 @@
  * SOFTWARE.
  */
 
-#include "util/perf/u_perfetto.h"
+#include <perfetto.h>
 
 #include "freedreno_drm_perfetto.h"
 #include "freedreno_drmif.h"
 
 #include "util/log.h"
+#include "util/perf/u_perfetto.h"
 #include "util/simple_mtx.h"
 
 class FdMemoryDataSource : public perfetto::DataSource<FdMemoryDataSource> {

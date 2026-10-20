@@ -877,8 +877,6 @@ struct agx_screen {
 
    /* Lock to protect syncobj usage vs. destruction in context destroy */
    struct u_rwlock destroy_lock;
-
-   float heap_memory_percent;
 };
 
 static inline struct agx_screen *

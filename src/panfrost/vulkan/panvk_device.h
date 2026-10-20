@@ -48,6 +48,11 @@ enum panvk_queue_family {
    PANVK_QUEUE_FAMILY_COUNT,
 };
 
+struct panvk_device_queue_family {
+   struct vk_queue **queues;
+   int queue_count;
+};
+
 struct panvk_device {
    struct vk_device vk;
 
@@ -94,6 +99,8 @@ struct panvk_device {
 
    struct vk_device_dispatch_table cmd_dispatch;
 
+   struct panvk_device_queue_family queue_families[PANVK_QUEUE_FAMILY_COUNT];
+
    struct panvk_precomp_cache *precomp_cache;
 
    struct {
@@ -138,15 +145,6 @@ static inline struct panvk_device *
 to_panvk_device(struct vk_device *dev)
 {
    return container_of(dev, struct panvk_device, vk);
-}
-
-static inline void
-panvk_address_binding_report(struct panvk_device *dev,
-                             struct vk_object_base *object, uint64_t base,
-                             uint64_t size, VkDeviceAddressBindingTypeEXT type)
-{
-   vk_address_binding_report(dev->vk.physical->instance,
-                             object ? object : &dev->vk.base, base, size, type);
 }
 
 static inline uint32_t
@@ -215,21 +213,6 @@ panvk_as_free(struct panvk_device *device, struct util_vma_heap *heap,
    util_vma_heap_free(heap, address, size);
    simple_mtx_unlock(&device->as.lock);
 }
-
-struct vk_queue;
-struct vk_queue_submit;
-
-VkResult panvk_create_bind_queue(struct panvk_device *dev,
-                                 const VkDeviceQueueCreateInfo *create_info,
-                                 uint32_t queue_idx,
-                                 struct vk_queue **out_queue);
-void panvk_destroy_bind_queue(struct vk_queue *vk_queue);
-VkResult panvk_bind_queue_submit(struct vk_queue *vk_queue,
-                                 struct vk_queue_submit *vk_submit);
-VkResult panvk_bind_queue_check_status(struct vk_queue *vk_queue);
-VkResult panvk_queue_vm_bind(struct vk_queue *vk_queue,
-                             struct vk_queue_submit *vk_submit,
-                             uint32_t syncobj_handle);
 
 #if PAN_ARCH
 VkResult

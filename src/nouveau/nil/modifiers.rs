@@ -245,7 +245,7 @@ impl BlockLinearModifier {
     }
 }
 
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "C" fn nil_drm_format_mods_for_format(
     dev: &nil_rs_bindings::nv_device_info,
     format: Format,
@@ -268,7 +268,6 @@ pub fn drm_format_mods_for_format(
         return;
     }
 
-    // This rejects unsupported color formats like YCbCr and any others
     if !format.supports_color_targets(dev) {
         return;
     }
@@ -393,7 +392,7 @@ pub fn select_best_drm_format_mod(
     best
 }
 
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "C" fn nil_select_best_drm_format_mod(
     dev: &nil_rs_bindings::nv_device_info,
     format: Format,

@@ -83,6 +83,4 @@ private:
 
 } // namespace r600
 
-int r600_lower_tess_level_default_to_ubo(nir_shader *sh);
-
 #endif // TCS_H

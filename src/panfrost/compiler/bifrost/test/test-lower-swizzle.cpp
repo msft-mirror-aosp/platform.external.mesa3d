@@ -18,7 +18,6 @@ class LowerSwizzle : public testing::Test {
    LowerSwizzle()
    {
       mem_ctx = ralloc_context(NULL);
-      arch = 7;
 
       reg = bi_register(0);
       x = bi_register(1);
@@ -36,7 +35,6 @@ class LowerSwizzle : public testing::Test {
    }
 
    void *mem_ctx;
-   unsigned arch;
 
    bi_index reg, x, y, z, w;
    bi_index x3210;

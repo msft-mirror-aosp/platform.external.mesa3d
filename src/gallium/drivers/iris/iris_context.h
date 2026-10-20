@@ -195,6 +195,8 @@ PRAGMA_DIAGNOSTIC_ERROR(-Wpadded)
  */
 struct iris_base_prog_key {
    unsigned program_string_id;
+   bool limit_trig_input_range;
+   unsigned padding:24;
 };
 
 struct iris_vue_prog_key {
@@ -212,12 +214,12 @@ struct iris_vs_prog_key {
 struct iris_tcs_prog_key {
    struct iris_vue_prog_key vue;
 
-   enum tess_primitive_mode _tes_primitive_mode:8;
+   enum tess_primitive_mode _tes_primitive_mode;
 
    uint8_t input_vertices;
 
    bool quads_workaround;
-   unsigned padding:8;
+   unsigned padding:16;
 
    /** A bitfield of per-patch outputs written. */
    uint32_t patch_outputs_written;
@@ -232,8 +234,6 @@ struct iris_tes_prog_key {
    /** A bitfield of per-patch inputs read. */
    uint32_t patch_inputs_read;
 
-   uint32_t padding;
-
    /** A bitfield of per-vertex inputs read. */
    uint64_t inputs_read;
 };
@@ -245,6 +245,7 @@ struct iris_gs_prog_key {
 struct iris_fs_prog_key {
    struct iris_base_prog_key base;
 
+   uint64_t input_slots_valid;
    uint8_t color_outputs_valid;
 
    unsigned nr_color_regions:5;
@@ -255,9 +256,7 @@ struct iris_fs_prog_key {
    bool force_dual_color_blend:1;
    bool coherent_fb_fetch:1;
    enum intel_vue_layout vue_layout:2;
-   unsigned padding:11;
-
-   uint64_t input_slots_valid;
+   uint64_t padding:43;
 };
 
 struct iris_cs_prog_key {
@@ -297,6 +296,7 @@ struct iris_fs_data {
    uint64_t inputs;
    unsigned num_varying_inputs;
 
+   unsigned fs_config_param;
    uint32_t flat_inputs;
 
    uint8_t computed_depth_mode;
@@ -351,7 +351,6 @@ struct iris_cs_data {
    enum intel_compute_walk_order walk_order;
 
    bool uses_barrier;
-   bool uses_fence;
    bool uses_sampler;
    bool first_param_is_builtin_subgroup_id;
 };
@@ -550,7 +549,7 @@ struct iris_uncompiled_shader {
    unsigned char nir_blake3[BLAKE3_KEY_LEN];
 
    /* Hash value based on shader source program */
-   uint64_t source_hash;
+   unsigned source_hash;
 
    unsigned program_id;
 
@@ -1471,14 +1470,14 @@ iris_shader_variant_reference(struct iris_compiled_shader **dst,
 bool iris_blorp_lookup_shader(struct blorp_batch *blorp_batch,
                               const void *key,
                               uint32_t key_size,
-                              uint64_t *kernel_out,
+                              uint32_t *kernel_out,
                               void *prog_data_out);
 bool iris_blorp_upload_shader(struct blorp_batch *blorp_batch, uint32_t stage,
                               const void *key, uint32_t key_size,
                               const void *kernel, uint32_t kernel_size,
                               const void *prog_data,
                               uint32_t prog_data_size,
-                              uint64_t *kernel_out,
+                              uint32_t *kernel_out,
                               void *prog_data_out);
 
 void iris_ensure_indirect_generation_shader(struct iris_batch *batch);

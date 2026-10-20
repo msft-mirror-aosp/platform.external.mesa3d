@@ -35,12 +35,6 @@
 #include "compiler/nir/nir_deref.h"
 
 #include "compiler/glsl/gl_nir.h"
-#include "pipe/p_defines.h"
-
-typedef struct {
-   const struct pipe_caps *caps;
-   bool bindless_only;
-} lower_images_options;
 
 static void
 type_size_align_1(const struct glsl_type *type, unsigned *size, unsigned *align)
@@ -62,7 +56,8 @@ lower_instr(nir_builder *b, nir_instr *instr, void *cb_data)
    if (instr->type != nir_instr_type_intrinsic)
       return false;
 
-   const lower_images_options *options = (const lower_images_options *)cb_data;
+   bool bindless_only = *(bool *)cb_data;
+
    nir_intrinsic_instr *intrinsic = nir_instr_as_intrinsic(instr);
 
    nir_deref_instr *deref;
@@ -86,7 +81,7 @@ lower_instr(nir_builder *b, nir_instr *instr, void *cb_data)
    }
 
    bool bindless = var->data.mode != nir_var_image || var->data.bindless;
-   if (options->bindless_only && !bindless)
+   if (bindless_only && !bindless)
       return false;
 
    b->cursor = nir_before_instr(instr);
@@ -103,10 +98,6 @@ lower_instr(nir_builder *b, nir_instr *instr, void *cb_data)
                          nir_build_deref_offset(b, deref, type_size_align_1),
                          var->data.driver_location);
    }
-
-   if (bindless && options->caps->glsl_bindless_handles_are_32bit)
-      src = nir_u2u32(b, src);
-
    nir_rewrite_image_intrinsic(intrinsic, src,
       bindless ? nir_image_intrinsic_type_bindless : nir_image_intrinsic_type_default);
    if (!bindless)
@@ -116,15 +107,9 @@ lower_instr(nir_builder *b, nir_instr *instr, void *cb_data)
 }
 
 bool
-gl_nir_lower_images(nir_shader *shader, const struct pipe_caps *caps,
-                    bool bindless_only)
+gl_nir_lower_images(nir_shader *shader, bool bindless_only)
 {
-   lower_images_options options = {
-      .caps = caps,
-      .bindless_only = bindless_only,
-   };
-
    return nir_shader_instructions_pass(shader, lower_instr,
                                        nir_metadata_control_flow,
-                                       &options);
+                                       &bindless_only);
 }

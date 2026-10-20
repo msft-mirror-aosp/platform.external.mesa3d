@@ -15,9 +15,8 @@ if TYPE_CHECKING:
 
 
 def infer_type(op: 'Opcode') -> bool:
-    no_infer_ops = ['dpas', 'slice_repack']
     return op.has_dest and (set(op.types) <= set(["u1", "u32", "u64"]) or
-                            op.name == 'mov') and op.name not in no_infer_ops
+                            op.name == 'mov')
 
 
 def signature(op: 'Opcode', with_dest: bool = True, with_types: bool = False,
@@ -59,7 +58,7 @@ TEMPLATE = """
     multi_type = len(op.types) > 1
     info_size = f'sizeof(jay_{op.name}_info)' if op.extra_struct else '0'
     operands = ["dst"] + [f"src{i}" for i in range(num_srcs)]
-    if num_srcs > 0 and op.name not in ['zip_ugpr16']:
+    if num_srcs > 0:
         uniform = " && " .join([f"jay_is_uniform(src{i})" for i in range(num_srcs)])
         reg_file = f"({uniform}) ? UGPR : GPR"
     else:
@@ -97,10 +96,6 @@ _jay_${OPCODE}(${signature(op, with_types = True)})
    inst->type = t;
 % if op.has_dest:
    inst->dst = dst;
-   inst->uniform = (jay_is_uniform(dst) && !jay_is_null(dst));
-   inst->uniform |= dst.file == FLAG;
-% elif op.name in ['sync']:
-   inst->uniform = true;
 % endif
 % for i in range(num_srcs):
    inst->src[${i}] = src${i};
@@ -111,8 +106,6 @@ _jay_${OPCODE}(${signature(op, with_types = True)})
 }
 
 #define jay_${OPCODE}(${signature(op, with_types = True, mode = 'call')}) _jay_${OPCODE}(${signature(op, with_types = True, src = 'JAY_BUILD_SRC({})', mode='call')})
-
-% if op.name not in no_typed_wrappers:
 
 % for type in op.types:
 static inline ${'jay_def' if op.has_dest else 'void'}
@@ -129,8 +122,6 @@ _jay_${OPCODE}_${type}(${signature(op, with_dest = False)})
 #define jay_${OPCODE}_${type}(${signature(op, with_dest = False, mode =
 'call')}) _jay_${OPCODE}_${type}(${signature(op, src='JAY_BUILD_SRC({})', mode = 'call', with_dest = False)})
 % endfor
-
-% endif
 
 % endfor
 
@@ -150,8 +141,7 @@ def main() -> int:
             f.write(Template(TEMPLATE).render(
                 opcodes=ops,
                 signature=signature,
-                infer_type=infer_type,
-                no_typed_wrappers={'dpas', 'slice_repack'}))
+                infer_type=infer_type))
     except Exception:
         print(exceptions.text_error_template().render())
         return 1

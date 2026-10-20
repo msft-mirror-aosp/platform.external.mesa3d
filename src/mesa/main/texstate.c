@@ -297,6 +297,10 @@ active_texture(GLenum texture, bool no_error)
 
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & (VERBOSE_API|VERBOSE_TEXTURE))
+      _mesa_debug(ctx, "glActiveTexture %s\n",
+                  _mesa_enum_to_string(texture));
+
    if (ctx->Texture.CurrentUnit == texUnit)
       return;
 
@@ -353,6 +357,10 @@ _mesa_ClientActiveTexture(GLenum texture)
 {
    GET_CURRENT_CONTEXT(ctx);
    GLuint texUnit = texture - GL_TEXTURE0;
+
+   if (MESA_VERBOSE & (VERBOSE_API | VERBOSE_TEXTURE))
+      _mesa_debug(ctx, "glClientActiveTexture %s\n",
+                  _mesa_enum_to_string(texture));
 
    if (ctx->Array.ActiveTexture == texUnit)
       return;
@@ -674,11 +682,13 @@ update_single_program_texture(struct gl_context *ctx, struct gl_program *prog,
       texUnit->Sampler : &texObj->Sampler;
 
    if (likely(texObj)) {
-      if (_mesa_is_texture_complete(ctx, texObj, sampler))
+      if (_mesa_is_texture_complete(texObj, sampler,
+                                    ctx->Const.ForceIntegerTexNearest))
          return texObj;
 
       _mesa_test_texobj_completeness(ctx, texObj);
-      if (_mesa_is_texture_complete(ctx, texObj, sampler))
+      if (_mesa_is_texture_complete(texObj, sampler,
+                                    ctx->Const.ForceIntegerTexNearest))
          return texObj;
    }
 
@@ -822,10 +832,12 @@ update_ff_texture_state(struct gl_context *ctx,
          struct gl_sampler_object *sampler = texUnit->Sampler ?
             texUnit->Sampler : &texObj->Sampler;
 
-         if (!_mesa_is_texture_complete(ctx, texObj, sampler)) {
+         if (!_mesa_is_texture_complete(texObj, sampler,
+                                        ctx->Const.ForceIntegerTexNearest)) {
             _mesa_test_texobj_completeness(ctx, texObj);
          }
-         if (_mesa_is_texture_complete(ctx, texObj, sampler)) {
+         if (_mesa_is_texture_complete(texObj, sampler,
+                                       ctx->Const.ForceIntegerTexNearest)) {
             _mesa_reference_texobj(&texUnit->_Current, texObj);
             complete = true;
             break;

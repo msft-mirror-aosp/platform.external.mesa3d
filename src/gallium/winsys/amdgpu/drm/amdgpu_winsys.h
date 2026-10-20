@@ -247,7 +247,6 @@ struct amdgpu_winsys {
    bool noop_cs;
    bool reserve_vmid;
    bool zero_all_vram_allocs;
-   bool ib_caches_flush;
 #if MESA_DEBUG
    bool debug_all_bos;
 

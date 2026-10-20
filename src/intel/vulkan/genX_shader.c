@@ -9,7 +9,6 @@
 #include "genxml/genX_pack.h"
 #include "genxml/genX_rt_pack.h"
 
-#include "common/intel_common.h"
 #include "common/intel_compute_slm.h"
 
 #include "nir/nir_xfb_info.h"
@@ -32,10 +31,8 @@ get_surface_count(const struct anv_device *device,
                   const struct anv_shader *shader)
 {
 #if GFX_VERx10 >= 125
-   if (device->physical->uses_efficient_64bit)
-      return 0;
    if (shader->vk.stage == MESA_SHADER_COMPUTE &&
-       !device->physical->drirc.perf.cs_surface_prefetch)
+       !device->physical->instance->force_compute_surface_prefetch)
       return 0;
 #endif
    return shader->bind_map.surface_count;
@@ -54,9 +51,7 @@ get_sampler_count(const struct anv_device *device,
     */
    return 0;
 #else
-   if (device->physical->uses_efficient_64bit)
-      return 0;
-   if (!device->physical->drirc.perf.sampler_prefetch)
+   if (!device->physical->instance->force_sampler_prefetch)
       return 0;
 
    return DIV_ROUND_UP(
@@ -79,21 +74,6 @@ static UNUSED uint32_t
 get_scratch_space(const struct anv_shader *shader)
 {
    return ffs(shader->prog_data->total_scratch / 2048);
-}
-
-static UNUSED uint32_t
-get_scratch_surface(struct anv_batch *batch,
-                    struct anv_device *device,
-                    struct anv_shader *shader,
-                    bool protected)
-{
-   /* We use relocated constant in efficient 64bit mode */
-   if (device->physical->uses_efficient_64bit)
-      return 0;
-
-   return anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
-                                      shader->prog_data->total_scratch,
-                                      protected);
 }
 
 /* Streamout (can be used by several shaders) */
@@ -309,14 +289,6 @@ vertex_element_comp_control(enum isl_format format, unsigned comp)
    }
 }
 
-static inline uint32_t
-vertex_element_slot(uint32_t elements, uint32_t elements_double, uint32_t a)
-{
-   return __builtin_popcount(elements & ((1 << a) - 1)) -
-          DIV_ROUND_UP(__builtin_popcount(elements_double &
-                                         ((1 << a) - 1)), 2);
-}
-
 static void
 emit_ves_vf_instancing(struct anv_batch *batch,
                        uint32_t *vertex_element_dws,
@@ -351,12 +323,19 @@ emit_ves_vf_instancing(struct anv_batch *batch,
        *
        * TODO: Compact vertex elements so we never end up with holes.
        */
-      memcpy(&vertex_element_dws[i * 2],
-             device->physical->gfx_default.empty_vs_input,
-             sizeof(device->physical->gfx_default.empty_vs_input));
+      struct GENX(VERTEX_ELEMENT_STATE) element = {
+         .Valid = true,
+         .Component0Control = VFCOMP_STORE_0,
+         .Component1Control = VFCOMP_STORE_0,
+         .Component2Control = VFCOMP_STORE_0,
+         .Component3Control = VFCOMP_STORE_0,
+      };
+      GENX(VERTEX_ELEMENT_STATE_pack)(NULL,
+                                      &vertex_element_dws[i * 2],
+                                      &element);
    }
 
-   u_foreach_bit(a, vi->attributes_valid & elements) {
+   u_foreach_bit(a, vi->attributes_valid) {
       enum isl_format format = anv_get_vbo_format(
          device->physical, vi->attributes[a].format);
       assume(format < ISL_NUM_FORMATS);
@@ -364,7 +343,13 @@ emit_ves_vf_instancing(struct anv_batch *batch,
       uint32_t binding = vi->attributes[a].binding;
       assert(binding < get_max_vbs(device->info));
 
-      uint32_t slot = vertex_element_slot(elements, elements_double, a);
+      if ((elements & (1 << a)) == 0)
+         continue; /* Binding unused */
+
+      uint32_t slot =
+         __builtin_popcount(elements & ((1 << a) - 1)) -
+         DIV_ROUND_UP(__builtin_popcount(elements_double &
+                                        ((1 << a) -1)), 2);
 
       struct GENX(VERTEX_ELEMENT_STATE) element = {
          .VertexBufferIndex = vi->attributes[a].binding,
@@ -380,14 +365,11 @@ emit_ves_vf_instancing(struct anv_batch *batch,
       GENX(VERTEX_ELEMENT_STATE_pack)(NULL,
                                       &vertex_element_dws[slot * 2],
                                       &element);
-   }
 
-   u_foreach_bit(a, vi->attributes_valid & elements) {
-      uint32_t binding = vi->attributes[a].binding;
-      assert(binding < get_max_vbs(device->info));
-
-      uint32_t slot = vertex_element_slot(elements, elements_double, a);
-
+      /* On Broadwell and later, we have a separate VF_INSTANCING packet
+       * that controls instancing.  On Haswell and prior, that's part of
+       * VERTEX_BUFFER_STATE which we emit later.
+       */
       anv_batch_emit(batch, GENX(3DSTATE_VF_INSTANCING), vfi) {
          bool per_instance = vi->bindings[binding].input_rate ==
             VK_VERTEX_INPUT_RATE_INSTANCE;
@@ -419,13 +401,12 @@ genX(batch_emit_vertex_input)(struct anv_batch *batch,
       memcpy(p + 1, device->physical->gfx_default.empty_vs_input,
              sizeof(device->physical->gfx_default.empty_vs_input));
    } else {
-      /* Fill the system values VERTEX_ELEMENT_STATE entries for the draw parameters. */
+      /* Use dyn->vi to emit the dynamic VERTEX_ELEMENT_STATE input. */
+      emit_ves_vf_instancing(batch, p + 1, device, shader, vi);
+      /* Then append the VERTEX_ELEMENT_STATE for the draw parameters */
       memcpy(p + 1 + 2 * shader->vs.input_elements,
              shader->vs.sgvs_elements,
              4 * 2 * shader->vs.sgvs_count);
-
-      /* Use dyn->vi to emit the dynamic VERTEX_ELEMENT_STATE input. */
-      emit_ves_vf_instancing(batch, p + 1, device, shader, vi);
    }
 }
 
@@ -552,7 +533,7 @@ emit_vs_shader(struct anv_batch *batch,
    }
 #endif
 
-   if (device->physical->drirc.perf.vf_comp_packing) {
+   if (device->physical->instance->vf_component_packing) {
       anv_shader_emit(batch, shader, vs.vf_component_packing,
                       GENX(3DSTATE_VF_COMPONENT_PACKING), vfc) {
          vfc.VertexElementEnablesDW[0] = vs_prog_data->vf_component_packing[0];
@@ -566,7 +547,7 @@ emit_vs_shader(struct anv_batch *batch,
    anv_shader_emit_tmp(batch, vs_dwords, GENX(3DSTATE_VS), vs) {
       vs.Enable               = true;
       vs.StatisticsEnable     = true;
-      vs.KernelStartPointer   = anv_shader_get_pointer(device, shader);
+      vs.KernelStartPointer   = shader->kernel.offset;
 #if GFX_VER < 20
       vs.SIMD8DispatchEnable  =
          vs_prog_data->base.dispatch_mode == DISPATCH_MODE_SIMD8;
@@ -594,14 +575,15 @@ emit_vs_shader(struct anv_batch *batch,
          vs_prog_data->base.cull_distance_mask;
 
 #if GFX_VER >= 30
-      vs.RegistersPerThread =
-         intel_register_blocks(devinfo, vs_prog_data->base.base.grf_used);
+      vs.RegistersPerThread = ptl_register_blocks(vs_prog_data->base.base.grf_used);
 #endif
    }
 
    anv_shader_emit_merge(batch, shader, vs.vs, vs_dwords, GENX(3DSTATE_VS), vs) {
 #if GFX_VERx10 >= 125
-      vs.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, false);
+      vs.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                          shader->prog_data->total_scratch,
+                                                          false);
 #else
       vs.PerThreadScratchSpace = get_scratch_space(shader);
       vs.ScratchSpaceBasePointer = get_scratch_address(device, shader);
@@ -611,7 +593,9 @@ emit_vs_shader(struct anv_batch *batch,
       anv_shader_emit_merge(batch, shader, vs.vs_protected,
                             vs_dwords, GENX(3DSTATE_VS), vs) {
 #if GFX_VERx10 >= 125
-         vs.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, true);
+         vs.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                             shader->prog_data->total_scratch,
+                                                             true);
 #else
          vs.PerThreadScratchSpace = get_scratch_space(shader);
          vs.ScratchSpaceBasePointer = get_scratch_address(device, shader);
@@ -633,7 +617,7 @@ emit_hs_shader(struct anv_batch *batch,
    anv_shader_emit_tmp(batch, hs_dwords, GENX(3DSTATE_HS), hs) {
       hs.Enable = true;
       hs.StatisticsEnable = true;
-      hs.KernelStartPointer = anv_shader_get_pointer(device, shader);
+      hs.KernelStartPointer = shader->kernel.offset;
       hs.SamplerCount = get_sampler_count(device, shader);
       hs.BindingTableEntryCount = get_surface_count(device, shader);
 
@@ -673,14 +657,15 @@ emit_hs_shader(struct anv_batch *batch,
       hs.IncludePrimitiveID = tcs_prog_data->include_primitive_id;
 
 #if GFX_VER >= 30
-      hs.RegistersPerThread =
-         intel_register_blocks(devinfo, tcs_prog_data->base.base.grf_used);
+      hs.RegistersPerThread = ptl_register_blocks(tcs_prog_data->base.base.grf_used);
 #endif
    };
 
    anv_shader_emit_merge(batch, shader, hs.hs, hs_dwords, GENX(3DSTATE_HS), hs) {
 #if GFX_VERx10 >= 125
-      hs.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, false);
+      hs.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                          shader->prog_data->total_scratch,
+                                                          false);
 #else
       hs.PerThreadScratchSpace = get_scratch_space(shader);
       hs.ScratchSpaceBasePointer = get_scratch_address(device, shader);
@@ -690,7 +675,9 @@ emit_hs_shader(struct anv_batch *batch,
       anv_shader_emit_merge(batch, shader, hs.hs_protected,
                             hs_dwords, GENX(3DSTATE_HS), hs) {
 #if GFX_VERx10 >= 125
-         hs.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, true);
+         hs.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                             shader->prog_data->total_scratch,
+                                                             false);
 #else
          hs.PerThreadScratchSpace = get_scratch_space(shader);
          hs.ScratchSpaceBasePointer = get_scratch_address(device, shader);
@@ -738,7 +725,7 @@ emit_ds_shader(struct anv_batch *batch,
    anv_shader_emit_tmp(batch, ds_dwords, GENX(3DSTATE_DS), ds) {
       ds.Enable = true;
       ds.StatisticsEnable = true;
-      ds.KernelStartPointer = anv_shader_get_pointer(device, shader);
+      ds.KernelStartPointer = shader->kernel.offset;
       ds.SamplerCount = get_sampler_count(device, shader);
       ds.BindingTableEntryCount = get_surface_count(device, shader);
       ds.MaximumNumberofThreads = devinfo->max_tes_threads - 1;
@@ -748,7 +735,15 @@ emit_ds_shader(struct anv_batch *batch,
       ds.DispatchGRFStartRegisterForURBData =
          tes_prog_data->base.base.dispatch_grf_start_reg;
 
+#if GFX_VER < 11
+      ds.DispatchMode =
+         tes_prog_data->base.dispatch_mode == DISPATCH_MODE_SIMD8 ?
+         DISPATCH_MODE_SIMD8_SINGLE_PATCH :
+         DISPATCH_MODE_SIMD4X2;
+#else
+      assert(tes_prog_data->base.dispatch_mode == INTEL_DISPATCH_MODE_SIMD8);
       ds.DispatchMode = DISPATCH_MODE_SIMD8_SINGLE_PATCH;
+#endif
 
       ds.UserClipDistanceClipTestEnableBitmask =
          tes_prog_data->base.clip_distance_mask;
@@ -760,14 +755,15 @@ emit_ds_shader(struct anv_batch *batch,
 #endif
 
 #if GFX_VER >= 30
-      ds.RegistersPerThread =
-         intel_register_blocks(devinfo, tes_prog_data->base.base.grf_used);
+      ds.RegistersPerThread = ptl_register_blocks(tes_prog_data->base.base.grf_used);
 #endif
    }
 
    anv_shader_emit_merge(batch, shader, ds.ds, ds_dwords, GENX(3DSTATE_DS), ds) {
 #if GFX_VERx10 >= 125
-      ds.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, false);
+      ds.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                          shader->prog_data->total_scratch,
+                                                          false);
 #else
       ds.PerThreadScratchSpace = get_scratch_space(shader);
       ds.ScratchSpaceBasePointer = get_scratch_address(device, shader);
@@ -777,7 +773,9 @@ emit_ds_shader(struct anv_batch *batch,
       anv_shader_emit_merge(batch, shader, ds.ds_protected,
                             ds_dwords, GENX(3DSTATE_DS), ds) {
 #if GFX_VERx10 >= 125
-         ds.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, true);
+         ds.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                             shader->prog_data->total_scratch,
+                                                             true);
 #else
          ds.PerThreadScratchSpace = get_scratch_space(shader);
          ds.ScratchSpaceBasePointer = get_scratch_address(device, shader);
@@ -799,7 +797,7 @@ emit_gs_shader(struct anv_batch *batch,
    anv_shader_emit_tmp(batch, gs_dwords, GENX(3DSTATE_GS), gs) {
       gs.Enable                  = true;
       gs.StatisticsEnable        = true;
-      gs.KernelStartPointer      = anv_shader_get_pointer(device, shader);
+      gs.KernelStartPointer      = shader->kernel.offset;
 #if GFX_VER < 20
       gs.DispatchMode            = gs_prog_data->base.dispatch_mode;
 #endif
@@ -835,14 +833,15 @@ emit_gs_shader(struct anv_batch *batch,
          gs_prog_data->base.cull_distance_mask;
 
 #if GFX_VER >= 30
-      gs.RegistersPerThread =
-         intel_register_blocks(devinfo, gs_prog_data->base.base.grf_used);
+      gs.RegistersPerThread = ptl_register_blocks(gs_prog_data->base.base.grf_used);
 #endif
    }
 
    anv_shader_emit_merge(batch, shader, gs.gs, gs_dwords, GENX(3DSTATE_GS), gs) {
 #if GFX_VERx10 >= 125
-      gs.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, false);
+      gs.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                          shader->prog_data->total_scratch,
+                                                          false);
 #else
       gs.PerThreadScratchSpace = get_scratch_space(shader);
       gs.ScratchSpaceBasePointer = get_scratch_address(device, shader);
@@ -852,7 +851,9 @@ emit_gs_shader(struct anv_batch *batch,
       anv_shader_emit_merge(batch, shader, gs.gs_protected,
                             gs_dwords, GENX(3DSTATE_GS), gs) {
 #if GFX_VERx10 >= 125
-         gs.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, true);
+         gs.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                             shader->prog_data->total_scratch,
+                                                             true);
 #else
          gs.PerThreadScratchSpace = get_scratch_space(shader);
          gs.ScratchSpaceBasePointer = get_scratch_address(device, shader);
@@ -882,17 +883,21 @@ emit_task_shader(struct anv_batch *batch,
 
    anv_shader_emit_merge(batch, shader, ts.control,
                          task_control_dwords, GENX(3DSTATE_TASK_CONTROL), tc) {
-      tc.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, false);
+      tc.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                          shader->prog_data->total_scratch,
+                                                          false);
    }
    if (device_needs_protected(device)) {
       anv_shader_emit_merge(batch, shader, ts.control_protected,
                             task_control_dwords, GENX(3DSTATE_TASK_CONTROL), tc) {
-         tc.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, true);
+         tc.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                             shader->prog_data->total_scratch,
+                                                             true);
       }
    }
 
    anv_shader_emit(batch, shader, ts.shader, GENX(3DSTATE_TASK_SHADER), task) {
-      task.KernelStartPointer                = anv_shader_get_pointer(device, shader);
+      task.KernelStartPointer                = shader->kernel.offset;
       task.SIMDSize                          = task_dispatch.simd_size / 16;
       task.MessageSIMD                       = task.SIMDSize;
       task.NumberofThreadsinGPGPUThreadGroup = task_dispatch.threads;
@@ -909,14 +914,18 @@ emit_task_shader(struct anv_batch *batch,
                                                       task_dispatch.group_size,
                                                       task_dispatch.simd_size);
 
-      task.EmitInlineParameter = shader->bind_map.inline_dwords_count > 0;
+      /*
+       * 3DSTATE_TASK_SHADER_DATA.InlineData[0:1] will be used for an address
+       * of a buffer with push constants and descriptor set table and
+       * InlineData[2:7] will be used for first few push constants.
+       */
+      task.EmitInlineParameter = true;
       task.IndirectDataLength = align(shader->bind_map.push_ranges[0].length * 32, 64);
 
       task.XP0Required = task_prog_data->uses_drawid;
 
 #if GFX_VER >= 30
-      task.RegistersPerThread =
-         intel_register_blocks(devinfo, task_prog_data->base.base.grf_used);
+      task.RegistersPerThread = ptl_register_blocks(task_prog_data->base.base.grf_used);
 #endif
    }
 
@@ -954,12 +963,16 @@ emit_mesh_shader(struct anv_batch *batch,
 
    anv_shader_emit_merge(batch, shader, ms.control,
                          mesh_control_dwords, GENX(3DSTATE_MESH_CONTROL), mc) {
-      mc.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, false);
+      mc.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                          shader->prog_data->total_scratch,
+                                                          false);
    }
    if (device_needs_protected(device)) {
       anv_shader_emit_merge(batch, shader, ms.control_protected,
                             mesh_control_dwords, GENX(3DSTATE_MESH_CONTROL), mc) {
-         mc.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, true);
+         mc.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                             shader->prog_data->total_scratch,
+                                                             true);
       }
    }
 
@@ -981,7 +994,7 @@ emit_mesh_shader(struct anv_batch *batch,
    }
 
    anv_shader_emit(batch, shader, ms.shader, GENX(3DSTATE_MESH_SHADER), mesh) {
-      mesh.KernelStartPointer                = anv_shader_get_pointer(device, shader);
+      mesh.KernelStartPointer                = shader->kernel.offset;
       mesh.SIMDSize                          = mesh_dispatch.simd_size / 16;
       mesh.MessageSIMD                       = mesh.SIMDSize;
       mesh.NumberofThreadsinGPGPUThreadGroup = mesh_dispatch.threads;
@@ -1005,14 +1018,18 @@ emit_mesh_shader(struct anv_batch *batch,
                                                       mesh_dispatch.group_size,
                                                       mesh_dispatch.simd_size);
 
-      mesh.EmitInlineParameter = shader->bind_map.inline_dwords_count > 0;
+      /*
+       * 3DSTATE_MESH_SHADER_DATA.InlineData[0:1] will be used for an address
+       * of a buffer with push constants and descriptor set table and
+       * InlineData[2:7] will be used for first few push constants.
+       */
+      mesh.EmitInlineParameter = true;
       mesh.IndirectDataLength = align(shader->bind_map.push_ranges[0].length * 32, 64);
 
       mesh.XP0Required = mesh_prog_data->uses_drawid;
 
 #if GFX_VER >= 30
-      mesh.RegistersPerThread =
-         intel_register_blocks(devinfo, mesh_prog_data->base.base.grf_used);
+      mesh.RegistersPerThread = ptl_register_blocks(mesh_prog_data->base.base.grf_used);
 #endif
    }
 
@@ -1068,14 +1085,15 @@ emit_ps_shader(struct anv_batch *batch,
       ps.MaximumNumberofThreadsPerPSD = devinfo->max_threads_per_psd - 1;
 
 #if GFX_VER >= 30
-      ps.RegistersPerThread =
-         intel_register_blocks(devinfo, fs_prog_data->base.grf_used);
+      ps.RegistersPerThread = ptl_register_blocks(fs_prog_data->base.grf_used);
 #endif
    }
 
    anv_shader_emit_merge(batch, shader, ps.ps, ps_dwords, GENX(3DSTATE_PS), ps) {
 #if GFX_VERx10 >= 125
-      ps.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, false);
+      ps.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                          shader->prog_data->total_scratch,
+                                                          false);
 #else
       ps.PerThreadScratchSpace = get_scratch_space(shader);
       ps.ScratchSpaceBasePointer = get_scratch_address(device, shader);
@@ -1085,7 +1103,9 @@ emit_ps_shader(struct anv_batch *batch,
       anv_shader_emit_merge(batch, shader, ps.ps_protected,
                             ps_dwords, GENX(3DSTATE_PS), ps) {
 #if GFX_VERx10 >= 125
-         ps.ScratchSpaceBuffer = get_scratch_surface(batch, device, shader, true);
+         ps.ScratchSpaceBuffer = anv_shader_get_scratch_surf(batch, device, shader->vk.stage,
+                                                             shader->prog_data->total_scratch,
+                                                             true);
 #else
          ps.PerThreadScratchSpace = get_scratch_space(shader);
          ps.ScratchSpaceBasePointer = get_scratch_address(device, shader);
@@ -1149,246 +1169,116 @@ emit_cs_shader(struct anv_batch *batch,
    const struct intel_cs_dispatch_info dispatch =
       brw_cs_get_dispatch_info(devinfo, cs_prog_data, NULL);
 
-   if (GFX_VERx10 >= 350 && device->physical->uses_efficient_64bit) {
-#if GFX_VERx10 >= 350
-      uint8_t pixel_async_compute_thread_limit;
-      uint8_t z_pass_async_compute_thread_limit;
-      uint8_t np_z_async_throttle_settings;
-      const bool slm_or_barrier_enabled =
-         cs_prog_data->base.total_shared != 0 ||
-         cs_prog_data->uses_barrier;
-
-      intel_compute_engine_async_threads_limit(device->info, dispatch.threads,
-                                               slm_or_barrier_enabled,
-                                               cs_prog_data->uses_fence,
-                                               &pixel_async_compute_thread_limit,
-                                               &z_pass_async_compute_thread_limit,
-                                               &np_z_async_throttle_settings);
-
-      struct GENX(COMPUTE_WALKER_BODY_2) walker =  {
-         .MaximumNumberofThreads = devinfo->max_cs_threads * devinfo->subslice_total,
-         .StackIDControl         = genX(compute_walker2_get_stack_id_control_value)(device),
-         .SIMDSize               = dispatch.simd_size / 16,
-         .MessageSIMD            = dispatch.simd_size / 16,
-         .GenerateLocalID        = cs_prog_data->generate_local_id != 0,
-         .EmitLocal              = cs_prog_data->generate_local_id,
-         .EmitInlineParameter    = true,
-         .WalkOrder              = cs_prog_data->walk_order,
-         .TileLayout             = cs_prog_data->walk_order == INTEL_WALK_ORDER_YXZ ?
-                                   TL_TileY32bpe : TL_Linear,
-         .DispatchWalkOrder      = cs_prog_data->uses_sampler ? DWO_Morton2x2XYWalk : DWO_LinearWalk,
-         .ThreadGroupBatchSize   = cs_prog_data->uses_sampler ? TGBS_TG_BATCH_4 : TGBS_TG_BATCH_1,
-         .ExecutionMask          = dispatch.right_mask,
-         .LocalXMaximum          = cs_prog_data->local_size[0] - 1,
-         .LocalYMaximum          = cs_prog_data->local_size[1] - 1,
-         .LocalZMaximum          = cs_prog_data->local_size[2] - 1,
-         .Post_sync_opn0.MOCS    = anv_mocs(device, NULL, 0),
-         .Post_sync_opn1.MOCS    = anv_mocs(device, NULL, 0),
-         .Post_sync_opn2.MOCS    = anv_mocs(device, NULL, 0),
-         .Post_sync_opn3.MOCS    = anv_mocs(device, NULL, 0),
-         .InterfaceDescriptor    = (struct GENX(INTERFACE_DESCRIPTOR_DATA_2)) {
-            .KernelStartPointer                 = anv_shader_get_pointer(device, shader),
-            .RegistersPerThread                 = intel_register_blocks(devinfo,
-                                                                        cs_prog_data->base.grf_used),
-            .NumberofThreadsinGPGPUThreadGroup  = dispatch.threads,
-            .ThreadGroupDispatchSize            = intel_compute_threads_group_dispatch_size_walker_2(dispatch.threads),
-            .SharedLocalMemorySize              = intel_compute_slm_encode_size(GFX_VER, cs_prog_data->base.total_shared),
-            .PreferredSLMAllocationSize         = intel_compute_preferred_slm_calc_encode_size(
-               devinfo, cs_prog_data->base.total_shared, dispatch.group_size, dispatch.simd_size),
-            .NumberOfBarriers                   = cs_prog_data->uses_barrier,
-            .PSAsyncThreadLimit                 = pixel_async_compute_thread_limit,
-            .ZPassAsyncComputeThreadLimit       = z_pass_async_compute_thread_limit,
-            .NP_ZAsyncThrottlesettings          = np_z_async_throttle_settings,
-         },
-      };
-
-      assert(ARRAY_SIZE(shader->cs.gfx350.compute_walker_body_2) >=
-             GENX(COMPUTE_WALKER_BODY_2_length));
-      GENX(COMPUTE_WALKER_BODY_2_pack)(NULL,
-                                       shader->cs.gfx350.compute_walker_body_2,
-                                       &walker);
-#endif /* GFX_VERx10 >= 350 */
-   } else {
 #if GFX_VERx10 >= 125
-      struct GENX(COMPUTE_WALKER_BODY) walker =  {
-         /* HSD 14016252163: Use of Morton walk order (and batching using a batch
-          * size of 4) is expected to increase sampler cache hit rates by
-          * increasing sample address locality within a subslice.
-          */
+   struct GENX(COMPUTE_WALKER_BODY) walker =  {
+      /* HSD 14016252163: Use of Morton walk order (and batching using a batch
+       * size of 4) is expected to increase sampler cache hit rates by
+       * increasing sample address locality within a subslice.
+       */
 #if GFX_VER >= 30
-         .DispatchWalkOrder        = cs_prog_data->uses_sampler ?
-         MortonWalk : LinearWalk,
-         .ThreadGroupBatchSize     = cs_prog_data->uses_sampler ?
-         TG_BATCH_4 : TG_BATCH_1,
+      .DispatchWalkOrder        = cs_prog_data->uses_sampler ?
+                                  MortonWalk : LinearWalk,
+      .ThreadGroupBatchSize     = cs_prog_data->uses_sampler ?
+                                  TG_BATCH_4 : TG_BATCH_1,
 #endif
-         .SIMDSize                       = dispatch.simd_size / 16,
-         .MessageSIMD                    = dispatch.simd_size / 16,
-         .GenerateLocalID                = cs_prog_data->generate_local_id != 0,
-         .EmitLocal                      = cs_prog_data->generate_local_id,
-         .WalkOrder                      = cs_prog_data->walk_order,
-         .TileLayout                     = cs_prog_data->walk_order == INTEL_WALK_ORDER_YXZ ?
-         TileY32bpe : Linear,
-         .LocalXMaximum                  = cs_prog_data->local_size[0] - 1,
-         .LocalYMaximum                  = cs_prog_data->local_size[1] - 1,
-         .LocalZMaximum                  = cs_prog_data->local_size[2] - 1,
-         .PostSync                       = {
-            .MOCS                        = anv_mocs(device, NULL, 0),
-         },
-         .InterfaceDescriptor            = {
-            .KernelStartPointer                = anv_shader_get_pointer(device, shader),
-            .SamplerCount                      = get_sampler_count(device, shader),
-            .BindingTableEntryCount            = MIN2(get_surface_count(device, shader), 31),
-            .NumberofThreadsinGPGPUThreadGroup = dispatch.threads,
-            .SharedLocalMemorySize             = intel_compute_slm_encode_size(
-               GFX_VER, cs_prog_data->base.total_shared),
-            .PreferredSLMAllocationSize        = intel_compute_preferred_slm_calc_encode_size(
-               devinfo, cs_prog_data->base.total_shared,
-               dispatch.group_size, dispatch.simd_size),
-            .NumberOfBarriers                  = cs_prog_data->uses_barrier,
-#if GFX_VER >= 30
-            .RegistersPerThread                =
-            intel_register_blocks(devinfo, cs_prog_data->base.grf_used),
-#endif
-         },
-         .EmitInlineParameter            = shader->bind_map.inline_dwords_count > 0,
-      };
-
-      assert(ARRAY_SIZE(shader->cs.gfx125.compute_walker_body) >=
-             GENX(COMPUTE_WALKER_BODY_length));
-      GENX(COMPUTE_WALKER_BODY_pack)(NULL,
-                                     shader->cs.gfx125.compute_walker_body,
-                                     &walker);
-#else
-      const uint32_t vfe_curbe_allocation =
-         align(cs_prog_data->push.per_thread.regs * dispatch.threads +
-               cs_prog_data->push.cross_thread.regs, 2);
-
-      anv_shader_emit(batch, shader, cs.gfx9.vfe, GENX(MEDIA_VFE_STATE), vfe) {
-         vfe.StackSize              = 0;
-         vfe.MaximumNumberofThreads = devinfo->max_cs_threads * devinfo->subslice_total - 1;
-         vfe.NumberofURBEntries     = 2;
-#if GFX_VER < 11
-         vfe.ResetGatewayTimer      = true;
-#endif
-         vfe.URBEntryAllocationSize = 2;
-         vfe.CURBEAllocationSize    = vfe_curbe_allocation;
-
-         if (cs_prog_data->base.total_scratch) {
-            /* Broadwell's Per Thread Scratch Space is in the range [0, 11]
-             * where 0 = 1k, 1 = 2k, 2 = 4k, ..., 11 = 2M.
-             */
-            vfe.PerThreadScratchSpace = ffs(cs_prog_data->base.total_scratch) - 11;
-            vfe.ScratchSpaceBasePointer = get_scratch_address(device, shader);
-         }
-      }
-
-      struct GENX(INTERFACE_DESCRIPTOR_DATA) desc = {
-         .KernelStartPointer     =
-            anv_shader_get_pointer(device, shader) +
-            brw_cs_prog_data_prog_offset(cs_prog_data, dispatch.simd_size),
-
-         .SamplerCount           = get_sampler_count(device, shader),
-         .BindingTableEntryCount = MIN2(get_surface_count(device, shader), 31),
-         .BarrierEnable          = cs_prog_data->uses_barrier,
-         .SharedLocalMemorySize  = intel_compute_slm_encode_size(
+      .SIMDSize                       = dispatch.simd_size / 16,
+      .MessageSIMD                    = dispatch.simd_size / 16,
+      .GenerateLocalID                = cs_prog_data->generate_local_id != 0,
+      .EmitLocal                      = cs_prog_data->generate_local_id,
+      .WalkOrder                      = cs_prog_data->walk_order,
+      .TileLayout                     = cs_prog_data->walk_order == INTEL_WALK_ORDER_YXZ ?
+                                        TileY32bpe : Linear,
+      .LocalXMaximum                  = cs_prog_data->local_size[0] - 1,
+      .LocalYMaximum                  = cs_prog_data->local_size[1] - 1,
+      .LocalZMaximum                  = cs_prog_data->local_size[2] - 1,
+      .PostSync                       = {
+         .MOCS                        = anv_mocs(device, NULL, 0),
+      },
+      .InterfaceDescriptor            = {
+         .KernelStartPointer                = shader->kernel.offset,
+         .SamplerCount                      = get_sampler_count(device, shader),
+         .BindingTableEntryCount            = MIN2(get_surface_count(device, shader), 31),
+         .NumberofThreadsinGPGPUThreadGroup = dispatch.threads,
+         .SharedLocalMemorySize             = intel_compute_slm_encode_size(
             GFX_VER, cs_prog_data->base.total_shared),
+         .PreferredSLMAllocationSize        = intel_compute_preferred_slm_calc_encode_size(
+            devinfo, cs_prog_data->base.total_shared,
+            dispatch.group_size, dispatch.simd_size),
+         .NumberOfBarriers                  = cs_prog_data->uses_barrier,
+#if GFX_VER >= 30
+         .RegistersPerThread                = ptl_register_blocks(cs_prog_data->base.grf_used),
+#endif
+      },
+      .EmitInlineParameter            = cs_prog_data->uses_inline_push_addr,
+   };
 
-         .ConstantURBEntryReadOffset = 0,
-         .ConstantURBEntryReadLength = cs_prog_data->push.per_thread.regs,
-         .CrossThreadConstantDataReadLength =
+   assert(ARRAY_SIZE(shader->cs.gfx125.compute_walker_body) >=
+          GENX(COMPUTE_WALKER_BODY_length));
+   GENX(COMPUTE_WALKER_BODY_pack)(NULL,
+                                  shader->cs.gfx125.compute_walker_body,
+                                  &walker);
+#else
+   const uint32_t vfe_curbe_allocation =
+      align(cs_prog_data->push.per_thread.regs * dispatch.threads +
+            cs_prog_data->push.cross_thread.regs, 2);
+
+   anv_shader_emit(batch, shader, cs.gfx9.vfe, GENX(MEDIA_VFE_STATE), vfe) {
+      vfe.StackSize              = 0;
+      vfe.MaximumNumberofThreads =
+         devinfo->max_cs_threads * devinfo->subslice_total - 1;
+      vfe.NumberofURBEntries     = 2;
+#if GFX_VER < 11
+      vfe.ResetGatewayTimer      = true;
+#endif
+      vfe.URBEntryAllocationSize = 2;
+      vfe.CURBEAllocationSize    = vfe_curbe_allocation;
+
+      if (cs_prog_data->base.total_scratch) {
+         /* Broadwell's Per Thread Scratch Space is in the range [0, 11]
+          * where 0 = 1k, 1 = 2k, 2 = 4k, ..., 11 = 2M.
+          */
+         vfe.PerThreadScratchSpace = ffs(cs_prog_data->base.total_scratch) - 11;
+         vfe.ScratchSpaceBasePointer = get_scratch_address(device, shader);
+      }
+   }
+
+   struct GENX(INTERFACE_DESCRIPTOR_DATA) desc = {
+      .KernelStartPointer     =
+         shader->kernel.offset +
+         brw_cs_prog_data_prog_offset(cs_prog_data, dispatch.simd_size),
+
+      .SamplerCount           = get_sampler_count(device, shader),
+      .BindingTableEntryCount = MIN2(get_surface_count(device, shader), 31),
+      .BarrierEnable          = cs_prog_data->uses_barrier,
+      .SharedLocalMemorySize  =
+         intel_compute_slm_encode_size(GFX_VER, cs_prog_data->base.total_shared),
+
+      .ConstantURBEntryReadOffset = 0,
+      .ConstantURBEntryReadLength = cs_prog_data->push.per_thread.regs,
+      .CrossThreadConstantDataReadLength =
          cs_prog_data->push.cross_thread.regs,
 #if GFX_VER >= 12
-         /* TODO: Check if we are missing workarounds and enable mid-thread
-          * preemption.
-          *
-          * We still have issues with mid-thread preemption (it was already
-          * disabled by the kernel on gfx11, due to missing workarounds). It's
-          * possible that we are just missing some workarounds, and could enable
-          * it later, but for now let's disable it to fix a GPU in compute in Car
-          * Chase (and possibly more).
-          */
-         .ThreadPreemptionDisable = true,
+      /* TODO: Check if we are missing workarounds and enable mid-thread
+       * preemption.
+       *
+       * We still have issues with mid-thread preemption (it was already
+       * disabled by the kernel on gfx11, due to missing workarounds). It's
+       * possible that we are just missing some workarounds, and could enable
+       * it later, but for now let's disable it to fix a GPU in compute in Car
+       * Chase (and possibly more).
+       */
+      .ThreadPreemptionDisable = true,
 #endif
 #if GFX_VERx10 >= 125
-         .ThreadGroupDispatchSize =
+      .ThreadGroupDispatchSize =
          intel_compute_threads_group_dispatch_size(dispatch.threads),
 #endif
 
-         .NumberofThreadsinGPGPUThreadGroup = dispatch.threads,
-      };
-      GENX(INTERFACE_DESCRIPTOR_DATA_pack)(batch,
-                                           shader->cs.gfx9.idd,
-                                           &desc);
-#endif
-   }
-}
-
-void
-genX(write_cs_descriptor)(struct anv_dgc_cs_descriptor *desc,
-                          struct anv_device *device,
-                          struct anv_shader *shader)
-{
-   const struct anv_pipeline_bind_map *bind_map = &shader->bind_map;
-   const struct anv_push_range *push_range = &bind_map->push_ranges[0];
-
-   *desc = (struct anv_dgc_cs_descriptor) {
-      .push_data_offset = 32 * (push_range->set == ANV_DESCRIPTOR_SET_PUSH_CONSTANTS ?
-                                push_range->start : 0),
+      .NumberofThreadsinGPGPUThreadGroup = dispatch.threads,
    };
-
-   const struct brw_cs_prog_data *prog_data =
-      brw_cs_prog_data_const(shader->prog_data);
-   const struct intel_cs_dispatch_info dispatch =
-      brw_cs_get_dispatch_info(device->info, prog_data, NULL);
-
-   desc->right_mask = dispatch.right_mask;
-   desc->threads = dispatch.threads;
-   desc->simd_size = dispatch.simd_size;
-
-#if GFX_VERx10 >= 125
-   GENX(COMPUTE_WALKER_pack)(NULL, desc->gfx125.compute_walker,
-                             &(struct GENX(COMPUTE_WALKER)) {
-                                GENX(COMPUTE_WALKER_header),
-                                .body = {
-                                   .PostSync.MOCS = anv_mocs(device, NULL, 0),
-                                },
-                             });
-
-   assert(sizeof(desc->gfx125.compute_walker) >
-          sizeof(shader->cs.gfx125.compute_walker_body));
-   for (uint32_t i = 0; i < ARRAY_SIZE(shader->cs.gfx125.compute_walker_body); i++)
-      desc->gfx125.compute_walker[1 + i] |= shader->cs.gfx125.compute_walker_body[i];
-   desc->gfx125.inline_dwords_count = bind_map->inline_dwords_count;
-   assert(sizeof(desc->gfx125.inline_dwords) ==
-          sizeof(bind_map->inline_dwords));
-   memcpy(desc->gfx125.inline_dwords,
-          bind_map->inline_dwords,
-          sizeof(bind_map->inline_dwords));
-
-#else
-   assert(sizeof(desc->gfx9.media_vfe_state) ==
-          shader->cs.gfx9.vfe.len * 4);
-   assert(sizeof(desc->gfx9.interface_descriptor_data) ==
-          sizeof(shader->cs.gfx9.idd));
-
-   memcpy(desc->gfx9.media_vfe_state,
-          &shader->cmd_data[shader->cs.gfx9.vfe.offset],
-          shader->cs.gfx9.vfe.len * 4);
-   memcpy(desc->gfx9.interface_descriptor_data,
-          shader->cs.gfx9.idd,
-          sizeof(desc->gfx9.interface_descriptor_data));
-
-   desc->gfx9.n_threads = dispatch.threads;
-   desc->gfx9.cross_thread_push_size = prog_data->push.cross_thread.size;
-   desc->gfx9.per_thread_push_size = prog_data->push.per_thread.size;
-   desc->gfx9.subgroup_id_offset =
-      offsetof(struct anv_push_constants, subgroup_id) -
-      (32 * push_range->start + prog_data->push.cross_thread.size);
-
-   GENX(GPGPU_WALKER_pack)(NULL, desc->gfx9.gpgpu_walker,
-                           &(struct GENX(GPGPU_WALKER)) {
-                                GENX(GPGPU_WALKER_header),
-                           });
+   GENX(INTERFACE_DESCRIPTOR_DATA_pack)(batch,
+                                        shader->cs.gfx9.idd,
+                                        &desc);
 #endif
 }
 
@@ -1489,7 +1379,7 @@ genX(write_rt_shader_group)(struct anv_device *device,
       assert(shader_count == 1);
       struct anv_shader *shader = container_of(shaders[0], struct anv_shader, vk);
       struct GENX(RT_GENERAL_SBT_HANDLE) sh = {};
-      sh.General = anv_shader_get_bsr(device->info, shader, 32);
+      sh.General = anv_shader_get_bsr(shader, 32);
       GENX(RT_GENERAL_SBT_HANDLE_pack)(NULL, output, &sh);
       break;
    }
@@ -1501,15 +1391,14 @@ genX(write_rt_shader_group)(struct anv_device *device,
       for (uint32_t i = 0; i < shader_count; i++) {
          struct anv_shader *shader = container_of(shaders[i], struct anv_shader, vk);
          if (shader->vk.stage == MESA_SHADER_CLOSEST_HIT) {
-            sh.ClosestHit = anv_shader_get_bsr(device->info, shader, 32);
+            sh.ClosestHit = anv_shader_get_bsr(shader, 32);
          } else if (shader->vk.stage == MESA_SHADER_ANY_HIT) {
-            sh.AnyHit = anv_shader_get_bsr(device->info, shader, 24);
+            sh.AnyHit = anv_shader_get_bsr(shader, 24);
             anyhit_seen = true;
          }
       }
       if (!anyhit_seen)
-         sh.AnyHit = anv_shader_internal_get_bsr(device->info,
-                                                 device->rt_null_ahs, 24);
+         sh.AnyHit = anv_shader_internal_get_bsr(device->rt_null_ahs, 24);
       GENX(RT_TRIANGLES_SBT_HANDLE_pack)(NULL, output, &sh);
       break;
    }
@@ -1524,9 +1413,9 @@ genX(write_rt_shader_group)(struct anv_device *device,
           * this shader groupe type.
           */
          if (shader->vk.stage == MESA_SHADER_CLOSEST_HIT)
-            sh.ClosestHit = anv_shader_get_bsr(device->info, shader, 32);
+            sh.ClosestHit = anv_shader_get_bsr(shader, 32);
          else if (shader->vk.stage == MESA_SHADER_INTERSECTION)
-            sh.Intersection = anv_shader_get_bsr(device->info, shader, 24);
+            sh.Intersection = anv_shader_get_bsr(shader, 24);
          else
             assert(shader->vk.stage == MESA_SHADER_ANY_HIT);
       }

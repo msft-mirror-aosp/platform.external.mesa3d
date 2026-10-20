@@ -27,8 +27,7 @@
 #include <mfobjects.h>
 #include <directx/d3d12.h>
 #include <wrl/client.h>
-
-#include "d3d12_suballoc_mediabuffer_manager.h"
+#include "pipe_headers.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -42,13 +41,11 @@ class CD3D12BitstreamMFBuffer : public IMFMediaBuffer
    DWORD m_dwLength;
    DWORD m_dwOffset;
    BYTE *m_pMappedData;
-   ComPtr<CD3D12ResourceHolder> m_spResourceHolder;
+   pipe_screen *m_pScreen;
+   pipe_resource *m_pOutputBitRes;
 
  public:
-   CD3D12BitstreamMFBuffer( void *logId,
-                            CD3D12ResourceHolder *pResourceHolder,
-                            DWORD length,
-                            DWORD offset );
+   CD3D12BitstreamMFBuffer( void *logId, pipe_context *pPipeContext, pipe_resource *pOutputBitRes, DWORD length, DWORD offset );
    ~CD3D12BitstreamMFBuffer();
 
    // IUnknown

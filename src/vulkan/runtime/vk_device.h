@@ -188,7 +188,6 @@ struct vk_device {
 
    uint32_t current_frame;
    bool trace_hotkey_trigger;
-   bool capture_key_pressed;
    simple_mtx_t trace_mtx;
 
    /* For VK_EXT_private_data */
@@ -322,8 +321,6 @@ struct vk_device {
    uint32_t memory_report_count;
 
    struct vk_pipeline_robustness_state robustness_state;
-
-   FILE *debug_output;
 };
 
 VK_DEFINE_HANDLE_CASTS(vk_device, base, VkDevice,

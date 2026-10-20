@@ -7,6 +7,7 @@
 #include "panvk_device.h"
 #include "panvk_device_memory.h"
 #include "panvk_entrypoints.h"
+#include "panvk_sparse.h"
 
 #include "pan_props.h"
 
@@ -54,8 +55,8 @@ panvk_GetDeviceBufferMemoryRequirements(VkDevice _device,
    pMemoryRequirements->memoryRequirements.alignment = align;
    pMemoryRequirements->memoryRequirements.size = size;
 
-   vk_foreach_struct_const(sType, ext, pMemoryRequirements->pNext) {
-      switch (sType) {
+   vk_foreach_struct_const(ext, pMemoryRequirements->pNext) {
+      switch (ext->sType) {
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
          VkMemoryDedicatedRequirements *dedicated = (void *)ext;
          dedicated->requiresDedicatedAllocation = false;
@@ -63,7 +64,7 @@ panvk_GetDeviceBufferMemoryRequirements(VkDevice _device,
          break;
       }
       default:
-         vk_debug_ignored_stype(sType);
+         vk_debug_ignored_stype(ext->sType);
          break;
       }
    }
@@ -73,8 +74,6 @@ VKAPI_ATTR VkResult VKAPI_CALL
 panvk_BindBufferMemory2(VkDevice _device, uint32_t bindInfoCount,
                         const VkBindBufferMemoryInfo *pBindInfos)
 {
-   VK_FROM_HANDLE(panvk_device, device, _device);
-
    for (uint32_t i = 0; i < bindInfoCount; i++) {
       VK_FROM_HANDLE(panvk_device_memory, mem, pBindInfos[i].memory);
       VK_FROM_HANDLE(panvk_buffer, buffer, pBindInfos[i].buffer);
@@ -89,10 +88,6 @@ panvk_BindBufferMemory2(VkDevice _device, uint32_t bindInfoCount,
          *bind_status->pResult = VK_SUCCESS;
 
       buffer->vk.device_address = mem->addr.dev + pBindInfos[i].memoryOffset;
-
-      panvk_address_binding_report(device, &buffer->vk.base,
-                                   buffer->vk.device_address, buffer->vk.size,
-                                   VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT);
    }
    return VK_SUCCESS;
 }
@@ -135,29 +130,14 @@ panvk_CreateBuffer(VkDevice _device, const VkBufferCreateInfo *pCreateInfo,
          /* Map last so that we don't have a possibility of getting any more
           * errors, in which case we'd have to unmap.
           */
-         struct pan_kmod_vm_op map = {
-            .type = PAN_KMOD_VM_OP_TYPE_MAP,
-            .va = {
-               .start = buffer->vk.device_address,
-               .size = va_range,
-            },
-            .flags = PAN_KMOD_VM_OP_OP_MAP_SPARSE,
-         };
-
-         int ret = pan_kmod_vm_bind(device->kmod.vm,
-                                    PAN_KMOD_VM_OP_MODE_IMMEDIATE, &map, 1);
-         if (ret) {
-            result = panvk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+         result = panvk_map_to_blackhole(device, buffer->vk.device_address,
+                                         va_range);
+         if (result != VK_SUCCESS) {
+            result = panvk_error(device, result);
             goto err_free_va;
          }
       }
    }
-
-   if (buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT)
-      panvk_address_binding_report(device, &buffer->vk.base,
-                                   buffer->vk.device_address,
-                                   panvk_buffer_get_sparse_size(buffer),
-                                   VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT);
 
    *pBuffer = panvk_buffer_to_handle(buffer);
 
@@ -186,10 +166,6 @@ panvk_DestroyBuffer(VkDevice _device, VkBuffer _buffer,
    if (buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) {
       uint64_t va_range = panvk_buffer_get_sparse_size(buffer);
 
-      panvk_address_binding_report(device, &buffer->vk.base,
-                                   buffer->vk.device_address, va_range,
-                                   VK_DEVICE_ADDRESS_BINDING_TYPE_UNBIND_EXT);
-
       struct pan_kmod_vm_op unmap = {
          .type = PAN_KMOD_VM_OP_TYPE_UNMAP,
          .va = {
@@ -203,10 +179,6 @@ panvk_DestroyBuffer(VkDevice _device, VkBuffer _buffer,
 
       panvk_as_free(device, &device->as.heap, buffer->vk.device_address,
                     va_range);
-   } else if (buffer->vk.device_address) {
-      panvk_address_binding_report(device, &buffer->vk.base,
-                                   buffer->vk.device_address, buffer->vk.size,
-                                   VK_DEVICE_ADDRESS_BINDING_TYPE_UNBIND_EXT);
    }
 
    vk_buffer_destroy(&device->vk, pAllocator, &buffer->vk);

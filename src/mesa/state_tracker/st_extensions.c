@@ -206,10 +206,8 @@ void st_init_limits(struct pipe_screen *screen,
    for (sh = 0; sh < MESA_SHADER_MESH_STAGES; ++sh) {
       struct gl_program_constants *pc = &c->Program[sh];
 
-      if (!screen->shader_caps[sh].max_instructions) {
-         pc->MaxTextureImageUnits = 0;
+      if (!screen->shader_caps[sh].max_instructions)
          continue;
-      }
 
       pc->MaxTextureImageUnits =
          _min(screen->shader_caps[sh].max_texture_samplers,
@@ -552,19 +550,16 @@ void st_init_limits(struct pipe_screen *screen,
          extensions->ARB_shader_storage_buffer_object = GL_TRUE;
    }
 
-   c->MaxCombinedImageUniforms =
-      likely(!screen->caps.max_combined_image_uniforms) ?
-      MAX3(
-         c->Program[MESA_SHADER_VERTEX].MaxImageUniforms +
-         c->Program[MESA_SHADER_TESS_CTRL].MaxImageUniforms +
-         c->Program[MESA_SHADER_TESS_EVAL].MaxImageUniforms +
-         c->Program[MESA_SHADER_GEOMETRY].MaxImageUniforms +
-         c->Program[MESA_SHADER_FRAGMENT].MaxImageUniforms,
-         c->Program[MESA_SHADER_TASK].MaxImageUniforms +
-         c->Program[MESA_SHADER_MESH].MaxImageUniforms +
-         c->Program[MESA_SHADER_FRAGMENT].MaxImageUniforms,
-         c->Program[MESA_SHADER_COMPUTE].MaxImageUniforms) :
-      screen->caps.max_combined_image_uniforms;
+   c->MaxCombinedImageUniforms = MAX3(
+      c->Program[MESA_SHADER_VERTEX].MaxImageUniforms +
+      c->Program[MESA_SHADER_TESS_CTRL].MaxImageUniforms +
+      c->Program[MESA_SHADER_TESS_EVAL].MaxImageUniforms +
+      c->Program[MESA_SHADER_GEOMETRY].MaxImageUniforms +
+      c->Program[MESA_SHADER_FRAGMENT].MaxImageUniforms,
+      c->Program[MESA_SHADER_TASK].MaxImageUniforms +
+      c->Program[MESA_SHADER_MESH].MaxImageUniforms +
+      c->Program[MESA_SHADER_FRAGMENT].MaxImageUniforms,
+      c->Program[MESA_SHADER_COMPUTE].MaxImageUniforms);
    c->MaxCombinedShaderOutputResources += c->MaxCombinedImageUniforms;
    c->MaxImageUnits = MAX_IMAGE_UNITS;
    if (c->Program[MESA_SHADER_FRAGMENT].MaxImageUniforms &&
@@ -1106,7 +1101,6 @@ void st_init_extensions(struct pipe_screen *screen,
    EXT_CAP(EXT_depth_bounds_test,            depth_bounds_test);
    EXT_CAP(EXT_disjoint_timer_query,         query_timestamp);
    EXT_CAP(EXT_draw_buffers2,                indep_blend_enable);
-   EXT_CAP(EXT_frag_depth,                   fragment_shader_depth);
    EXT_CAP(EXT_memory_object,                memobj);
 #ifndef _WIN32
    EXT_CAP(EXT_memory_object_fd,             memobj);
@@ -1189,11 +1183,6 @@ void st_init_extensions(struct pipe_screen *screen,
    init_format_extensions(screen, extensions, depthstencil_mapping,
                           ARRAY_SIZE(depthstencil_mapping), PIPE_TEXTURE_2D,
                           PIPE_BIND_DEPTH_STENCIL | PIPE_BIND_SAMPLER_VIEW);
-
-   if (!screen->caps.native_fp32_depth &&
-       (api == API_OPENGL_CORE || api == API_OPENGL_COMPAT))
-      extensions->ARB_depth_buffer_float = GL_FALSE;
-
    init_format_extensions(screen, extensions, texture_mapping,
                           ARRAY_SIZE(texture_mapping), PIPE_TEXTURE_2D,
                           PIPE_BIND_SAMPLER_VIEW);
@@ -1223,10 +1212,6 @@ void st_init_extensions(struct pipe_screen *screen,
        options->force_glsl_version <= GLSLVersion) {
       consts->ForceGLSLVersion = options->force_glsl_version;
    }
-
-   consts->DefaultGLSLVersion = api == API_OPENGLES2 ? 100 : 110;
-   if (options->default_glsl_version)
-      consts->DefaultGLSLVersion = options->default_glsl_version;
 
    consts->ForceCompatShaders = options->force_compat_shaders;
 
@@ -1504,14 +1489,14 @@ void st_init_extensions(struct pipe_screen *screen,
                                                   samples,
                                                   storage_samples,
                                                   PIPE_BIND_RENDER_TARGET)) {
-                     unsigned mode = consts->NumSupportedMultisampleModes;
+                     unsigned i = consts->NumSupportedMultisampleModes;
 
-                     assert(mode < ARRAY_SIZE(consts->SupportedMultisampleModes));
-                     consts->SupportedMultisampleModes[mode].NumColorSamples =
+                     assert(i < ARRAY_SIZE(consts->SupportedMultisampleModes));
+                     consts->SupportedMultisampleModes[i].NumColorSamples =
                         samples;
-                     consts->SupportedMultisampleModes[mode].NumColorStorageSamples =
+                     consts->SupportedMultisampleModes[i].NumColorStorageSamples =
                         storage_samples;
-                     consts->SupportedMultisampleModes[mode].NumDepthStencilSamples =
+                     consts->SupportedMultisampleModes[i].NumDepthStencilSamples =
                         depth_samples;
                      consts->NumSupportedMultisampleModes++;
                   }
@@ -1886,19 +1871,4 @@ void st_init_extensions(struct pipe_screen *screen,
       extensions->NV_copy_depth_to_color = true;
    if (screen->caps.device_protected_surface || screen->caps.device_protected_context)
       extensions->EXT_protected_textures = true;
-
-   /* GL_EXT_YUV_target extends TEXTURE_EXTERNAL_OES / samplerExternalOES with
-    * YUV-aware sampling and framebuffer attachment, so it only makes sense on
-    * top of OES_EGL_image_external, and needs the GLSL/ESSL version that
-    * samplerExternal2DY2YEXT relies on.
-    */
-   if (extensions->OES_EGL_image_external &&
-       (GLSLVersion >= 330 || ESSLVersion >= 300) &&
-       (screen->is_format_supported(screen, PIPE_FORMAT_NV12, PIPE_TEXTURE_2D,
-                                    0, 0,
-                                    PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW) ||
-        screen->is_format_supported(screen, PIPE_FORMAT_YUYV, PIPE_TEXTURE_2D,
-                                    0, 0,
-                                    PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW)))
-      extensions->EXT_YUV_target = GL_TRUE;
 }

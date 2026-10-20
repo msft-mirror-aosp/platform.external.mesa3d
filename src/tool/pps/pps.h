@@ -7,8 +7,10 @@
 
 #pragma once
 
-#include "util/perf/u_perfetto.h"
-#ifdef ANDROID_LIBPERFETTO
+#ifndef ANDROID_LIBPERFETTO
+#include <perfetto.h>
+#else
+#include <perfetto/tracing.h>
 #include <perfetto/common/gpu_counter_descriptor.gen.h>
 #include <perfetto/common/gpu_counter_descriptor.pbzero.h>
 #include <perfetto/config/gpu/gpu_counter_config.pbzero.h>

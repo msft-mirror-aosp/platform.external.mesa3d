@@ -56,7 +56,7 @@ static const VkPresentModeKHR present_modes[] = {
 static VkResult
 wsi_headless_surface_get_capabilities(VkIcdSurfaceBase *surface,
                                       struct wsi_device *wsi_device,
-                                      VkSurfaceCapabilities2KHR* caps)
+                                      VkSurfaceCapabilitiesKHR* caps)
 {
    /* For true mailbox mode, we need at least 4 images:
     *  1) One to scan out from
@@ -64,38 +64,30 @@ wsi_headless_surface_get_capabilities(VkIcdSurfaceBase *surface,
     *  3) One to be currently held by the Wayland compositor
     *  4) One to render to
     */
-   caps->surfaceCapabilities.minImageCount = 4;
+   caps->minImageCount = 4;
    /* There is no real maximum */
-   caps->surfaceCapabilities.maxImageCount = 0;
+   caps->maxImageCount = 0;
 
-   caps->surfaceCapabilities.currentExtent = (VkExtent2D) { -1, -1 };
-   caps->surfaceCapabilities.minImageExtent = (VkExtent2D) { 1, 1 };
-   caps->surfaceCapabilities.maxImageExtent = (VkExtent2D) {
+   caps->currentExtent = (VkExtent2D) { -1, -1 };
+   caps->minImageExtent = (VkExtent2D) { 1, 1 };
+   caps->maxImageExtent = (VkExtent2D) {
       wsi_device->maxImageDimension2D,
       wsi_device->maxImageDimension2D,
    };
 
-   caps->surfaceCapabilities.supportedTransforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-   caps->surfaceCapabilities.currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-   caps->surfaceCapabilities.maxImageArrayLayers = 1;
+   caps->supportedTransforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+   caps->currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+   caps->maxImageArrayLayers = 1;
 
-   caps->surfaceCapabilities.supportedCompositeAlpha =
+   caps->supportedCompositeAlpha =
       VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR |
       VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
 
-   VkImageUsageFlags image_usage = wsi_caps_get_image_usage();
+   caps->supportedUsageFlags = wsi_caps_get_image_usage();
 
    VK_FROM_HANDLE(vk_physical_device, pdevice, wsi_device->pdevice);
    if (pdevice->supported_extensions.EXT_attachment_feedback_loop_layout)
-      image_usage |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
-
-   VkImageUsageFlags2CreateInfoKHR *usage2 =
-      vk_find_struct(caps->pNext, IMAGE_USAGE_FLAGS_2_CREATE_INFO_KHR);
-   if (usage2) {
-      usage2->usage = image_usage;
-   } else {
-      caps->surfaceCapabilities.supportedUsageFlags = image_usage;
-   }
+      caps->supportedUsageFlags |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
 
    return VK_SUCCESS;
 }
@@ -113,18 +105,18 @@ wsi_headless_surface_get_capabilities2(VkIcdSurfaceBase *surface,
 
    VkResult result =
       wsi_headless_surface_get_capabilities(surface, wsi_device,
-                                      caps);
+                                      &caps->surfaceCapabilities);
 
-   vk_foreach_struct(sType, ext, caps->pNext) {
-      switch (sType) {
+   vk_foreach_struct(ext, caps->pNext) {
+      switch (ext->sType) {
       case VK_STRUCTURE_TYPE_SURFACE_PROTECTED_CAPABILITIES_KHR: {
-         VkSurfaceProtectedCapabilitiesKHR *protected = ext;
+         VkSurfaceProtectedCapabilitiesKHR *protected = (void *)ext;
          protected->supportsProtected = VK_FALSE;
          break;
       }
       case VK_STRUCTURE_TYPE_SURFACE_PRESENT_SCALING_CAPABILITIES_KHR: {
          /* Unsupported */
-         VkSurfacePresentScalingCapabilitiesKHR *scaling = ext;
+         VkSurfacePresentScalingCapabilitiesKHR *scaling = (void *)ext;
          scaling->supportedPresentScaling = 0;
          scaling->supportedPresentGravityX = 0;
          scaling->supportedPresentGravityY = 0;
@@ -134,7 +126,7 @@ wsi_headless_surface_get_capabilities2(VkIcdSurfaceBase *surface,
       }
       case VK_STRUCTURE_TYPE_SURFACE_PRESENT_MODE_COMPATIBILITY_KHR: {
          /* Unsupported */
-         VkSurfacePresentModeCompatibilityKHR *compat = ext;
+         VkSurfacePresentModeCompatibilityKHR *compat = (void *)ext;
          if (compat->pPresentModes == NULL) {
             if (!present_mode) {
                wsi_common_vk_warn_once("Use of VkSurfacePresentModeCompatibilityKHR "
@@ -151,7 +143,7 @@ wsi_headless_surface_get_capabilities2(VkIcdSurfaceBase *surface,
       }
 
       case VK_STRUCTURE_TYPE_PRESENT_TIMING_SURFACE_CAPABILITIES_EXT: {
-         VkPresentTimingSurfaceCapabilitiesEXT *wait = ext;
+         VkPresentTimingSurfaceCapabilitiesEXT *wait = (void *)ext;
 
          wait->presentStageQueries = 0;
          wait->presentTimingSupported = VK_FALSE;
@@ -159,28 +151,6 @@ wsi_headless_surface_get_capabilities2(VkIcdSurfaceBase *surface,
          wait->presentAtRelativeTimeSupported = VK_FALSE;
          break;
       }
-
-      case VK_STRUCTURE_TYPE_SWAPCHAIN_FLAGS_SURFACE_CAPABILITIES_EXT: {
-         VkSwapchainFlagsSurfaceCapabilitiesEXT *surface_caps = ext;
-         VK_FROM_HANDLE(vk_physical_device, pdevice, wsi_device->pdevice);
-
-         if (pdevice->supported_extensions.EXT_multisampled_render_to_swapchain)
-            surface_caps->swapchainSupportedFlags |= VK_SWAPCHAIN_CREATE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_BIT_EXT;
-         if (pdevice->supported_extensions.KHR_bind_memory2)
-            surface_caps->swapchainSupportedFlags |= VK_SWAPCHAIN_CREATE_SPLIT_INSTANCE_BIND_REGIONS_BIT_KHR;
-         if (pdevice->supported_extensions.KHR_present_id2)
-            surface_caps->swapchainSupportedFlags |= VK_SWAPCHAIN_CREATE_PRESENT_ID_2_BIT_KHR;
-         if (pdevice->supported_extensions.KHR_present_wait2)
-            surface_caps->swapchainSupportedFlags |= VK_SWAPCHAIN_CREATE_PRESENT_WAIT_2_BIT_KHR;
-         if (pdevice->supported_extensions.KHR_swapchain_mutable_format)
-            surface_caps->swapchainSupportedFlags |= VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR;
-         if (pdevice->supported_extensions.EXT_present_timing)
-            surface_caps->swapchainSupportedFlags |= VK_SWAPCHAIN_CREATE_PRESENT_TIMING_BIT_EXT;
-         if (pdevice->supported_extensions.KHR_swapchain_maintenance1 ||
-             pdevice->supported_extensions.EXT_swapchain_maintenance1)
-            surface_caps->swapchainSupportedFlags |= VK_SWAPCHAIN_CREATE_DEFERRED_MEMORY_ALLOCATION_BIT_EXT;
-      }
-      break;
 
       default:
          /* Ignored */

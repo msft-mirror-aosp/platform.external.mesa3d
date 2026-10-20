@@ -42,6 +42,11 @@
 
 BITSET_WORD intel_debug[BITSET_WORDS(INTEL_DEBUG_MAX)] = {0};
 
+struct debug_control_bitset {
+   const char *string;
+   uint32_t range[2];
+};
+
 static const struct debug_control_bitset debug_control[] = {
 #define OPT1(name, bit) \
    { .string = name, .range = { bit, bit }, }
@@ -63,11 +68,13 @@ static const struct debug_control_bitset debug_control[] = {
    OPT1("urb",               DEBUG_URB),
    OPT1("vs",                DEBUG_VS),
    OPT1("clip",              DEBUG_CLIP),
+   OPT1("no16",              DEBUG_NO16),
    OPT1("blorp",             DEBUG_BLORP),
    OPT1("nodualobj",         DEBUG_NO_DUAL_OBJECT_GS),
    OPT1("optimizer",         DEBUG_OPTIMIZER),
    OPT1("mda",               DEBUG_MDA),
    OPT1("ann",               DEBUG_ANNOTATION),
+   OPT1("no8",               DEBUG_NO8),
    OPT1("no-oaconfig",       DEBUG_NO_OACONFIG),
    OPT1("no-fill-opt",       DEBUG_NO_FILL_OPT),
    OPT1("spill_fs",          DEBUG_SPILL_FS),
@@ -80,6 +87,7 @@ static const struct debug_control_bitset debug_control[] = {
    OPT1("ds",                DEBUG_TES),
    OPT1("tes",               DEBUG_TES),
    OPT1("l3",                DEBUG_L3),
+   OPT1("do32",              DEBUG_DO32),
    OPT1("norbc",             DEBUG_NO_CCS),
    OPT1("noccs",             DEBUG_NO_CCS),
    OPT1("noccs-modifier",    DEBUG_NO_CCS_MODIFIER),
@@ -90,19 +98,16 @@ static const struct debug_control_bitset debug_control[] = {
    OPT1("bt",                DEBUG_BT),
    OPT1("pc",                DEBUG_PIPE_CONTROL),
    OPT1("nofc",              DEBUG_NO_FAST_CLEAR),
+   OPT1("no32",              DEBUG_NO32),
    OPT2("shaders",           DEBUG_VS, DEBUG_RT),
    OPT1("rt",                DEBUG_RT),
    OPT1("rt_notrace",        DEBUG_RT_NO_TRACE),
-   OPT1("rt_noahs",          DEBUG_RT_NO_AHS),
-   OPT1("rt_nochs",          DEBUG_RT_NO_CHS),
    OPT1("bvh_blas",          DEBUG_BVH_BLAS),
    OPT1("bvh_tlas",          DEBUG_BVH_TLAS),
    OPT1("bvh_blas_ir_hdr",   DEBUG_BVH_BLAS_IR_HDR),
    OPT1("bvh_tlas_ir_hdr",   DEBUG_BVH_TLAS_IR_HDR),
    OPT1("bvh_blas_ir_as",    DEBUG_BVH_BLAS_IR_AS),
    OPT1("bvh_tlas_ir_as",    DEBUG_BVH_TLAS_IR_AS),
-   OPT1("bvh_pcrel_map",     DEBUG_BVH_PCREL_MAP),
-   OPT1("bvh_update_as",     DEBUG_BVH_UPDATE_AS),
    OPT1("bvh_no_build",      DEBUG_BVH_NO_BUILD),
    OPT1("task",              DEBUG_TASK),
    OPT1("mesh",              DEBUG_MESH),
@@ -128,7 +133,6 @@ static const struct debug_control_bitset debug_control[] = {
 #undef OPT2
 };
 uint64_t intel_simd = 0;
-unsigned intel_simd_overridden = 0;
 
 static const struct debug_control simd_control[] = {
    { "fs8",    DEBUG_FS_SIMD8 },
@@ -177,24 +181,83 @@ intel_debug_flag_for_shader_stage(mesa_shader_stage stage)
    return flags[stage];
 }
 
+#define DEBUG_FS_SIMD  (DEBUG_FS_SIMD8  | DEBUG_FS_SIMD16  | \
+                        DEBUG_FS_SIMD32)
+#define DEBUG_CS_SIMD  (DEBUG_CS_SIMD8  | DEBUG_CS_SIMD16  | DEBUG_CS_SIMD32)
+#define DEBUG_TS_SIMD  (DEBUG_TS_SIMD8  | DEBUG_TS_SIMD16  | DEBUG_TS_SIMD32)
+#define DEBUG_MS_SIMD  (DEBUG_MS_SIMD8  | DEBUG_MS_SIMD16  | DEBUG_MS_SIMD32)
+#define DEBUG_RT_SIMD  (DEBUG_RT_SIMD8  | DEBUG_RT_SIMD16  | DEBUG_RT_SIMD32)
+
+#define DEBUG_SIMD8_ALL \
+   (DEBUG_FS_SIMD8  | \
+    DEBUG_CS_SIMD8  | \
+    DEBUG_TS_SIMD8  | \
+    DEBUG_MS_SIMD8  | \
+    DEBUG_RT_SIMD8)
+
+#define DEBUG_SIMD16_ALL \
+   (DEBUG_FS_SIMD16 | \
+    DEBUG_CS_SIMD16 | \
+    DEBUG_TS_SIMD16 | \
+    DEBUG_MS_SIMD16 | \
+    DEBUG_RT_SIMD16)
+
+#define DEBUG_SIMD32_ALL \
+   (DEBUG_FS_SIMD32 | \
+    DEBUG_CS_SIMD32 | \
+    DEBUG_TS_SIMD32 | \
+    DEBUG_MS_SIMD32 | \
+    DEBUG_RT_SIMD32)
+
 uint64_t intel_debug_batch_frame_start = 0;
 uint64_t intel_debug_batch_frame_stop = -1;
 
 uint32_t intel_debug_bkp_before_draw_count = 0;
 uint32_t intel_debug_bkp_after_draw_count = 0;
-uint64_t intel_shader_dump_filter = 0;
+uint32_t intel_shader_dump_filter = 0;
 
 uint32_t intel_debug_bkp_before_dispatch_count = 0;
 uint32_t intel_debug_bkp_after_dispatch_count = 0;
 
-uint32_t intel_threads_per_eu_min = -1;
-uint64_t intel_threads_per_eu_srchash = -1;
+static void
+parse_debug_bitset(const char *env, const struct debug_control_bitset *tbl)
+{
+   /* Check if env is NULL or empty */
+   if (!env || !*env)
+      return;
+
+   char *copy = strdup(env);
+   if (!copy)
+      return;
+
+   /* Tokenize the string by space or comma */
+   for (char *tok = strtok(copy, ", "); tok; tok = strtok(NULL, ", ")) {
+      /* Check for negation prefix, useful if user would like to disable certian flags */
+      bool negate = (*tok == '~' || *tok == '-');
+      if (negate)
+         tok++;
+
+      for (unsigned i = 0; tbl[i].string; i++) {
+         if (strcasecmp(tok, tbl[i].string) != 0)
+            continue;
+
+         for (unsigned bit = tbl[i].range[0]; bit <= tbl[i].range[1]; bit++) {
+            if (negate)
+               BITSET_CLEAR(intel_debug, bit);
+            else
+               BITSET_SET(intel_debug, bit);
+         }
+         break;
+      }
+   }
+   free(copy);
+}
 
 static void
 process_intel_debug_variable_once(void)
 {
    BITSET_ZERO(intel_debug);
-   parse_debug_bitset(os_get_option("INTEL_DEBUG"), debug_control, intel_debug);
+   parse_debug_bitset(os_get_option("INTEL_DEBUG"), debug_control);
 
    intel_simd = parse_debug_string(os_get_option("INTEL_SIMD_DEBUG"), simd_control);
    intel_debug_batch_frame_start =
@@ -208,30 +271,15 @@ process_intel_debug_variable_once(void)
       debug_get_num_option("INTEL_DEBUG_BKP_AFTER_DRAW_COUNT", 0);
 
    intel_shader_dump_filter =
-      debug_get_unsigned_option("INTEL_SHADER_DUMP_FILTER", 0);
+      debug_get_num_option("INTEL_SHADER_DUMP_FILTER", 0);
 
    intel_debug_bkp_before_dispatch_count =
       debug_get_num_option("INTEL_DEBUG_BKP_BEFORE_DISPATCH_COUNT", 0);
    intel_debug_bkp_after_dispatch_count =
       debug_get_num_option("INTEL_DEBUG_BKP_AFTER_DISPATCH_COUNT", 0);
 
-   /* If INTEL_SIMD_DEBUG doesn't specify any options for a stage, then all
-    * are allowed, except FS currently disables multipolygon modes by default.
-    */
-   intel_simd_overridden =
-      ((intel_simd & DEBUG_FS_SIMD) ? (1 << MESA_SHADER_FRAGMENT) : 0) |
-      ((intel_simd & DEBUG_CS_SIMD) ? (1 << MESA_SHADER_COMPUTE)  : 0) |
-      ((intel_simd & DEBUG_TS_SIMD) ? (1 << MESA_SHADER_TASK)     : 0) |
-      ((intel_simd & DEBUG_MS_SIMD) ? (1 << MESA_SHADER_MESH)     : 0) |
-      ((intel_simd & DEBUG_RT_SIMD) ? (1 << MESA_SHADER_RAYGEN |
-                                       1 << MESA_SHADER_ANY_HIT |
-                                       1 << MESA_SHADER_CLOSEST_HIT |
-                                       1 << MESA_SHADER_MISS |
-                                       1 << MESA_SHADER_INTERSECTION |
-                                       1 << MESA_SHADER_CALLABLE) : 0);
-
    if (!(intel_simd & DEBUG_FS_SIMD))
-      intel_simd |=   DEBUG_FS_SIMD8 | DEBUG_FS_SIMD16 | DEBUG_FS_SIMD32;
+      intel_simd |=   DEBUG_FS_SIMD;
    if (!(intel_simd & DEBUG_CS_SIMD))
       intel_simd |=   DEBUG_CS_SIMD;
    if (!(intel_simd & DEBUG_TS_SIMD))
@@ -241,35 +289,24 @@ process_intel_debug_variable_once(void)
    if (!(intel_simd & DEBUG_RT_SIMD))
       intel_simd |=   DEBUG_RT_SIMD;
 
-   intel_threads_per_eu_min =
-      debug_get_unsigned_option("INTEL_THREADS_PER_EU_MIN", -1);
-   intel_threads_per_eu_srchash =
-      debug_get_unsigned_option("INTEL_THREADS_PER_EU_SRCHASH", (uint64_t)-1);
+   if (BITSET_TEST(intel_debug, DEBUG_NO8))
+      intel_simd &= ~DEBUG_SIMD8_ALL;
 
-   if (intel_threads_per_eu_min != -1 &&
-       (intel_threads_per_eu_min < 4 || intel_threads_per_eu_min > 10)) {
-         fprintf(stderr, "INTEL_THREADS_PER_EU_MIN = %u is outside valid "
-                 "range [4, 10]. Ignoring\n", intel_threads_per_eu_min);
-         intel_threads_per_eu_min = -1;
-   }
+   if (BITSET_TEST(intel_debug, DEBUG_NO16))
+      intel_simd &= ~DEBUG_SIMD16_ALL;
+
+   if (BITSET_TEST(intel_debug, DEBUG_NO32))
+      intel_simd &= ~DEBUG_SIMD32_ALL;
+
+   BITSET_CLEAR(intel_debug, DEBUG_NO8);
+   BITSET_CLEAR(intel_debug, DEBUG_NO16);
+   BITSET_CLEAR(intel_debug, DEBUG_NO32);
 }
 
 static const struct debug_named_value use_jay_options[] = {
-   { "vs",  BITFIELD_BIT(MESA_SHADER_VERTEX),    "Use jay for vertex shaders"   },
-   { "task",  BITFIELD_BIT(MESA_SHADER_TASK),   "Use jay for task shaders"  },
-   { "tcs", BITFIELD_BIT(MESA_SHADER_TESS_CTRL), "Use jay for tessellation control shaders" },
-   { "tes", BITFIELD_BIT(MESA_SHADER_TESS_EVAL), "Use jay for tessellation evaluation shaders" },
-   { "mesh",  BITFIELD_BIT(MESA_SHADER_MESH),   "Use jay for mesh shaders"  },
-   { "fs",  BITFIELD_BIT(MESA_SHADER_FRAGMENT),  "Use jay for fragment shaders" },
-   { "gs",  BITFIELD_BIT(MESA_SHADER_GEOMETRY),  "Use jay for geometry shaders" },
-   { "cs",  BITFIELD_BIT(MESA_SHADER_COMPUTE),   "Use jay for compute shaders"  },
-   { "rgen",  BITFIELD_BIT(MESA_SHADER_RAYGEN),  "Use jay for raygen shaders"  },
-   { "ahit",  BITFIELD_BIT(MESA_SHADER_ANY_HIT), "Use jay for anyhit shaders"  },
-   { "chit",  BITFIELD_BIT(MESA_SHADER_CLOSEST_HIT),   "Use jay for closest hit shaders"  },
-   { "miss",  BITFIELD_BIT(MESA_SHADER_MISS),          "Use jay for miss shaders"  },
-   { "isec",  BITFIELD_BIT(MESA_SHADER_INTERSECTION),  "Use jay for intersection shaders"  },
-   { "call",  BITFIELD_BIT(MESA_SHADER_CALLABLE),      "Use jay for callable shaders"  },
-   { "all", ~0,         "Use jay for supported shader stages" },
+   { "vs", BITFIELD_BIT(MESA_SHADER_VERTEX),   "Use jay for vertex shaders"   },
+   { "fs", BITFIELD_BIT(MESA_SHADER_FRAGMENT), "Use jay for fragment shaders" },
+   { "cs", BITFIELD_BIT(MESA_SHADER_COMPUTE),  "Use jay for compute shaders"  },
    DEBUG_NAMED_VALUE_END
 };
 
@@ -282,13 +319,13 @@ intel_use_jay(const struct intel_device_info *devinfo, mesa_shader_stage stage)
    if (stage == MESA_SHADER_KERNEL)
       stage = MESA_SHADER_COMPUTE;
 
-   return devinfo->ver >= 20 && (use_jay & BITFIELD_BIT(stage));
+   return devinfo->ver == 20 && (use_jay & BITFIELD_BIT(stage));
 }
 
 bool
 intel_use_jay_any_stage(const struct intel_device_info *devinfo)
 {
-   return devinfo->ver >= 20 && use_jay;
+   return devinfo->ver == 20 && use_jay;
 }
 
 void

@@ -23,7 +23,11 @@
 
 #include "vulkan/runtime/vk_object.h"
 
-#include "util/perf/u_perfetto.h"
+#ifndef ANDROID_LIBPERFETTO
+#include <perfetto.h>
+#else
+#include <perfetto/tracing.h>
+#endif
 
 #include "util/hash_table.h"
 #include "util/perf/u_trace.h"
@@ -74,8 +78,6 @@ class MesaRenderpassDataSource
     : public perfetto::DataSource<DataSourceType, DataSourceTraits> {
 
  public:
-   constexpr static perfetto::BufferExhaustedPolicy kBufferExhaustedPolicy =
-      perfetto::BufferExhaustedPolicy::kStall;
    typedef typename perfetto::DataSource<DataSourceType,
                                          DataSourceTraits>::TraceContext
       TraceContext;

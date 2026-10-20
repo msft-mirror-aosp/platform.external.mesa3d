@@ -64,16 +64,6 @@ what the change does, and justify that change in the commit messages.
 Using coding assistants or "AI" or other tools does not grant additional
 privileges or reduce our expectations.
 
-"AI" shouldn't be used to generate code comments, commit messages, and
-Gitlab comments. Every contributor should communicate with the community
-directly without other people or tools in the middle. We want contributors
-to develop and practice their own communication and technical writing.
-Those skills deteriorate if they are not used.
-
-Consequentially, contributors can use "AI" for research etc., but all text
-should be their own words. They should get to know the community through
-normal communication and the community should be able to get to know them.
-
 Disclosure is always required when "AI" was involved in the creative
 process of coming up with the code, except in the following cases:
 
@@ -159,7 +149,7 @@ Patch formatting
 
    ::
 
-      Closes: https://gitlab.freedesktop.org/mesa/mesa/-/work_items/1
+      Closes: https://gitlab.freedesktop.org/mesa/mesa/-/issues/1
 
    Prefer the full URL to just ``Closes: #1``, since the URL makes it
    easier to get to the bug page from ``git log``
@@ -222,14 +212,8 @@ You can produce those fixes lines by running this command once::
 
 After that, using ``git fixes <sha1>`` will print the full line for you.
 
-.. warning::
-   Reverted commits are *not* automatically backported! You need to include the
-   ``Fixes:`` tag for the commit it reverts if you want to backport the revert
-   everywhere, or the ``Backport-to: YY.N`` tag if you want to backport it only
-   in a specific release branch.
-
 The stable tag
---------------
+~~~~~~~~~~~~~~
 
 If you want a commit to be applied to a stable branch, you should add an
 appropriate note to the commit message.
@@ -438,25 +422,6 @@ merge request for someone else to do it for them, or reach on
 Do not merge someone else's MR unless you are sure they don't have a new
 version that they are testing locally for instance.
 **When in doubt, ask**, for instance by leaving a comment on that MR.
-
-Common issues when merging
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``This branch couldn't be merged: Manual Step encountered with run-manual-jobs set to False``
-   The Marge script rebases the MR's branch onto the MR's target branch
-   (usually ``main``) and adds some extra info to the commit messages (e.g.
-   ``Part-of:`` which contains the URL back to the MR that merged the commit).
-   If there is nothing to rebase and nothing to add to the commit messages
-   (e.g. if the user took the commits from Marge, modified them and pushed
-   that), then Marge will have nothing to push, skipping the creation of the
-   merge pipeline.
-
-   The solution is to either wait until something else is merged, causing
-   Marge to rebase, or remove the ``Part-of:`` trailer from at least one
-   commit message (the top commit is enough, not need to edit all of them),
-   causing Marge to add it back. Either of these causes Marge to push new
-   commits, falling back into the normal case.
-
 
 Nominating a commit for a stable branch
 ---------------------------------------

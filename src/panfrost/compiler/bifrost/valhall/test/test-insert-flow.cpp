@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2022 Collabora, Ltd.
- * Copyright (C) 2026 Arm Ltd.
  * SPDX-License-Identifier: MIT
  */
 
@@ -259,20 +258,6 @@ TEST_F(InsertFlow, BarrierBug)
       flow(WAIT2);
       bi_barrier(b);
       flow(WAIT);
-      flow(END);
-   });
-}
-
-TEST_F(InsertFlow, SerializeAtomOpcAumin)
-{
-   CASE(COMPUTE, {
-      bi_atom_return_i32_to(b, bi_register(0), bi_register(0), bi_register(0),
-                            bi_register(0), BI_ATOM_OPC_AADD, 0);
-
-      flow(WAIT0);
-      bi_atom_return_i32_to(b, bi_register(0), bi_register(0), bi_register(0),
-                            bi_register(0), BI_ATOM_OPC_AUMIN, 0);
-
       flow(END);
    });
 }

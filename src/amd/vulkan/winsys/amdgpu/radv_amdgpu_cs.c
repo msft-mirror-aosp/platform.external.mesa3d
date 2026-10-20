@@ -11,7 +11,6 @@
 #include <stdlib.h>
 #include "drm-uapi/amdgpu_drm.h"
 
-#include "tools/radv_debug.h"
 #include "util/detect_os.h"
 #include "util/os_time.h"
 #include "util/u_memory.h"
@@ -21,6 +20,7 @@
 #include "radv_amdgpu_bo.h"
 #include "radv_amdgpu_cs.h"
 #include "radv_amdgpu_winsys.h"
+#include "radv_debug.h"
 #include "radv_radeon_winsys.h"
 #include "sid.h"
 #include "vk_drm_syncobj.h"
@@ -203,8 +203,8 @@ radv_amdgpu_cs_domain(const struct radeon_winsys *_ws)
 {
    const struct radv_amdgpu_winsys *ws = (const struct radv_amdgpu_winsys *)_ws;
 
-   bool enough_vram = ws->info.all_vram_visible || p_atomic_read_relaxed(&ws->alloc_tracker->allocated_vram_vis) * 2 <=
-                                                      (uint64_t)ws->info.vram_vis_size_kb * 1024;
+   bool enough_vram = ws->info.all_vram_visible ||
+                      p_atomic_read_relaxed(&ws->allocated_vram_vis) * 2 <= (uint64_t)ws->info.vram_vis_size_kb * 1024;
 
    /* Bandwidth should be equivalent to at least PCIe 3.0 x8.
     * If there is no PCIe info, assume there is enough bandwidth.
@@ -791,7 +791,7 @@ radv_amdgpu_cs_chain_dgc_ib(struct ac_cmdbuf *_cs, uint64_t va, uint32_t cdw, ui
       /* Writeback L2 because CP isn't coherent with L2 on GFX6-8. */
       if (cs->ws->info.gfx_level == GFX8) {
          ac_emit_cp_acquire_mem(&cs->base, GFX8, AMD_IP_COMPUTE, V_581A_MICRO_ENGINE,
-                                S_0301F0_TC_WB_ACTION_ENA(1) | S_0301F0_TC_NC_ACTION_ENA(1), NULL, NULL);
+                                S_0301F0_TC_WB_ACTION_ENA(1) | S_0301F0_TC_NC_ACTION_ENA(1));
       }
 
       /* Finalize the current CS. */
@@ -1268,7 +1268,7 @@ radv_amdgpu_winsys_cs_submit(struct radeon_winsys_ctx *_ctx, const struct radv_w
       if (waits[i].sync->type == &vk_sync_dummy_type)
          continue;
 
-      assert(vk_sync_type_is_drm_syncobj(waits[i].sync->type));
+      assert(waits[i].sync->type == &ws->syncobj_sync_type);
       wait_syncobj[wait_idx] = ((struct vk_drm_syncobj *)waits[i].sync)->syncobj;
       wait_points[wait_idx] = waits[i].wait_value;
       ++wait_idx;
@@ -1278,7 +1278,7 @@ radv_amdgpu_winsys_cs_submit(struct radeon_winsys_ctx *_ctx, const struct radv_w
       if (signals[i].sync->type == &vk_sync_dummy_type)
          continue;
 
-      assert(vk_sync_type_is_drm_syncobj(signals[i].sync->type));
+      assert(signals[i].sync->type == &ws->syncobj_sync_type);
       signal_syncobj[signal_idx] = ((struct vk_drm_syncobj *)signals[i].sync)->syncobj;
       signal_points[signal_idx] = signals[i].signal_value;
       ++signal_idx;
@@ -1287,8 +1287,10 @@ radv_amdgpu_winsys_cs_submit(struct radeon_winsys_ctx *_ctx, const struct radv_w
    assert(signal_idx <= signal_count);
    assert(wait_idx <= wait_count);
 
-   const uint32_t wait_timeline_syncobj_count = ws->info.has_timeline_syncobj ? wait_idx : 0;
-   const uint32_t signal_timeline_syncobj_count = ws->info.has_timeline_syncobj ? signal_idx : 0;
+   const uint32_t wait_timeline_syncobj_count =
+      (ws->syncobj_sync_type.features & VK_SYNC_FEATURE_TIMELINE) ? wait_idx : 0;
+   const uint32_t signal_timeline_syncobj_count =
+      (ws->syncobj_sync_type.features & VK_SYNC_FEATURE_TIMELINE) ? signal_idx : 0;
 
    struct radv_winsys_sem_info sem_info = {
       .wait =
@@ -1376,9 +1378,6 @@ radv_amdgpu_winsys_get_cpu_addr(void *_cs, uint64_t addr, struct ac_addr_info *i
       }
    }
    u_rwlock_rdunlock(&cs->ws->global_bo_list.lock);
-
-   if (cs->chained_to)
-      radv_amdgpu_winsys_get_cpu_addr(cs->chained_to, addr, info);
 
    return;
 }
@@ -1513,12 +1512,29 @@ radv_amdgpu_winsys_cs_annotate(struct ac_cmdbuf *_cs, const char *annotation)
    }
 }
 
+static uint32_t
+radv_to_amdgpu_priority(enum radeon_ctx_priority radv_priority)
+{
+   switch (radv_priority) {
+   case RADEON_CTX_PRIORITY_REALTIME:
+      return AMDGPU_CTX_PRIORITY_VERY_HIGH;
+   case RADEON_CTX_PRIORITY_HIGH:
+      return AMDGPU_CTX_PRIORITY_HIGH;
+   case RADEON_CTX_PRIORITY_MEDIUM:
+      return AMDGPU_CTX_PRIORITY_NORMAL;
+   case RADEON_CTX_PRIORITY_LOW:
+      return AMDGPU_CTX_PRIORITY_LOW;
+   default:
+      UNREACHABLE("Invalid context priority");
+   }
+}
+
 static VkResult
 radv_amdgpu_ctx_create(struct radeon_winsys *_ws, enum radeon_ctx_priority priority, struct radeon_winsys_ctx **rctx)
 {
    struct radv_amdgpu_winsys *ws = radv_amdgpu_winsys(_ws);
    struct radv_amdgpu_ctx *ctx = CALLOC_STRUCT(radv_amdgpu_ctx);
-   uint32_t amdgpu_priority = radeon_to_amdgpu_priority(priority);
+   uint32_t amdgpu_priority = radv_to_amdgpu_priority(priority);
    VkResult result;
    int r;
 
@@ -1571,6 +1587,25 @@ radv_amdgpu_ctx_destroy(struct radeon_winsys_ctx *rwctx)
    FREE(ctx);
 }
 
+static VkResult
+radv_amdgpu_ctx_is_priority_permitted(struct radeon_winsys *_ws, enum radeon_ctx_priority priority)
+{
+   struct radv_amdgpu_winsys *ws = radv_amdgpu_winsys(_ws);
+   uint32_t amdgpu_priority = radv_to_amdgpu_priority(priority);
+   uint32_t ctx_handle;
+   int r;
+
+   r = ac_drm_cs_ctx_create2(ws->dev, amdgpu_priority, &ctx_handle);
+   if (r && r == -EACCES) {
+      return VK_ERROR_NOT_PERMITTED;
+   } else if (r) {
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+   }
+
+   ac_drm_cs_ctx_free(ws->dev, ctx_handle);
+   return VK_SUCCESS;
+}
+
 static uint32_t
 radv_amdgpu_ctx_queue_syncobj(struct radv_amdgpu_ctx *ctx, unsigned ip, unsigned ring)
 {
@@ -1621,28 +1656,28 @@ radv_to_amdgpu_pstate(enum radeon_ctx_pstate radv_pstate)
 }
 
 static int
-radv_amdgpu_ctx_set_pstate(struct radeon_winsys_ctx *rwctx, enum radeon_ctx_pstate pstate, uint64_t timeout)
+radv_amdgpu_ctx_set_pstate(struct radeon_winsys_ctx *rwctx, enum radeon_ctx_pstate pstate)
 {
    struct radv_amdgpu_ctx *ctx = (struct radv_amdgpu_ctx *)rwctx;
    uint32_t new_pstate = radv_to_amdgpu_pstate(pstate);
+   uint32_t current_pstate = 0;
    int r;
 
-   /* The kernel might return -EBUSY with many parallel processes because pstate is per-device, and
-    * not per-context. This happens frequently with dEQP using performance query.
-    */
-   const uint64_t abs_timeout_ns = os_time_get_absolute_timeout(timeout);
-
-   r = 0;
-   do {
-      /* Wait 1 ms and try again. */
-      if (r == -EBUSY)
-         os_time_sleep(1000);
-
-      r = ac_drm_cs_ctx_stable_pstate(ctx->ws->dev, ctx->ctx_handle, AMDGPU_CTX_OP_SET_STABLE_PSTATE, new_pstate, NULL);
-   } while (r == -EBUSY && os_time_get_nano() < abs_timeout_ns);
-
+   r = ac_drm_cs_ctx_stable_pstate(ctx->ws->dev, ctx->ctx_handle, AMDGPU_CTX_OP_GET_STABLE_PSTATE, 0, &current_pstate);
    if (r) {
-      fprintf(stderr, "radv/amdgpu: failed to set new pstate. (%i)\n", r);
+      fprintf(stderr, "radv/amdgpu: failed to get current pstate\n");
+      return r;
+   }
+
+   /* Do not try to set a new pstate when the current one is already what we want. Otherwise, the
+    * kernel might return -EBUSY if we have multiple AMDGPU contexts in flight.
+    */
+   if (current_pstate == new_pstate)
+      return 0;
+
+   r = ac_drm_cs_ctx_stable_pstate(ctx->ws->dev, ctx->ctx_handle, AMDGPU_CTX_OP_SET_STABLE_PSTATE, new_pstate, NULL);
+   if (r) {
+      fprintf(stderr, "radv/amdgpu: failed to set new pstate\n");
       return r;
    }
 
@@ -1887,6 +1922,7 @@ radv_amdgpu_cs_init_functions(struct radv_amdgpu_winsys *ws)
 {
    ws->base.ctx_create = radv_amdgpu_ctx_create;
    ws->base.ctx_destroy = radv_amdgpu_ctx_destroy;
+   ws->base.ctx_is_priority_permitted = radv_amdgpu_ctx_is_priority_permitted;
    ws->base.ctx_wait_idle = radv_amdgpu_ctx_wait_idle;
    ws->base.ctx_set_pstate = radv_amdgpu_ctx_set_pstate;
    ws->base.cs_domain = radv_amdgpu_cs_domain;

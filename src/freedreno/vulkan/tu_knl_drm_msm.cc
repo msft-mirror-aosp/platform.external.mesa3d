@@ -15,9 +15,10 @@
 #include "util/hash_table.h"
 #include "util/libsync.h"
 #include "util/u_debug.h"
+#include "util/u_process.h"
+#include "vk_util.h"
 
 #include "common/redump.h"
-#include "drm/msm/msm_common.h"
 #include "tu_cmd_buffer.h"
 #include "tu_cs.h"
 #include "tu_device.h"
@@ -33,23 +34,129 @@ tu_drm_get_param(int fd, uint32_t param, uint64_t *value)
    /* Technically this requires a pipe, but the kernel only supports one pipe
     * anyway at the time of writing and most of these are clearly pipe
     * independent. */
-   return msm_common_get_param(fd, MSM_PIPE_3D0, param, value);
+   struct drm_msm_param req = {
+      .pipe = MSM_PIPE_3D0,
+      .param = param,
+   };
+
+   int ret = drmCommandWriteRead(fd, DRM_MSM_GET_PARAM, &req, sizeof(req));
+   if (ret)
+      return ret;
+
+   *value = req.value;
+
+   return 0;
 }
 
-static uint64_t
-tu_drm_get_param_or(int fd, uint32_t param, uint64_t *value, uint64_t default_value)
+static int
+tu_drm_get_gpu_id(const struct tu_physical_device *dev, uint32_t *id)
 {
-   int ret = tu_drm_get_param(fd, param, value);
+   uint64_t value;
+   int ret = tu_drm_get_param(dev->local_fd, MSM_PARAM_GPU_ID, &value);
    if (ret)
-      return default_value;
+      return ret;
 
-   return *value;
+   *id = value;
+   return 0;
+}
+
+static int
+tu_drm_get_gmem_size(const struct tu_physical_device *dev, uint32_t *size)
+{
+   uint64_t value;
+   int ret = tu_drm_get_param(dev->local_fd, MSM_PARAM_GMEM_SIZE, &value);
+   if (ret)
+      return ret;
+
+   *size = value;
+   return 0;
+}
+
+static int
+tu_drm_get_gmem_base(const struct tu_physical_device *dev, uint64_t *base)
+{
+   return tu_drm_get_param(dev->local_fd, MSM_PARAM_GMEM_BASE, base);
+}
+
+static bool
+tu_drm_get_raytracing(const struct tu_physical_device *dev)
+{
+   uint64_t value;
+   int ret = tu_drm_get_param(dev->local_fd, MSM_PARAM_RAYTRACING, &value);
+   if (ret)
+      return false;
+
+   return value;
+}
+
+static bool
+tu_drm_get_prr(const struct tu_physical_device *dev)
+{
+   uint64_t value;
+   int ret = tu_drm_get_param(dev->local_fd, MSM_PARAM_HAS_PRR, &value);
+   if (ret)
+      return false;
+
+   return value;
+}
+
+static int
+tu_drm_get_va_prop(const struct tu_physical_device *dev,
+                   uint64_t *va_start, uint64_t *va_size)
+{
+   uint64_t value;
+   int ret = tu_drm_get_param(dev->local_fd, MSM_PARAM_VA_START, &value);
+   if (ret)
+      return ret;
+
+   *va_start = value;
+
+   ret = tu_drm_get_param(dev->local_fd, MSM_PARAM_VA_SIZE, &value);
+   if (ret)
+      return ret;
+
+   *va_size = value;
+
+   return 0;
+}
+
+static bool
+tu_drm_has_preemption(const struct tu_physical_device *dev)
+{
+   struct drm_msm_submitqueue req = {
+      .flags = MSM_SUBMITQUEUE_ALLOW_PREEMPT,
+      .prio = dev->submitqueue_priority_count / 2,
+   };
+
+   int ret = drmCommandWriteRead(dev->local_fd,
+                                 DRM_MSM_SUBMITQUEUE_NEW, &req, sizeof(req));
+   if (ret)
+      return false;
+
+   drmCommandWrite(dev->local_fd, DRM_MSM_SUBMITQUEUE_CLOSE, &req.id,
+                   sizeof(req.id));
+   return true;
+}
+
+static int
+tu_drm_set_param(int fd, uint32_t param, uint64_t value, uint32_t len)
+{
+   struct drm_msm_param param_req = {
+      .pipe = MSM_PIPE_3D0,
+      .param = param,
+      .value = value,
+      .len = len,
+   };
+
+   int ret = drmCommandWriteRead(fd, DRM_MSM_SET_PARAM, &param_req,
+                                 sizeof(param_req));
+   return ret;
 }
 
 static int
 tu_try_enable_vm_bind(int fd)
 {
-   return msm_common_set_param(fd, MSM_PIPE_3D0, MSM_PARAM_EN_VM_BIND, 1, 0);
+   return tu_drm_set_param(fd, MSM_PARAM_EN_VM_BIND, 1, 0);
 }
 
 static void
@@ -58,7 +165,86 @@ tu_drm_set_debuginfo(int fd)
    if (!TU_DEBUG(COMM))
       return;
 
-   msm_common_set_debuginfo(fd, MSM_PIPE_3D0);
+   const char *comm = util_get_process_name();
+   if (comm)
+      tu_drm_set_param(fd, MSM_PARAM_COMM, (uintptr_t)comm, strlen(comm));
+
+   static char cmdline[0x1000];
+   if (util_get_command_line(cmdline, sizeof(cmdline)))
+      tu_drm_set_param(fd, MSM_PARAM_CMDLINE, (uintptr_t)cmdline, strlen(cmdline));
+}
+
+static uint32_t
+tu_drm_get_priorities(const struct tu_physical_device *dev)
+{
+   uint64_t val = 1;
+   tu_drm_get_param(dev->local_fd, MSM_PARAM_PRIORITIES, &val);
+   assert(val >= 1);
+
+   return val;
+}
+
+static uint32_t
+tu_drm_get_highest_bank_bit(const struct tu_physical_device *dev)
+{
+   uint64_t value;
+   int ret = tu_drm_get_param(dev->local_fd, MSM_PARAM_HIGHEST_BANK_BIT, &value);
+   if (ret)
+      return 0;
+
+   return value;
+}
+
+static enum fdl_macrotile_mode
+tu_drm_get_macrotile_mode(const struct tu_physical_device *dev)
+{
+   uint64_t value;
+   int ret = tu_drm_get_param(dev->local_fd, MSM_PARAM_MACROTILE_MODE, &value);
+   if (ret)
+      return FDL_MACROTILE_INVALID;
+
+   return (enum fdl_macrotile_mode) value;
+}
+
+static uint32_t
+tu_drm_get_ubwc_swizzle(const struct tu_physical_device *dev)
+{
+   uint64_t value;
+   int ret = tu_drm_get_param(dev->local_fd, MSM_PARAM_UBWC_SWIZZLE, &value);
+   if (ret)
+      return ~0;
+
+   return value;
+}
+
+static uint64_t
+tu_drm_get_uche_trap_base(const struct tu_physical_device *dev)
+{
+   uint64_t value;
+   int ret = tu_drm_get_param(dev->local_fd, MSM_PARAM_UCHE_TRAP_BASE, &value);
+   if (ret)
+      return 0x1fffffffff000ull;
+
+   return value;
+}
+
+static bool
+tu_drm_is_memory_type_supported(int fd, uint32_t flags)
+{
+   struct drm_msm_gem_new req_alloc = { .size = 0x1000, .flags = flags };
+
+   int ret =
+      drmCommandWriteRead(fd, DRM_MSM_GEM_NEW, &req_alloc, sizeof(req_alloc));
+   if (ret) {
+      return false;
+   }
+
+   struct drm_gem_close req_close = {
+      .handle = req_alloc.handle,
+   };
+   drmIoctl(fd, DRM_IOCTL_GEM_CLOSE, &req_close);
+
+   return true;
 }
 
 static VkResult
@@ -75,8 +261,8 @@ msm_device_init(struct tu_device *dev)
    if (dev->physical_device->has_vm_bind) {
       ret = tu_try_enable_vm_bind(fd);
       if (ret != 0) {
-         close(fd);
-         return vk_startup_errorf(dev->physical_device->instance, VK_ERROR_INITIALIZATION_FAILED,
+         return vk_startup_errorf(dev->physical_device->instance,
+                                  VK_ERROR_INITIALIZATION_FAILED,
                                   "Failed to enable VM_BIND mode: %d", ret);
       }
 
@@ -229,16 +415,31 @@ msm_submitqueue_close(struct tu_device *dev, struct tu_queue *queue)
    }
 }
 
+static void
+tu_gem_close(const struct tu_device *dev, uint32_t gem_handle)
+{
+   struct drm_gem_close req = {
+      .handle = gem_handle,
+   };
+
+   drmIoctl(dev->fd, DRM_IOCTL_GEM_CLOSE, &req);
+}
+
 /** Helper for DRM_MSM_GEM_INFO, returns 0 on error. */
 static uint64_t
 tu_gem_info(const struct tu_device *dev, uint32_t gem_handle, uint32_t info)
 {
-   uint64_t value;
-   int ret = msm_common_gem_info_get(dev->fd, gem_handle, info, &value);
-   if (ret)
+   struct drm_msm_gem_info req = {
+      .handle = gem_handle,
+      .info = info,
+   };
+
+   int ret = drmCommandWriteRead(dev->fd,
+                                 DRM_MSM_GEM_INFO, &req, sizeof(req));
+   if (ret < 0)
       return 0;
 
-   return value;
+   return req.value;
 }
 
 static VkResult
@@ -252,7 +453,15 @@ tu_wait_fence(struct tu_device *dev,
    if (fence < 0)
       return VK_SUCCESS;
 
-   int ret = msm_common_wait_fence(dev->fd, queue_id, fence, timeout_ns);
+   struct drm_msm_wait_fence req = {
+      .fence = fence,
+      .queueid = queue_id,
+   };
+   int ret;
+
+   get_abs_timeout(&req.timeout, timeout_ns);
+
+   ret = drmCommandWrite(dev->fd, DRM_MSM_WAIT_FENCE, &req, sizeof(req));
    if (ret) {
       if (ret == -ETIMEDOUT) {
          return VK_TIMEOUT;
@@ -265,7 +474,7 @@ tu_wait_fence(struct tu_device *dev,
    return VK_SUCCESS;
 }
 
-static VkResult
+VkResult
 msm_queue_wait_fence(struct tu_queue *queue, uint32_t fence,
                      uint64_t timeout_ns)
 {
@@ -321,7 +530,7 @@ tu_free_zombie_vma_locked(struct tu_device *dev, bool wait)
             return VK_ERROR_UNKNOWN;
          }
 
-         msm_common_gem_close(dev->fd, vma->gem_handle);
+         tu_gem_close(dev, vma->gem_handle);
 
          util_vma_heap_free(&dev->vma, vma->iova, vma->size);
       }
@@ -355,7 +564,6 @@ static VkResult
 msm_allocate_userspace_iova_locked(struct tu_device *dev,
                                    uint32_t gem_handle,
                                    uint64_t size,
-                                   uint64_t align,
                                    uint64_t client_iova,
                                    enum tu_bo_alloc_flags flags,
                                    uint64_t *iova)
@@ -370,7 +578,7 @@ msm_allocate_userspace_iova_locked(struct tu_device *dev,
 
    tu_free_zombie_vma_locked(dev, false);
 
-   result = tu_allocate_userspace_iova(dev, size, align, client_iova, flags, iova);
+   result = tu_allocate_userspace_iova(dev, size, client_iova, flags, iova);
    if (result == VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS) {
       /* Address may be already freed by us, but not considered as
        * freed by the kernel. We have to wait until all work that
@@ -378,7 +586,7 @@ msm_allocate_userspace_iova_locked(struct tu_device *dev,
        * be replayed only by debug tooling, it should be ok to wait.
        */
       tu_free_zombie_vma_locked(dev, true);
-      result = tu_allocate_userspace_iova(dev, size, align, client_iova, flags, iova);
+      result = tu_allocate_userspace_iova(dev, size, client_iova, flags, iova);
    }
 
    return result;
@@ -540,7 +748,6 @@ static VkResult
 tu_allocate_iova(struct tu_device *dev,
                  uint32_t gem_handle, /* only for BOs imported via dma-buf */
                  uint64_t size,
-                 uint64_t align,
                  uint64_t client_iova,
                  enum tu_bo_alloc_flags flags,
                  uint64_t *iova)
@@ -550,10 +757,10 @@ tu_allocate_iova(struct tu_device *dev,
    msm_vma_lock(dev);
 
    if (dev->physical_device->has_vm_bind) {
-      result = tu_allocate_userspace_iova(dev, size, align, client_iova, flags, iova);
+      result = tu_allocate_userspace_iova(dev, size, client_iova, flags, iova);
    } else if (dev->physical_device->has_set_iova) {
       assert(dev->physical_device->has_set_iova);
-      result = msm_allocate_userspace_iova_locked(dev, gem_handle, size, align,
+      result = msm_allocate_userspace_iova_locked(dev, gem_handle, size,
                                                   client_iova, flags, iova);
    }
 
@@ -562,7 +769,7 @@ tu_allocate_iova(struct tu_device *dev,
    return result;
 }
 
-static void
+void
 tu_free_iova(struct tu_device *dev,
              uint64_t iova,
              uint64_t size)
@@ -596,7 +803,7 @@ tu_bo_init(struct tu_device *dev,
    }
 
    if (result != VK_SUCCESS) {
-      msm_common_gem_close(dev->fd, gem_handle);
+      tu_gem_close(dev, gem_handle);
       return result;
    }
 
@@ -610,7 +817,7 @@ tu_bo_init(struct tu_device *dev,
       result = tu_bo_add_to_bo_list(dev, gem_handle, flags, iova, &idx);
       if (result != VK_SUCCESS) {
          mtx_unlock(&dev->bo_mutex);
-         msm_common_gem_close(dev->fd, gem_handle);
+         tu_gem_close(dev, gem_handle);
          return result;
       }
    }
@@ -637,12 +844,42 @@ tu_bo_init(struct tu_device *dev,
    return VK_SUCCESS;
 }
 
+/**
+ * Sets the name in the kernel so that the contents of /debug/dri/0/gem are more
+ * useful.
+ *
+ * We skip this on release builds (when we're also not doing BO debugging) to
+ * reduce overhead.
+ */
+static void
+tu_bo_set_kernel_name(struct tu_device *dev, struct tu_bo *bo, const char *name)
+{
+   bool kernel_bo_names = dev->bo_sizes != NULL;
+#if MESA_DEBUG
+   kernel_bo_names = true;
+#endif
+   if (!kernel_bo_names)
+      return;
+
+   struct drm_msm_gem_info req = {
+      .handle = bo->gem_handle,
+      .info = MSM_INFO_SET_NAME,
+      .value = (uintptr_t)(void *)name,
+      .len = strlen(name),
+   };
+
+   int ret = drmCommandWrite(dev->fd, DRM_MSM_GEM_INFO, &req, sizeof(req));
+   if (ret) {
+      mesa_logw_once("Failed to set BO name with DRM_MSM_GEM_INFO: %d",
+                     ret);
+   }
+}
+
 static VkResult
 msm_bo_init(struct tu_device *dev,
             struct vk_object_base *base,
             struct tu_bo **out_bo,
             uint64_t size,
-            uint64_t align,
             uint64_t client_iova,
             VkMemoryPropertyFlags mem_property,
             enum tu_bo_alloc_flags flags,
@@ -656,43 +893,47 @@ msm_bo_init(struct tu_device *dev,
    if (lazy_vma)
       iova = lazy_vma->msm.iova;
    else
-      result = tu_allocate_iova(dev, 0, size, align, client_iova, flags, &iova);
+      result = tu_allocate_iova(dev, 0, size, client_iova, flags, &iova);
 
    if (result != VK_SUCCESS)
       return result;
 
-   uint32_t msm_flags = 0;
+   struct drm_msm_gem_new req = {
+      .size = size,
+      .flags = 0
+   };
 
    if (mem_property & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) {
       if (mem_property & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) {
-         msm_flags |= MSM_BO_CACHED_COHERENT;
+         req.flags |= MSM_BO_CACHED_COHERENT;
       } else {
-         msm_flags |= MSM_BO_CACHED;
+         req.flags |= MSM_BO_CACHED;
       }
    } else {
-      msm_flags |= MSM_BO_WC;
+      req.flags |= MSM_BO_WC;
    }
 
    if (flags & TU_BO_ALLOC_GPU_READ_ONLY)
-      msm_flags |= MSM_BO_GPU_READONLY;
+      req.flags |= MSM_BO_GPU_READONLY;
 
    if (dev->physical_device->has_vm_bind && !(flags & TU_BO_ALLOC_SHAREABLE))
-      msm_flags |= MSM_BO_NO_SHARE;
+      req.flags |= MSM_BO_NO_SHARE;
 
-   uint32_t gem_handle;
-   int ret = msm_common_gem_new(dev->fd, size, msm_flags, &gem_handle);
+   int ret = drmCommandWriteRead(dev->fd,
+                                 DRM_MSM_GEM_NEW, &req, sizeof(req));
    if (ret) {
       if (!lazy_vma)
          tu_free_iova(dev, iova, size);
       return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
    }
 
-   struct tu_bo *bo = tu_device_lookup_bo(dev, gem_handle);
+   struct tu_bo* bo = tu_device_lookup_bo(dev, req.handle);
    assert(bo && bo->gem_handle == 0);
 
    assert(!(flags & TU_BO_ALLOC_DMABUF));
 
-   result = tu_bo_init(dev, base, bo, gem_handle, size, iova, flags, name);
+   result =
+      tu_bo_init(dev, base, bo, req.handle, size, iova, flags, name);
 
    if (result == VK_SUCCESS) {
       *out_bo = bo;
@@ -711,7 +952,7 @@ msm_bo_init(struct tu_device *dev,
    }
 
    /* We don't use bo->name here because for the !TU_DEBUG=bo case bo->name is NULL. */
-   msm_common_bo_set_name(dev->fd, bo->gem_handle, name, strlen(name));
+   tu_bo_set_kernel_name(dev, bo, name);
 
    if (result == VK_SUCCESS &&
        (mem_property & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) &&
@@ -734,7 +975,6 @@ static VkResult
 msm_bo_init_dmabuf(struct tu_device *dev,
                    struct tu_bo **out_bo,
                    uint64_t size,
-                   uint64_t align,
                    enum tu_bo_alloc_flags flags,
                    int prime_fd)
 {
@@ -778,10 +1018,10 @@ msm_bo_init_dmabuf(struct tu_device *dev,
    }
 
    VkResult result =
-      tu_allocate_iova(dev, gem_handle, size, align, 0, flags, &iova);
+      tu_allocate_iova(dev, gem_handle, size, 0, flags, &iova);
 
    if (result != VK_SUCCESS) {
-      msm_common_gem_close(dev->fd, gem_handle);
+      tu_gem_close(dev, gem_handle);
       goto out_unlock;
    }
 
@@ -838,14 +1078,38 @@ static void
 msm_bo_set_metadata(struct tu_device *dev, struct tu_bo *bo,
                     void *metadata, uint32_t metadata_size)
 {
-   msm_common_set_metadata(dev->fd, bo->gem_handle, metadata, metadata_size);
+   struct drm_msm_gem_info req = {
+      .handle = bo->gem_handle,
+      .info = MSM_INFO_SET_METADATA,
+      .value = (uintptr_t)(void *)metadata,
+      .len = metadata_size,
+   };
+
+   int ret = drmCommandWrite(dev->fd, DRM_MSM_GEM_INFO, &req, sizeof(req));
+   if (ret) {
+      mesa_logw_once("Failed to set BO metadata with DRM_MSM_GEM_INFO: %d",
+                     ret);
+   }
 }
 
 static int
 msm_bo_get_metadata(struct tu_device *dev, struct tu_bo *bo,
                     void *metadata, uint32_t metadata_size)
 {
-   return msm_common_get_metadata(dev->fd, bo->gem_handle, metadata, metadata_size);
+   struct drm_msm_gem_info req = {
+      .handle = bo->gem_handle,
+      .info = MSM_INFO_GET_METADATA,
+      .value = (uintptr_t)(void *)metadata,
+      .len = metadata_size,
+   };
+
+   int ret = drmCommandWrite(dev->fd, DRM_MSM_GEM_INFO, &req, sizeof(req));
+   if (ret) {
+      mesa_logw_once("Failed to get BO metadata with DRM_MSM_GEM_INFO: %d",
+                     ret);
+   }
+
+   return ret;
 }
 
 static void
@@ -858,7 +1122,11 @@ msm_bo_gem_close(struct tu_device *dev, struct tu_bo *bo)
    uint32_t gem_handle = bo->gem_handle;
    memset(bo, 0, sizeof(*bo));
 
-   msm_common_gem_close(dev->fd, gem_handle);
+   struct drm_gem_close req = {
+      .handle = gem_handle,
+   };
+
+   drmIoctl(dev->fd, DRM_IOCTL_GEM_CLOSE, &req);
 }
 
 static void
@@ -909,7 +1177,7 @@ msm_sparse_vma_init(struct tu_device *dev,
                     struct tu_sparse_vma *out_vma,
                     uint64_t *out_iova,
                     enum tu_sparse_vma_flags flags,
-                    uint64_t size, uint64_t align, uint64_t client_iova)
+                    uint64_t size, uint64_t client_iova)
 {
    VkResult result;
    enum tu_bo_alloc_flags bo_flags =
@@ -918,7 +1186,7 @@ msm_sparse_vma_init(struct tu_device *dev,
 
    out_vma->msm.size = size;
 
-   result = tu_allocate_iova(dev, 0, size, align, client_iova, bo_flags,
+   result = tu_allocate_iova(dev, 0, size, client_iova, bo_flags,
                              &out_vma->msm.iova);
 
    if (result != VK_SUCCESS)
@@ -1178,10 +1446,10 @@ msm_queue_submit(struct tu_queue *queue, void *_submit,
    } else {
       uint32_t flags = MSM_PIPE_3D0;
 
-      if (wait_count || extra_wait_count)
+      if (wait_count)
          flags |= MSM_SUBMIT_SYNCOBJ_IN;
 
-      if (signal_count || extra_signal_count)
+      if (signal_count)
          flags |= MSM_SUBMIT_SYNCOBJ_OUT;
 
       if (has_vm_bind) {
@@ -1366,14 +1634,11 @@ tu_knl_drm_msm_load(struct tu_instance *instance,
    device->has_vm_bind = tu_try_enable_vm_bind(fd) == 0;
    device->has_sparse = device->has_vm_bind;
 
-   uint64_t val;
-
-   if (tu_drm_get_param(fd, MSM_PARAM_GPU_ID, &val)) {
+   if (tu_drm_get_gpu_id(device, &device->dev_id.gpu_id)) {
       result = vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
                                  "could not get GPU ID");
       goto fail;
    }
-   device->dev_id.gpu_id = val;
 
    if (tu_drm_get_param(fd, MSM_PARAM_CHIP_ID, &device->dev_id.chip_id)) {
       result = vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
@@ -1381,44 +1646,43 @@ tu_knl_drm_msm_load(struct tu_instance *instance,
       goto fail;
    }
 
-   if (tu_drm_get_param(fd, MSM_PARAM_GMEM_SIZE, &val)) {
-      result = vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED, "could not get GMEM size");
+   if (tu_drm_get_gmem_size(device, &device->gmem_size)) {
+      result = vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                                "could not get GMEM size");
       goto fail;
    }
-   device->gmem_size = val;
    device->gmem_size = debug_get_num_option("TU_GMEM", device->gmem_size);
 
-   if (tu_drm_get_param(fd, MSM_PARAM_GMEM_BASE, &val)) {
-      result = vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED, "could not get GMEM base");
+   if (tu_drm_get_gmem_base(device, &device->gmem_base)) {
+      result = vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                                 "could not get GMEM size");
       goto fail;
    }
-   device->gmem_base = val;
 
-   device->has_set_iova = !msm_common_get_va_prop(device->local_fd, MSM_PIPE_3D0, &device->va_start, &device->va_size);
-   device->has_iova_align = device->has_set_iova;
+   device->has_set_iova = !tu_drm_get_va_prop(device, &device->va_start,
+                                              &device->va_size);
    device->has_lazy_bos = device->has_set_iova;
-   device->has_raytracing = tu_drm_get_param_or(fd, MSM_PARAM_RAYTRACING, &val, false);
-   device->has_sparse_prr = tu_drm_get_param_or(fd, MSM_PARAM_HAS_PRR, &val, false);
+   device->has_raytracing = tu_drm_get_raytracing(device);
+   device->has_sparse_prr = tu_drm_get_prr(device);
 
-   device->has_preemption = msm_common_has_preemption(device->local_fd, device->submitqueue_priority_count / 2);
+   device->has_preemption = tu_drm_has_preemption(device);
 
    device->is_perf_cntr_selectable = true;
 
    /* Even if kernel is new enough, the GPU itself may not support it. */
    device->has_cached_coherent_memory =
-      (device->msm_minor_version >= 8) && msm_common_is_memory_type_supported(fd, os_page_size, MSM_BO_CACHED_COHERENT);
+      (device->msm_minor_version >= 8) &&
+      tu_drm_is_memory_type_supported(fd, MSM_BO_CACHED_COHERENT);
 
    tu_drm_set_debuginfo(fd);
 
-   device->submitqueue_priority_count = tu_drm_get_param_or(fd, MSM_PARAM_PRIORITIES, &val, 1);
-   assert(device->submitqueue_priority_count >= 1);
+   device->submitqueue_priority_count = tu_drm_get_priorities(device);
 
-   device->ubwc_config.highest_bank_bit = tu_drm_get_param_or(fd, MSM_PARAM_HIGHEST_BANK_BIT, &val, 0);
-   device->ubwc_config.bank_swizzle_levels = tu_drm_get_param_or(fd, MSM_PARAM_UBWC_SWIZZLE, &val, ~0);
-   device->ubwc_config.macrotile_mode =
-      (enum fdl_macrotile_mode) tu_drm_get_param_or(fd, MSM_PARAM_MACROTILE_MODE, &val, FDL_MACROTILE_INVALID);
+   device->ubwc_config.highest_bank_bit = tu_drm_get_highest_bank_bit(device);
+   device->ubwc_config.bank_swizzle_levels = tu_drm_get_ubwc_swizzle(device);
+   device->ubwc_config.macrotile_mode = tu_drm_get_macrotile_mode(device);
 
-   device->uche_trap_base = tu_drm_get_param_or(fd, MSM_PARAM_UCHE_TRAP_BASE, &val, UINT64_C(0x1fffffffff000));
+   device->uche_trap_base = tu_drm_get_uche_trap_base(device);
 
    device->syncobj_type = vk_drm_syncobj_get_type(fd);
 

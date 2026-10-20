@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/sysinfo.h>
 #include <unistd.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -41,7 +42,6 @@
 #include "v3dv_cmd_buffer.h"
 #include "v3dv_image.h"
 #include "v3dv_entrypoints.h"
-#include "v3dv_utrace.h"
 #include "v3dv_version_dispatch.h"
 
 #include "vk_android.h"
@@ -51,18 +51,14 @@
 
 #include "util/build_id.h"
 #include "util/disk_cache.h"
-#include "v3dv_drirc.h"
+#include "util/driconf.h"
 #include "util/os_file.h"
-#include "util/os_misc.h"
-#include "util/u_atomic.h"
 #include "util/u_debug.h"
 #include "util/format/u_format.h"
 #include "perfcntrs/v3d_perfcntrs.h"
-#include "vk_buffer.h"
 #include "vk_shader_module.h"
 #include "vk_format.h"
 #include "vk_ycbcr_conversion.h"
-#include "vk_physical_device.h"
 
 #include <sys/stat.h>
 
@@ -107,19 +103,7 @@ v3dv_EnumerateInstanceVersion(uint32_t *pApiVersion)
     defined(VK_USE_PLATFORM_XLIB_KHR) ||    \
     defined(VK_USE_PLATFORM_DISPLAY_KHR)
 #define V3DV_USE_WSI_PLATFORM
-#include "wsi_common.h"
 #endif
-
-static bool v3d_has_feature(const struct v3dv_physical_device *device,
-                            enum drm_v3d_param feature)
-{
-   struct drm_v3d_get_param p = {
-      .param = feature,
-   };
-   if (v3d_ioctl(device->render_fd, DRM_IOCTL_V3D_GET_PARAM, &p) != 0)
-      return false;
-   return p.value;
-}
 
 static const struct vk_instance_extension_table instance_extensions = {
    .KHR_device_group_creation           = true,
@@ -164,11 +148,6 @@ static void
 get_device_extensions(const struct v3dv_physical_device *device,
                       struct vk_device_extension_table *ext)
 {
-#ifdef V3DV_USE_WSI_PLATFORM
-   const struct v3dv_instance *v3dv_instance =
-      container_of(device->vk.instance, struct v3dv_instance, vk);
-#endif
-
    *ext = (struct vk_device_extension_table) {
       .KHR_8bit_storage                     = true,
       .KHR_16bit_storage                    = true,
@@ -195,7 +174,7 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .KHR_index_type_uint8                 = true,
       .KHR_line_rasterization               = true,
       .KHR_load_store_op_none               = true,
-      .KHR_performance_query                = v3d_has_feature(device, DRM_V3D_PARAM_SUPPORTS_PERFMON),
+      .KHR_performance_query                = device->caps.perfmon,
       .KHR_relaxed_block_layout             = true,
       .KHR_robustness2                      = true,
       .KHR_maintenance1                     = true,
@@ -207,14 +186,9 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .KHR_pipeline_executable_properties   = true,
       .KHR_separate_depth_stencil_layouts   = true,
       .KHR_shader_expect_assume             = true,
-      .KHR_shader_float16_int8              = device->devinfo.ver >= 71,
       .KHR_shader_float_controls            = true,
-      .KHR_shader_maximal_reconvergence     = true,
       .KHR_shader_non_semantic_info         = true,
-      .KHR_shader_quad_control              = device->devinfo.ver >= 71,
       .KHR_shader_relaxed_extended_instruction = true,
-      .KHR_shader_subgroup_extended_types   = true,
-      .KHR_shader_subgroup_rotate           = device->devinfo.ver >= 71,
       .KHR_sampler_mirror_clamp_to_edge     = true,
       .KHR_sampler_ycbcr_conversion         = true,
       .KHR_spirv_1_4                        = true,
@@ -244,11 +218,9 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .EXT_border_color_swizzle             = true,
       .EXT_color_write_enable               = true,
       .EXT_custom_border_color              = true,
-      .EXT_debug_marker                     = true,
       .EXT_depth_clamp_zero_one             = device->devinfo.ver >= 71,
       .EXT_depth_clip_control               = true,
       .EXT_depth_clip_enable                = device->devinfo.ver >= 71,
-      .EXT_device_memory_report             = true,
       .EXT_load_store_op_none               = true,
       .EXT_inline_uniform_block             = true,
       .EXT_extended_dynamic_state           = true,
@@ -273,7 +245,6 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .EXT_private_data                     = true,
       .EXT_provoking_vertex                 = true,
       .EXT_queue_family_foreign             = true,
-      .EXT_scalar_block_layout              = device->devinfo.ver >= 71,
       .EXT_separate_stencil_usage           = true,
       .EXT_shader_demote_to_helper_invocation = true,
       .EXT_shader_module_identifier         = true,
@@ -284,9 +255,6 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .EXT_texel_buffer_alignment           = true,
       .EXT_tooling_info                     = true,
       .EXT_vertex_attribute_divisor         = true,
-#ifdef V3DV_USE_WSI_PLATFORM
-      .GOOGLE_display_timing = wsi_instance_supports_google_display_timing(device->vk.instance, &v3dv_instance->drirc.options),
-#endif
    };
 #if DETECT_OS_ANDROID
    struct u_gralloc *gralloc = vk_android_get_ugralloc();
@@ -297,26 +265,10 @@ get_device_extensions(const struct v3dv_physical_device *device,
 #endif
 }
 
-/* V3D_WEBGPU_OVERRIDE=1 advertises higher limits and features required by
- * Dawn/WebGPU implementation that is over what V3D actually supports. Turn
- * on for WebGPU usage with the understanding that the over-advertised paths
- * may fail or assert.
- */
-bool
-v3dv_webgpu_override_enabled(void)
-{
-   static int cached = -1;
-   if (unlikely(cached < 0))
-      cached = debug_get_bool_option("V3D_WEBGPU_OVERRIDE", false) ? 1 : 0;
-   return cached != 0;
-}
-
 static void
 get_features(const struct v3dv_physical_device *physical_device,
              struct vk_features *features)
 {
-   const bool webgpu = v3dv_webgpu_override_enabled();
-
    *features = (struct vk_features) {
       /* Vulkan 1.0 */
       .robustBufferAccess = true, /* This feature is mandatory */
@@ -357,20 +309,15 @@ get_features(const struct v3dv_physical_device *physical_device,
       .shaderStorageImageMultisample = false,
       .shaderStorageImageReadWithoutFormat = true,
       .shaderStorageImageWriteWithoutFormat = false,
-      /* Next four features are not actually implemented yet; advertise them
-       * only under V3D_WEBGPU_OVERRIDE=1 so Dawn/WebGPU setups can claim they
-       * are available. Debug build will assert if feature is really used.
-       */
-      .shaderUniformBufferArrayDynamicIndexing = webgpu,
-      .shaderSampledImageArrayDynamicIndexing = webgpu,
-      .shaderStorageBufferArrayDynamicIndexing = webgpu,
-      .shaderStorageImageArrayDynamicIndexing = webgpu,
+      .shaderUniformBufferArrayDynamicIndexing = false,
+      .shaderSampledImageArrayDynamicIndexing = false,
+      .shaderStorageBufferArrayDynamicIndexing = false,
+      .shaderStorageImageArrayDynamicIndexing = false,
       .shaderClipDistance = true,
       .shaderCullDistance = false,
-      .shaderFloat16 = physical_device->devinfo.ver >= 71,
       .shaderFloat64 = false,
       .shaderInt64 = false,
-      .shaderInt16 = physical_device->devinfo.ver >= 71,
+      .shaderInt16 = false,
       .shaderResourceResidency = false,
       .shaderResourceMinLod = false,
       .sparseBinding = false,
@@ -430,7 +377,6 @@ get_features(const struct v3dv_physical_device *physical_device,
       .separateDepthStencilLayouts = true,
       .storageBuffer8BitAccess = true,
       .storagePushConstant8 = true,
-      .shaderInt8 = physical_device->devinfo.ver >= 71,
       .imagelessFramebuffer = true,
       .timelineSemaphore = true,
 
@@ -472,7 +418,7 @@ get_features(const struct v3dv_physical_device *physical_device,
       .robustImageAccess = true,
       .robustBufferAccess2 = false,
       .robustImageAccess2 = true,
-      .nullDescriptor = true,
+      .nullDescriptor = false,
       .shaderIntegerDotProduct = true,
 
       /* VK_EXT_4444_formats */
@@ -524,7 +470,7 @@ get_features(const struct v3dv_physical_device *physical_device,
       .vertexAttributeInstanceRateZeroDivisor = false,
 
       /* VK_KHR_performance_query */
-      .performanceCounterQueryPools = v3d_has_feature(physical_device, DRM_V3D_PARAM_SUPPORTS_PERFMON),
+      .performanceCounterQueryPools = physical_device->caps.perfmon,
       .performanceCounterMultipleQueryPools = false,
 
       /* VK_EXT_texel_buffer_alignment */
@@ -548,9 +494,6 @@ get_features(const struct v3dv_physical_device *physical_device,
 
       /* VK_EXT_depth_clip_enable */
       .depthClipEnable = physical_device->devinfo.ver >= 71,
-
-      /* VK_EXT_device_memory_report */
-      .deviceMemoryReport = true,
 
       /* VK_EXT_attachment_feedback_loop_layout */
       .attachmentFeedbackLoopLayout = true,
@@ -602,16 +545,6 @@ get_features(const struct v3dv_physical_device *physical_device,
       .presentWait2 = true,
 #endif
 
-      /* VK_KHR_shader_maximal_reconvergence */
-      .shaderMaximalReconvergence = true,
-
-      /* VK_KHR_shader_quad_control */
-      .shaderQuadControl = physical_device->devinfo.ver >= 71,
-
-      /* VK_KHR_shader_subgroup_rotate */
-      .shaderSubgroupRotate = physical_device->devinfo.ver >= 71,
-      .shaderSubgroupRotateClustered = physical_device->devinfo.ver >= 71,
-
       /* VK_KHR_shader_relaxed_extended_instruction */
       .shaderRelaxedExtendedInstruction = true,
    };
@@ -649,17 +582,23 @@ static const struct debug_control v3dv_pipeline_cache_control[] = {
    { NULL, 0 },
 };
 
+static const driOptionDescription v3dv_dri_options[] = {
+   DRI_CONF_SECTION_PERFORMANCE
+      DRI_CONF_VK_X11_OVERRIDE_MIN_IMAGE_COUNT(0)
+      DRI_CONF_VK_X11_STRICT_IMAGE_COUNT(false)
+      DRI_CONF_VK_X11_ENSURE_MIN_IMAGE_COUNT(false)
+      DRI_CONF_VK_XWAYLAND_WAIT_READY(true)
+   DRI_CONF_SECTION_END
+};
+
 static void
 v3dv_init_dri_options(struct v3dv_instance *instance)
 {
-   v3dv_parse_dri_options(&instance->drirc,
-                          &(driConfigFileParseParams) {
-                             .driverName = "v3dv",
-                             .applicationName = instance->vk.app_info.app_name,
-                             .applicationVersion = instance->vk.app_info.app_version,
-                             .engineName = instance->vk.app_info.engine_name,
-                             .engineVersion = instance->vk.app_info.engine_version,
-                          });
+   driParseOptionInfo(&instance->available_dri_options, v3dv_dri_options,
+                      ARRAY_SIZE(v3dv_dri_options));
+   driParseConfigFiles(&instance->dri_options, &instance->available_dri_options, 0, "v3dv", NULL, NULL,
+                       instance->vk.app_info.app_name, instance->vk.app_info.app_version,
+                       instance->vk.app_info.engine_name, instance->vk.app_info.engine_version);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -706,16 +645,6 @@ v3dv_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
    instance->pipeline_cache_enabled = true;
    instance->default_pipeline_cache_enabled = true;
    instance->meta_cache_enabled = true;
-   int64_t pipeline_cache_max_entries =
-      debug_get_num_option("V3DV_MAX_PIPELINE_CACHE_ENTRIES", 0);
-   if (pipeline_cache_max_entries < 0 ||
-       pipeline_cache_max_entries > UINT32_MAX) {
-      mesa_loge("V3DV_MAX_PIPELINE_CACHE_ENTRIES must be between 0 and %u\n",
-                UINT32_MAX);
-      pipeline_cache_max_entries = 0;
-   }
-   instance->pipeline_cache_max_entries = (uint32_t) pipeline_cache_max_entries;
-
    const char *pipeline_cache_str = os_get_option("V3DV_ENABLE_PIPELINE_CACHE");
    uint64_t pipeline_cache_flags =
       parse_debug_string(pipeline_cache_str, v3dv_pipeline_cache_control);
@@ -783,8 +712,6 @@ physical_device_finish(struct v3dv_physical_device *device)
    close(device->render_fd);
    if (device->display_fd >= 0)
       close(device->display_fd);
-   if (device->primary_fd >= 0)
-      close(device->primary_fd);
 
    free(device->name);
 
@@ -814,55 +741,70 @@ v3dv_DestroyInstance(VkInstance _instance,
 
    VG(VALGRIND_DESTROY_MEMPOOL(instance));
 
-   driDestroyOptionCache(&instance->drirc.options);
-   driDestroyOptionInfo(&instance->drirc.available_options);
+   driDestroyOptionCache(&instance->dri_options);
+   driDestroyOptionInfo(&instance->available_dri_options);
 
    vk_instance_finish(&instance->vk);
    vk_free(&instance->vk.alloc, instance);
 }
 
 static uint64_t
-compute_heap_size(struct v3dv_instance *instance)
+compute_heap_size()
 {
-   /* The GPU has a 32-bit MMU and cannot address more than 4GB. */
-   ASSERTED const uint64_t MAX_HEAP_SIZE = 4ull * 1024ull * 1024ull * 1024ull;
-   uint64_t memory;
 #if !USE_V3D_SIMULATOR
-   memory = os_get_gpu_heap_size(instance->drirc.misc.heap_memory_percent,
-                                 &instance->drirc.misc.heap_memory_percent);
-   return MIN2(MAX_HEAP_SIZE, memory);
+   /* Query the total ram from the system */
+   struct sysinfo info;
+   sysinfo(&info);
+
+   uint64_t total_ram = (uint64_t)info.totalram * (uint64_t)info.mem_unit;
 #else
-   /* Memory allocated by the simulator is fully dedicated for the GPU so we
-    * expose all of it instead of reserving a fraction for the rest of the
-    * system as we do for real, shared RAM. The simulator never allocates more
-    * than the GPU can address.
-    */
-   memory = (uint64_t) v3d_simulator_get_mem_size();
-   assert(MAX_HEAP_SIZE >= memory);
-   return memory;
+   uint64_t total_ram = (uint64_t) v3d_simulator_get_mem_size();
 #endif
+
+   /* We don't want to burn too much ram with the GPU.  If the user has 4GB
+    * or less, we use at most half.  If they have more than 4GB we limit it
+    * to 3/4 with a max. of 4GB since the GPU cannot address more than that.
+    */
+   const uint64_t MAX_HEAP_SIZE = 4ull * 1024ull * 1024ull * 1024ull;
+   uint64_t available;
+   if (total_ram <= MAX_HEAP_SIZE)
+      available = total_ram / 2;
+   else
+      available = MIN2(MAX_HEAP_SIZE, total_ram * 3 / 4);
+
+   return available;
 }
 
 static uint64_t
 compute_memory_budget(struct v3dv_physical_device *device)
 {
    uint64_t heap_size = device->memory.memoryHeaps[0].size;
-   uint64_t heap_used = p_atomic_read(&device->heap_used);
-
+   uint64_t heap_used = device->heap_used;
+   uint64_t sys_available;
 #if !USE_V3D_SIMULATOR
+   ASSERTED bool has_available_memory =
+      os_get_available_system_memory(&sys_available);
+   assert(has_available_memory);
+#else
+   sys_available = (uint64_t) v3d_simulator_get_mem_free();
+#endif
+
    /* Let's not incite the app to starve the system: report at most 90% of
     * available system memory.
     */
-   const float percentage = 0.9f;
-   return vk_physical_device_heap_budget_from_system(
-         &device->vk, percentage, heap_size, heap_used);
-#else
-   /* The simulator memory is fully dedicated to the GPU, so the whole free
-    * pool is available to applications.
-    */
-   uint64_t heap_available = (uint64_t) v3d_simulator_get_mem_free();
+   uint64_t heap_available = sys_available * 9 / 10;
    return MIN2(heap_size, heap_used + heap_available);
-#endif
+}
+
+static bool
+v3d_has_feature(struct v3dv_physical_device *device, enum drm_v3d_param feature)
+{
+   struct drm_v3d_get_param p = {
+      .param = feature,
+   };
+   if (v3d_ioctl(device->render_fd, DRM_IOCTL_V3D_GET_PARAM, &p) != 0)
+      return false;
+   return p.value;
 }
 
 static bool
@@ -871,8 +813,7 @@ device_has_expected_features(struct v3dv_physical_device *device)
    return v3d_has_feature(device, DRM_V3D_PARAM_SUPPORTS_TFU) &&
           v3d_has_feature(device, DRM_V3D_PARAM_SUPPORTS_CSD) &&
           v3d_has_feature(device, DRM_V3D_PARAM_SUPPORTS_CACHE_FLUSH) &&
-          v3d_has_feature(device, DRM_V3D_PARAM_SUPPORTS_MULTISYNC_EXT) &&
-          v3d_has_feature(device, DRM_V3D_PARAM_SUPPORTS_CPU_QUEUE);
+          device->caps.multisync;
 }
 
 
@@ -955,50 +896,21 @@ get_device_properties(const struct v3dv_physical_device *device,
    STATIC_ASSERT(MAX_UNIFORM_BUFFERS >= MAX_DYNAMIC_UNIFORM_BUFFERS);
    STATIC_ASSERT(MAX_STORAGE_BUFFERS >= MAX_DYNAMIC_STORAGE_BUFFERS);
 
-   struct v3dv_instance *instance =
-      container_of(device->vk.instance, struct v3dv_instance, vk);
-
    const uint32_t page_size = 4096;
-   const uint64_t mem_size = compute_heap_size(instance);
+   const uint64_t mem_size = compute_heap_size();
 
-   const bool webgpu = v3dv_webgpu_override_enabled();
-
-   /* HW supports 64 varying components; Dawn requires 72, so we
-    * over-advertise the extra 8 only when V3D_WEBGPU_OVERRIDE=1. Of those 8:
-    * 4 are used for the position, which in V3D is mapped to dedicated
-    * registers (rf2/rf3) so it doesn't draw from the 64 varying pool; the
-    * other 4 are needed by a Dawn polyfill that V3DV shouldn't actually need.
-    * TODO: lower the polyfill pattern to avoid the extra varyings, or modify
-    *       Dawn to skip the usage of this varying for Broadcom.
-    */
-   const uint32_t max_varying_components = webgpu ? 16 * 4 + 8 : 16 * 4;
+   const uint32_t max_varying_components = 16 * 4;
 
    const uint32_t max_per_stage_resources = 128;
 
    const float v3d_point_line_granularity = 2.0f / (1 << V3D_COORD_SHIFT);
-   /* With V3D_WEBGPU_OVERRIDE=1 advertise the minimal dawn required dimension
-    * of 8192 for the framebuffer.
-    */
-   const uint32_t max_fb_size =
-      webgpu ? 8192u : device->devinfo.max_framebuffer_size;
-   /* The TMU supports image dimensions up to 16384x16384 at single sample
-    * (halved to 8192x8192 for 2D images, the only ones that can be
-    * multisampled). For now we still cap maxImageDimension* at the framebuffer
-    * size because copy/blit/clear go through the TLB and blit-shader paths,
-    * which are bounded by the framebuffer size.
-    *
-    * With V3D_WEBGPU_OVERRIDE=1 expose larger limits for texture-only
-    * dimensions; the error in job_compute_frame_tiling() will fire if we
-    * ever actually render above the HW limit.
-    */
-   const uint32_t max_image_dim = webgpu ? 16384u : max_fb_size;
-   const uint32_t max_image_2d_dim = webgpu ? 8192u : max_fb_size;
+   const uint32_t max_fb_size = V3D_MAX_IMAGE_DIMENSION;
 
    /* Note: update nir_shader_compiler_options.max_samples when changing this. */
    const VkSampleCountFlags supported_sample_counts =
       VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT;
 
-   const uint8_t max_rts = device->devinfo.max_render_targets;
+   const uint8_t max_rts = V3D_MAX_RENDER_TARGETS(device->devinfo.ver);
 
    struct timespec clock_res;
    clock_getres(CLOCK_MONOTONIC, &clock_res);
@@ -1026,10 +938,7 @@ get_device_properties(const struct v3dv_physical_device *device,
                       VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT |
                       VK_SUBGROUP_FEATURE_VOTE_BIT |
                       VK_SUBGROUP_FEATURE_QUAD_BIT |
-                      VK_SUBGROUP_FEATURE_ARITHMETIC_BIT |
-                      VK_SUBGROUP_FEATURE_CLUSTERED_BIT |
-                      VK_SUBGROUP_FEATURE_ROTATE_BIT |
-                      VK_SUBGROUP_FEATURE_ROTATE_CLUSTERED_BIT;
+                      VK_SUBGROUP_FEATURE_ARITHMETIC_BIT;
    }
 
    /* FIXME: this will probably require an in-depth review */
@@ -1042,10 +951,10 @@ get_device_properties(const struct v3dv_physical_device *device,
       .deviceType = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
 
       /* Vulkan 1.0 limits */
-      .maxImageDimension1D = max_image_dim,
-      .maxImageDimension2D = max_image_2d_dim,
-      .maxImageDimension3D = max_image_dim,
-      .maxImageDimensionCube = max_image_dim,
+      .maxImageDimension1D = V3D_MAX_IMAGE_DIMENSION,
+      .maxImageDimension2D = V3D_MAX_IMAGE_DIMENSION,
+      .maxImageDimension3D = V3D_MAX_IMAGE_DIMENSION,
+      .maxImageDimensionCube = V3D_MAX_IMAGE_DIMENSION,
       .maxImageArrayLayers = V3D_MAX_ARRAY_LAYERS,
       .maxTexelBufferElements = (1ul << 28),
       .maxUniformBufferRange = V3D_MAX_BUFFER_RANGE,
@@ -1104,35 +1013,30 @@ get_device_properties(const struct v3dv_physical_device *device,
 
       /* Fragment limits */
       .maxFragmentInputComponents               = max_varying_components,
-      .maxFragmentOutputAttachments             = max_rts,
+      .maxFragmentOutputAttachments             = 4,
       .maxFragmentDualSrcAttachments            = 1,
       .maxFragmentCombinedOutputResources       = max_rts +
                                                   MAX_STORAGE_BUFFERS +
                                                   MAX_STORAGE_IMAGES,
 
       /* Compute limits */
-      .maxComputeSharedMemorySize               = V3D_MAX_COMPUTE_SHARED_MEMORY_SIZE,
-      .maxComputeWorkGroupCount                 = { V3D_MAX_CSD_WG_COUNT,
-                                                    V3D_MAX_CSD_WG_COUNT,
-                                                    V3D_MAX_CSD_WG_COUNT },
-      .maxComputeWorkGroupInvocations           = V3D_MAX_CSD_WG_SIZE,
-      .maxComputeWorkGroupSize                  = { V3D_MAX_CSD_WG_SIZE,
-                                                    V3D_MAX_CSD_WG_SIZE,
-                                                    V3D_MAX_CSD_WG_SIZE },
+      .maxComputeSharedMemorySize               = 16384,
+      .maxComputeWorkGroupCount                 = { 65535, 65535, 65535 },
+      .maxComputeWorkGroupInvocations           = 256,
+      .maxComputeWorkGroupSize                  = { 256, 256, 256 },
 
       .subPixelPrecisionBits                    = V3D_COORD_SHIFT,
       .subTexelPrecisionBits                    = 8,
       .mipmapPrecisionBits                      = 8,
       .maxDrawIndexedIndexValue                 = device->devinfo.ver >= 71 ?
                                                   0xffffffff : 0x00ffffff,
-      .maxDrawIndirectCount                     = device->vk.supported_features.multiDrawIndirect ?
-                                                  0x7fffffff : 1,
+      .maxDrawIndirectCount                     = 0x7fffffff,
       .maxSamplerLodBias                        = 14.0f,
       .maxSamplerAnisotropy                     = 16.0f,
       .maxViewports                             = MAX_VIEWPORTS,
       .maxViewportDimensions                    = { max_fb_size, max_fb_size },
-      .viewportBoundsRange                      = { -2.0f * (float)max_fb_size,
-                                                     2.0f * (float)max_fb_size - 1.0f },
+      .viewportBoundsRange                      = { -2.0 * max_fb_size,
+                                                    2.0 * max_fb_size - 1 },
       .viewportSubPixelBits                     = 0,
       .minMemoryMapAlignment                    = page_size,
       .minTexelBufferOffsetAlignment            = V3D_TMU_TEXEL_ALIGN,
@@ -1259,7 +1163,7 @@ get_device_properties(const struct v3dv_physical_device *device,
       .maxDescriptorSetUpdateAfterBindUniformBuffersDynamic = MAX_DYNAMIC_UNIFORM_BUFFERS,
       .maxDescriptorSetUpdateAfterBindStorageBuffers =
           V3DV_SUPPORTED_SHADER_STAGES * MAX_STORAGE_BUFFERS,
-      .maxDescriptorSetUpdateAfterBindStorageBuffersDynamic = MAX_DYNAMIC_STORAGE_BUFFERS,
+      .maxDescriptorSetUpdateAfterBindStorageBuffersDynamic = MAX_DYNAMIC_UNIFORM_BUFFERS,
       .maxDescriptorSetUpdateAfterBindSampledImages =
           V3DV_SUPPORTED_SHADER_STAGES * MAX_SAMPLED_IMAGES,
       .maxDescriptorSetUpdateAfterBindStorageImages =
@@ -1288,14 +1192,12 @@ get_device_properties(const struct v3dv_physical_device *device,
       .storageTexelBufferOffsetSingleTexelAlignment = false,
       .uniformTexelBufferOffsetAlignmentBytes = V3D_TMU_TEXEL_ALIGN,
       .uniformTexelBufferOffsetSingleTexelAlignment = false,
-      /* V3D 7.1+ has native v8dot instructions for 4x8-bit packed dot
-       * products (unsigned, signed, mixed signedness).
-       */
+      /* No native acceleration for integer dot product. We use NIR lowering. */
       .integerDotProduct8BitUnsignedAccelerated = false,
       .integerDotProduct8BitMixedSignednessAccelerated = false,
-      .integerDotProduct4x8BitPackedUnsignedAccelerated = device->devinfo.ver >= 71,
-      .integerDotProduct4x8BitPackedSignedAccelerated = device->devinfo.ver >= 71,
-      .integerDotProduct4x8BitPackedMixedSignednessAccelerated = device->devinfo.ver >= 71,
+      .integerDotProduct4x8BitPackedUnsignedAccelerated = false,
+      .integerDotProduct4x8BitPackedSignedAccelerated = false,
+      .integerDotProduct4x8BitPackedMixedSignednessAccelerated = false,
       .integerDotProduct16BitUnsignedAccelerated = false,
       .integerDotProduct16BitSignedAccelerated = false,
       .integerDotProduct16BitMixedSignednessAccelerated = false,
@@ -1376,7 +1278,7 @@ get_device_properties(const struct v3dv_physical_device *device,
       /* VK_EXT_subgroup_size_control */
       .minSubgroupSize = V3D_CHANNELS,
       .maxSubgroupSize = V3D_CHANNELS,
-      .maxComputeWorkgroupSubgroups = V3D_MAX_CSD_WG_SIZE / V3D_CHANNELS,
+      .maxComputeWorkgroupSubgroups = 16, /* 256 / 16 */
       .requiredSubgroupSizeStages = VK_SHADER_STAGE_COMPUTE_BIT,
 
       /* VK_KHR_maintenance5 */
@@ -1397,8 +1299,7 @@ get_device_properties(const struct v3dv_physical_device *device,
 
    /* VkPhysicalDeviceProperties */
    snprintf(properties->deviceName, sizeof(properties->deviceName),
-            "%s", (strlen(instance->drirc.debug.force_vk_devicename) > 0) ?
-                  instance->drirc.debug.force_vk_devicename : device->name);
+            "%s", device->name);
    memcpy(properties->pipelineCacheUUID,
             device->pipeline_cache_uuid, VK_UUID_SIZE);
 
@@ -1445,10 +1346,10 @@ create_physical_device(struct v3dv_instance *instance,
    if (fstat(primary_fd, &primary_stat) != 0) {
       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
                          "failed to stat DRM primary node");
-   } else {
-      device->has_primary = true;
-      device->primary_devid = primary_stat.st_rdev;
+      goto fail;
    }
+   device->has_primary = true;
+   device->primary_devid = primary_stat.st_rdev;
 
    if (fstat(render_fd, &render_stat) != 0) {
       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
@@ -1467,12 +1368,6 @@ create_physical_device(struct v3dv_instance *instance,
    device->render_fd = render_fd;
    device->display_fd = display_fd;
 
-   drmVersionPtr version = drmGetVersion(render_fd);
-   if (version) {
-      device->is_shim = version->desc && strcmp(version->desc, "shim") == 0;
-      drmFreeVersion(version);
-   }
-
    if (!v3d_get_device_info(device->render_fd, &device->devinfo, &v3d_ioctl)) {
       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
                          "Failed to get info from device.");
@@ -1485,15 +1380,22 @@ create_physical_device(struct v3dv_instance *instance,
       goto fail;
    }
 
-   /* Always mention only the newest kernel version we require */
+   device->caps.cpu_queue =
+      v3d_has_feature(device, DRM_V3D_PARAM_SUPPORTS_CPU_QUEUE);
+
+   device->caps.multisync =
+      v3d_has_feature(device, DRM_V3D_PARAM_SUPPORTS_MULTISYNC_EXT);
+
+   device->caps.perfmon =
+      v3d_has_feature(device, DRM_V3D_PARAM_SUPPORTS_PERFMON);
+
    if (!device_has_expected_features(device)) {
       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
-                         "Kernel driver doesn't have required features. "
-                         "v3dv now requires kernel 6.8+");
+                         "Kernel driver doesn't have required features.");
       goto fail;
    }
 
-   if (v3d_has_feature(device, DRM_V3D_PARAM_SUPPORTS_PERFMON)) {
+   if (device->caps.perfmon) {
       device->perfcntr = v3d_perfcntrs_init(&device->devinfo, device->render_fd);
 
       if (!device->perfcntr) {
@@ -1524,7 +1426,7 @@ create_physical_device(struct v3dv_instance *instance,
    /* Setup available memory heaps and types */
    VkPhysicalDeviceMemoryProperties *mem = &device->memory;
    mem->memoryHeapCount = 1;
-   mem->memoryHeaps[0].size = compute_heap_size(instance);
+   mem->memoryHeaps[0].size = compute_heap_size();
    mem->memoryHeaps[0].flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
 
    /* This is the only combination required by the spec */
@@ -1538,7 +1440,7 @@ create_physical_device(struct v3dv_instance *instance,
    /* Initialize sparse array for refcounting imported BOs */
    util_sparse_array_init(&device->bo_map, sizeof(struct v3dv_bo), 512);
 
-   device->merge_jobs = !V3D_DBG(NO_MERGE_JOBS);
+   device->options.merge_jobs = !V3D_DBG(NO_MERGE_JOBS);
 
    device->drm_syncobj_type = vk_drm_syncobj_get_type(device->render_fd);
 
@@ -1749,13 +1651,9 @@ enumerate_devices(struct vk_instance *vk_instance)
          break;
    }
 
-   if (render_fd < 0) {
-      if (display_fd != -1)
-         close(display_fd);
-      if (primary_fd != -1)
-         close(primary_fd);
+   if (render_fd < 0 || primary_fd < 0)
       result = VK_ERROR_INCOMPATIBLE_DRIVER;
-   } else
+   else
       result = create_physical_device(instance, primary_fd, render_fd, display_fd);
 
    drmFreeDevices(devices, max_devices);
@@ -1782,13 +1680,13 @@ v3dv_physical_device_device_id(const struct v3dv_physical_device *dev)
    }
 }
 
-/* We support multiqueue emulation */
+/* We support exactly one queue family. */
 static const VkQueueFamilyProperties
 v3dv_queue_family_properties = {
    .queueFlags = VK_QUEUE_GRAPHICS_BIT |
                  VK_QUEUE_COMPUTE_BIT |
                  VK_QUEUE_TRANSFER_BIT,
-   .queueCount = V3DV_MAX_QUEUES,
+   .queueCount = 1,
    .timestampValidBits = 64,
    .minImageTransferGranularity = { 1, 1, 1 },
 };
@@ -1804,8 +1702,8 @@ v3dv_GetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice,
    vk_outarray_append_typed(VkQueueFamilyProperties2, &out, p) {
       p->queueFamilyProperties = v3dv_queue_family_properties;
 
-      vk_foreach_struct(sType, s, p->pNext) {
-         vk_debug_ignored_stype(sType);
+      vk_foreach_struct(s, p->pNext) {
+         vk_debug_ignored_stype(s->sType);
       }
    }
 }
@@ -1827,8 +1725,8 @@ v3dv_GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice,
    v3dv_GetPhysicalDeviceMemoryProperties(physicalDevice,
                                           &pMemoryProperties->memoryProperties);
 
-   vk_foreach_struct(sType, ext, pMemoryProperties->pNext) {
-      switch (sType) {
+   vk_foreach_struct(ext, pMemoryProperties->pNext) {
+      switch (ext->sType) {
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT: {
          VkPhysicalDeviceMemoryBudgetPropertiesEXT *p =
             (VkPhysicalDeviceMemoryBudgetPropertiesEXT *) ext;
@@ -1845,7 +1743,7 @@ v3dv_GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice,
          break;
       }
       default:
-         vk_debug_ignored_stype(sType);
+         vk_debug_ignored_stype(ext->sType);
          break;
       }
    }
@@ -1920,14 +1818,9 @@ queue_init(struct v3dv_device *device, struct v3dv_queue *queue,
    if (result != VK_SUCCESS)
       return result;
 
-   /* Threaded submit requires an implementation of syncobj which is not
-    * available on the shim driver.
-    */
-   if (!device->pdevice->is_shim) {
-      result = vk_queue_enable_submit_thread(&queue->vk);
-      if (result != VK_SUCCESS)
-         goto fail_submit_thread;
-   }
+   result = vk_queue_enable_submit_thread(&queue->vk);
+   if (result != VK_SUCCESS)
+      goto fail_submit_thread;
 
    queue->device = device;
    queue->vk.driver_submit = v3dv_queue_driver_submit;
@@ -1944,6 +1837,7 @@ queue_init(struct v3dv_device *device, struct v3dv_queue *queue,
       }
    }
 
+   queue->noop_job = NULL;
    return VK_SUCCESS;
 
 fail_last_job_syncs:
@@ -1956,6 +1850,8 @@ fail_submit_thread:
 static void
 queue_finish(struct v3dv_queue *queue)
 {
+   if (queue->noop_job)
+      v3dv_job_destroy(queue->noop_job);
    destroy_queue_syncs(queue);
    vk_queue_finish(&queue->vk);
 }
@@ -1972,10 +1868,6 @@ init_device_meta(struct v3dv_device *device)
 static void
 destroy_device_meta(struct v3dv_device *device)
 {
-   if (device->meta.tfu_fill_zero.src_bo) {
-      v3dv_bo_free(device, device->meta.tfu_fill_zero.src_bo, 0);
-      device->meta.tfu_fill_zero.src_bo = NULL;
-   }
    mtx_destroy(&device->meta.mtx);
    v3dv_meta_clear_finish(device);
    v3dv_meta_blit_finish(device);
@@ -1995,16 +1887,14 @@ v3dv_CreateDevice(VkPhysicalDevice physicalDevice,
 
    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
 
-   /* Check requested queues */
-   uint32_t total_queues = 0;
+   /* Check requested queues (we only expose one queue ) */
+   assert(pCreateInfo->queueCreateInfoCount == 1);
    for (uint32_t i = 0; i < pCreateInfo->queueCreateInfoCount; i++) {
       assert(pCreateInfo->pQueueCreateInfos[i].queueFamilyIndex == 0);
-      assert(pCreateInfo->pQueueCreateInfos[i].queueCount <= V3DV_MAX_QUEUES);
+      assert(pCreateInfo->pQueueCreateInfos[i].queueCount == 1);
       if (pCreateInfo->pQueueCreateInfos[i].flags != 0)
          return vk_error(instance, VK_ERROR_INITIALIZATION_FAILED);
-      total_queues += pCreateInfo->pQueueCreateInfos[i].queueCount;
    }
-   assert(total_queues <= V3DV_MAX_QUEUES);
 
    device = vk_zalloc2(&physical_device->vk.instance->alloc, pAllocator,
                        sizeof(*device), 8,
@@ -2027,41 +1917,19 @@ v3dv_CreateDevice(VkPhysicalDevice physicalDevice,
    device->instance = instance;
    device->pdevice = physical_device;
 
-   mtx_init(&device->queue_mutex, mtx_plain);
    mtx_init(&device->query_mutex, mtx_plain);
-   mtx_init(&device->events.lock, mtx_plain);
    cnd_init(&device->query_ended);
 
    device->vk.command_buffer_ops = &v3dv_cmd_buffer_ops;
    device->vk.copy_sync_payloads = vk_drm_syncobj_copy_payloads;
 
    vk_device_set_drm_fd(&device->vk, physical_device->render_fd);
+   vk_device_enable_threaded_submit(&device->vk);
 
-   /* Threaded submit requires an implementation of syncobj which is not
-    * available on the shim driver.
-    */
-   if (!physical_device->is_shim)
-      vk_device_enable_threaded_submit(&device->vk);
-
-   device->queues = vk_zalloc2(&device->vk.alloc, pAllocator,
-                               sizeof(*device->queues) * total_queues, 8,
-                               VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
-   if (!device->queues) {
-      result = vk_error(instance, VK_ERROR_OUT_OF_HOST_MEMORY);
-      goto fail_queues_alloc;
-   }
-
-   device->queue_count = 0;
-   for (uint32_t i = 0; i < pCreateInfo->queueCreateInfoCount; i++) {
-      for (uint32_t j = 0; j < pCreateInfo->pQueueCreateInfos[i].queueCount; j++) {
-         result = queue_init(device, &device->queues[device->queue_count],
-                             &pCreateInfo->pQueueCreateInfos[i], j);
-         if (result != VK_SUCCESS)
-            goto fail_queues_init;
-
-         device->queue_count++;
-      }
-   }
+   result = queue_init(device, &device->queue,
+                       pCreateInfo->pQueueCreateInfos, 0);
+   if (result != VK_SUCCESS)
+      goto fail;
 
    device->devinfo = physical_device->devinfo;
 
@@ -2080,37 +1948,14 @@ v3dv_CreateDevice(VkPhysicalDevice physicalDevice,
    v3dv_bo_cache_init(device);
    v3dv_pipeline_cache_init(&device->default_pipeline_cache, device, 0,
                             device->instance->default_pipeline_cache_enabled);
-   if (v3d_device_needs_default_attribute_values(&device->devinfo)) {
-      device->default_attribute_float =
-         v3d_X((&device->devinfo), create_default_attribute_values)(device, NULL);
-      if (!device->default_attribute_float) {
-         result = vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-         goto fail;
-      }
-   }
-
-   if (device->vk.enabled_features.nullDescriptor) {
-      device->null_bo =
-         v3dv_bo_alloc(device, 4096, "null texture data", true,
-                       VK_OBJECT_TYPE_DEVICE,
-                       vk_object_to_u64_handle(&device->vk.base));
-      if (!device->null_bo ||
-          !v3dv_bo_map(device, device->null_bo,
-                       device->null_bo->size)) {
-         result = vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-         goto fail;
-      }
-      memset(device->null_bo->map, 0, device->null_bo->size);
-   }
+   device->default_attribute_float =
+      v3d_X((&device->devinfo), create_default_attribute_values)(device, NULL);
 
    device->device_address_mem_ctx = ralloc_context(NULL);
-   if (!device->device_address_mem_ctx) {
-      result = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
-      goto fail;
-   }
    util_dynarray_init(&device->device_address_bo_list,
                       device->device_address_mem_ctx);
 
+   mtx_init(&device->events.lock, mtx_plain);
    result = v3dv_event_allocate_resources(device);
    if (result != VK_SUCCESS)
       goto fail;
@@ -2125,34 +1970,17 @@ v3dv_CreateDevice(VkPhysicalDevice physicalDevice,
       goto fail;
 
    *pDevice = v3dv_device_to_handle(device);
-   v3dv_utrace_context_init(device);
-#ifdef HAVE_PERFETTO
-   v3dv_utrace_perfetto_init(device, V3DV_UTRACE_PERFETTO_QUEUE_COUNT);
-#endif
 
    return VK_SUCCESS;
 
 fail:
+   cnd_destroy(&device->query_ended);
+   mtx_destroy(&device->query_mutex);
+   queue_finish(&device->queue);
    destroy_device_meta(device);
    v3dv_pipeline_cache_finish(&device->default_pipeline_cache);
    v3dv_event_free_resources(device);
    v3dv_query_free_resources(device);
-   v3dv_bo_free(device, device->default_attribute_float, 0);
-   v3dv_bo_free(device, device->null_bo, 0);
-   ralloc_free(device->device_address_mem_ctx);
-   /* The BO cache has to go last, since the frees above return their private
-    * BOs to it.
-    */
-   v3dv_bo_cache_destroy(device);
-fail_queues_init:
-   for (uint32_t i = 0; i < device->queue_count; i++)
-      queue_finish(&device->queues[i]);
-   vk_free2(&device->vk.alloc, pAllocator, device->queues);
-fail_queues_alloc:
-   cnd_destroy(&device->query_ended);
-   mtx_destroy(&device->events.lock);
-   mtx_destroy(&device->query_mutex);
-   mtx_destroy(&device->queue_mutex);
    vk_device_finish(&device->vk);
    vk_free(&device->vk.alloc, device);
 
@@ -2165,11 +1993,8 @@ v3dv_DestroyDevice(VkDevice _device,
 {
    V3DV_FROM_HANDLE(v3dv_device, device, _device);
 
-   v3dv_utrace_context_fini(device);
    device->vk.dispatch_table.DeviceWaitIdle(_device);
-   for (uint32_t i = 0; i < device->queue_count; i++)
-      queue_finish(&device->queues[i]);
-   vk_free2(&device->vk.alloc, pAllocator, device->queues);
+   queue_finish(&device->queue);
 
    v3dv_event_free_resources(device);
    mtx_destroy(&device->events.lock);
@@ -2180,13 +2005,8 @@ v3dv_DestroyDevice(VkDevice _device,
    v3dv_pipeline_cache_finish(&device->default_pipeline_cache);
 
    if (device->default_attribute_float) {
-      v3dv_bo_free(device, device->default_attribute_float, 0);
+      v3dv_bo_free(device, device->default_attribute_float);
       device->default_attribute_float = NULL;
-   }
-
-   if (device->null_bo) {
-      v3dv_bo_free(device, device->null_bo, 0);
-      device->null_bo = NULL;
    }
 
    ralloc_free(device->device_address_mem_ctx);
@@ -2198,7 +2018,6 @@ v3dv_DestroyDevice(VkDevice _device,
 
    cnd_destroy(&device->query_ended);
    mtx_destroy(&device->query_mutex);
-   mtx_destroy(&device->queue_mutex);
 
    vk_device_finish(&device->vk);
    vk_free2(&device->vk.alloc, pAllocator, device);
@@ -2212,9 +2031,7 @@ device_alloc(struct v3dv_device *device,
    /* Our kernel interface is 32-bit */
    assert(size <= UINT32_MAX);
 
-   mem->bo = v3dv_bo_alloc(device, size, "device_alloc", false,
-                           VK_OBJECT_TYPE_DEVICE_MEMORY,
-                           vk_object_to_u64_handle(&mem->vk.base));
+   mem->bo = v3dv_bo_alloc(device, size, "device_alloc", false);
    if (!mem->bo)
       return VK_ERROR_OUT_OF_DEVICE_MEMORY;
 
@@ -2248,7 +2065,7 @@ device_free(struct v3dv_device *device, struct v3dv_device_memory *mem)
 
    p_atomic_add(&device->pdevice->heap_used, -((int64_t)mem->bo->size));
 
-   v3dv_bo_free(device, mem->bo, vk_object_to_u64_handle(&mem->vk.base));
+   v3dv_bo_free(device, mem->bo);
 }
 
 static void
@@ -2291,9 +2108,7 @@ static VkResult
 device_import_bo(struct v3dv_device *device,
                  const VkAllocationCallbacks *pAllocator,
                  int fd, uint64_t size,
-                 struct v3dv_bo **bo,
-                 VkObjectType obj_type,
-                 uint64_t obj_handle)
+                 struct v3dv_bo **bo)
 {
    *bo = NULL;
 
@@ -2322,13 +2137,11 @@ device_import_bo(struct v3dv_device *device,
    *bo = v3dv_device_lookup_bo(device->pdevice, handle);
    assert(*bo);
 
-   v3dv_bo_init_import(*bo, handle, size, get_offset.offset, obj_type, obj_handle, false);
+   if ((*bo)->refcnt == 0)
+      v3dv_bo_init_import(*bo, handle, size, get_offset.offset, false);
+   else
+      p_atomic_inc(&(*bo)->refcnt);
 
-   v3dv_emit_device_memory_report(&device->vk, VK_SUCCESS,
-                                  true, /* is_alloc */
-                                  true, /* is_import */
-                                  handle, (*bo)->size,
-                                  obj_type, obj_handle);
    return VK_SUCCESS;
 }
 
@@ -2370,9 +2183,7 @@ device_alloc_for_wsi(struct v3dv_device *device,
    if (err < 0)
       goto fail_export;
 
-   result = device_import_bo(device, pAllocator, fd, size, &mem->bo,
-                             VK_OBJECT_TYPE_DEVICE_MEMORY,
-                             vk_object_to_u64_handle(&mem->vk.base));
+   result = device_import_bo(device, pAllocator, fd, size, &mem->bo);
    close(fd);
    if (result != VK_SUCCESS)
       goto fail_import;
@@ -2416,11 +2227,8 @@ free_memory(struct v3dv_device *device,
    if (mem->bo->map)
       device_unmap(device, mem);
 
-   if (mem->is_for_device_address) {
-      mtx_lock(&device->queue_mutex);
+   if (mem->is_for_device_address)
       device_remove_device_address_bo(device, mem->bo);
-      mtx_unlock(&device->queue_mutex);
-   }
 
    device_free(device, mem);
 
@@ -2450,23 +2258,12 @@ v3dv_AllocateMemory(VkDevice _device,
    assert(pAllocateInfo->sType == VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
 
    const VkDeviceSize alloc_size = align64(pAllocateInfo->allocationSize, 4096);
-   /* Our memory requirements pad TRANSFER_SRC resources with
-    * V3D_TFU_READAHEAD_SIZE (and UBO/SSBO with 4 bytes for ldunifa), so
-    * allocating the reported requirements of a resource of exactly
-    * maxMemoryAllocationSize must succeed. Accept one extra page over
-    * the limit, which covers any sub-page padding after alignment.
-    */
-   uint64_t heap_used = p_atomic_read(&pdevice->heap_used);
-   if (unlikely(alloc_size > MAX_MEMORY_ALLOCATION_SIZE + 4096u ||
-      heap_used + alloc_size > pdevice->memory.memoryHeaps[0].size)) {
-      v3dv_emit_device_memory_report(&device->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY,
-                                     true, /* is_alloc */
-                                     false, /* is_import */
-                                     0, /* mem_obj_id */
-                                     alloc_size, VK_OBJECT_TYPE_DEVICE_MEMORY,
-                                     0 /* obj_handle */ );
+   if (unlikely(alloc_size > MAX_MEMORY_ALLOCATION_SIZE))
       return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-   }
+
+   uint64_t heap_used = p_atomic_read(&pdevice->heap_used);
+   if (unlikely(heap_used + alloc_size > pdevice->memory.memoryHeaps[0].size))
+      return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
 
    mem = vk_device_memory_create(&device->vk, pAllocateInfo,
                                  pAllocator, sizeof(*mem));
@@ -2480,16 +2277,16 @@ v3dv_AllocateMemory(VkDevice _device,
    const struct wsi_memory_allocate_info *wsi_info = NULL;
    const VkImportMemoryFdInfoKHR *fd_info = NULL;
    const VkMemoryAllocateFlagsInfo *flags_info = NULL;
-   vk_foreach_struct_const(sType, ext, pAllocateInfo->pNext) {
-      switch ((unsigned)sType) {
+   vk_foreach_struct_const(ext, pAllocateInfo->pNext) {
+      switch ((unsigned)ext->sType) {
       case VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA:
-         wsi_info = ext;
+         wsi_info = (void *)ext;
          break;
       case VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR:
-         fd_info = ext;
+         fd_info = (void *)ext;
          break;
       case VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO:
-         flags_info = ext;
+         flags_info = (void *)ext;
          break;
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO:
          /* We don't have particular optimizations associated with memory
@@ -2506,7 +2303,7 @@ v3dv_AllocateMemory(VkDevice _device,
          /* This case is handled in the common code */
          break;
       default:
-         vk_debug_ignored_stype(sType);
+         vk_debug_ignored_stype(ext->sType);
          break;
       }
    }
@@ -2519,9 +2316,7 @@ v3dv_AllocateMemory(VkDevice _device,
       assert(fd_info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT ||
              fd_info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT);
       result = device_import_bo(device, pAllocator,
-                                fd_info->fd, pAllocateInfo->allocationSize, &mem->bo,
-                                VK_OBJECT_TYPE_DEVICE_MEMORY,
-                                vk_object_to_u64_handle(&mem->vk.base));
+                                fd_info->fd, pAllocateInfo->allocationSize, &mem->bo);
       if (result == VK_SUCCESS)
          close(fd_info->fd);
    } else if (mem->vk.ahardware_buffer) {
@@ -2530,9 +2325,7 @@ v3dv_AllocateMemory(VkDevice _device,
       assert(handle->numFds > 0);
       size_t size = lseek(handle->data[0], 0, SEEK_END);
       result = device_import_bo(device, pAllocator,
-                                handle->data[0], size, &mem->bo,
-                                VK_OBJECT_TYPE_DEVICE_MEMORY,
-                                vk_object_to_u64_handle(&mem->vk.base));
+                                handle->data[0], size, &mem->bo);
 #else
       result = VK_ERROR_FEATURE_NOT_PRESENT;
 #endif
@@ -2634,14 +2427,18 @@ get_image_memory_requirements(struct v3dv_image *image,
                               VkImageAspectFlagBits planeAspect,
                               VkMemoryRequirements2 *pMemoryRequirements)
 {
+   uint32_t readahead = 0;
    /* The TFU unit has a 64-bytes readahead so we need to add a
     * V3D_TFU_READAHEAD padding to avoid invalid reads done by the TFU after
     * the end of the last allocated memory page causing MMU error.
     */
+   if (image->vk.usage & (VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
+           readahead = V3D_TFU_READAHEAD_SIZE;
+
    pMemoryRequirements->memoryRequirements = (VkMemoryRequirements) {
       .memoryTypeBits = 0x1,
       .alignment = image->planes[0].alignment,
-      .size = image->non_disjoint_size ? image->non_disjoint_size + V3D_TFU_READAHEAD_SIZE : 0
+      .size = image->non_disjoint_size ? image->non_disjoint_size + readahead : 0
    };
 
    if (planeAspect != VK_IMAGE_ASPECT_NONE) {
@@ -2654,11 +2451,11 @@ get_image_memory_requirements(struct v3dv_image *image,
       VkMemoryRequirements *mem_reqs =
          &pMemoryRequirements->memoryRequirements;
       mem_reqs->alignment = image->planes[plane].alignment;
-      mem_reqs->size = image->planes[plane].size + V3D_TFU_READAHEAD_SIZE;
+      mem_reqs->size = image->planes[plane].size + readahead;
    }
 
-   vk_foreach_struct(sType, ext, pMemoryRequirements->pNext) {
-      switch (sType) {
+   vk_foreach_struct(ext, pMemoryRequirements->pNext) {
+      switch (ext->sType) {
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
          VkMemoryDedicatedRequirements *req =
             (VkMemoryDedicatedRequirements *) ext;
@@ -2667,7 +2464,7 @@ get_image_memory_requirements(struct v3dv_image *image,
          break;
       }
       default:
-         vk_debug_ignored_stype(sType);
+         vk_debug_ignored_stype(ext->sType);
          break;
       }
    }
@@ -2681,8 +2478,8 @@ v3dv_GetImageMemoryRequirements2(VkDevice device,
    V3DV_FROM_HANDLE(v3dv_image, image, pInfo->image);
 
    VkImageAspectFlagBits planeAspect = VK_IMAGE_ASPECT_NONE;
-   vk_foreach_struct_const(sType, ext, pInfo->pNext) {
-      switch (sType) {
+   vk_foreach_struct_const(ext, pInfo->pNext) {
+      switch (ext->sType) {
       case VK_STRUCTURE_TYPE_IMAGE_PLANE_MEMORY_REQUIREMENTS_INFO: {
          VkImagePlaneMemoryRequirementsInfo *req =
             (VkImagePlaneMemoryRequirementsInfo *) ext;
@@ -2690,7 +2487,7 @@ v3dv_GetImageMemoryRequirements2(VkDevice device,
          break;
       }
       default:
-         vk_debug_ignored_stype(sType);
+         vk_debug_ignored_stype(ext->sType);
          break;
       }
    }
@@ -2789,35 +2586,17 @@ v3dv_BindImageMemory2(VkDevice _device,
                       const VkBindImageMemoryInfo *pBindInfos)
 {
    for (uint32_t i = 0; i < bindInfoCount; i++) {
-#if DETECT_OS_ANDROID
+      /* This section is removed by the optimizer for non-ANDROID builds */
       V3DV_FROM_HANDLE(v3dv_image, image, pBindInfos[i].image);
-      if (vk_image_is_android_hardware_buffer(&image->vk) ||
-          vk_image_is_android_native_buffer_alias(&image->vk)) {
-         const VkNativeBufferANDROID *anb =
-            vk_find_struct_const(pBindInfos[i].pNext, NATIVE_BUFFER_ANDROID);
-
+      if (vk_image_is_android_hardware_buffer(&image->vk)) {
          V3DV_FROM_HANDLE(v3dv_device, device, _device);
+         V3DV_FROM_HANDLE(v3dv_device_memory, mem, pBindInfos[i].memory);
 
          VkImageDrmFormatModifierExplicitCreateInfoEXT eci;
          VkSubresourceLayout a_plane_layouts[V3DV_MAX_PLANE_COUNT];
-         VkResult result;
-
-         if (vk_image_is_android_native_buffer_alias(&image->vk)) {
-            assert(anb && image->vk.android_deferred_create_info);
-            VkNativeBufferANDROID local_anb = *anb;
-            local_anb.pNext = image->vk.android_deferred_create_info->pNext;
-            image->vk.android_deferred_create_info->pNext = &local_anb;
-
-            result = vk_android_get_anb_layout(image->vk.android_deferred_create_info,
-                                               &eci, a_plane_layouts, V3DV_MAX_PLANE_COUNT);
-            image->vk.android_deferred_create_info->pNext = NULL;
-         } else {
-            V3DV_FROM_HANDLE(v3dv_device_memory, mem, pBindInfos[i].memory);
-            result = vk_android_get_ahb_layout(mem->vk.ahardware_buffer,
-                                               &eci, a_plane_layouts,
-                                               V3DV_MAX_PLANE_COUNT);
-         }
-
+         VkResult result = vk_android_get_ahb_layout(mem->vk.ahardware_buffer,
+                                                     &eci, a_plane_layouts,
+                                                     V3DV_MAX_PLANE_COUNT);
          if (result != VK_SUCCESS)
             return result;
 
@@ -2826,21 +2605,7 @@ v3dv_BindImageMemory2(VkDevice _device,
                                            /* disjoint = */ false, &eci);
          if (result != VK_SUCCESS)
             return result;
-
-         if (vk_image_is_android_native_buffer_alias(&image->vk)) {
-            result = vk_android_import_anb_memory(&device->vk, &image->vk, anb,
-                                                  &device->vk.alloc);
-            if (result != VK_SUCCESS)
-               return result;
-
-            VkBindImageMemoryInfo local_bind = pBindInfos[i];
-            local_bind.memory = image->vk.anb_memory;
-            local_bind.memoryOffset = 0;
-            bind_image_memory(&local_bind);
-            continue;
-         }
       }
-#endif
 
       const VkBindImageMemorySwapchainInfoKHR *swapchain_info =
          vk_find_struct_const(pBindInfos[i].pNext,
@@ -2872,8 +2637,17 @@ v3dv_buffer_init(struct v3dv_device *device,
                  struct v3dv_buffer *buffer,
                  uint32_t alignment)
 {
+   const VkBufferUsageFlags2CreateInfoKHR *flags2 =
+      vk_find_struct_const(pCreateInfo->pNext,
+                           BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR);
+   VkBufferUsageFlags2KHR usage;
+   if (flags2)
+      usage = flags2->usage;
+   else
+      usage = pCreateInfo->usage;
+
    buffer->size = pCreateInfo->size;
-   buffer->usage = vk_buffer_usage_flags(pCreateInfo);
+   buffer->usage = usage;
    buffer->alignment = alignment;
 }
 
@@ -2881,28 +2655,30 @@ static void
 get_buffer_memory_requirements(struct v3dv_buffer *buffer,
                                VkMemoryRequirements2 *pMemoryRequirements)
 {
+   uint32_t readahead = 0;
    /* UBO and SSBO may be read using ldunifa, which prefetches the next 4
     * bytes after a read. If the buffer's size is exactly a multiple of a page
     * size and the shader reads the last 4 bytes with ldunifa the prefetching
-    * would read out of bounds and cause an MMU error, so we need to allocate
-    * extra space to avoid kernel error spamming.
-    *
-    * On the other side, the TFU unit has also a 64-bytes readahead so we need
-    * to add a V3D_TFU_READAHEAD padding to avoid invalid reads done by the
-    * TFU after the end of the last allocated memory page.
-    *
-    * As the buffers can be exported and be used in a different way than
-    * created, the most conservative approach is to always add the
-    * V3D_TFU_READAHEAD padding.
+    * would read out of bounds and cause an MMU error, so we allocate extra
+    * space to avoid kernel error spamming. The TFU unit has also a 64-bytes
+    * readahead so we need to add a V3D_TFU_READAHEAD padding to avoid invalid
+    * reads done by the TFU after the end of the last allocated memory page.
     */
+   if (buffer->usage & (VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
+           readahead = V3D_TFU_READAHEAD_SIZE;
+   else if (buffer->usage & (VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) {
+           readahead = 4;
+   }
+
    pMemoryRequirements->memoryRequirements = (VkMemoryRequirements) {
       .memoryTypeBits = 0x1,
       .alignment = buffer->alignment,
-      .size = align64(buffer->size + V3D_TFU_READAHEAD_SIZE, buffer->alignment),
+      .size = align64(buffer->size + readahead, buffer->alignment),
    };
 
-   vk_foreach_struct(sType, ext, pMemoryRequirements->pNext) {
-      switch (sType) {
+   vk_foreach_struct(ext, pMemoryRequirements->pNext) {
+      switch (ext->sType) {
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
          VkMemoryDedicatedRequirements *req =
             (VkMemoryDedicatedRequirements *) ext;
@@ -2911,7 +2687,7 @@ get_buffer_memory_requirements(struct v3dv_buffer *buffer,
          break;
       }
       default:
-         vk_debug_ignored_stype(sType);
+         vk_debug_ignored_stype(ext->sType);
          break;
       }
    }
@@ -2980,7 +2756,7 @@ v3dv_CreateBuffer(VkDevice  _device,
    struct v3dv_buffer *buffer;
 
    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
-   assert(vk_buffer_usage_flags(pCreateInfo) != 0);
+   assert(pCreateInfo->usage != 0);
 
    /* We don't support any flags for now */
    assert(pCreateInfo->flags == 0);
@@ -3091,7 +2867,7 @@ v3dv_setup_dynamic_framebuffer(struct v3dv_cmd_buffer *cmd_buffer,
     * MSAA resolves.
     */
    const uint32_t max_attachments =
-      2 * device->devinfo.max_render_targets + 1;
+      2 * (V3D_MAX_RENDER_TARGETS(device->devinfo.ver) + 1);
    const uint32_t attachments_alloc_size =
       sizeof(struct v3dv_image_view *) * max_attachments;
 

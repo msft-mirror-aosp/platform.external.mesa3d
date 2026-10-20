@@ -258,17 +258,32 @@ impl Shader<'_> {
             match instr.op {
                 Op::ParCopy(pc) => {
                     assert!(instr.pred.is_true());
-                    let mut instrs = MappedInstrs::new();
+                    let mut instrs = Vec::new();
                     if DEBUG.annotate() {
                         instrs.push(Instr::new(OpAnnotate {
                             annotation: "par_copy lowered by lower_par_copy"
                                 .into(),
                         }));
                     }
-                    instrs.extend(lower_par_copy(*pc, sm));
-                    instrs
+                    match lower_par_copy(*pc, sm) {
+                        MappedInstrs::None => {
+                            if let Some(instr) = instrs.pop() {
+                                MappedInstrs::One(instr)
+                            } else {
+                                MappedInstrs::None
+                            }
+                        }
+                        MappedInstrs::One(i) => {
+                            instrs.push(i);
+                            MappedInstrs::Many(instrs)
+                        }
+                        MappedInstrs::Many(i) => {
+                            instrs.extend(i);
+                            MappedInstrs::Many(instrs)
+                        }
+                    }
                 }
-                _ => [instr].into(),
+                _ => MappedInstrs::One(instr),
             }
         });
     }

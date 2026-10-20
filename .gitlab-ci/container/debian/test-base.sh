@@ -52,7 +52,6 @@ EPHEMERAL=(
     libgbm-dev
     libinput-dev
     libgles2-mesa-dev
-    "libllvmspirvlib-${LLVM_VERSION}-dev"
     liblz4-dev
     libpciaccess-dev
     libpixman-1-dev
@@ -142,7 +141,6 @@ DEPS=(
     libxkbcommon0
     libxrandr2
     libxrender1
-    "llvm-spirv-${LLVM_VERSION}"
     ntpsec-ntpdig
     libxshmfence1
     ocl-icd-libopencl1
@@ -206,6 +204,10 @@ section_end debian_setup
 ############### Build mold
 
 . .gitlab-ci/container/build-mold.sh
+
+############### Build LLVM-SPIRV translator
+
+. .gitlab-ci/container/build-llvm-spirv.sh
 
 ############### Build libclc
 

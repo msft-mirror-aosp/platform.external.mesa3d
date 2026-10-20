@@ -182,12 +182,8 @@ if args.parent_path:
     if args.piglit_path or args.vk_gl_cts_path:
         parser.print_help()
         sys.exit(0)
-
     piglit_path = os.path.join(args.parent_path, "piglit")
-
-    cts_dir = os.path.join(args.parent_path, "cts")
-    glcts_dir = os.path.join(args.parent_path, "glcts")
-    vk_gl_cts_path = cts_dir if os.path.isdir(cts_dir) else glcts_dir
+    vk_gl_cts_path = os.path.join(args.parent_path, "glcts")
 else:
     if not args.piglit_path or not args.vk_gl_cts_path:
         parser.print_help()

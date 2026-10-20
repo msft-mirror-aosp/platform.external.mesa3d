@@ -1,6 +1,5 @@
 /*
  * Copyright © 2021 Collabora Ltd.
- * Copyright © 2026 NXP
  *
  * Derived from tu_device.c which is:
  * Copyright © 2016 Red Hat.
@@ -11,15 +10,13 @@
  */
 
 #include "util/build_id.h"
-#include "panvk_drirc.h"
+#include "util/driconf.h"
 #include "util/mesa-blake3.h"
 #include "util/os_misc.h"
 #include "util/u_call_once.h"
 
 #include "vk_alloc.h"
 #include "vk_log.h"
-
-#include "pan_trace.h"
 
 #include "panvk_entrypoints.h"
 #include "panvk_instance.h"
@@ -47,13 +44,12 @@ static const struct debug_control panvk_debug_options[] = {
    {"force_simultaneous", PANVK_DEBUG_FORCE_SIMULTANEOUS},
    {"implicit_others_inv", PANVK_DEBUG_IMPLICIT_OTHERS_INV},
    {"force_blackhole", PANVK_DEBUG_FORCE_BLACKHOLE},
-   {"wsi_no_afbc", PANVK_DEBUG_WSI_NO_AFBC},
+   {"wsi_afbc", PANVK_DEBUG_WSI_AFBC},
    {"no_wb_mmap", PANVK_DEBUG_NO_WB_MMAP},
    {"no_user_mmap_sync", PANVK_DEBUG_NO_USER_MMAP_SYNC},
-   {"cached_before_coherent", PANVK_DEBUG_CACHED_BEFORE_COHERENT},
+   {"coherent_before_cached", PANVK_DEBUG_COHERENT_BEFORE_CACHED},
    {"no_extended_va_range", PANVK_DEBUG_NO_EXTENDED_VA_RANGE},
    {"hsr_prepass", PANVK_DEBUG_HSR_PREPASS},
-   {"no_crc", PANVK_DEBUG_NO_CRC},
    {NULL, 0},
 };
 
@@ -105,7 +101,6 @@ static const struct vk_instance_extension_table panvk_instance_extensions = {
    .KHR_surface = true,
    .KHR_surface_maintenance1 = true,
    .EXT_surface_maintenance1 = true,
-   .EXT_swapchain_colorspace = true,
 #endif
 #ifdef VK_USE_PLATFORM_DISPLAY_KHR
    .KHR_display = true,
@@ -193,17 +188,44 @@ panvk_kmod_free(const struct pan_kmod_allocator *allocator, void *data)
    return vk_free(vkalloc, data);
 }
 
+static const driOptionDescription panvk_dri_options[] = {
+   DRI_CONF_SECTION_PERFORMANCE
+      DRI_CONF_ADAPTIVE_SYNC(true)
+      DRI_CONF_VK_X11_OVERRIDE_MIN_IMAGE_COUNT(0)
+      DRI_CONF_VK_X11_STRICT_IMAGE_COUNT(false)
+      DRI_CONF_VK_X11_ENSURE_MIN_IMAGE_COUNT(false)
+      DRI_CONF_VK_XWAYLAND_WAIT_READY(false)
+   DRI_CONF_SECTION_END
+
+   DRI_CONF_SECTION_DEBUG
+      DRI_CONF_FORCE_VK_VENDOR()
+      DRI_CONF_VK_WSI_FORCE_SWAPCHAIN_TO_CURRENT_EXTENT(false)
+      DRI_CONF_VK_X11_IGNORE_SUBOPTIMAL(false)
+   DRI_CONF_SECTION_END
+
+   DRI_CONF_SECTION_MISCELLANEOUS
+      DRI_CONF_PAN_COMPUTE_CORE_MASK(~0ull)
+      DRI_CONF_PAN_FRAGMENT_CORE_MASK(~0ull)
+      DRI_CONF_PAN_ENABLE_VERTEX_PIPELINE_STORES_ATOMICS(false)
+      DRI_CONF_PAN_FORCE_ENABLE_SHADER_ATOMICS(false)
+   DRI_CONF_SECTION_END
+};
+
 static void
 panvk_init_dri_options(struct panvk_instance *instance)
 {
-   panvk_parse_dri_options(&instance->drirc,
-                           &(driConfigFileParseParams) {
-                              .driverName = "panvk",
-                              .applicationName = instance->vk.app_info.app_name,
-                              .applicationVersion = instance->vk.app_info.app_version,
-                              .engineName = instance->vk.app_info.engine_name,
-                              .engineVersion = instance->vk.app_info.engine_version,
-                           });
+   driParseOptionInfo(&instance->available_dri_options, panvk_dri_options, ARRAY_SIZE(panvk_dri_options));
+   driParseConfigFiles(&instance->dri_options, &instance->available_dri_options, 0, "panvk", NULL, NULL,
+                       instance->vk.app_info.app_name, instance->vk.app_info.app_version,
+                       instance->vk.app_info.engine_name, instance->vk.app_info.engine_version);
+
+   instance->force_vk_vendor =
+      driQueryOptioni(&instance->dri_options, "force_vk_vendor");
+
+   instance->enable_vertex_pipeline_stores_atomics = driQueryOptionb(
+      &instance->dri_options, "pan_enable_vertex_pipeline_stores_atomics");
+   instance->force_enable_shader_atomics = driQueryOptionb(
+      &instance->dri_options, "pan_force_enable_shader_atomics");
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -217,7 +239,6 @@ panvk_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO);
 
    panvk_debug_init();
-   pan_trace_init();
 
    const struct build_id_note *note =
       build_id_find_nhdr_for_addr(panvk_CreateInstance);
@@ -285,8 +306,8 @@ panvk_DestroyInstance(VkInstance _instance,
    if (!instance)
       return;
 
-   driDestroyOptionCache(&instance->drirc.options);
-   driDestroyOptionInfo(&instance->drirc.available_options);
+   driDestroyOptionCache(&instance->dri_options);
+   driDestroyOptionInfo(&instance->available_dri_options);
 
    vk_instance_finish(&instance->vk);
    vk_free(&instance->vk.alloc, instance);

@@ -14,20 +14,6 @@ package {
     default_applicable_licenses: ["external_mesa3d_license"],
 }
 
-filegroup {
-    name: "nir_algebraic.py",
-    srcs: [
-        "nir_algebraic.py",
-    ],
-}
-
-filegroup {
-    name: "nir_opcodes.py",
-    srcs: [
-        "nir_opcodes.py",
-    ],
-}
-
 python_binary_host {
     name: "nir_builder_opcodes_h_py_binary",
     main: "nir_builder_opcodes_h.py",
@@ -291,7 +277,6 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
-        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -303,7 +288,6 @@ cc_library_static {
     header_libs: [
         "inc_compiler",
         "inc_include",
-        "inc_nir",
         "inc_src",
         "inc_util",
         "inc_util_c11",
@@ -323,18 +307,19 @@ cc_library_static {
         "shader_stats.h",
         "u_format_gen.h",
     ],
+    generated_sources: [
+        "nir_constant_expressions.c",
+        "nir_intrinsic.c",
+        "nir_opcodes.c",
+        "nir_opt_algebraic",
+    ],
     srcs: [
-        ":nir_constant_expressions.c",
-        ":nir_intrinsic.c",
-        ":nir_opcodes.c",
-        ":nir_opt_algebraic",
         "nir.c",
         "nir_builder.c",
         "nir_builtin_builder.c",
         "nir_clip_cull_distance_io_utils.c",
         "nir_clone.c",
         "nir_control_flow.c",
-        "nir_convert_address_format.c",
         "nir_deref.c",
         "nir_divergence_analysis.c",
         "nir_dominance.c",
@@ -358,7 +343,6 @@ cc_library_static {
         "nir_linking_helpers.c",
         "nir_liveness.c",
         "nir_loop_analyze.c",
-        "nir_lower_abort.c",
         "nir_lower_alpha.c",
         "nir_lower_alu.c",
         "nir_lower_alu_width.c",
@@ -466,7 +450,6 @@ cc_library_static {
         "nir_lower_wpos_center.c",
         "nir_lower_wpos_ytransform.c",
         "nir_lower_wrmasks.c",
-        "nir_lower_xfb_to_stores.c",
         "nir_metadata.c",
         "nir_mod_analysis.c",
         "nir_move_output_stores_to_end.c",
@@ -519,8 +502,6 @@ cc_library_static {
         "nir_opt_reassociate_bfi.c",
         "nir_opt_rematerialize_compares.c",
         "nir_opt_remove_phis.c",
-        "nir_opt_scalar_array_vars_to_vec.c",
-        "nir_opt_shared_vars_to_subgroup.c",
         "nir_opt_shrink_stores.c",
         "nir_opt_shrink_vectors.c",
         "nir_opt_sink.c",
@@ -586,7 +567,6 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
-        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

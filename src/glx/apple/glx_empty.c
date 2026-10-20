@@ -2,9 +2,34 @@
 #include "glxextensions.h"
 #include "glxconfig.h"
 
-/* The swap control entry points are implemented against CGL in
- * apple_glx_swap_interval.c rather than stubbed out here.
- */
+/*
+** GLX_SGI_swap_control
+*/
+int
+glXSwapIntervalSGI(int interval)
+{
+   (void) interval;
+   return 0;
+}
+
+
+/*
+** GLX_MESA_swap_control
+*/
+int
+glXSwapIntervalMESA(unsigned int interval)
+{
+   (void) interval;
+   return GLX_BAD_CONTEXT;
+}
+
+
+int
+glXGetSwapIntervalMESA(void)
+{
+   return 0;
+}
+
 
 /*
 ** GLX_SGI_video_sync

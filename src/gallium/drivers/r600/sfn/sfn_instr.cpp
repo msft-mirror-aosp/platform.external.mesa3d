@@ -364,9 +364,8 @@ Block::insert(const iterator pos, Instr *instr)
    return m_instructions.insert(pos, instr);
 }
 
-auto
-Block::try_reserve_kcache(const AluGroup& group) const
-   -> std::pair<std::array<KCacheLine, 4>, bool>
+bool
+Block::try_reserve_kcache(const AluGroup& group)
 {
    auto kcache = m_kcache;
 
@@ -375,22 +374,13 @@ Block::try_reserve_kcache(const AluGroup& group) const
       auto u = kc->as_uniform();
       assert(u);
       if (!try_reserve_kcache(*u, kcache)) {
-         return {kcache, false};
+         m_kcache_alloc_failed = true;
+         return false;
       }
    }
 
-   return {kcache, true};
-}
-
-bool
-Block::update_kcache_reservation(const AluGroup& group)
-{
-   auto [kcache, success] = try_reserve_kcache(group);
-
-   if (!success)
-      return false;
-
-   commit_kcache_reservation(kcache);
+   m_kcache = kcache;
+   m_kcache_alloc_failed = false;
    return true;
 }
 
@@ -406,9 +396,8 @@ Block::kcache_needs_extended() const
    return false;
 }
 
-auto
-Block::try_reserve_kcache(const AluInstr& instr) const
-   -> std::pair<std::array<KCacheLine, 4>, bool>
+bool
+Block::try_reserve_kcache(const AluInstr& instr)
 {
    auto kcache = m_kcache;
 
@@ -416,29 +405,14 @@ Block::try_reserve_kcache(const AluInstr& instr) const
       auto u = src->as_uniform();
       if (u) {
          if (!try_reserve_kcache(*u, kcache)) {
-            return {kcache, false};
+            m_kcache_alloc_failed = true;
+            return false;
          }
       }
    }
-   return {kcache, true};
-}
-
-bool
-Block::update_kcache_reservation(const AluInstr& instr)
-{
-   auto [kcache, success] = try_reserve_kcache(instr);
-
-   if (!success)
-      return false;
-
-   commit_kcache_reservation(kcache);
-   return true;
-}
-
-void
-Block::commit_kcache_reservation(const std::array<KCacheLine, 4>& kcache)
-{
    m_kcache = kcache;
+   m_kcache_alloc_failed = false;
+   return true;
 }
 
 void
@@ -558,7 +532,7 @@ void InstrWithVectorResult::update_indirect_addr(UNUSED PRegister old_reg, PRegi
 }
 
 void
-InstrWithVectorResult::pin_registers()
+InstrWithVectorResult::pin_dest_to_chan()
 {
    for (int i = 0; i < 4; ++i) {
       if (m_dest[i]->chan() < 4)

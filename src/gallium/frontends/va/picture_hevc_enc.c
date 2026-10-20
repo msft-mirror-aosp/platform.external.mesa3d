@@ -66,8 +66,7 @@ vlVaHandleVAEncPictureParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *cont
          if (dpb->evict) {
             surf = handle_table_get(drv->htab, dpb->id);
             assert(surf);
-            surf->dpb_id = NULL;
-            surf->dpb_buffer = NULL;
+            surf->is_dpb = false;
             surf->buffer = NULL;
             /* Keep the buffer for reuse later */
             dpb->id = 0;
@@ -82,10 +81,11 @@ vlVaHandleVAEncPictureParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *cont
 
    for (i = 0; i < ARRAY_SIZE(context->desc.h265enc.dpb); i++) {
       if (context->desc.h265enc.dpb[i].id == h265->decoded_curr_pic.picture_id) {
-         assert(surf->dpb_id);
+         assert(surf->is_dpb);
          break;
       }
-      if (!surf->dpb_id && !context->desc.h265enc.dpb[i].id) {
+      if (!surf->is_dpb && !context->desc.h265enc.dpb[i].id) {
+         surf->is_dpb = true;
          if (surf->buffer) {
             surf->buffer->destroy(surf->buffer);
             surf->buffer = NULL;
@@ -107,8 +107,7 @@ vlVaHandleVAEncPictureParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *cont
                buffer = context->decoder->create_dpb_buffer(context->decoder, &context->desc.base, &surf->templat);
             surf->buffer = buffer;
          }
-         surf->dpb_id = &context->desc.h265enc.dpb[i].id;
-         surf->dpb_buffer = &context->desc.h265enc.dpb[i].buffer;
+         vlVaSetSurfaceContext(drv, surf, context);
          if (i == context->desc.h265enc.dpb_size)
             context->desc.h265enc.dpb_size++;
          break;
@@ -130,7 +129,7 @@ vlVaHandleVAEncPictureParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *cont
 
    if (!coded_buf->derived_surface.resource)
       coded_buf->derived_surface.resource = pipe_buffer_create(drv->pipe->screen, PIPE_BIND_VERTEX_BUFFER,
-                                            PIPE_USAGE_STAGING, MAX2(1024 * 1024, coded_buf->size));
+                                            PIPE_USAGE_STAGING, coded_buf->size);
 
    context->coded_buf = coded_buf;
    context->desc.h265enc.pic.log2_parallel_merge_level_minus2 = h265->log2_parallel_merge_level_minus2;
@@ -200,7 +199,6 @@ vlVaHandleVAEncSliceParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *contex
    slice_descriptor.slice_type = h265->slice_type;
    assert(slice_descriptor.slice_type <= PIPE_H265_SLICE_TYPE_I);
 
-#ifndef NDEBUG
    /* Assert that the slices are coming in order */
    if (context->desc.h265enc.num_slice_descriptors == 0) {
       assert(slice_descriptor.slice_segment_address == 0);
@@ -210,7 +208,6 @@ vlVaHandleVAEncSliceParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *contex
       assert(last_slice_descriptor->slice_segment_address +
              last_slice_descriptor->num_ctu_in_slice == slice_descriptor.slice_segment_address);
    }
-#endif
 
    if (context->desc.h265enc.num_slice_descriptors < ARRAY_SIZE(context->desc.h265enc.slices_descriptors))
       context->desc.h265enc.slices_descriptors[context->desc.h265enc.num_slice_descriptors++] = slice_descriptor;
@@ -687,8 +684,6 @@ static void parseEncSliceParamsH265(vlVaContext *context,
                slice->delta_poc_msb_cycle_lt[i] = vl_rbsp_ue(rbsp);
          }
       }
-      if (seq->sps_temporal_mvp_enabled_flag)
-         slice->slice_temporal_mvp_enabled_flag = vl_rbsp_u(rbsp, 1);
    }
 
    if (context->desc.h265enc.seq.sample_adaptive_offset_enabled_flag) {
@@ -776,7 +771,7 @@ static void parseEncVpsParamsH265(vlVaContext *context, struct vl_rbsp *rbsp)
    }
    vid->vps_max_layer_id = vl_rbsp_u(rbsp, 6);
    vid->vps_num_layer_sets_minus1 = vl_rbsp_ue(rbsp);
-   for (unsigned i = 1; i <= vid->vps_num_layer_sets_minus1; i++) {
+   for (unsigned i = 0; i <= vid->vps_num_layer_sets_minus1; i++) {
       for (unsigned j = 0; j <= vid->vps_max_layer_id; j++)
          vl_rbsp_u(rbsp, 1); /* layer_id_included_flag[i][j] */
    }
@@ -1006,6 +1001,51 @@ static void parseEncSpsParamsH265(vlVaContext *context, struct vl_rbsp *rbsp)
    }
 }
 
+static void parseEncSeiPayloadH265(vlVaContext *context, struct vl_rbsp *rbsp, int payloadType, int payloadSize)
+{
+   switch (payloadType) {
+   case MASTERING_DISPLAY_COLOUR_VOLUME:
+      for (int32_t i = 0; i < 3; i++) {
+         context->desc.h265enc.metadata_hdr_mdcv.primary_chromaticity_x[i] = vl_rbsp_u(rbsp, 16);
+         context->desc.h265enc.metadata_hdr_mdcv.primary_chromaticity_y[i] = vl_rbsp_u(rbsp, 16);
+      }
+      context->desc.h265enc.metadata_hdr_mdcv.white_point_chromaticity_x = vl_rbsp_u(rbsp, 16);
+      context->desc.h265enc.metadata_hdr_mdcv.white_point_chromaticity_y = vl_rbsp_u(rbsp, 16);
+      context->desc.h265enc.metadata_hdr_mdcv.luminance_max = vl_rbsp_u(rbsp, 32);
+      context->desc.h265enc.metadata_hdr_mdcv.luminance_min = vl_rbsp_u(rbsp, 32);
+      break;
+   case CONTENT_LIGHT_LEVEL_INFO:
+      context->desc.h265enc.metadata_hdr_cll.max_cll= vl_rbsp_u(rbsp, 16);
+      context->desc.h265enc.metadata_hdr_cll.max_fall= vl_rbsp_u(rbsp, 16);
+      break;
+   default:
+      break;
+   }
+}
+
+static void parseEncSeiH265(vlVaContext *context, struct vl_rbsp *rbsp)
+{
+   do {
+      /* sei_message() */
+      int payloadType = 0;
+      int payloadSize = 0;
+
+      int byte = 0xFF;
+      while (byte == 0xFF) {
+         byte = vl_rbsp_u(rbsp, 8);
+         payloadType += byte;
+      }
+
+      byte = 0xFF;
+      while (byte == 0xFF) {
+         byte = vl_rbsp_u(rbsp, 8);
+         payloadSize += byte;
+      }
+      parseEncSeiPayloadH265(context, rbsp, payloadType, payloadSize);
+
+   } while (vl_rbsp_more_data(rbsp));
+}
+
 VAStatus
 vlVaHandleVAEncPackedHeaderDataBufferTypeHEVC(vlVaContext *context, vlVaBuffer *buf)
 {
@@ -1054,6 +1094,16 @@ vlVaHandleVAEncPackedHeaderDataBufferTypeHEVC(vlVaContext *context, vlVaBuffer *
       vl_rbsp_init(&rbsp, &vlc, ~0, context->packed_header_emulation_bytes);
 
       switch (nal_unit_type) {
+      case PIPE_H265_NAL_TRAIL_N:
+      case PIPE_H265_NAL_TRAIL_R:
+      case PIPE_H265_NAL_TSA_N:
+      case PIPE_H265_NAL_TSA_R:
+      case PIPE_H265_NAL_IDR_W_RADL:
+      case PIPE_H265_NAL_IDR_N_LP:
+      case PIPE_H265_NAL_CRA_NUT:
+         is_slice = true;
+         parseEncSliceParamsH265(context, &rbsp, nal_unit_type, temporal_id);
+         break;
       case PIPE_H265_NAL_VPS:
          parseEncVpsParamsH265(context, &rbsp);
          break;
@@ -1063,13 +1113,10 @@ vlVaHandleVAEncPackedHeaderDataBufferTypeHEVC(vlVaContext *context, vlVaBuffer *
       case PIPE_H265_NAL_PPS:
          parseEncPpsParamsH265(context, &rbsp);
          break;
+      case PIPE_H265_NAL_PREFIX_SEI:
+         parseEncSeiH265(context, &rbsp);
+         break;
       default:
-         /* Ignore RSV_VCL 10-15 reserved NALs */
-         if (nal_unit_type <= PIPE_H265_NAL_CRA_NUT &&
-             !(nal_unit_type >= 10 && nal_unit_type <= 15)) {
-            is_slice = true;
-            parseEncSliceParamsH265(context, &rbsp, nal_unit_type, temporal_id);
-         }
          break;
       }
 

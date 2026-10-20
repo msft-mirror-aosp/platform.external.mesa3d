@@ -14,8 +14,6 @@
 #ifndef PVR_MACROS_H
 #define PVR_MACROS_H
 
-#include "util/u_debug.h"
-
 #ifdef HAVE_VALGRIND
 #   include <valgrind/valgrind.h>
 #   include <valgrind/memcheck.h>
@@ -26,19 +24,15 @@
 
 /**
  * Print a FINISHME message, including its source location.
- *
- * Suppressed when PVR_IGNORE_FINISHME_WARNINGS environment variable is set.
  */
 #define pvr_finishme(format, ...)              \
    do {                                        \
       static bool reported = false;            \
       if (!reported) {                         \
-         if (!debug_get_bool_option("PVR_IGNORE_FINISHME_WARNINGS", false)) { \
-            mesa_logw("%s:%d: FINISHME: " format, \
-                      __FILE__,                \
-                      __LINE__,                \
-                      ##__VA_ARGS__);          \
-         }                                     \
+         mesa_logw("%s:%d: FINISHME: " format, \
+                   __FILE__,                   \
+                   __LINE__,                   \
+                   ##__VA_ARGS__);             \
          reported = true;                      \
       }                                        \
    } while (false)

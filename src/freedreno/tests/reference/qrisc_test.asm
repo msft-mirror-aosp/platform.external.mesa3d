@@ -27,8 +27,6 @@ cwrite $02, [$00 + @LOAD_STORE_HI]
 cwrite $rem, [$00 + @MEM_READ_DWORDS]
 cwrite $00, [$00 + @PACKET_TABLE_WRITE_ADDR]
 (rep)cwrite $memdata, [$00 + @PACKET_TABLE_WRITE]
-mov $02, 0x76
-swrite $02, [$00 + %PREEMPT_INSTR]
 mov $02, 0x883	; CP_SCRATCH[0].REG
 mov $03, 0xbeef
 mov $04, 0xdead << 16
@@ -73,27 +71,27 @@ mov $01, $data
 
 CP_SET_SECURE_MODE:
 mov $02, $data
-setsecure $02, #l63
+setsecure $02, #l61
 
-fxn61:
-l61:
-jump #l61
+fxn59:
+l59:
+jump #l59
 nop
-l63:
+l61:
 waitin
 mov $01, $data
 
-fxn65:
-l65:
+fxn63:
+l63:
 cmp $04, $02, $03
-breq $04, b0, #l72
-brne $04, b1, #l70
-breq $04, b2, #l65
+breq $04, b0, #l70
+brne $04, b1, #l68
+breq $04, b2, #l63
 sub $03, $03, $02
-l70:
-jump #l65
+l68:
+jump #l63
 sub $02, $02, $03
-l72:
+l70:
 ret
 nop
 
@@ -102,7 +100,7 @@ cwrite $data, [$00 + @REG_READ_ADDR]
 add $02, $regdata, 0x42
 addhi $03, $00, $regdata
 sub $02, $02, $regdata
-call #fxn65
+call #fxn63
 subhi $03, $03, $regdata
 and $02, $02, $regdata
 or $02, $02, 0x1
@@ -127,14 +125,14 @@ mov $03, $data
 mov $04, $data
 mov $05, $data
 mov $06, $data
-l101:
-breq $06, 0x0, #l107
+l99:
+breq $06, 0x0, #l105
 cwrite $03, [$00 + @LOAD_STORE_HI]
 load $07, [$02 + 0x4]!
 cwrite $05, [$00 + @LOAD_STORE_HI]
-jump #l101
+jump #l99
 store $07, [$04 + 0x4]!
-l107:
+l105:
 waitin
 mov $01, $data
 
@@ -150,17 +148,16 @@ waitin
 mov $01, $data
 
 IN_PREEMPT:
-preempt:
 cread $02, [$00 + 0x101]
-brne $02, 0x1, #l127
+brne $02, 0x1, #l125
 nop
-bl #fxn61
+bl #fxn59
 nop
 nop
 nop
 waitin
 mov $01, $data
-l127:
+l125:
 iret
 nop
 

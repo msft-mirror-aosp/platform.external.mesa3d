@@ -257,15 +257,13 @@ lower_packed_varying_needs_lowering(nir_shader *shader, nir_variable *var,
  *
  * The newly created varying inherits its interpolation parameters from \c
  * unpacked_var.  Its base type is ivec4 if we are lowering a flat varying,
- * vec4 otherwise.  Its \c precision is passed in explicitly, since a struct
- * field's precision differs from that of the variable being packed.
+ * vec4 otherwise.
  */
 static void
 create_or_update_packed_varying(struct lower_packed_varyings_state *state,
                                 nir_variable *unpacked_var,
                                 const char *name, unsigned location,
-                                unsigned slot, unsigned vertex_index,
-                                unsigned precision)
+                                unsigned slot, unsigned vertex_index)
 {
    assert(slot < state->locations_used);
    if (state->packed_varyings[slot] == NULL) {
@@ -300,7 +298,7 @@ create_or_update_packed_varying(struct lower_packed_varyings_state *state,
       packed_var->data.interpolation = is_interpolation_flat ?
          (unsigned) INTERP_MODE_FLAT : unpacked_var->data.interpolation;
       packed_var->data.location = location;
-      packed_var->data.precision = precision;
+      packed_var->data.precision = unpacked_var->data.precision;
       packed_var->data.always_active_io = unpacked_var->data.always_active_io;
       packed_var->data.stream = NIR_STREAM_PACKED;
 
@@ -333,14 +331,13 @@ create_or_update_packed_varying(struct lower_packed_varyings_state *state,
 static nir_deref_instr *
 get_packed_varying_deref(struct lower_packed_varyings_state *state,
                          unsigned location, nir_variable *unpacked_var,
-                         const char *name, unsigned vertex_index,
-                         unsigned precision)
+                         const char *name, unsigned vertex_index)
 {
    unsigned slot = location - VARYING_SLOT_VAR0;
    assert(slot < state->locations_used);
 
    create_or_update_packed_varying(state, unpacked_var, name, location, slot,
-                                   vertex_index, precision);
+                                   vertex_index);
 
    nir_deref_instr *deref =
       nir_build_deref_var(&state->b, state->packed_varyings[slot]);
@@ -562,8 +559,7 @@ lower_varying(struct lower_packed_varyings_state *state,
               nir_def *rhs_swizzle, unsigned writemask,
               const struct glsl_type *type, unsigned fine_location,
               nir_variable *unpacked_var, nir_deref_instr *unpacked_var_deref,
-              const char *name, bool gs_input_toplevel, unsigned vertex_index,
-              unsigned precision);
+              const char *name, bool gs_input_toplevel, unsigned vertex_index);
 
 /**
  * Recursively pack or unpack a varying for which we need to iterate over its
@@ -584,8 +580,7 @@ lower_arraylike(struct lower_packed_varyings_state *state,
                 nir_def *rhs_swizzle, unsigned writemask,
                 const struct glsl_type *type, unsigned fine_location,
                 nir_variable *unpacked_var, nir_deref_instr *unpacked_var_deref,
-                const char *name, bool gs_input_toplevel, unsigned vertex_index,
-                unsigned precision)
+                const char *name, bool gs_input_toplevel, unsigned vertex_index)
 {
    unsigned array_size = glsl_get_length(type);
    unsigned dmul = glsl_type_is_64bit(glsl_without_array(type)) ? 2 : 1;
@@ -609,15 +604,14 @@ lower_arraylike(struct lower_packed_varyings_state *state,
           * are at the same location, but with a different vertex index.
           */
          (void) lower_varying(state, rhs_swizzle, writemask, type, fine_location,
-                              unpacked_var, unpacked_array_deref, name, false, i,
-                              precision);
+                              unpacked_var, unpacked_array_deref, name, false, i);
       } else {
          char *subscripted_name = name ?
             ralloc_asprintf(state->mem_ctx, "%s[%d]", name, i) : NULL;
          fine_location =
             lower_varying(state, rhs_swizzle, writemask, type, fine_location,
                           unpacked_var, unpacked_array_deref,
-                          subscripted_name, false, vertex_index, precision);
+                          subscripted_name, false, vertex_index);
       }
    }
 
@@ -650,8 +644,7 @@ lower_varying(struct lower_packed_varyings_state *state,
               nir_def *rhs_swizzle, unsigned writemask,
               const struct glsl_type *type, unsigned fine_location,
               nir_variable *unpacked_var, nir_deref_instr *unpacked_var_deref,
-              const char *name, bool gs_input_toplevel, unsigned vertex_index,
-              unsigned precision)
+              const char *name, bool gs_input_toplevel, unsigned vertex_index)
 {
    unsigned dmul = glsl_type_is_64bit(type) ? 2 : 1;
    /* When gs_input_toplevel is set, we should be looking at a geometry shader
@@ -668,15 +661,12 @@ lower_varying(struct lower_packed_varyings_state *state,
             NULL;
          const struct glsl_type *field_type = glsl_get_struct_field(type, i);
 
-         unsigned field_precision =
-            glsl_get_struct_field_data(type, i)->precision;
-
          nir_deref_instr *unpacked_struct_deref =
             nir_build_deref_struct(&state->b, unpacked_var_deref, i);
          fine_location = lower_varying(state, rhs_swizzle, writemask, field_type,
                                        fine_location, unpacked_var,
                                        unpacked_struct_deref, deref_name,
-                                       false, vertex_index, field_precision);
+                                       false, vertex_index);
       }
 
       return fine_location;
@@ -686,14 +676,14 @@ lower_varying(struct lower_packed_varyings_state *state,
        */
       return lower_arraylike(state, rhs_swizzle, writemask, type, fine_location,
                              unpacked_var, unpacked_var_deref, name,
-                             gs_input_toplevel, vertex_index, precision);
+                             gs_input_toplevel, vertex_index);
    } else if (glsl_type_is_matrix(type)) {
       /* Matrices are packed/unpacked by considering each column vector in
        * sequence.
        */
       return lower_arraylike(state, rhs_swizzle, writemask, type, fine_location,
                              unpacked_var, unpacked_var_deref, name, false,
-                             vertex_index, precision);
+                             vertex_index);
    } else if (glsl_get_vector_elements(type) * dmul + fine_location % 4 > 4) {
       /* We don't have code to split up 64bit variable between two
        * varying slots, instead we add padding if necessary.
@@ -702,8 +692,7 @@ lower_varying(struct lower_packed_varyings_state *state,
       if (aligned_fine_location != fine_location) {
          return lower_varying(state, rhs_swizzle, writemask, type,
                               aligned_fine_location, unpacked_var,
-                              unpacked_var_deref, name, false, vertex_index,
-                              precision);
+                              unpacked_var_deref, name, false, vertex_index);
       }
 
       /* This vector is going to be "double parked" across two varying slots,
@@ -769,7 +758,7 @@ lower_varying(struct lower_packed_varyings_state *state,
             glsl_vector_type(glsl_get_base_type(type), left_components);
          fine_location = lower_varying(state, left_swizzle, left_writemask, swiz_type,
                                        fine_location, unpacked_var, unpacked_var_deref,
-                                       left_name, false, vertex_index, precision);
+                                       left_name, false, vertex_index);
       } else {
          /* Top up the fine location to the next slot */
          fine_location++;
@@ -795,7 +784,7 @@ lower_varying(struct lower_packed_varyings_state *state,
          glsl_vector_type(glsl_get_base_type(type), right_components);
       return lower_varying(state, right_swizzle, right_writemask, swiz_type,
                            fine_location, unpacked_var, unpacked_var_deref,
-                           right_name, false, vertex_index, precision);
+                           right_name, false, vertex_index);
    } else {
       /* No special handling is necessary; (un)pack the old varying (now temp)
        * from/into the new packed varying.
@@ -807,7 +796,7 @@ lower_varying(struct lower_packed_varyings_state *state,
       assert(state->components[location - VARYING_SLOT_VAR0] >= components);
       nir_deref_instr *packed_deref =
          get_packed_varying_deref(state, location, unpacked_var, name,
-                                  vertex_index, precision);
+                                  vertex_index);
 
       nir_variable *packed_var =
          state->packed_varyings[location - VARYING_SLOT_VAR0];
@@ -864,7 +853,7 @@ pack_output_var(struct lower_packed_varyings_state *state, nir_variable *var)
    lower_varying(state, NULL, ~0u, var->type,
                  var->data.location * 4 + var->data.location_frac,
                  var, unpacked_var_deref, var->name,
-                 state->gs_input_vertices != 0, 0, var->data.precision);
+                 state->gs_input_vertices != 0, 0);
 }
 
 static void
@@ -997,7 +986,7 @@ lower_packed_inputs(struct lower_packed_varyings_state *state)
       lower_varying(state, NULL, ~0u, var->type,
                     var->data.location * 4 + var->data.location_frac,
                     var, unpacked_var_deref, var->name,
-                    state->gs_input_vertices != 0, 0, var->data.precision);
+                    state->gs_input_vertices != 0, 0);
    }
 }
 

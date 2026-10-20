@@ -7,7 +7,6 @@
  */
 
 #include "si_query.h"
-#include "gfx/si_gfx.h"
 #include "si_build_pm4.h"
 
 #include "amd/common/sid.h"
@@ -1651,7 +1650,7 @@ static void si_query_hw_get_result_resource(struct si_context *sctx, struct si_q
          va = qbuf->buf->gpu_address + qbuf->results_end - query->result_size;
          va += params.fence_offset;
 
-         ac_emit_cp_wait_mem(&sctx->gfx_cs.current, va, 0x80000000, 0x80000000, WAIT_REG_MEM_EQUAL);
+         si_cp_wait_mem(sctx, &sctx->gfx_cs, va, 0x80000000, 0x80000000, WAIT_REG_MEM_EQUAL);
       }
 
       unsigned writable_bitmask = 0x4;

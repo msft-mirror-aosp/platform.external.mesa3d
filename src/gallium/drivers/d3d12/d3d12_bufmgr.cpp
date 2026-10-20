@@ -23,7 +23,6 @@
 
 #include "d3d12_bufmgr.h"
 #include "d3d12_context.h"
-#include "d3d12_fence.h"
 #include "d3d12_format.h"
 #include "d3d12_screen.h"
 
@@ -31,7 +30,6 @@
 #include "pipebuffer/pb_bufmgr.h"
 
 #include "util/format/u_format.h"
-#include "util/set.h"
 #include "util/u_memory.h"
 
 #include <dxguids/dxguids.h>
@@ -144,16 +142,12 @@ d3d12_bo_new(struct d3d12_screen *screen, uint64_t size, const pb_desc *pb_desc)
       d3d12_evicted : d3d12_resident;
 
    D3D12_HEAP_PROPERTIES heap_pris = GetCustomHeapProperties(dev, heap_type);
-   d3d12_screen_reclaim_completed(screen);
-   HRESULT hres;
-   do {
-      hres = dev->CreateCommittedResource(&heap_pris,
-                                          heap_flags,
-                                          &res_desc,
-                                          D3D12_RESOURCE_STATE_COMMON,
-                                          NULL,
-                                          IID_PPV_ARGS(&res));
-   } while (hres == E_OUTOFMEMORY && d3d12_screen_reclaim_one(screen));
+   HRESULT hres = dev->CreateCommittedResource(&heap_pris,
+                                               heap_flags,
+                                               &res_desc,
+                                               D3D12_RESOURCE_STATE_COMMON,
+                                               NULL,
+                                               IID_PPV_ARGS(&res));
 
    if (FAILED(hres))
       return NULL;
@@ -201,13 +195,9 @@ d3d12_bo_unreference(struct d3d12_bo *bo)
 
       /* MSVC's offsetof fails when the name is ambiguous between struct and function */
       typedef struct d3d12_context d3d12_context_type;
-      list_for_each_entry(d3d12_context_type, ctx, &bo->screen->context_list, context_list_entry) {
-         if (ctx->id == D3D12_CONTEXT_NO_ID) {
+      list_for_each_entry(d3d12_context_type, ctx, &bo->screen->context_list, context_list_entry)
+         if (ctx->id == D3D12_CONTEXT_NO_ID)
             util_dynarray_append_typed(&ctx->recently_destroyed_bos, uint64_t, bo->unique_id);
-         } else if (bo->local_context_state_mask & (1u << ctx->id)) {
-            _mesa_set_remove_key(ctx->local_state_bos, bo);
-         }
-      }
 
       mtx_unlock(&bo->screen->submit_mutex);
 
@@ -223,57 +213,6 @@ d3d12_bo_unreference(struct d3d12_bo *bo)
 
       FREE(bo);
    }
-}
-
-bool
-d3d12_screen_reclaim_completed(struct d3d12_screen *screen)
-{
-   uint64_t completed = screen->fence->GetCompletedValue();
-   struct list_head retired;
-   list_inithead(&retired);
-
-   mtx_lock(&screen->pending_free_lock);
-   list_for_each_entry_safe(struct d3d12_pending_free_entry, entry,
-                            &screen->pending_free_list, link) {
-      if (entry->fence_value > completed)
-         break;
-      list_del(&entry->link);
-      list_addtail(&entry->link, &retired);
-   }
-   mtx_unlock(&screen->pending_free_lock);
-
-   bool dropped = !list_is_empty(&retired);
-   list_for_each_entry_safe(struct d3d12_pending_free_entry, entry, &retired, link) {
-      d3d12_bo_unreference(entry->bo);
-      FREE(entry);
-   }
-   return dropped;
-}
-
-bool
-d3d12_screen_reclaim_one(struct d3d12_screen *screen)
-{
-   uint64_t target = 0;
-   bool have_target = false;
-
-   mtx_lock(&screen->pending_free_lock);
-   if (!list_is_empty(&screen->pending_free_list)) {
-      struct d3d12_pending_free_entry *head =
-         list_first_entry(&screen->pending_free_list,
-                          struct d3d12_pending_free_entry, link);
-      target = head->fence_value;
-      have_target = true;
-   }
-   mtx_unlock(&screen->pending_free_lock);
-
-   if (!have_target)
-      return false;
-
-   if (screen->fence->GetCompletedValue() < target)
-      screen->fence->SetEventOnCompletion(target, nullptr);
-
-   d3d12_screen_reclaim_completed(screen);
-   return true;
 }
 
 void *
@@ -368,18 +307,8 @@ d3d12_buffer_validate(struct pb_buffer *pbuf,
 
 static void
 d3d12_buffer_fence(struct pb_buffer *pbuf,
-                   struct pipe_fence_handle *fence)
+                   struct pipe_fence_handle *fence )
 {
-   if (!fence)
-      return;
-   struct d3d12_buffer *buf = d3d12_buffer(pbuf);
-   struct d3d12_fence *f = d3d12_fence(fence);
-   uint64_t offset;
-   struct d3d12_bo *base = d3d12_bo_get_base(buf->bo, &offset);
-   if (f->cmdqueue_fence != base->screen->fence)
-      return;
-   if (f->value > base->last_used_fence)
-      base->last_used_fence = f->value;
 }
 
 const struct pb_vtbl d3d12_buffer_vtbl = {
@@ -445,11 +374,8 @@ d3d12_bufmgr_destroy(struct pb_manager *_mgr)
 static bool
 d3d12_bufmgr_is_buffer_busy(struct pb_manager *_mgr, struct pb_buffer *_buf)
 {
-   struct d3d12_bufmgr *mgr = d3d12_bufmgr(_mgr);
-   struct d3d12_buffer *buf = d3d12_buffer(_buf);
-   uint64_t offset;
-   struct d3d12_bo *base = d3d12_bo_get_base(buf->bo, &offset);
-   return base->last_used_fence > mgr->screen->fence->GetCompletedValue();
+   /* We're only asked this on buffers that are known not busy */
+   return false;
 }
 
 struct pb_manager *

@@ -57,6 +57,7 @@ struct brw_shader_params
    const nir_shader *nir;
    const brw_base_prog_key *key;
    brw_stage_prog_data *prog_data;
+
    unsigned dispatch_width;
 
    /* Fragment shader. */
@@ -85,6 +86,7 @@ public:
 
    void vfail(const char *msg, va_list args);
    void fail(const char *msg, ...);
+   void limit_dispatch_width(unsigned n, const char *msg);
 
    void emit_gs_control_data_bits(const brw_reg &vertex_count);
    brw_reg gs_urb_channel_mask(const brw_reg &dword_index);
@@ -124,6 +126,7 @@ public:
    const brw_base_prog_key *const key;
 
    struct brw_stage_prog_data *prog_data;
+
    brw_analysis<brw_live_variables, brw_shader> live_analysis;
    brw_analysis<brw_register_pressure, brw_shader> regpressure_analysis;
    brw_analysis<brw_performance, brw_shader> performance_analysis;
@@ -140,10 +143,11 @@ public:
    /** Byte-offset for the next available spot in the scratch space buffer. */
    unsigned last_scratch;
 
-   /** Byte-offset for the next logical, non-reused spill slot. */
-   unsigned last_logical_scratch;
-
-   brw_reg subgroup_barrier_index;
+   brw_reg frag_depth;
+   brw_reg frag_stencil;
+   brw_reg sample_mask;
+   brw_reg outputs[VARYING_SLOT_MAX];
+   brw_reg dual_src_output;
    /* This includes HW thread payload + push constants + URB(after brw_assign_xs_urb_setup()) */
    int first_non_payload_grf;
 
@@ -203,20 +207,13 @@ public:
       int per_primitive_offsets[VARYING_SLOT_MAX];
    } fs;
 
-   /* Whether we've seen an RT write already */
-   bool seen_rt_write;
-
    unsigned grf_used;
    bool spilled_any_registers;
    bool needs_register_pressure;
 
-   /* Offset of this shader's code within the binary returned by
-    * brw_to_binary().  Filled in by brw_to_binary(); meaningless before.
-    */
-   unsigned start_offset;
-
    const unsigned dispatch_width; /**< 8, 16 or 32 */
    const unsigned max_polygons;
+   unsigned max_dispatch_width;
 
    /* The API selected subgroup size */
    unsigned api_subgroup_size; /**< 0, 8, 16, 32 */
@@ -242,19 +239,13 @@ public:
    } inst_arena;
 };
 
-enum brw_print_flags {
-   BRW_PRINT_DEFS         = 1 << 0,
-   BRW_PRINT_BLOCKS       = 1 << 1,
-   BRW_PRINT_REG_PRESSURE = 1 << 2,
-};
-
-void brw_print_instructions(const brw_shader &s, FILE *file = stderr,
-                            unsigned flags = BRW_PRINT_DEFS | BRW_PRINT_BLOCKS |
-                                             BRW_PRINT_REG_PRESSURE);
+void brw_print_instructions(const brw_shader &s, FILE *file = stderr);
 
 void brw_print_instruction(const brw_shader &s, const brw_inst *inst,
                            FILE *file = stderr,
                            const brw_def_analysis *defs = nullptr);
+
+void brw_print_swsb(FILE *f, const struct intel_device_info *devinfo, const tgl_swsb swsb);
 
 /**
  * Return the flag register used in fragment shaders to keep track of live
@@ -269,17 +260,25 @@ sample_mask_flag_subreg(const brw_shader &s)
 }
 
 inline brw_reg
-brw_dynamic_fs_config(struct brw_fs_prog_data *fs_prog_data)
+brw_dynamic_fs_config(const struct brw_fs_prog_data *fs_prog_data)
 {
-   fs_prog_data->uses_fs_config = true;
    return byte_offset(
       brw_uniform_reg(
          fs_prog_data->fs_config_param / REG_SIZE, BRW_TYPE_UD),
       fs_prog_data->fs_config_param % REG_SIZE);
 }
 
-enum intel_barycentric_mode
-brw_barycentric_mode(nir_intrinsic_instr *intr);
+inline brw_reg
+brw_dynamic_per_primitive_remap(const struct brw_fs_prog_data *fs_prog_data)
+{
+   return byte_offset(
+      brw_uniform_reg(
+         fs_prog_data->per_primitive_remap_param / REG_SIZE, BRW_TYPE_UW),
+      fs_prog_data->per_primitive_remap_param % REG_SIZE);
+}
+
+enum intel_barycentric_mode brw_barycentric_mode(const struct brw_fs_prog_key *key,
+                                                 nir_intrinsic_instr *intr);
 
 uint32_t brw_fb_write_msg_control(const brw_inst *inst,
                                   const struct brw_fs_prog_data *prog_data);
@@ -343,7 +342,6 @@ bool brw_lower_scalar_fp64_MAD(brw_shader &s);
 bool brw_lower_scoreboard(brw_shader &s);
 bool brw_lower_send_descriptors(brw_shader &s);
 bool brw_lower_send_gather(brw_shader &s);
-bool brw_lower_sendg_ind_desc_to_arf(brw_shader &s);
 bool brw_lower_sends_overlapping_payload(brw_shader &s);
 bool brw_lower_simd_width(brw_shader &s);
 bool brw_lower_src_modifiers(brw_shader &s, brw_inst *inst, unsigned i);
@@ -369,7 +367,6 @@ bool brw_opt_cse_defs(brw_shader &s);
 bool brw_opt_dead_code_eliminate(brw_shader &s);
 bool brw_opt_eliminate_find_live_channel(brw_shader &s);
 bool brw_opt_fill_and_spill(brw_shader &s);
-bool brw_opt_predicate_logic(brw_shader &s);
 bool brw_opt_register_coalesce(brw_shader &s);
 bool brw_opt_remove_extra_rounding_modes(brw_shader &s);
 bool brw_opt_remove_redundant_halts(brw_shader &s);
@@ -412,41 +409,3 @@ brw_inst *brw_clone_inst(brw_shader &s, const brw_inst *inst);
  */
 brw_inst *brw_transform_inst(brw_shader &s, brw_inst *inst, enum opcode new_opcode,
                              unsigned new_num_srcs = UINT_MAX);
-
-/* Maximum number of entries in brw_to_binary_params::shaders.
- *
- * This covers the most demanding caller (brw_compile_fs, which emits up to
- * four variants: vmulti, simd8, simd16, simd32).
- */
-#define BRW_TO_BINARY_MAX_SHADERS 4
-
-struct brw_to_binary_params {
-   const struct brw_compiler *compiler;
-   const struct brw_compile_params *params;
-   struct brw_stage_prog_data *prog_data;
-
-   /* Main shaders.  Slots with shader == NULL are skipped.  Non-skipped
-    * slots are processed in array order, each consuming (in turn) one entry
-    * from params->stats if it is non-NULL.
-    *
-    * After the call, each emitted shader's start_offset field is set to the
-    * offset of its code within the returned binary.
-    */
-   brw_shader *shaders[BRW_TO_BINARY_MAX_SHADERS];
-
-   /* Bindless-only: resume shaders for ray-tracing.  Their shader binding
-    * table entries are computed internally from each resume shader's
-    * start_offset (set by this call) plus its dispatch_width and grf_used,
-    * and are appended to the output (with relocs).
-    */
-   brw_shader *const *resume_shaders;
-   unsigned num_resume_shaders;
-
-   /* Optional extra data appended to the output after params->nir->constant_data,
-    * aligned to 32 bytes.  Used e.g. by the mesh wa_18019110168 remap table.
-    */
-   const void *extra_const_data;
-   unsigned extra_const_data_size;
-};
-
-const unsigned *brw_to_binary(const brw_to_binary_params *p);

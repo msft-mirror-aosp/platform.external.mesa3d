@@ -129,30 +129,6 @@ __forceinline short _interlockedadd16(short volatile * _Addend, short _Value)
    return _InterlockedExchangeAdd16(_Addend, _Value) + _Value;
 }
 
-#ifdef __clang__
-/* When compiling with clang-cl (_MSC_VER and __clang__ both defined),
- * #include <intrin.h> resolves to Clang's builtin intrin.h/intrin0.h rather
- * than MSVC's intrin0.inl.h. Clang's header only declares the PascalCase
- * _Interlocked*64 intrinsics (not the lowercase _interlocked*64 aliases from
- * MSVC/WinSDK) and omits _interlockedadd and _interlockedadd64, which causes
- * C++ compilation errors in the p_atomic_* ternary macros below.
- */
-__forceinline long _interlockedadd(long volatile * _Addend, long _Value)
-{
-   return _InterlockedExchangeAdd(_Addend, _Value) + _Value;
-}
-
-__forceinline __int64 _interlockedadd64(__int64 volatile * _Addend, __int64 _Value)
-{
-   return _InterlockedExchangeAdd64(_Addend, _Value) + _Value;
-}
-
-#define _interlockedincrement64 _InterlockedIncrement64
-#define _interlockeddecrement64 _InterlockedDecrement64
-#define _interlockedexchangeadd64 _InterlockedExchangeAdd64
-#define _interlockedexchange64 _InterlockedExchange64
-#endif
-
 /* MSVC supports decltype keyword, but it's only supported on C++ and doesn't
  * quite work here; and if a C++-only solution is worthwhile, then it would be
  * better to use templates / function overloading, instead of decltype magic.

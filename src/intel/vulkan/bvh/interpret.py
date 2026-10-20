@@ -4,10 +4,9 @@ import ctypes
 import sys
 import json
 
-ANV_RT_BVH_HEADER_SIZE = 256;
-
 def get_header_properties(header):
     return {
+        'rootNodeOffset': header.rootNodeOffset,
         'aabb': {
             'min_x': header.aabb.min_x,
             'min_y': header.aabb.min_y,
@@ -16,6 +15,7 @@ def get_header_properties(header):
             'max_y': header.aabb.max_y,
             'max_z': header.aabb.max_z,
         },
+        'instance_flags': header.instance_flags,
         'copy_dispatch_size': list(header.copy_dispatch_size),
         'compacted_size': header.compacted_size,
         'serialization_size': header.serialization_size,
@@ -23,8 +23,6 @@ def get_header_properties(header):
         'instance_count': header.instance_count,
         'self_ptr': header.self_ptr,
         'enable_64b_rt': header.enable_64b_rt,
-        'instance_leaves_offset': header.instance_leaves_offset,
-        'root_flags': header.root_flags,
         'padding': f"{len(header.padding)} uint32_t paddings",
     }
 
@@ -192,7 +190,9 @@ class VkAabb(ctypes.Structure):
 
 class AnvAccelStructHeader(ctypes.Structure):
     _fields_ = (
+        ('rootNodeOffset', ctypes.c_uint64),
         ('aabb', VkAabb),
+        ('instance_flags', ctypes.c_uint32),
         ('copy_dispatch_size', ctypes.c_uint32 * 3),
         ('compacted_size', ctypes.c_uint64),
         ('serialization_size', ctypes.c_uint64),
@@ -200,8 +200,6 @@ class AnvAccelStructHeader(ctypes.Structure):
         ('instance_count', ctypes.c_uint64),
         ('self_ptr', ctypes.c_uint64),
         ('enable_64b_rt', ctypes.c_uint32),
-        ('instance_leaves_offset', ctypes.c_uint32),
-        ('root_flags', ctypes.c_uint32),
         ('padding', ctypes.c_uint32 * 41),
     )
 
@@ -317,7 +315,7 @@ class BVHInterpreter:
         # Interpret the header
         header = self.interpret_structure(offset, AnvAccelStructHeader)
         self.enable_64b_rt = header.enable_64b_rt
-        offset += ANV_RT_BVH_HEADER_SIZE
+        offset += header.rootNodeOffset
 
         # Interpret the rootNode
         self.dfs_interpret_node(offset, AnvInternalNode)

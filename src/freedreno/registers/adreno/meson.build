@@ -1,7 +1,7 @@
 # Copyright © 2019 Google, Inc
 # SPDX-License-Identifier: MIT
 
-xml_reg_files = files(
+xml_reg_files = [
   'a2xx.xml',
   'a3xx.xml',
   'a4xx.xml',
@@ -15,7 +15,7 @@ xml_reg_files = files(
   'a8xx_enums.xml',
   'a8xx_descriptors.xml',
   'a8xx_perfcntrs.xml',
-)
+]
 
 perfcntr_files = [
   [ 'a2xx.xml', 'a2xx_perfcntrs.json' ],
@@ -26,16 +26,15 @@ perfcntr_files = [
 ]
 
 xml_files = xml_reg_files
-xml_files += files(
+xml_files += [
   'a6xx_gmu.xml',
   'ocmem.xml',
   'adreno_control_regs.xml',
   'adreno_pipe_regs.xml',
   'adreno_common.xml',
-)
+]
 
 freedreno_pm4_xml_header_file = []
-adreno_pm4_xml = files('adreno_pm4.xml')
 
 freedreno_pm4_xml_header_file += custom_target(
     'adreno_pm4.xml.h',
@@ -43,7 +42,6 @@ freedreno_pm4_xml_header_file += custom_target(
     output: 'adreno_pm4.xml.h',
     command: [prog_python, '@INPUT0@', '--rnn', rnn_src_path, '--xml', '@INPUT1@', 'c-defines'],
     capture: true,
-    depend_files: xml_files,
 )
 
 freedreno_pm4_xml_header_file += custom_target(
@@ -52,7 +50,6 @@ freedreno_pm4_xml_header_file += custom_target(
     output: 'adreno-pm4-pack.xml.h',
     command: [prog_python, '@INPUT0@', '--rnn', rnn_src_path, '--xml', '@INPUT1@', 'c-pack-structs'],
     capture: true,
-    depend_files: xml_files,
 )
 freedreno_xml_header_files += freedreno_pm4_xml_header_file
 
@@ -70,18 +67,16 @@ if install_fd_decode_tools
 endif
 
 foreach f : xml_files
-  _fname = fs.name(f)
-  _name = fs.replace_suffix(_fname, '.xml.h')
+  _name = f + '.h'
   freedreno_xml_header_files += custom_target(
     _name,
     input: [gen_header_py, f, freedreno_schema, freedreno_copyright],
     output: _name,
     command: [prog_python, '@INPUT0@', '--validate', '--rnn', rnn_src_path, '--xml', '@INPUT1@', 'c-defines'],
     capture: true,
-    depend_files: [xml_files, adreno_pm4_xml]
   )
   if install_fd_decode_tools
-    _gzname = fs.replace_suffix(_fname, '.xml.gz')
+    _gzname = f + '.gz'
     custom_target(
       _gzname,
       input: f,
@@ -103,7 +98,6 @@ foreach e : perfcntr_files
     output: _name,
     command: [prog_python, '@INPUT0@', '--validate', '--rnn', rnn_src_path, '--xml', '@INPUT1@', 'perfcntrs', '--json', '@INPUT2@'],
     capture: true,
-    depend_files: [xml_files, adreno_pm4_xml]
   )
 endforeach
 
@@ -113,20 +107,17 @@ freedreno_xml_header_files += custom_target(
     output: 'a6xx-pack.xml.h',
     command: [prog_python, '@INPUT0@', '--rnn', rnn_src_path, '--xml', '@INPUT1@', 'c-pack-structs'],
     capture: true,
-    depend_files: [xml_files, adreno_pm4_xml]
 )
 
 freedreno_py_header_files = []
 
 foreach f : xml_reg_files
-  _fname = fs.name(f)
-  _pyname = fs.replace_suffix(_fname, '.py')
+  _pyname = f.split('.')[0] + '.py'
   freedreno_py_header_files += custom_target(
     _pyname,
     input: [gen_header_py, f, freedreno_schema, freedreno_copyright],
     output: _pyname,
     command: [prog_python, '@INPUT0@', '--rnn', rnn_src_path, '--xml', '@INPUT1@', 'py-defines'],
     capture: true,
-    depend_files: [xml_files, adreno_pm4_xml]
   )
 endforeach

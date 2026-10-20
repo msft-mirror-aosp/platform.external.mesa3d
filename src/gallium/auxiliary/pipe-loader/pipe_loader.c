@@ -137,10 +137,8 @@ void
 pipe_loader_config_options(struct pipe_loader_device *dev)
 {
    if (!dev->option_cache.info) {
-      driParseConfigFiles(&dev->option_cache, &dev->option_info,
-                          &(driConfigFileParseParams) {
-                             .driverName = dev->driver_name,
-                          });
+      driParseConfigFiles(&dev->option_cache, &dev->option_info, 0,
+                          dev->driver_name, NULL, NULL, NULL, 0, NULL, 0);
    }
 }
 

@@ -17,6 +17,7 @@
 #include "radeon_compiler.h"
 #include "radeon_compiler_util.h"
 #include "radeon_dataflow.h"
+#include "radeon_list.h"
 #include "radeon_regalloc.h"
 #include "radeon_variable.h"
 
@@ -131,7 +132,7 @@ variable_get_class(struct rc_variable *variable, const struct rc_class *classes)
    unsigned int i;
    unsigned int can_change_writemask = 1;
    unsigned int writemask = rc_variable_writemask_sum(variable);
-   struct util_dynarray *readers = rc_variable_readers_union(variable);
+   struct rc_list *readers = rc_variable_readers_union(variable);
    int class_index;
 
    if (!variable->C->is_r500) {
@@ -212,8 +213,8 @@ variable_get_class(struct rc_variable *variable, const struct rc_class *classes)
          can_change_writemask = 0;
       }
    }
-   util_dynarray_foreach(readers, struct rc_reader *, reader_ptr) {
-      struct rc_reader *r = *reader_ptr;
+   for (; readers; readers = readers->Next) {
+      struct rc_reader *r = readers->Item;
       if (r->Inst->Type == RC_INSTRUCTION_PAIR) {
          if (r->U.P.Arg->Source == RC_PAIR_PRESUB_SRC) {
             can_change_writemask = 0;
@@ -246,22 +247,22 @@ do_advanced_regalloc(struct regalloc_state *s)
    unsigned int i, input_node, node_count, node_index;
    struct ra_class **node_classes;
    struct rc_instruction *inst;
-   struct util_dynarray *variables;
+   struct rc_list *var_ptr;
+   struct rc_list *variables;
    struct ra_graph *graph;
    const struct rc_regalloc_state *ra_state = s->C->regalloc_state;
 
    /* Get list of program variables */
    variables = rc_get_variables(s->C);
-   node_count = util_dynarray_num_elements(variables, struct rc_variable *);
-   node_classes = linear_alloc_array(s->C->Pool, struct ra_class *, node_count);
+   node_count = rc_list_count(variables);
+   node_classes = memory_pool_malloc(&s->C->Pool, node_count * sizeof(struct ra_class *));
 
-   for (node_index = 0; node_index < node_count; node_index++) {
+   for (var_ptr = variables, node_index = 0; var_ptr; var_ptr = var_ptr->Next, node_index++) {
       unsigned int class_index;
-      struct rc_variable *var = rc_variable_list_element(variables, node_index);
       /* Compute the live intervals */
-      rc_variable_compute_live_intervals(var);
+      rc_variable_compute_live_intervals(var_ptr->Item);
 
-      class_index = variable_get_class(var, ra_state->class_list);
+      class_index = variable_get_class(var_ptr->Item, ra_state->class_list);
       node_classes[node_index] = ra_state->classes[class_index];
    }
 
@@ -302,8 +303,8 @@ do_advanced_regalloc(struct regalloc_state *s)
       if (!s->Input[i].Writemask) {
          continue;
       }
-      for (node_index = 0; node_index < node_count; node_index++) {
-         struct rc_variable *var = rc_variable_list_element(variables, node_index);
+      for (var_ptr = variables, node_index = 0; var_ptr; var_ptr = var_ptr->Next, node_index++) {
+         struct rc_variable *var = var_ptr->Item;
          if (rc_overlap_live_intervals_array(s->Input[i].Live, var->Live)) {
             ra_add_node_interference(graph, node_index, node_count + input_node);
          }
@@ -321,11 +322,11 @@ do_advanced_regalloc(struct regalloc_state *s)
    }
 
    /* Rewrite the registers */
-   for (node_index = 0; node_index < node_count; node_index++) {
+   for (var_ptr = variables, node_index = 0; var_ptr; var_ptr = var_ptr->Next, node_index++) {
       int reg = ra_get_node_reg(graph, node_index);
       unsigned int writemask = reg_get_writemask(reg);
       unsigned int index = reg_get_index(reg);
-      struct rc_variable *var = rc_variable_list_element(variables, node_index);
+      struct rc_variable *var = var_ptr->Item;
 
       if (!s->C->is_r500 && var->Inst->Type == RC_INSTRUCTION_NORMAL) {
          writemask = rc_variable_writemask_sum(var);
@@ -357,11 +358,11 @@ rc_pair_regalloc(struct radeon_compiler *cc, void *user)
    memset(&s, 0, sizeof(s));
    s.C = cc;
    s.NumInputs = rc_get_max_index(cc, RC_FILE_INPUT) + 1;
-   s.Input = linear_alloc_array(cc->Pool, struct register_info, s.NumInputs);
+   s.Input = memory_pool_malloc(&cc->Pool, s.NumInputs * sizeof(struct register_info));
    memset(s.Input, 0, s.NumInputs * sizeof(struct register_info));
 
    s.NumTemporaries = rc_get_max_index(cc, RC_FILE_TEMPORARY) + 1;
-   s.Temporary = linear_alloc_array(cc->Pool, struct register_info, s.NumTemporaries);
+   s.Temporary = memory_pool_malloc(&cc->Pool, s.NumTemporaries * sizeof(struct register_info));
    memset(s.Temporary, 0, s.NumTemporaries * sizeof(struct register_info));
 
    rc_recompute_ips(s.C);

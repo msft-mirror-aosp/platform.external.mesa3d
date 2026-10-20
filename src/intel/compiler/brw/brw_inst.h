@@ -9,7 +9,6 @@
 #include <assert.h>
 #include "brw_reg.h"
 #include "compiler/brw_list.h"
-#include "compiler/gen/gen.h"
 #include "brw_sampler.h"
 
 #define MAX_SAMPLER_MESSAGE_SIZE 11
@@ -192,17 +191,12 @@ struct brw_inst : brw_exec_node {
           */
          bool has_no_mask_send_params:1;
 
-         /**
-          * For RT messages, whether synchronous or not.
-          */
-         bool synchronous:1;
-
-         uint8_t pad:5;
+         uint8_t pad:6;
       };
       uint16_t bits;
    };
 
-   gen_swsb sched; /**< Scheduling info. */
+   tgl_swsb sched; /**< Scheduling info. */
 
    bblock_t *block;
 
@@ -219,17 +213,12 @@ struct brw_inst : brw_exec_node {
 };
 
 struct brw_send_inst : brw_inst {
-   union {
-      struct {
-         uint32_t desc;
-         uint32_t ex_desc;
-      };
-      uint64_t combined_desc;/* SENDG combined desc */
-   };
+   uint32_t desc;
+   uint32_t ex_desc;
    uint32_t offset;
 
-   uint8_t mlen;/* SENDG address length */
-   uint8_t ex_mlen;/* SENDG data length */
+   uint8_t mlen;
+   uint8_t ex_mlen;
    uint8_t sfid;
 
    /** The number of hardware registers used for a message header. */
@@ -268,9 +257,7 @@ struct brw_send_inst : brw_inst {
           */
          bool ex_desc_imm:1;
 
-         bool efficient_64bit:1;
-
-         uint8_t pad:1;
+         uint8_t pad:2;
       };
       uint8_t send_bits;
    };
@@ -314,18 +301,8 @@ struct brw_tex_inst : brw_inst {
           * brw_opt_zero_samples()
           */
          uint16_t required_params:13;
-         /**
-          * Texture index Gfx35+ only
-          */
-         uint8_t texture_index:5;
-         /**
-          * Sampler index Gfx35+ only
-          */
-         uint8_t sampler_index:3;
-
-         uint32_t pad:24;
       };
-      uint64_t bits;
+      uint32_t bits;
    };
 
    /**
@@ -343,8 +320,6 @@ struct brw_mem_inst : brw_inst {
    uint8_t coord_components;
    uint8_t components;
    uint8_t flags;
-   /** Texture index Gfx35+ only */
-   uint8_t surface_index;
 
    /** Required alignment of address in bytes; 0 for natural alignment */
    uint32_t alignment;
@@ -379,30 +354,15 @@ struct brw_fb_write_inst : brw_inst {
 };
 
 struct brw_scratch_inst : brw_inst {
-   /** Physical offset in scratch space for the load or store. */
+   /** Offset in scratch space for the load or store. */
    unsigned offset;
-
-   /**
-    * Scratch offset assuming no reuse between spilled values.  Used by later
-    * optimizations to identify dead spills and fills.
-    */
-   unsigned logical_offset;
 
    /**
     * Should a LSC transpose message be used for the fill?
     *
     * Currently this must be false for spills.
     */
-   bool use_transpose:1;
-
-   /**
-    * Should a LSC fill the base offset?
-    *
-    * Currently this must be false for spills.
-    */
-   bool use_base_offset:1;
-
-   uint32_t pad:30;
+   bool use_transpose;
 };
 
 /**
@@ -478,9 +438,9 @@ regs_read(const struct intel_device_info *devinfo, const brw_inst *inst, unsigne
       return 1;
 
    const unsigned reg_size = inst->src[i].file == UNIFORM ? 4 : REG_SIZE;
-   const unsigned size_read = inst->size_read(devinfo, i);
    return DIV_ROUND_UP(reg_offset(inst->src[i]) % reg_size +
-                       size_read - MIN2(size_read, reg_padding(inst->src[i])),
+                       inst->size_read(devinfo, i) -
+                       MIN2(inst->size_read(devinfo, i), reg_padding(inst->src[i])),
                        reg_size);
 }
 
@@ -554,7 +514,7 @@ bool is_coalescing_payload(const struct brw_shader &s, const brw_inst *inst);
 bool has_bank_conflict(const struct brw_isa_info *isa, const brw_inst *inst);
 
 /* Helper from brw_lower_scoreboard.cpp. */
-gen_pipe
+tgl_pipe
 inferred_exec_pipe(const struct intel_device_info *devinfo,
                    const brw_inst *inst);
 
@@ -563,21 +523,13 @@ inferred_exec_pipe(const struct intel_device_info *devinfo,
  * subregister number of the instruction.
  */
 static inline unsigned
-brw_flag_mask(unsigned flag_subreg, unsigned group, unsigned exec_size,
-              unsigned width)
-{
-   assert(util_is_power_of_two_nonzero(width));
-   const unsigned start = (flag_subreg * 16 + group) &
-                          ~(width - 1);
-   const unsigned end = start + align(exec_size, width);
-   return ((1 << DIV_ROUND_UP(end, 8)) - 1) & ~((1 << (start / 8)) - 1);
-}
-
-static inline unsigned
 brw_flag_mask(const brw_inst *inst, unsigned width)
 {
-   return brw_flag_mask(inst->flag_subreg, inst->group, inst->exec_size,
-                        width);
+   assert(util_is_power_of_two_nonzero(width));
+   const unsigned start = (inst->flag_subreg * 16 + inst->group) &
+                          ~(width - 1);
+   const unsigned end = start + align(inst->exec_size, width);
+   return ((1 << DIV_ROUND_UP(end, 8)) - 1) & ~((1 << (start / 8)) - 1);
 }
 
 static inline unsigned
@@ -597,7 +549,3 @@ brw_flag_mask(const brw_reg &r, unsigned sz)
       return 0;
    }
 }
-
-unsigned brw_flags_written(enum opcode, enum brw_conditional_mod,
-                           unsigned flag_subreg, unsigned group,
-                           unsigned exec_size);

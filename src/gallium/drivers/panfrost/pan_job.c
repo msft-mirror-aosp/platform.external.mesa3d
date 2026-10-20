@@ -47,9 +47,8 @@ panfrost_batch_add_surface(struct panfrost_batch *batch,
 {
    if (surf->texture) {
       struct panfrost_resource *rsrc = pan_resource(surf->texture);
-      pan_resource_modifier_legalize(batch->ctx, rsrc, surf->format, true,
-                                     false);
-      panfrost_batch_write_rsrc(batch, rsrc);
+      pan_legalize_format(batch->ctx, rsrc, surf->format, true, false);
+      panfrost_batch_write_rsrc(batch, rsrc, MESA_SHADER_FRAGMENT);
    }
 }
 
@@ -90,9 +89,6 @@ panfrost_batch_init(struct panfrost_context *ctx,
       panfrost_batch_add_surface(batch, &batch->key.cbufs[i]);
 
    panfrost_batch_add_surface(batch, &batch->key.zsbuf);
-
-   if (dev->arch >= 10)
-      u_trace_init(&batch->trace, &ctx->trace_context);
 
    return screen->vtbl.init_batch(batch);
 }
@@ -136,9 +132,6 @@ panfrost_batch_cleanup(struct panfrost_context *ctx,
    util_unreference_framebuffer_state(&batch->key);
 
    util_dynarray_fini(&batch->bos);
-
-   if (dev->arch >= 10)
-      u_trace_fini(&batch->trace);
 
    memset(batch, 0, sizeof(*batch));
    BITSET_CLEAR(ctx->batches.active, batch_idx);
@@ -336,29 +329,35 @@ panfrost_batch_add_bo_old(struct panfrost_batch *batch, struct panfrost_bo *bo,
    *entry = flags;
 }
 
-void
-panfrost_batch_add_bo(struct panfrost_batch *batch, struct panfrost_bo *bo)
+static uint32_t
+panfrost_access_for_stage(mesa_shader_stage stage)
 {
-   panfrost_batch_add_bo_old(batch, bo, PAN_BO_ACCESS_READ);
+   return (stage == MESA_SHADER_FRAGMENT) ? PAN_BO_ACCESS_FRAGMENT
+                                          : PAN_BO_ACCESS_VERTEX_TILER;
 }
 
 void
-panfrost_batch_write_bo(struct panfrost_batch *batch, struct panfrost_bo *bo)
+panfrost_batch_add_bo(struct panfrost_batch *batch, struct panfrost_bo *bo,
+                      mesa_shader_stage stage)
 {
-   panfrost_batch_add_bo_old(batch, bo, PAN_BO_ACCESS_WRITE);
+   panfrost_batch_add_bo_old(
+      batch, bo, PAN_BO_ACCESS_READ | panfrost_access_for_stage(stage));
+}
+
+void
+panfrost_batch_write_bo(struct panfrost_batch *batch, struct panfrost_bo *bo,
+                        mesa_shader_stage stage)
+{
+   panfrost_batch_add_bo_old(
+      batch, bo, PAN_BO_ACCESS_WRITE | panfrost_access_for_stage(stage));
 }
 
 void
 panfrost_batch_read_rsrc(struct panfrost_batch *batch,
-                         struct panfrost_resource *rsrc)
+                         struct panfrost_resource *rsrc,
+                         mesa_shader_stage stage)
 {
-   /* Recursive call to panfrost_batch_read_rsrc() to add all planes.
-    * The max recursion depth should be 3.
-    */
-   if (rsrc->base.next)
-      panfrost_batch_read_rsrc(batch, pan_resource(rsrc->base.next));
-
-   uint32_t access = PAN_BO_ACCESS_READ | PAN_BO_ACCESS_PER_CTX_TRACKING;
+   uint32_t access = PAN_BO_ACCESS_READ | panfrost_access_for_stage(stage);
 
    pan_resource_update_access(batch->ctx, rsrc, false);
 
@@ -374,15 +373,10 @@ panfrost_batch_read_rsrc(struct panfrost_batch *batch,
 
 void
 panfrost_batch_write_rsrc(struct panfrost_batch *batch,
-                          struct panfrost_resource *rsrc)
+                          struct panfrost_resource *rsrc,
+                          mesa_shader_stage stage)
 {
-   /* Recursive call to panfrost_batch_write_rsrc() to add all planes.
-    * The max recursion depth should be 3.
-    */
-   if (rsrc->base.next)
-      panfrost_batch_write_rsrc(batch, pan_resource(rsrc->base.next));
-
-   uint32_t access = PAN_BO_ACCESS_WRITE | PAN_BO_ACCESS_PER_CTX_TRACKING;
+   uint32_t access = PAN_BO_ACCESS_WRITE | panfrost_access_for_stage(stage);
 
    pan_resource_update_access(batch->ctx, rsrc, true);
 
@@ -406,7 +400,7 @@ panfrost_batch_create_bo(struct panfrost_batch *batch, size_t size,
    bo = panfrost_bo_create(pan_device(batch->ctx->base.screen), size,
                            create_flags, label);
    if (bo) {
-      panfrost_batch_add_bo(batch, bo);
+      panfrost_batch_add_bo(batch, bo, stage);
 
       /* panfrost_batch_add_bo() has retained a reference and
        * panfrost_bo_create() initialize the refcnt to 1, so let's
@@ -434,7 +428,7 @@ panfrost_batch_get_scratchpad(struct panfrost_batch *batch,
                                   MESA_SHADER_VERTEX, "Thread local storage");
 
       if (batch->scratchpad)
-         panfrost_batch_add_bo(batch, batch->scratchpad);
+         panfrost_batch_add_bo(batch, batch->scratchpad, MESA_SHADER_FRAGMENT);
    }
 
    return batch->scratchpad;
@@ -483,7 +477,6 @@ panfrost_batch_to_fb_info(const struct panfrost_batch *batch,
    fb->force_samples = (batch->line_smoothing == U_TRISTATE_YES) ? 16 : 0;
    fb->rt_count = batch->key.nr_cbufs;
    fb->pls_enabled = batch->key.pls_enabled;
-   fb->downscale_rts = batch->key.downscale_cbufs;
    fb->sprite_coord_origin = (batch->sprite_coord_origin == U_TRISTATE_YES);
    fb->first_provoking_vertex =
       (batch->first_provoking_vertex == U_TRISTATE_YES);
@@ -512,11 +505,6 @@ panfrost_batch_to_fb_info(const struct panfrost_batch *batch,
 
       fb->rts[i].discard = !reserve && !(batch->resolve & mask);
 
-      if (fb->downscale_rts) {
-         assert(fb->rt_count == 2);
-         fb->rts[i].discard = false;
-      }
-
       /* Clamp the rendering area to the damage extent. The
        * KHR_partial_update spec states that trying to render outside of
        * the damage region is "undefined behavior", so we should be safe.
@@ -537,13 +525,13 @@ panfrost_batch_to_fb_info(const struct panfrost_batch *batch,
       rts[i].format = surf->format;
       rts[i].dim = MALI_TEXTURE_DIMENSION_2D;
       rts[i].last_level = rts[i].first_level = surf->level;
-      rts[i].first_layer_or_z_slice = surf->first_layer;
-      rts[i].last_layer_or_z_slice = surf->last_layer;
+      rts[i].first_layer = surf->first_layer;
+      rts[i].last_layer = surf->last_layer;
       panfrost_set_image_view_planes(&rts[i], surf->texture);
       rts[i].nr_samples =
          surf->nr_samples ?: MAX2(surf->texture->nr_samples, 1);
       memcpy(rts[i].swizzle, id_swz, sizeof(rts[i].swizzle));
-      fb->rts[i].crc_state = &prsrc->crc_state;
+      fb->rts[i].crc_valid = &prsrc->valid.crc;
       fb->rts[i].view = &rts[i];
 
       /* Preload if the RT is read or updated */
@@ -565,11 +553,13 @@ panfrost_batch_to_fb_info(const struct panfrost_batch *batch,
       if (util_format_has_depth(fdesc)) {
          z_rsrc = pan_resource(surf->texture);
 
-         zs->format = z_rsrc->image.props.format;
+         zs->format = surf->format == PIPE_FORMAT_Z32_FLOAT_S8X24_UINT
+                         ? PIPE_FORMAT_Z32_FLOAT
+                         : surf->format;
          zs->dim = MALI_TEXTURE_DIMENSION_2D;
          zs->last_level = zs->first_level = surf->level;
-         zs->first_layer_or_z_slice = surf->first_layer;
-         zs->last_layer_or_z_slice = surf->last_layer;
+         zs->first_layer = surf->first_layer;
+         zs->last_layer = surf->last_layer;
          zs->planes[0] = (struct pan_image_plane_ref){
             .image = &z_rsrc->image,
             .plane_idx = 0,
@@ -589,8 +579,8 @@ panfrost_batch_to_fb_info(const struct panfrost_batch *batch,
             s->format = PIPE_FORMAT_S8_UINT;
             s->dim = MALI_TEXTURE_DIMENSION_2D;
             s->last_level = s->first_level = surf->level;
-            s->first_layer_or_z_slice = surf->first_layer;
-            s->last_layer_or_z_slice = surf->last_layer;
+            s->first_layer = surf->first_layer;
+            s->last_layer = surf->last_layer;
             s->planes[0] = (struct pan_image_plane_ref){
                .image = &s_rsrc->image,
                .plane_idx = 0,
@@ -606,8 +596,8 @@ panfrost_batch_to_fb_info(const struct panfrost_batch *batch,
          s->format = surf->format;
          s->dim = MALI_TEXTURE_DIMENSION_2D;
          s->last_level = s->first_level = surf->level;
-         s->first_layer_or_z_slice = surf->first_layer;
-         s->last_layer_or_z_slice = surf->last_layer;
+         s->first_layer = surf->first_layer;
+         s->last_layer = surf->last_layer;
          s->planes[0] = (struct pan_image_plane_ref){
             .image = &s_rsrc->image,
             .plane_idx = 0,
@@ -731,9 +721,6 @@ panfrost_batch_submit(struct panfrost_context *ctx,
    if (ret)
       mesa_loge("panfrost_batch_submit failed: %d\n", ret);
 
-   if (pan_device(ctx->base.screen)->arch >= 10)
-      u_trace_flush(&batch->trace, NULL, U_TRACE_FRAME_UNKNOWN, false);
-
    /* We must reset the damage info of our render targets here even
     * though a damage reset normally happens when the DRI layer swaps
     * buffers. That's because there can be implicit flushes the GL
@@ -774,9 +761,6 @@ panfrost_flush_all_batches(struct panfrost_context *ctx, const char *reason)
       if (ctx->batches.slots[i].seqnum)
          panfrost_batch_submit(ctx, &ctx->batches.slots[i]);
    }
-
-   if (pan_device(ctx->base.screen)->arch >= 10)
-      u_trace_context_process(&ctx->trace_context, false);
 }
 
 void
@@ -791,8 +775,6 @@ panfrost_flush_writer(struct panfrost_context *ctx,
    if (entry) {
       perf_debug(ctx, "Flushing writer due to: %s", reason);
       panfrost_batch_submit(ctx, entry->data);
-      if (pan_device(ctx->base.screen)->arch >= 10)
-         u_trace_context_process(&ctx->trace_context, false);
    }
 }
 
@@ -814,8 +796,6 @@ panfrost_flush_batches_accessing_rsrc(struct panfrost_context *ctx,
       perf_debug(ctx, "Flushing user due to: %s", reason);
       panfrost_batch_submit(ctx, batch);
    }
-   if (pan_device(ctx->base.screen)->arch >= 10)
-      u_trace_context_process(&ctx->trace_context, false);
 }
 
 bool

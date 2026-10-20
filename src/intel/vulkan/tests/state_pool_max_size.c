@@ -61,8 +61,7 @@ static void run_test(uint32_t state_size,
                      uint32_t block_size,
                      uint32_t pool_max_size)
 {
-   struct anv_instance instance = {};
-   struct anv_physical_device physical_device = { .instance = &instance };
+   struct anv_physical_device physical_device = { };
    struct anv_device device = {};
    struct anv_state_pool state_pool;
 

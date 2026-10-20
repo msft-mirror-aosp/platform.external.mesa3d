@@ -17,13 +17,7 @@
 
 struct kk_buffer {
    struct vk_buffer vk;
-
-   struct {
-      mtl_buffer *handle;
-      /* Offset within handle's base address. Don't use this directly, route all
-       * offset calculations through kk_buffer_mtl_offset */
-      uint64_t offset;
-   } metal;
+   mtl_buffer *mtl_handle;
 };
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(kk_buffer, vk.base, VkBuffer,
@@ -42,21 +36,13 @@ kk_buffer_addr_range(const struct kk_buffer *buffer, uint64_t offset,
    };
 }
 
-static inline uint64_t
-kk_buffer_mtl_offset(const struct kk_buffer *buffer, uint64_t offset)
-{
-   return buffer->metal.offset + offset;
-}
-
 static inline mtl_resource *
 kk_buffer_to_mtl_resource(const struct kk_buffer *buffer)
 {
    if (buffer != NULL) {
-      return (mtl_resource *)buffer->metal.handle;
+      return (mtl_resource *)buffer->mtl_handle;
    }
    return NULL;
 }
-
-void kk_buffer_set_label(struct kk_buffer *buf, const char *label);
 
 #endif // KK_BUFFER_H

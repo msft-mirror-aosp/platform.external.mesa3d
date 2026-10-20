@@ -21,7 +21,6 @@ EPHEMERAL=(
     "clang-${LLVM_VERSION}"
     cmake
     dpkg-dev
-    freeglut3-dev
     g++
     glslang-tools
     libasound2-dev
@@ -31,7 +30,6 @@ EPHEMERAL=(
     libfontconfig-dev
     libgl-dev
     libgles2-mesa-dev
-    libglew-dev
     libglu1-mesa-dev
     libglx-dev
     libpciaccess-dev
@@ -47,20 +45,16 @@ EPHEMERAL=(
     "llvm-${LLVM_VERSION}-dev"
     "lld-${LLVM_VERSION}"
     make
-    mesa-common-dev
     meson
     ocl-icd-opencl-dev
     patch
     pkgconf
     python-is-python3
-    spirv-headers
     xz-utils
 )
 
 DEPS=(
     libfontconfig1
-    libglew2.2
-    libglut3.12
     libglu1-mesa
     libvulkan-dev
 )
@@ -99,10 +93,6 @@ PIGLIT_OPTS="-DPIGLIT_USE_WAFFLE=ON
 	     -DPIGLIT_BUILD_VK_TESTS=ON
 	     -DPIGLIT_BUILD_DMA_BUF_TESTS=ON" \
   . .gitlab-ci/container/build-piglit.sh
-
-############### Build OpenCL-CTS
-
-. .gitlab-ci/container/build-opencl-cts.sh
 
 ############### Build dEQP GL
 

@@ -6,7 +6,6 @@ deploy-docs:
   stage: deploy
   pages: true
   rules:
-    - !reference [.no_downstream_pipeline-rules, rules]
     - !reference [.common-rules, rules]
     - !reference [.no_scheduled_pipelines-rules, rules]
     # post-merge pipeline
@@ -28,7 +27,6 @@ test-docs:
   interruptible: true
   stage: deploy
   rules:
-    - !reference [.no_downstream_pipeline-rules, rules]
     - !reference [.common-rules, rules]
     # merge pipeline
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN == "marge-bot"'
@@ -38,18 +36,22 @@ test-docs:
       when: manual
 
 linkcheck-docs:
-  extends:
-    - .docs-base
-    - .no-auto-retry
+  extends: .docs-base
   # Cancel job if a newer commit is pushed to the same branch
   interruptible: true
   stage: deploy
   rules:
-    - !reference [.no_downstream_pipeline-rules, rules]
     - !reference [.common-rules, rules]
     - !reference [.scheduled_pipeline-rules, rules]
     # pre-merge pipeline
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN != "marge-bot"'
       when: manual
   allow_failure: true
-  script: sphinx-build --quiet --fail-on-warning --builder linkcheck docs public
+  script:
+    - |
+      if ! sphinx-build -W -b linkcheck docs public
+      then
+        echo "Summary:"
+        cat public/output.txt
+        exit 1
+      fi

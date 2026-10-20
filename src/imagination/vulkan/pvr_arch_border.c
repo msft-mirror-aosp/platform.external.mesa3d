@@ -269,6 +269,41 @@ pvr_border_color_table_free_entry(struct pvr_border_color_table *const table,
    BITSET_SET(table->unused_entries, index);
 }
 
+static void
+pvr_border_color_table_fill_entry(struct pvr_border_color_table *const table,
+                                  const uint32_t index,
+                                  const union pipe_color_union *const color,
+                                  const bool is_int,
+                                  const struct pvr_device_info *const dev_info)
+{
+   struct pvr_border_color_table_entry *const entries = table->table->bo->map;
+   struct pvr_border_color_table_entry *const entry = &entries[index];
+
+   for (enum ROGUE_TEXSTATE_FORMAT tex_format = 0;
+        tex_format < PVR_TEX_FORMAT_COUNT;
+        tex_format++) {
+      if (tex_format_is_supported(tex_format))
+         pvr_border_color_table_pack_single(
+            &entry->values[tex_format],
+            color,
+            get_tex_format_description(tex_format),
+            is_int,
+            dev_info);
+   }
+
+   for (enum ROGUE_TEXSTATE_FORMAT_COMPRESSED tex_format = 0;
+        tex_format < PVR_TEX_FORMAT_COUNT;
+        tex_format++) {
+      if (tex_format_compressed_is_supported(tex_format))
+         pvr_border_color_table_pack_single_compressed(
+            &entry->compressed_values[tex_format],
+            color,
+            get_tex_format_compressed_description(tex_format),
+            is_int,
+            dev_info);
+   }
+}
+
 /** Attempt to invert a swizzle.
  *
  * If @param swz contains multiple channels with the same swizzle, this
@@ -313,7 +348,7 @@ static bool pvr_invert_swizzle(const unsigned char swz[4], unsigned char dst[4])
 
 static inline void pvr_border_color_swizzle_to_tex_format(
    union pipe_color_union *const color,
-   const VkFormat vk_format,
+   const enum pipe_format color_format,
    const struct pvr_tex_format_description *const pvr_tex_fmt_desc,
    bool is_int)
 {
@@ -321,7 +356,6 @@ static inline void pvr_border_color_swizzle_to_tex_format(
       is_int ? pvr_tex_fmt_desc->pipe_format_int
              : pvr_tex_fmt_desc->pipe_format_float;
 
-   const enum pipe_format color_format = vk_format_to_pipe_format(vk_format);
    const struct util_format_description *const color_format_desc =
       util_format_description(color_format);
    const struct util_format_description *const tex_format_desc =
@@ -381,54 +415,6 @@ static inline void pvr_border_color_swizzle_to_tex_format(
    *color = swizzled_color;
 }
 
-static void
-pvr_border_color_table_fill_entry(struct pvr_border_color_table *const table,
-                                  const uint32_t index,
-                                  const VkFormat vk_format,
-                                  const union pipe_color_union *const color,
-                                  const bool is_int,
-                                  const struct pvr_device_info *const dev_info)
-{
-   struct pvr_border_color_table_entry *const entries = table->table->bo->map;
-   struct pvr_border_color_table_entry *const entry = &entries[index];
-
-   for (enum ROGUE_TEXSTATE_FORMAT tex_format = 0;
-        tex_format < PVR_TEX_FORMAT_COUNT;
-        tex_format++) {
-      if (tex_format_is_supported(tex_format)) {
-         const struct pvr_tex_format_description *const pvr_tex_fmt_desc =
-            get_tex_format_description(tex_format);
-         union pipe_color_union swizzled_color = *color;
-
-         if (vk_format_is_color(vk_format)) {
-            pvr_border_color_swizzle_to_tex_format(&swizzled_color,
-                                                   vk_format,
-                                                   pvr_tex_fmt_desc,
-                                                   is_int);
-         }
-
-         pvr_border_color_table_pack_single(
-            &entry->values[tex_format],
-            &swizzled_color,
-            pvr_tex_fmt_desc,
-            is_int,
-            dev_info);
-      }
-   }
-
-   for (enum ROGUE_TEXSTATE_FORMAT_COMPRESSED tex_format = 0;
-        tex_format < PVR_TEX_FORMAT_COUNT;
-        tex_format++) {
-      if (tex_format_compressed_is_supported(tex_format))
-         pvr_border_color_table_pack_single_compressed(
-            &entry->compressed_values[tex_format],
-            color,
-            get_tex_format_compressed_description(tex_format),
-            is_int,
-            dev_info);
-   }
-}
-
 VkResult pvr_arch_border_color_table_init(struct pvr_device *const device)
 {
    struct pvr_border_color_table *table = device->border_color_table =
@@ -469,7 +455,6 @@ VkResult pvr_arch_border_color_table_init(struct pvr_device *const device)
 
       pvr_border_color_table_fill_entry(table,
                                         i,
-                                        VK_FORMAT_UNDEFINED,
                                         (const union pipe_color_union *)&color,
                                         is_int,
                                         dev_info);
@@ -499,6 +484,66 @@ void pvr_arch_border_color_table_finish(struct pvr_device *const device)
    vk_free(&device->vk.alloc, device->border_color_table);
 }
 
+static inline void pvr_border_color_table_set_custom_entry(
+   struct pvr_border_color_table *const table,
+   const uint32_t index,
+   const VkFormat vk_format,
+   const union pipe_color_union *const color,
+   const bool is_int,
+   const struct pvr_device_info *const dev_info)
+{
+   struct pvr_border_color_table_entry *const entries = table->table->bo->map;
+   struct pvr_border_color_table_entry *const entry = &entries[index];
+
+   const enum pipe_format format = vk_format_to_pipe_format(vk_format);
+   uint32_t tex_format = pvr_arch_get_tex_format(vk_format);
+
+   assert(tex_format != ROGUE_TEXSTATE_FORMAT_INVALID);
+
+   if (util_format_is_compressed(format)) {
+      const struct pvr_tex_format_compressed_description *const
+         pvr_tex_fmt_desc = get_tex_format_compressed_description(tex_format);
+
+      pvr_border_color_table_pack_single_compressed(
+         &entry->compressed_values[tex_format],
+         color,
+         pvr_tex_fmt_desc,
+         is_int,
+         dev_info);
+   } else {
+      const struct pvr_tex_format_description *const pvr_tex_fmt_desc =
+         get_tex_format_description(tex_format);
+      union pipe_color_union swizzled_color = *color;
+
+      if (util_format_is_depth_or_stencil(format)) {
+         VkImageAspectFlags aspect_mask;
+
+         if (is_int)
+            aspect_mask = VK_IMAGE_ASPECT_STENCIL_BIT;
+         else
+            aspect_mask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+         /* Write the border color entry at the index of the texture
+          * format relative to the depth-only or stencil-only compoment
+          * associated with this Vulkan format.
+          */
+         tex_format = pvr_arch_get_tex_format_aspect(vk_format, aspect_mask);
+         assert(tex_format != ROGUE_TEXSTATE_FORMAT_INVALID);
+      }
+
+      pvr_border_color_swizzle_to_tex_format(&swizzled_color,
+                                             format,
+                                             pvr_tex_fmt_desc,
+                                             is_int);
+
+      pvr_border_color_table_pack_single(&entry->values[tex_format],
+                                         &swizzled_color,
+                                         pvr_tex_fmt_desc,
+                                         is_int,
+                                         dev_info);
+   }
+}
+
 static VkResult pvr_border_color_table_create_custom_entry(
    struct pvr_device *const device,
    const struct pvr_sampler *const sampler,
@@ -524,7 +569,7 @@ static VkResult pvr_border_color_table_create_custom_entry(
          goto err_free_entry;
    }
 
-   pvr_border_color_table_fill_entry(
+   pvr_border_color_table_set_custom_entry(
       table,
       index,
       vk_format,

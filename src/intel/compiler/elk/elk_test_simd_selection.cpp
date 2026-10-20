@@ -253,7 +253,7 @@ TEST_F(SIMDSelectionCS, SpillAtSIMD16)
 
 TEST_F(SIMDSelectionCS, EnvironmentVariable32)
 {
-   intel_simd_overridden |= BITFIELD_BIT(MESA_SHADER_COMPUTE);
+   BITSET_SET(intel_debug, DEBUG_DO32);
 
    ASSERT_TRUE(elk_simd_should_compile(simd_state, SIMD8));
    elk_simd_mark_compiled(simd_state, SIMD8, not_spilled);
@@ -267,7 +267,7 @@ TEST_F(SIMDSelectionCS, EnvironmentVariable32)
 
 TEST_F(SIMDSelectionCS, EnvironmentVariable32ButSpills)
 {
-   intel_simd_overridden |= BITFIELD_BIT(MESA_SHADER_COMPUTE);
+   BITSET_SET(intel_debug, DEBUG_DO32);
 
    ASSERT_TRUE(elk_simd_should_compile(simd_state, SIMD8));
    elk_simd_mark_compiled(simd_state, SIMD8, not_spilled);

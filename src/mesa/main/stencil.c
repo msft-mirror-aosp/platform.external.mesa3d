@@ -111,6 +111,9 @@ _mesa_ClearStencil( GLint s )
 {
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glClearStencil(%d)\n", s);
+
    ctx->PopAttribState |= GL_STENCIL_BUFFER_BIT;
    ctx->Stencil.Clear = (GLuint) s;
 }
@@ -134,6 +137,9 @@ void GLAPIENTRY
 _mesa_StencilFuncSeparateATI( GLenum frontfunc, GLenum backfunc, GLint ref, GLuint mask )
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glStencilFuncSeparateATI()\n");
 
    if (!validate_stencil_func(ctx, frontfunc)) {
       _mesa_error(ctx, GL_INVALID_ENUM,
@@ -223,6 +229,9 @@ _mesa_StencilFunc(GLenum func, GLint ref, GLuint mask)
 {
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glStencilFunc()\n");
+
    if (!validate_stencil_func(ctx, func)) {
       _mesa_error(ctx, GL_INVALID_ENUM, "glStencilFunc(func)");
       return;
@@ -248,6 +257,9 @@ _mesa_StencilMask( GLuint mask )
 {
    GET_CURRENT_CONTEXT(ctx);
    const GLint face = ctx->Stencil.ActiveFace;
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glStencilMask(0x%x)\n", mask);
 
    if (face != 0) {
       /* Only modify the EXT_stencil_two_side back-face state.
@@ -332,6 +344,9 @@ _mesa_StencilOp(GLenum fail, GLenum zfail, GLenum zpass)
 {
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glStencilOp()\n");
+
    if (!validate_stencil_op(ctx, fail)) {
       _mesa_error(ctx, GL_INVALID_ENUM, "glStencilOp(sfail)");
       return;
@@ -356,6 +371,9 @@ void GLAPIENTRY
 _mesa_ActiveStencilFaceEXT(GLenum face)
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glActiveStencilFaceEXT()\n");
 
    if (!ctx->Extensions.EXT_stencil_two_side) {
       _mesa_error(ctx, GL_INVALID_OPERATION, "glActiveStencilFaceEXT");
@@ -416,6 +434,9 @@ void GLAPIENTRY
 _mesa_StencilOpSeparate(GLenum face, GLenum sfail, GLenum zfail, GLenum zpass)
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glStencilOpSeparate()\n");
 
    if (!validate_stencil_op(ctx, sfail)) {
       _mesa_error(ctx, GL_INVALID_ENUM, "glStencilOpSeparate(sfail)");
@@ -479,6 +500,9 @@ _mesa_StencilFuncSeparate(GLenum face, GLenum func, GLint ref, GLuint mask)
 {
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glStencilFuncSeparate()\n");
+
    if (face != GL_FRONT && face != GL_BACK && face != GL_FRONT_AND_BACK) {
       _mesa_error(ctx, GL_INVALID_ENUM, "glStencilFuncSeparate(face)");
       return;
@@ -522,6 +546,9 @@ void GLAPIENTRY
 _mesa_StencilMaskSeparate(GLenum face, GLuint mask)
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glStencilMaskSeparate()\n");
 
    if (face != GL_FRONT && face != GL_BACK && face != GL_FRONT_AND_BACK) {
       _mesa_error(ctx, GL_INVALID_ENUM, "glStencilaMaskSeparate(face)");

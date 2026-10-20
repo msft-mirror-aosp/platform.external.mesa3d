@@ -45,7 +45,6 @@ filegroup {
         "lp_bld_misc.cpp",
         "lp_bld_nir.c",
         "lp_bld_nir_aos.c",
-        "lp_bld_nir_lower.c",
         "lp_bld_nir_soa.c",
         "lp_bld_pack.c",
         "lp_bld_passmgr.c",
@@ -61,20 +60,6 @@ filegroup {
         "lp_bld_tgsi_info.c",
         "lp_bld_tgsi_soa.c",
         "lp_bld_type.c",
-    ],
-}
-
-python_binary_host {
-    name: "lp_bld_nir_no_integer_algebraic_py_binary",
-    main: "lp_bld_nir_no_integer_algebraic.py",
-    srcs: [
-        ":nir_algebraic.py",
-        ":nir_opcodes.py",
-        "lp_bld_nir_no_integer_algebraic.py",
-    ],
-    libs: [
-        "mako",
-        "pyyaml",
     ],
 }
 

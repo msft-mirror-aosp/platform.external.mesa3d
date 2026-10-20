@@ -1060,7 +1060,8 @@ vc4_flush_resource(struct pipe_context *pctx, struct pipe_resource *prsc)
                 rsc->cube_map_stride = new_rsc->cube_map_stride;
                 rsc->tiled = new_rsc->tiled;
 
-                pipe_resource_reference((struct pipe_resource **)&new_rsc, NULL);
+                struct pipe_resource *new_prsc = (struct pipe_resource *)&new_rsc;
+                pipe_resource_reference(&new_prsc, NULL);
         }
 }
 

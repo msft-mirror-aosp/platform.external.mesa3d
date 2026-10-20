@@ -22,7 +22,6 @@
  */
 
 #include "lvp_private.h"
-#include "lp_texture_handle.h"
 #include "lvp_conv.h"
 #include "lvp_acceleration_structure.h"
 
@@ -52,10 +51,9 @@
 #if DETECT_OS_LINUX
 #include <sys/mman.h>
 #include <sys/resource.h>
-#include <sys/sysinfo.h>
 #endif
 
-#ifdef VK_USE_PLATFORM_ANDROID_KHR
+#if DETECT_OS_ANDROID
 #include "vk_android.h"
 #endif
 
@@ -140,7 +138,6 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .KHR_deferred_host_operations          = true,
    .KHR_depth_stencil_resolve             = true,
    .KHR_descriptor_update_template        = true,
-   .KHR_device_address_commands           = true,
    .KHR_device_group                      = true,
    .KHR_draw_indirect_count               = true,
    .KHR_driver_properties                 = true,
@@ -181,7 +178,6 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .KHR_maintenance8                      = true,
    .KHR_maintenance9                      = true,
    .KHR_maintenance10                     = true,
-   .KHR_maintenance11                     = true,
    .KHR_map_memory2                       = true,
    .KHR_multiview                         = true,
    .KHR_push_descriptor                   = true,
@@ -208,7 +204,6 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .KHR_shader_subgroup_extended_types    = true,
    .KHR_shader_subgroup_rotate            = true,
    .KHR_shader_terminate_invocation       = true,
-   .KHR_shader_untyped_pointers           = true,
    .KHR_spirv_1_4                         = true,
    .KHR_storage_buffer_storage_class      = true,
 #ifdef LVP_USE_WSI_PLATFORM
@@ -234,15 +229,12 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .EXT_calibrated_timestamps             = true,
    .EXT_color_write_enable                = true,
    .EXT_conditional_rendering             = true,
-   .EXT_cooperative_matrix_maintenance1   = true,
-   .EXT_debug_marker                      = true,
    .EXT_depth_bias_control                = true,
    .EXT_depth_clip_enable                 = true,
    .EXT_depth_clip_control                = true,
    .EXT_depth_range_unrestricted          = true,
    .EXT_dynamic_rendering_unused_attachments = true,
    .EXT_descriptor_buffer                 = true,
-   .EXT_descriptor_heap                   = true,
    .EXT_descriptor_indexing               = true,
    .EXT_device_generated_commands         = true,
    .EXT_extended_dynamic_state            = true,
@@ -257,7 +249,6 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .EXT_image_2d_view_of_3d               = true,
    .EXT_image_sliced_view_of_3d           = true,
    .EXT_image_robustness                  = true,
-   .EXT_image_view_min_lod                = true,
    .EXT_index_type_uint8                  = true,
    .EXT_inline_uniform_block              = true,
    .EXT_load_store_op_none                = true,
@@ -268,7 +259,6 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
 #endif
    .EXT_mesh_shader                       = true,
    .EXT_multisampled_render_to_single_sampled = true,
-   .EXT_multisampled_render_to_swapchain = true,
    .EXT_multi_draw                        = true,
    .EXT_mutable_descriptor_type           = true,
    .EXT_nested_command_buffer             = true,
@@ -321,7 +311,7 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .EXT_robustness2                       = true,
    .EXT_zero_initialize_device_memory     = true,
    .AMDX_shader_enqueue                   = true,
-#ifdef VK_USE_PLATFORM_ANDROID_KHR
+#if DETECT_OS_ANDROID
    .ANDROID_native_buffer                 = true,
 #endif
    .GOOGLE_decorate_string                = true,
@@ -626,9 +616,6 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       /* VK_EXT_multisampled_render_to_single_sampled */
       .multisampledRenderToSingleSampled = true,
 
-      /* VK_EXT_multisampled_render_to_swapchain */
-      .multisampledRenderToSwapchain = true,
-
       /* VK_EXT_mutable_descriptor_type */
       .mutableDescriptorType = true,
 
@@ -637,9 +624,6 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
 
       /* VK_EXT_image_sliced_view_of_3d */
       .imageSlicedViewOf3D = true,
-
-      /* VK_EXT_image_view_min_lod */
-      .minLod = true,
 
       /* VK_EXT_depth_bias_control */
       .depthBiasControl = true,
@@ -700,10 +684,6 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       /* VK_EXT_extended_dynamic_state */
       .extendedDynamicState = true,
 
-      /* VK_EXT_descriptor_heap */
-      .descriptorHeap = true,
-      .descriptorHeapCaptureReplay = false,
-
       /* VK_EXT_4444_formats */
       .formatA4R4G4B4 = true,
       .formatA4B4G4R4 = true,
@@ -757,7 +737,7 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       .extendedDynamicState3LineRasterizationMode = true,
       .extendedDynamicState3LineStippleEnable = true,
       .extendedDynamicState3ProvokingVertexMode = true,
-      .extendedDynamicState3SampleLocationsEnable = true,
+      .extendedDynamicState3SampleLocationsEnable = false,
       .extendedDynamicState3ColorBlendEnable = true,
       .extendedDynamicState3ColorBlendEquation = true,
       .extendedDynamicState3ColorWriteMask = true,
@@ -771,7 +751,7 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       .extendedDynamicState3CoverageModulationTable = false,
       .extendedDynamicState3CoverageReductionMode = false,
       .extendedDynamicState3RepresentativeFragmentTestEnable = false,
-      .extendedDynamicState3ColorBlendAdvanced = true,
+      .extendedDynamicState3ColorBlendAdvanced = false,
 
       /* VK_EXT_dynamic_rendering_unused_attachments */
       .dynamicRenderingUnusedAttachments = true,
@@ -863,8 +843,6 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       .maintenance9 = true,
       /* maintenance10 */
       .maintenance10 = true,
-      /* maintenance11 */
-      .maintenance11 = true,
 
       /* VK_KHR_shader_maximal_reconvergence */
       .shaderMaximalReconvergence = true,
@@ -904,28 +882,14 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       .unifiedImageLayouts = true,
       .unifiedImageLayoutsVideo = true,
 
-      /* VK_KHR_device_address_commands */
-      .deviceAddressCommands = true,
-
       /* VK_KHR_cooperative_matrix */
       .cooperativeMatrix = has_cooperative_matrix(),
       .cooperativeMatrixRobustBufferAccess = has_cooperative_matrix(),
 
-      .cooperativeMatrixProperties2 = true,
-      .cooperativeMatrixReductions = true,
-      .cooperativeMatrixConversions = true,
-      .cooperativeMatrixPerElementOperations = true,
-      .cooperativeMatrixGetCoordinate = true,
-
       .cooperativeMatrixFlexibleDimensions = true,
-      .cooperativeMatrixConversionsNV = true,
-      .cooperativeMatrixReductionsNV = true,
-      .cooperativeMatrixPerElementOperationsNV = true,
-      .cooperativeMatrixTensorAddressing = true,
-      .cooperativeMatrixBlockLoads = true,
-
-      /* VK_KHR_shader_untyped_pointers */
-      .shaderUntypedPointers = true,
+      .cooperativeMatrixConversions = true,
+      .cooperativeMatrixReductions = true,
+      .cooperativeMatrixPerElementOperations = true,
    };
 }
 
@@ -953,8 +917,6 @@ static VkImageLayout lvp_host_copy_image_layouts[] = {
    VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR,
    VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
    VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR,
-   VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ,
-   VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT,
 };
 
 static void
@@ -964,10 +926,10 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
    const unsigned *block_size = device->pscreen->compute_caps.max_block_size;
 
    const uint64_t max_render_targets = device->pscreen->caps.max_render_targets;
-   struct lvp_instance *instance = (struct lvp_instance *)device->vk.instance;
 
    int texel_buffer_alignment = device->pscreen->caps.texture_buffer_offset_alignment;
 
+   STATIC_ASSERT(sizeof(struct lp_descriptor) <= 256);
    *p = (struct vk_properties) {
       /* Vulkan 1.0 */
       .apiVersion = LVP_API_VERSION,
@@ -1160,8 +1122,8 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
 
       .supportedDepthResolveModes = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT,
       .supportedStencilResolveModes = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT,
-      .independentResolveNone = true,
-      .independentResolve = true,
+      .independentResolveNone = false,
+      .independentResolve = false,
 
       .filterMinmaxImageComponentMapping = true,
       .filterMinmaxSingleComponentFormats = true,
@@ -1207,7 +1169,6 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
       .pCopyDstLayouts = lvp_host_copy_image_layouts,
       .copyDstLayoutCount = ARRAY_SIZE(lvp_host_copy_image_layouts),
       .identicalMemoryTypeRequirements = VK_FALSE,
-      .dynamicRenderingLocalReadDepthStencilAttachments = true,
 
       /* VK_EXT_blend_operation_advanced */
       .advancedBlendMaxColorAttachments = device->pscreen->caps.max_render_targets,
@@ -1273,45 +1234,25 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
       .imageViewCaptureReplayDescriptorDataSize = 0,
       .samplerCaptureReplayDescriptorDataSize = 0,
       .accelerationStructureCaptureReplayDescriptorDataSize = 0,
-      .EDBsamplerDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_SAMPLER),
-      .combinedImageSamplerDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
-      .sampledImageDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE),
-      .storageImageDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
-      .uniformTexelBufferDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER),
-      .robustUniformTexelBufferDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER),
-      .storageTexelBufferDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER),
-      .robustStorageTexelBufferDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER),
-      .uniformBufferDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
-      .robustUniformBufferDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
-      .storageBufferDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-      .robustStorageBufferDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-      .inputAttachmentDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT),
-      .accelerationStructureDescriptorSize = lvp_get_descriptor_size(VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR),
+      .EDBsamplerDescriptorSize = sizeof(struct lp_descriptor),
+      .combinedImageSamplerDescriptorSize = sizeof(struct lp_descriptor),
+      .sampledImageDescriptorSize = sizeof(struct lp_descriptor),
+      .storageImageDescriptorSize = sizeof(struct lp_descriptor),
+      .uniformTexelBufferDescriptorSize = sizeof(struct lp_descriptor),
+      .robustUniformTexelBufferDescriptorSize = sizeof(struct lp_descriptor),
+      .storageTexelBufferDescriptorSize = sizeof(struct lp_descriptor),
+      .robustStorageTexelBufferDescriptorSize = sizeof(struct lp_descriptor),
+      .uniformBufferDescriptorSize = sizeof(struct lp_descriptor),
+      .robustUniformBufferDescriptorSize = sizeof(struct lp_descriptor),
+      .storageBufferDescriptorSize = sizeof(struct lp_descriptor),
+      .robustStorageBufferDescriptorSize = sizeof(struct lp_descriptor),
+      .inputAttachmentDescriptorSize = sizeof(struct lp_descriptor),
+      .accelerationStructureDescriptorSize = sizeof(struct lp_descriptor),
       .maxSamplerDescriptorBufferRange = UINT32_MAX,
       .maxResourceDescriptorBufferRange = UINT32_MAX,
       .resourceDescriptorBufferAddressSpaceSize = UINT32_MAX,
       .samplerDescriptorBufferAddressSpaceSize = UINT32_MAX,
       .descriptorBufferAddressSpaceSize = UINT32_MAX,
-
-      /* VK_EXT_descriptor_heap */
-      .samplerHeapAlignment = 4,
-      .resourceHeapAlignment = 4,
-      .maxSamplerHeapSize = 64 * 4080,
-      .maxResourceHeapSize = 64 * MAX_DESCRIPTORS * 2,
-      .minSamplerHeapReservedRange = 0,
-      .minSamplerHeapReservedRangeWithEmbedded = 0,
-      .minResourceHeapReservedRange = 0,
-      .samplerDescriptorSize = sizeof(struct lp_sampler_descriptor),
-      .imageDescriptorSize = sizeof(struct lp_image_descriptor),
-      .bufferDescriptorSize = sizeof(struct lp_buffer_descriptor),
-      .samplerDescriptorAlignment = 4,
-      .imageDescriptorAlignment = 4,
-      .bufferDescriptorAlignment = 4,
-      .maxPushDataSize = 256,
-      .imageCaptureReplayOpaqueDataSize = 0,
-      .maxDescriptorHeapEmbeddedSamplers = (2 << 11),
-      .samplerYcbcrConversionCount = 3,
-      .sparseDescriptorHeaps = true,
 
       /* VK_EXT_graphics_pipeline_library */
       .graphicsPipelineLibraryFastLinking = VK_TRUE,
@@ -1397,7 +1338,7 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
        * alignment is any lower. */
       .shaderGroupBaseAlignment = 32,
       .shaderGroupHandleCaptureReplaySize = 0,
-      .maxRayDispatchInvocationCount = 1 << 30,
+      .maxRayDispatchInvocationCount = 1024 * 1024 * 64,
       .shaderGroupHandleAlignment = 16,
       .maxRayHitAttributeSize = LVP_RAY_HIT_ATTRIBS_SIZE,
 
@@ -1408,21 +1349,8 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
       .cooperativeMatrixFlexibleDimensionsMaxDimension = 1024,
    };
 
-#if DETECT_OS_LINUX
-   struct sysinfo si;
-   sysinfo(&si);
-   /* just let apps yolo it until they oom */
-   p->maxResourceHeapSize = MAX2(p->maxResourceHeapSize, si.totalram / 2);
-   p->maxSamplerHeapSize = MAX2(p->maxSamplerHeapSize, si.totalram / 2);
-#endif
-
    /* Vulkan 1.0 */
-   if (strlen(instance->drirc.debug.force_vk_devicename) > 0) {
-      snprintf(p->deviceName, sizeof(p->deviceName), "%s",
-               instance->drirc.debug.force_vk_devicename);
-   } else {
-      strcpy(p->deviceName, device->pscreen->get_name(device->pscreen));
-   }
+   strcpy(p->deviceName, device->pscreen->get_name(device->pscreen));
    lvp_device_get_cache_uuid(p->pipelineCacheUUID);
 
    /* Vulkan 1.1 */
@@ -1621,15 +1549,6 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateInstance(
    instance->vk.physical_devices.enumerate = lvp_enumerate_physical_devices;
    instance->vk.physical_devices.destroy = lvp_destroy_physical_device;
 
-   lvp_parse_dri_options(&instance->drirc,
-                         &(driConfigFileParseParams){
-                            .driverName = "lvp",
-                            .applicationName = instance->vk.app_info.app_name,
-                            .applicationVersion = instance->vk.app_info.app_version,
-                            .engineName = instance->vk.app_info.engine_name,
-                            .engineVersion = instance->vk.app_info.engine_version,
-                         });
-
    //   VG(VALGRIND_CREATE_MEMPOOL(instance, 0, false));
 
    *pInstance = lvp_instance_to_handle(instance);
@@ -1647,9 +1566,6 @@ VKAPI_ATTR void VKAPI_CALL lvp_DestroyInstance(
       return;
 
    pipe_loader_release(&instance->devs, instance->num_devices);
-
-   driDestroyOptionCache(&instance->drirc.options);
-   driDestroyOptionInfo(&instance->drirc.available_options);
 
    vk_instance_finish(&instance->vk);
    vk_free(&instance->vk.alloc, instance);
@@ -1744,12 +1660,6 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceQueueFamilyProperties2(
       prio->priorities[1] = VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR;
       prio->priorities[2] = VK_QUEUE_GLOBAL_PRIORITY_HIGH_KHR;
       prio->priorities[3] = VK_QUEUE_GLOBAL_PRIORITY_REALTIME_KHR;
-   }
-   VkQueueFamilyOptimalImageTransferGranularityPropertiesKHR *gran = vk_find_struct(pQueueFamilyProperties, QUEUE_FAMILY_OPTIMAL_IMAGE_TRANSFER_GRANULARITY_PROPERTIES_KHR);
-   if (gran) {
-      gran->optimalImageTransferGranularity.width = 1;
-      gran->optimalImageTransferGranularity.height = 1;
-      gran->optimalImageTransferGranularity.depth = 1;
    }
    VkQueueFamilyOwnershipTransferPropertiesKHR *prop = vk_find_struct(pQueueFamilyProperties, QUEUE_FAMILY_OWNERSHIP_TRANSFER_PROPERTIES_KHR);
    if (prop)
@@ -1948,7 +1858,6 @@ static void
 lvp_queue_finish(struct lvp_queue *queue)
 {
    vk_queue_finish(&queue->vk);
-   cso_unbind_context(queue->cso);
 
    destroy_pipelines(queue);
    simple_mtx_destroy(&queue->lock);
@@ -2040,13 +1949,9 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
    uint32_t zero = 0;
    device->zero_buffer = pipe_buffer_create_with_data(device->queue.ctx, 0, PIPE_USAGE_IMMUTABLE, sizeof(uint32_t), &zero);
 
-   struct pipe_sampler_state null_sampler = {
-      .seamless_cube_map = 1,
-      .max_lod = 0.25,
-   };
-   device->null_texture_handle = llvmpipe_create_texture_handle(device->pscreen,
-      &(struct pipe_sampler_view){ 0 }, &null_sampler);
-   device->null_image_handle = llvmpipe_create_image_handle(device->pscreen,
+   device->null_texture_handle = (void *)(uintptr_t)device->queue.ctx->create_texture_handle(device->queue.ctx,
+      &(struct pipe_sampler_view){ 0 }, NULL);
+   device->null_image_handle = (void *)(uintptr_t)device->queue.ctx->create_image_handle(device->queue.ctx,
       &(struct pipe_image_view){ 0 });
 
    device->bda_texture_handles = UTIL_DYNARRAY_INIT;
@@ -2074,20 +1979,22 @@ VKAPI_ATTR void VKAPI_CALL lvp_DestroyDevice(
 {
    VK_FROM_HANDLE(lvp_device, device, _device);
 
+   lvp_device_finish_accel_struct_state(device);
+
    vk_meta_device_finish(&device->vk, &device->meta);
 
    util_dynarray_foreach(&device->bda_texture_handles, struct lp_texture_handle *, handle)
-      llvmpipe_delete_texture_handle(device->pscreen, *handle);
+      device->queue.ctx->delete_texture_handle(device->queue.ctx, (uint64_t)(uintptr_t)*handle);
 
    util_dynarray_fini(&device->bda_texture_handles);
 
    util_dynarray_foreach(&device->bda_image_handles, struct lp_texture_handle *, handle)
-      llvmpipe_delete_image_handle(device->pscreen, *handle);
+      device->queue.ctx->delete_image_handle(device->queue.ctx, (uint64_t)(uintptr_t)*handle);
 
    util_dynarray_fini(&device->bda_image_handles);
 
-   llvmpipe_delete_texture_handle(device->pscreen, device->null_texture_handle);
-   llvmpipe_delete_image_handle(device->pscreen, device->null_image_handle);
+   device->queue.ctx->delete_texture_handle(device->queue.ctx, (uint64_t)(uintptr_t)device->null_texture_handle);
+   device->queue.ctx->delete_image_handle(device->queue.ctx, (uint64_t)(uintptr_t)device->null_image_handle);
 
    device->queue.ctx->delete_fs_state(device->queue.ctx, device->noop_fs);
 
@@ -2183,8 +2090,8 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateMemory(
    assert(pAllocateInfo->sType == VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
    int priority = 0;
 
-   vk_foreach_struct_const(sType, ext, pAllocateInfo->pNext) {
-      switch ((unsigned)sType) {
+   vk_foreach_struct_const(ext, pAllocateInfo->pNext) {
+      switch ((unsigned)ext->sType) {
       case VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR:
          import_info = (VkImportMemoryFdInfoKHR*)ext;
          assert_memhandle_type(import_info->handleType);
@@ -2195,7 +2102,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateMemory(
          break;
       }
       case VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO:
-         mem_flags = ext;
+         mem_flags = (void*)ext;
          break;
       default:
          break;
@@ -2225,7 +2132,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateMemory(
       mem->map = mem->vk.host_ptr;
       mem->memory_type = LVP_DEVICE_MEMORY_TYPE_USER_PTR;
    }
-#ifdef VK_USE_PLATFORM_ANDROID_KHR
+#if DETECT_OS_ANDROID
    else if (mem->vk.ahardware_buffer) {
       error = lvp_import_ahb_memory(device, pAllocateInfo, mem);
       if (error != VK_SUCCESS)
@@ -2463,8 +2370,8 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetBufferMemoryRequirements2(
 {
    lvp_GetBufferMemoryRequirements(device, pInfo->buffer,
                                    &pMemoryRequirements->memoryRequirements);
-   vk_foreach_struct(sType, ext, pMemoryRequirements->pNext) {
-      switch (sType) {
+   vk_foreach_struct(ext, pMemoryRequirements->pNext) {
+      switch (ext->sType) {
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
          VkMemoryDedicatedRequirements *req =
             (VkMemoryDedicatedRequirements *) ext;
@@ -2500,8 +2407,8 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetImageMemoryRequirements2(
    lvp_GetImageMemoryRequirements(device, pInfo->image,
                                   &pMemoryRequirements->memoryRequirements);
 
-   vk_foreach_struct(sType, ext, pMemoryRequirements->pNext) {
-      switch (sType) {
+   vk_foreach_struct(ext, pMemoryRequirements->pNext) {
+      switch (ext->sType) {
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
          VkMemoryDedicatedRequirements *req =
             (VkMemoryDedicatedRequirements *) ext;
@@ -2577,7 +2484,7 @@ lvp_image_bind(struct lvp_device *device,
    VkResult result;
 
    if (!mem) {
-#ifdef VK_USE_PLATFORM_ANDROID_KHR
+#if DETECT_OS_ANDROID
       return lvp_bind_anb_memory(device, bind_info);
 #else
       const VkBindImageMemorySwapchainInfoKHR *swapchain_info =
@@ -2738,41 +2645,43 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_ResetEvent(
 }
 
 void
-lvp_sampler_init(struct lvp_device *device, struct lp_sampler_descriptor *desc, const struct vk_sampler_state *vk_state)
+lvp_sampler_init(struct lvp_device *device, struct lp_descriptor *desc, const VkSamplerCreateInfo *pCreateInfo, const struct vk_sampler *sampler)
 {
    struct pipe_sampler_state state = {0};
-   STATIC_ASSERT(sizeof(state.border_color) == sizeof(vk_state->border_color_value));
+   VkClearColorValue border_color =
+      vk_sampler_border_color_value(pCreateInfo, NULL);
+   STATIC_ASSERT(sizeof(state.border_color) == sizeof(border_color));
 
-   state.wrap_s = vk_conv_wrap_mode(vk_state->address_mode_u);
-   state.wrap_t = vk_conv_wrap_mode(vk_state->address_mode_v);
-   state.wrap_r = vk_conv_wrap_mode(vk_state->address_mode_w);
-   state.min_img_filter = vk_state->min_filter == VK_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
-   state.min_mip_filter = vk_state->mipmap_mode == VK_SAMPLER_MIPMAP_MODE_LINEAR ? PIPE_TEX_MIPFILTER_LINEAR : PIPE_TEX_MIPFILTER_NEAREST;
-   state.mag_img_filter = vk_state->mag_filter == VK_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
-   state.min_lod = vk_state->min_lod;
-   state.max_lod = vk_state->max_lod;
-   state.lod_bias = vk_state->mip_lod_bias;
-   if (vk_state->anisotropy_enable)
-      state.max_anisotropy = vk_state->max_anisotropy;
+   state.wrap_s = vk_conv_wrap_mode(pCreateInfo->addressModeU);
+   state.wrap_t = vk_conv_wrap_mode(pCreateInfo->addressModeV);
+   state.wrap_r = vk_conv_wrap_mode(pCreateInfo->addressModeW);
+   state.min_img_filter = pCreateInfo->minFilter == VK_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
+   state.min_mip_filter = pCreateInfo->mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR ? PIPE_TEX_MIPFILTER_LINEAR : PIPE_TEX_MIPFILTER_NEAREST;
+   state.mag_img_filter = pCreateInfo->magFilter == VK_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
+   state.min_lod = pCreateInfo->minLod;
+   state.max_lod = pCreateInfo->maxLod;
+   state.lod_bias = pCreateInfo->mipLodBias;
+   if (pCreateInfo->anisotropyEnable)
+      state.max_anisotropy = pCreateInfo->maxAnisotropy;
    else
       state.max_anisotropy = 1;
-   state.unnormalized_coords = vk_state->unnormalized_coordinates;
-   state.compare_mode = vk_state->compare_enable ? PIPE_TEX_COMPARE_R_TO_TEXTURE : PIPE_TEX_COMPARE_NONE;
-   state.compare_func = vk_state->compare_op;
-   state.seamless_cube_map = !(vk_state->flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT);
+   state.unnormalized_coords = pCreateInfo->unnormalizedCoordinates;
+   state.compare_mode = pCreateInfo->compareEnable ? PIPE_TEX_COMPARE_R_TO_TEXTURE : PIPE_TEX_COMPARE_NONE;
+   state.compare_func = pCreateInfo->compareOp;
+   state.seamless_cube_map = !(pCreateInfo->flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT);
    STATIC_ASSERT((unsigned)VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE == (unsigned)PIPE_TEX_REDUCTION_WEIGHTED_AVERAGE);
    STATIC_ASSERT((unsigned)VK_SAMPLER_REDUCTION_MODE_MIN == (unsigned)PIPE_TEX_REDUCTION_MIN);
    STATIC_ASSERT((unsigned)VK_SAMPLER_REDUCTION_MODE_MAX == (unsigned)PIPE_TEX_REDUCTION_MAX);
-   state.reduction_mode = (enum pipe_tex_reduction_mode)vk_state->reduction_mode;
-   memcpy(&state.border_color, &vk_state->border_color_value, sizeof(vk_state->border_color_value));
+   state.reduction_mode = (enum pipe_tex_reduction_mode)sampler->reduction_mode;
+   memcpy(&state.border_color, &border_color, sizeof(border_color));
 
    simple_mtx_lock(&device->queue.lock);
-   struct lp_texture_handle *texture_handle = llvmpipe_create_texture_handle(device->pscreen, NULL, &state);
-   desc->sampler_index = texture_handle->sampler_index;
-   llvmpipe_delete_texture_handle(device->pscreen, texture_handle);
+   struct lp_texture_handle *texture_handle = (void *)(uintptr_t)device->queue.ctx->create_texture_handle(device->queue.ctx, NULL, &state);
+   desc->texture.sampler_index = texture_handle->sampler_index;
+   device->queue.ctx->delete_texture_handle(device->queue.ctx, (uint64_t)(uintptr_t)texture_handle);
    simple_mtx_unlock(&device->queue.lock);
 
-   lp_jit_sampler_from_pipe(&desc->jit, &state);
+   lp_jit_sampler_from_pipe(&desc->sampler, &state);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateSampler(
@@ -2789,9 +2698,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateSampler(
    if (!sampler)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   struct vk_sampler_state state;
-   vk_sampler_state_init(&state, pCreateInfo);
-   lvp_sampler_init(device, &sampler->desc, &state);
+   lvp_sampler_init(device, &sampler->desc, pCreateInfo, &sampler->vk);
 
    *pSampler = lvp_sampler_to_handle(sampler);
 
@@ -2810,21 +2717,6 @@ VKAPI_ATTR void VKAPI_CALL lvp_DestroySampler(
       return;
 
    vk_sampler_destroy(&device->vk, pAllocator, &sampler->vk);
-}
-
-VKAPI_ATTR VkResult VKAPI_CALL lvp_RegisterCustomBorderColorEXT(
-   VkDevice                                    device,
-   const VkSamplerCustomBorderColorCreateInfoEXT* pBorderColor,
-   VkBool32                                    requestIndex,
-   uint32_t*                                   pIndex)
-{
-   return VK_SUCCESS;
-}
-
-VKAPI_ATTR void VKAPI_CALL lvp_UnregisterCustomBorderColorEXT(
-   VkDevice                                    device,
-   uint32_t                                    index)
-{
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL lvp_CreatePrivateDataSlot(
@@ -3038,26 +2930,6 @@ fill_matrix_prop_khr(struct __vk_outarray *base, struct matrix_prop *prop)
 }
 
 static void
-fill_matrix_prop_ext(struct __vk_outarray *base, struct matrix_prop *prop)
-{
-   vk_outarray(VkCooperativeMatrixProperties2EXT) *out = (void *)base;
-
-   vk_outarray_append_typed(VkCooperativeMatrixProperties2EXT, out, p)
-   {
-      *p = (struct VkCooperativeMatrixProperties2EXT){
-         .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_2_EXT,
-         .MGranularity = 8,
-         .NGranularity = 8,
-         .KGranularity = 8,
-         .AType = prop->a_type,
-         .BType = prop->b_type,
-         .CType = prop->c_type,
-         .ResultType = prop->r_type
-      };
-   }
-}
-
-static void
 fill_flexible_matrix_prop_nv(struct __vk_outarray *base, struct matrix_prop *prop)
 {
    vk_outarray(VkCooperativeMatrixFlexibleDimensionsPropertiesNV) *out = (void *)base;
@@ -3121,19 +2993,5 @@ lvp_GetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV(
 {
    VK_OUTARRAY_MAKE_TYPED(VkCooperativeMatrixFlexibleDimensionsPropertiesNV, out, pProperties, pPropertyCount);
    fill_array_sizes_structs(&out.base, fill_flexible_matrix_prop_nv);
-   return vk_outarray_status(&out);
-}
-
-VKAPI_ATTR VkResult VKAPI_CALL
-lvp_GetPhysicalDeviceCooperativeMatrixProperties2EXT(VkPhysicalDevice physicalDevice,
-                                                     const VkPhysicalDeviceCooperativeMatrixInfo2EXT *info,
-                                                     uint32_t *pPropertyCount,
-                                                     VkCooperativeMatrixProperties2EXT *pProperties)
-{
-   VK_OUTARRAY_MAKE_TYPED(VkCooperativeMatrixProperties2EXT, out, pProperties, pPropertyCount);
-
-   if (info->scope == VK_SCOPE_SUBGROUP_KHR &&
-       !(info->flags & VK_COOPERATIVE_MATRIX_SATURATING_ACCUMULATION_BIT_EXT))
-      fill_array_sizes_structs(&out.base, fill_matrix_prop_ext);
    return vk_outarray_status(&out);
 }

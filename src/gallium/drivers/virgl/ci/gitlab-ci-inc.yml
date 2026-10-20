@@ -1,30 +1,18 @@
-.enforce-hw-jobs-virgl-rules:
+.virgl-rules:
+  stage: layered-backends
   rules:
-    - if: '$INPUT_HW_JOBS !~ /"(all|virgl|virtio.ko)"/i'
-      when: never
-
-.enforce-hw-jobs-virgl-iris-rules:
-  rules:
-    - if: '$INPUT_HW_JOBS !~ /"(all|iris|i915.ko|virgl|virtio.ko)"/i'
-      when: never
-
-.virgl-manual-rules:
-  stage: layered-backends-nightly
-  rules:
-    - !reference [.enforce-hw-jobs-virgl-rules, rules]
     - !reference [.test, rules]
-    - !reference [.gl-manual-rules, rules]
-    - !reference [.llvmpipe-manual-rules, rules]
+    - !reference [.gl-rules, rules]
+    - !reference [.llvmpipe-rules, rules]
     - changes: &virgl_file_list
-        - src/gallium/drivers/virgl/**/*
-        - src/gallium/winsys/virgl/**/*
+      - src/gallium/drivers/virgl/**/*
+      - src/gallium/winsys/virgl/**/*
       when: on_success
 
 .virgl-iris-manual-rules:
-  stage: layered-backends-nightly
+  stage: layered-backends
   extends: .no-auto-retry
   rules:
-    - !reference [.enforce-hw-jobs-virgl-iris-rules, rules]
     - !reference [.test, rules]
     - !reference [.collabora-farm-manual-rules, rules]
     - !reference [.gl-manual-rules, rules]
@@ -37,7 +25,6 @@
   stage: performance
   extends: .no-auto-retry
   rules:
-    - !reference [.enforce-hw-jobs-virgl-iris-rules, rules]
     - !reference [.test, rules]
     - !reference [.collabora-farm-manual-rules, rules]
     - !reference [.performance-rules, rules]
@@ -57,7 +44,7 @@
 .virpipe-test:
   extends:
     - .test-gl
-    - .virgl-manual-rules
+    - .virgl-rules
   timeout: 15m
   variables:
     GALLIUM_DRIVER: virpipe
@@ -75,7 +62,7 @@
   extends:
     - .test-gl
     - .test-crosvm
-    - .virgl-manual-rules
+    - .virgl-rules
   timeout: 15m
   variables:
     FLAKES_CHANNEL: "#virgl-ci"
@@ -83,3 +70,22 @@
     CROSVM_GALLIUM_DRIVER: "llvmpipe"
     CROSVM_GPU_ARGS: "gles=false,backend=virglrenderer,egl=true,surfaceless=true"
     GALLIVM_PERF: "nopt,no_quad_lod"
+
+.virgl-iris-test:
+  extends:
+    - .lava-x86_64-piglit-traces
+    - .lava-acer-cp514-2h-1130g7-volteer:x86_64
+    - .test-crosvm
+  variables:
+    HWCI_KERNEL_MODULES: vhost_vsock
+    HWCI_ENABLE_X86_KVM: 1
+    HWCI_TEST_SCRIPT: "/install/crosvm-runner.sh"
+    HWCI_TEST_ARGS: "/install/piglit/piglit-traces.sh"
+    PARALLELISE_VIA_LP_THREADS: 1
+    GPU_VERSION: virgl
+    DRIVER_NAME: virgl
+    GALLIUM_DRIVER: virgl
+    CROSVM_GALLIUM_DRIVER: iris
+    CROSVM_GPU_ARGS: "gles=false,backend=virglrenderer,egl=true,surfaceless=true"
+    EGL_PLATFORM: surfaceless
+    PIGLIT_TRACES_FILE: traces-virgl-iris.yml

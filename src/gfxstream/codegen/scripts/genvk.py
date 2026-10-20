@@ -15,17 +15,13 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 from cgenerator import CGeneratorOptions, COutputGenerator
 
-from generator import write, regSortFeatures
+from generator import write
 from reg import Registry
 
 # gfxstream + cereal modules
-from cerealgenerator import CerealGenerator, SUPPORTED_FEATURES
+from cerealgenerator import CerealGenerator
 
 from typing import Optional
-
-def cerealSortFeatures(featureList):
-    regSortFeatures(featureList)
-    featureList.sort(key=lambda f: 0 if f.name in SUPPORTED_FEATURES else 1)
 
 def makeREstring(strings, default=None, strings_are_regex=False):
     """Turn a list of strings into a regexp string matching exactly those strings."""
@@ -89,8 +85,7 @@ def makeGenOpts(args):
                 prefixText        = prefixStrings + vkPrefixStrings,
                 apientry          = 'VKAPI_CALL ',
                 apientryp         = 'VKAPI_PTR *',
-                alignFuncParam    = 48,
-                sortProcedure     = cerealSortFeatures)
+                alignFuncParam    = 48)
         ]
 
     gfxstreamPrefixStrings = [
@@ -234,12 +229,3 @@ if __name__ == '__main__':
     # Load the XML tree into the registry object
     reg.loadElementTree(tree)
     reg.apiGen()
-
-    if args.target != 'cereal' and options.filename is not None:
-        if "GFXSTREAM_NO_CLANG_FMT" not in os.environ:
-            import shutil
-            import subprocess
-            clang_format_command = shutil.which('clang-format')
-            if clang_format_command is not None:
-                filepath = os.path.join(options.directory, options.filename)
-                subprocess.call([clang_format_command, "-i", "--style=file", filepath])

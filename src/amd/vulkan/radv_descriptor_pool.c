@@ -6,13 +6,13 @@
  */
 
 #include "radv_descriptor_pool.h"
-#include "tools/radv_rmv.h"
 #include "radv_buffer.h"
 #include "radv_descriptor_set.h"
 #include "radv_descriptors.h"
 #include "radv_device.h"
 #include "radv_entrypoints.h"
 #include "radv_physical_device.h"
+#include "radv_rmv.h"
 
 #include "vk_log.h"
 
@@ -63,8 +63,8 @@ radv_create_descriptor_pool(struct radv_device *device, const VkDescriptorPoolCr
    const VkMutableDescriptorTypeCreateInfoEXT *mutable_info =
       vk_find_struct_const(pCreateInfo->pNext, MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_EXT);
 
-   vk_foreach_struct_const (sType, ext, pCreateInfo->pNext) {
-      switch (sType) {
+   vk_foreach_struct_const (ext, pCreateInfo->pNext) {
+      switch (ext->sType) {
       case VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_INLINE_UNIFORM_BLOCK_CREATE_INFO: {
          const VkDescriptorPoolInlineUniformBlockCreateInfo *info =
             (const VkDescriptorPoolInlineUniformBlockCreateInfo *)ext;
@@ -120,7 +120,7 @@ radv_create_descriptor_pool(struct radv_device *device, const VkDescriptorPoolCr
                   num_16byte_descriptors += pCreateInfo->pPoolSizes[i].descriptorCount;
             }
          } else {
-            const uint32_t max_desc_size = radv_get_sampled_image_desc_size(pdev);
+            const uint32_t max_desc_size = pdev->use_fmask ? 64 : 32;
             bo_size += max_desc_size * pCreateInfo->pPoolSizes[i].descriptorCount;
          }
          break;
@@ -183,7 +183,7 @@ radv_create_descriptor_pool(struct radv_device *device, const VkDescriptorPoolCr
             goto fail;
          }
       } else {
-         pool->host_bo = vk_zalloc2(&device->vk.alloc, pAllocator, bo_size, 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+         pool->host_bo = vk_alloc2(&device->vk.alloc, pAllocator, bo_size, 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
          if (!pool->host_bo) {
             result = VK_ERROR_OUT_OF_HOST_MEMORY;
             goto fail;

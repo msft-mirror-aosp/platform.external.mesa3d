@@ -63,10 +63,10 @@ struct v3dv_format_plane {
    uint8_t return_size;
 
    /* Needs software unorm packing */
-   bool sw_unorm;
+   bool unorm;
 
    /* Needs software snorm packing */
-   bool sw_snorm;
+   bool snorm;
 };
 
 struct v3dv_format {

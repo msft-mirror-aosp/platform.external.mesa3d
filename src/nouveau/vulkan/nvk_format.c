@@ -24,14 +24,10 @@ nvk_format_supports_atomics(const struct nvk_physical_device *pdev,
    switch (p_format) {
    case PIPE_FORMAT_R32_UINT:
    case PIPE_FORMAT_R32_SINT:
-   case PIPE_FORMAT_R32_FLOAT:
       return true;
    case PIPE_FORMAT_R64_UINT:
    case PIPE_FORMAT_R64_SINT:
       return pdev->vk.supported_features.shaderImageInt64Atomics;
-   case PIPE_FORMAT_R16G16_FLOAT:
-   case PIPE_FORMAT_R16G16B16A16_FLOAT:
-      return pdev->vk.supported_features.shaderFloat16VectorAtomics;
    default:
       return false;
    }
@@ -230,10 +226,10 @@ nvk_GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice,
       .bufferFeatures = vk_format_features2_to_features(buffer2),
    };
 
-   vk_foreach_struct(sType, ext, pFormatProperties->pNext) {
-      switch (sType) {
+   vk_foreach_struct(ext, pFormatProperties->pNext) {
+      switch (ext->sType) {
       case VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3: {
-         VkFormatProperties3 *p = ext;
+         VkFormatProperties3 *p = (void *)ext;
          p->linearTilingFeatures = linear2;
          p->optimalTilingFeatures = optimal2;
          p->bufferFeatures = buffer2;
@@ -246,7 +242,7 @@ nvk_GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice,
          break;
 
       default:
-         vk_debug_ignored_stype(sType);
+         vk_debug_ignored_stype(ext->sType);
          break;
       }
    }

@@ -247,7 +247,6 @@ impl RegLatencySM80 {
             Op::LdTram(_) => DecoupledAgu,
             Op::Shfl(_) => DecoupledAgu,
             Op::Ldsm(_) => DecoupledAgu,
-            Op::Nanosleep(_) => Decoupled,
             x => {
                 panic!("Illegal instuction in reg category {}", x);
             }
@@ -1097,7 +1096,6 @@ impl URegLatencySM80 {
                     vdecoupled
                 }
             }
-            Op::Ldcg(_) => Uldc,
             Op::Lea(_) => vcoupled,
             Op::LeaX(_) => vcoupled,
             Op::Lop2(_) | Op::Lop3(_) => vcoupled,
@@ -1317,7 +1315,7 @@ impl UPredLatencySM80 {
             | Op::Lop3(_)
             | Op::Mov(_) => Udp,
             Op::Bra(_) => Bra_Jmp,
-            Op::Ldcg(_) | Op::Ldc(_) => Uldc_Mma,
+            Op::Ldc(_) => Uldc_Mma,
             Op::PLop3(_) => {
                 if uniform_op {
                     Udp

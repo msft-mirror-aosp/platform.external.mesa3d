@@ -8,10 +8,8 @@
 #include "radv_entrypoints.h"
 #include "radv_formats.h"
 #include "radv_meta.h"
-#include "radv_tracepoints.h"
 
 #include "util/format_rgb9e5.h"
-#include "util/format_srgb.h"
 #include "vk_format.h"
 #include "vk_shader_module.h"
 
@@ -273,18 +271,20 @@ static bool radv_can_fast_clear_depth(struct radv_cmd_buffer *cmd_buffer, const 
 
 struct radv_clear_ds_layout_key {
    enum radv_meta_object_key_type type;
+   bool unrestricted;
 };
 
 static VkResult
-get_depth_stencil_pipeline_layout(struct radv_device *device, VkPipelineLayout *layout_out)
+get_depth_stencil_pipeline_layout(struct radv_device *device, bool unrestricted, VkPipelineLayout *layout_out)
 {
    struct radv_clear_ds_layout_key key;
 
    memset(&key, 0, sizeof(key));
    key.type = RADV_META_OBJECT_KEY_CLEAR_DS;
+   key.unrestricted = unrestricted;
 
    const VkPushConstantRange pc_range = {
-      .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+      .stageFlags = unrestricted ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT,
       .size = 4,
    };
 
@@ -296,16 +296,18 @@ struct radv_clear_ds_key {
    enum radv_meta_object_key_type type;
    VkImageAspectFlags aspects;
    uint8_t samples;
+   bool unrestricted;
 };
 
 static VkResult
 get_depth_stencil_pipeline(struct radv_device *device, int samples, VkImageAspectFlags aspects,
                            VkPipeline *pipeline_out, VkPipelineLayout *layout_out)
 {
+   const bool unrestricted = device->vk.enabled_extensions.EXT_depth_range_unrestricted;
    struct radv_clear_ds_key key;
    VkResult result;
 
-   result = get_depth_stencil_pipeline_layout(device, layout_out);
+   result = get_depth_stencil_pipeline_layout(device, unrestricted, layout_out);
    if (result != VK_SUCCESS)
       return result;
 
@@ -313,6 +315,7 @@ get_depth_stencil_pipeline(struct radv_device *device, int samples, VkImageAspec
    key.type = RADV_META_OBJECT_KEY_CLEAR_DS;
    key.aspects = aspects;
    key.samples = samples;
+   key.unrestricted = unrestricted;
 
    VkPipeline pipeline_from_cache = vk_meta_lookup_pipeline(&device->meta_state.device, &key, sizeof(key));
    if (pipeline_from_cache != VK_NULL_HANDLE) {
@@ -320,8 +323,9 @@ get_depth_stencil_pipeline(struct radv_device *device, int samples, VkImageAspec
       return VK_SUCCESS;
    }
 
-   nir_shader *vs_module = radv_meta_nir_build_clear_depthstencil_vertex_shader();
-   nir_shader *fs_module = radv_meta_nir_build_fs_noop();
+   nir_shader *vs_module, *fs_module;
+
+   radv_meta_nir_build_clear_depthstencil_shaders(&vs_module, &fs_module, unrestricted);
 
    VkGraphicsPipelineCreateInfoRADV radv_info = {
       .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO_RADV,
@@ -368,11 +372,6 @@ get_depth_stencil_pipeline(struct radv_device *device, int samples, VkImageAspec
       .pRasterizationState =
          &(VkPipelineRasterizationStateCreateInfo){
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-            .pNext =
-               &(VkPipelineRasterizationDepthClipStateCreateInfoEXT){
-                  .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_DEPTH_CLIP_STATE_CREATE_INFO_EXT,
-                  .depthClipEnable = false,
-               },
             .rasterizerDiscardEnable = false,
             .polygonMode = VK_POLYGON_MODE_FILL,
             .cullMode = VK_CULL_MODE_NONE,
@@ -451,6 +450,7 @@ emit_depthstencil_clear(struct radv_cmd_buffer *cmd_buffer, VkClearDepthStencilV
                         VkImageAspectFlags aspects, const VkClearRect *clear_rect, uint32_t view_mask)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+   const bool unrestricted = device->vk.enabled_extensions.EXT_depth_range_unrestricted;
    const struct radv_rendering_state *render = &cmd_buffer->state.render;
    struct radv_image_view *iview = render->ds_att.iview;
    uint32_t samples;
@@ -481,7 +481,9 @@ emit_depthstencil_clear(struct radv_cmd_buffer *cmd_buffer, VkClearDepthStencilV
    if (!(aspects & VK_IMAGE_ASPECT_DEPTH_BIT))
       clear_value.depth = 1.0f;
 
-   radv_meta_push_constants(cmd_buffer, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, 4, &clear_value.depth);
+   radv_meta_push_constants(cmd_buffer, layout,
+                            unrestricted ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT, 0, 4,
+                            &clear_value.depth);
 
    uint32_t prev_reference = cmd_buffer->state.dynamic.vk.ds.stencil.front.reference;
    if (aspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
@@ -685,17 +687,12 @@ radv_can_fast_clear_depth(struct radv_cmd_buffer *cmd_buffer, const struct radv_
                           const VkClearDepthStencilValue clear_value, uint32_t view_mask)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
-   const struct radv_physical_device *pdev = radv_device_physical(device);
-
-   if (pdev->drirc.performance.image_meta_path == RADV_IMAGE_META_PATH_FRAGMENT ||
-       pdev->drirc.performance.image_meta_path == RADV_IMAGE_META_PATH_COMPUTE)
-      return false;
 
    if (!iview || !iview->support_fast_clear)
       return false;
 
    if (!radv_layout_is_htile_compressed(device, iview->image, iview->vk.base_mip_level, image_layout,
-                                        radv_image_queue_family_mask(iview->image, cmd_buffer->qf)))
+                                        radv_image_queue_family_mask(iview->image, cmd_buffer->qf, cmd_buffer->qf)))
       return false;
 
    if (!radv_is_clear_rect_full(iview, clear_rect, view_mask))
@@ -833,6 +830,9 @@ radv_clear_dcc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image, con
    uint32_t level_count = vk_image_subresource_level_count(&image->vk, range);
    uint32_t layer_count = vk_image_subresource_layer_count(&image->vk, range);
    uint32_t flush_bits = 0;
+
+   /* Mark the image as being compressed. */
+   radv_update_dcc_metadata(cmd_buffer, image, range, true);
 
    for (uint32_t l = 0; l < level_count; l++) {
       uint64_t dcc_offset = image->planes[0].surface.meta_offset;
@@ -1001,9 +1001,9 @@ radv_clear_dcc_comp_to_single(struct radv_cmd_buffer *cmd_buffer, struct radv_im
       width = u_minify(image->vk.extent.width, range->baseMipLevel + l);
       height = u_minify(image->vk.extent.height, range->baseMipLevel + l);
 
-      const VkImageViewUsage2CreateInfoKHR iview_usage_info = {
-         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_2_CREATE_INFO_KHR,
-         .usage = VK_IMAGE_USAGE_2_STORAGE_BIT_KHR,
+      const VkImageViewUsageCreateInfo iview_usage_info = {
+         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
+         .usage = VK_IMAGE_USAGE_STORAGE_BIT,
       };
 
       radv_image_view_init(&iview, device,
@@ -1322,15 +1322,11 @@ radv_can_fast_clear_color(struct radv_cmd_buffer *cmd_buffer, const struct radv_
    const struct radv_physical_device *pdev = radv_device_physical(device);
    uint32_t clear_color[2];
 
-   if (pdev->drirc.performance.image_meta_path == RADV_IMAGE_META_PATH_FRAGMENT ||
-       pdev->drirc.performance.image_meta_path == RADV_IMAGE_META_PATH_COMPUTE)
-      return false;
-
    if (!iview || !iview->support_fast_clear)
       return false;
 
    if (!radv_layout_can_fast_clear(device, iview->image, iview->vk.base_mip_level, image_layout,
-                                   radv_image_queue_family_mask(iview->image, cmd_buffer->qf)))
+                                   radv_image_queue_family_mask(iview->image, cmd_buffer->qf, cmd_buffer->qf)))
       return false;
 
    if (!radv_is_clear_rect_full(iview, clear_rect, view_mask))
@@ -1439,8 +1435,6 @@ radv_fast_clear_color(struct radv_cmd_buffer *cmd_buffer, const struct radv_imag
          need_decompress_pass = true;
 
       flush_bits |= radv_clear_dcc(cmd_buffer, iview->image, &range, reset_value);
-
-      radv_update_dcc_metadata(cmd_buffer, iview->image, &range, true);
 
       if (reset_value == radv_dcc_single_clear_value(device)) {
          /* Write the clear color to the first byte of each 256B block when the image supports DCC
@@ -1601,9 +1595,7 @@ radv_cmd_buffer_clear_rendering(struct radv_cmd_buffer *cmd_buffer, const VkRend
 
    radv_suspend_conditional_rendering(cmd_buffer);
 
-   radv_utrace_begin_clear_rendering(cmd_buffer);
-
-   radv_meta_begin_rendering(cmd_buffer);
+   radv_meta_begin(cmd_buffer);
 
    assert(render->color_att_count == pRenderingInfo->colorAttachmentCount);
    for (uint32_t i = 0; i < render->color_att_count; i++) {
@@ -1642,10 +1634,8 @@ radv_cmd_buffer_clear_rendering(struct radv_cmd_buffer *cmd_buffer, const VkRend
       }
    }
 
-   radv_meta_end_rendering(cmd_buffer);
+   radv_meta_end(cmd_buffer);
    cmd_buffer->state.flush_bits |= post_flush;
-
-   radv_utrace_end_clear_rendering(cmd_buffer);
 
    radv_resume_conditional_rendering(cmd_buffer);
 }
@@ -1660,10 +1650,10 @@ radv_clear_image_layer(struct radv_cmd_buffer *cmd_buffer, struct radv_image *im
    uint32_t width = u_minify(image->vk.extent.width, range->baseMipLevel + level);
    uint32_t height = u_minify(image->vk.extent.height, range->baseMipLevel + level);
 
-   const VkImageViewUsage2CreateInfoKHR iview_usage_info = {
-      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_2_CREATE_INFO_KHR,
-      .usage = (vk_format_is_color(format) ? VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR
-                                           : VK_IMAGE_USAGE_2_DEPTH_STENCIL_ATTACHMENT_BIT_KHR),
+   const VkImageViewUsageCreateInfo iview_usage_info = {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
+      .usage = (vk_format_is_color(format) ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                                           : VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT),
    };
 
    radv_image_view_init(&iview, device,
@@ -1672,7 +1662,7 @@ radv_clear_image_layer(struct radv_cmd_buffer *cmd_buffer, struct radv_image *im
                            .pNext = &iview_usage_info,
                            .flags = VK_IMAGE_VIEW_CREATE_DRIVER_INTERNAL_BIT_MESA,
                            .image = radv_image_to_handle(image),
-                           .viewType = radv_meta_get_view_type(image, true),
+                           .viewType = radv_meta_get_view_type(image),
                            .format = format,
                            .subresourceRange = {.aspectMask = range->aspectMask,
                                                 .baseMipLevel = range->baseMipLevel + level,
@@ -1750,9 +1740,9 @@ radv_fast_clear_range(struct radv_cmd_buffer *cmd_buffer, struct radv_image *ima
    struct radv_image_view iview;
    bool fast_cleared = false;
 
-   const VkImageViewUsage2CreateInfoKHR iview_usage_info = {
-      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_2_CREATE_INFO_KHR,
-      .usage = VK_IMAGE_USAGE_2_STORAGE_BIT_KHR,
+   const VkImageViewUsageCreateInfo iview_usage_info = {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
+      .usage = VK_IMAGE_USAGE_STORAGE_BIT,
    };
 
    radv_image_view_init(&iview, device,
@@ -1761,7 +1751,7 @@ radv_fast_clear_range(struct radv_cmd_buffer *cmd_buffer, struct radv_image *ima
                            .pNext = &iview_usage_info,
                            .flags = VK_IMAGE_VIEW_CREATE_DRIVER_INTERNAL_BIT_MESA,
                            .image = radv_image_to_handle(image),
-                           .viewType = radv_meta_get_view_type(image, false),
+                           .viewType = radv_meta_get_view_type(image),
                            .format = image->vk.format,
                            .subresourceRange =
                               {
@@ -1826,15 +1816,6 @@ radv_cmd_clear_image(struct radv_cmd_buffer *cmd_buffer, struct radv_image *imag
    else
       internal_clear_value.depthStencil = clear_value->depthStencil;
 
-   if (cs && vk_format_is_srgb(image->vk.format)) {
-      format = vk_format_no_srgb(image->vk.format);
-
-      for (unsigned i = 0; i < 3; i++) {
-         internal_clear_value.color.float32[i] =
-            util_format_linear_to_srgb_float(internal_clear_value.color.float32[i]);
-      }
-   }
-
    if (format == VK_FORMAT_E5B9G9R9_UFLOAT_PACK32) {
       if (cs ? !radv_is_storage_image_format_supported(pdev, format)
              : !radv_is_colorbuffer_format_supported(pdev, format)) {
@@ -1882,14 +1863,11 @@ radv_CmdClearColorImage(VkCommandBuffer commandBuffer, VkImage image_h, VkImageL
 {
    VK_FROM_HANDLE(radv_cmd_buffer, cmd_buffer, commandBuffer);
    VK_FROM_HANDLE(radv_image, image, image_h);
-   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
-   const struct radv_physical_device *pdev = radv_device_physical(device);
    bool cs;
 
    radv_suspend_conditional_rendering(cmd_buffer);
 
-   cs = cmd_buffer->qf == RADV_QUEUE_COMPUTE || !radv_image_is_renderable(image) ||
-        pdev->drirc.performance.image_meta_path == RADV_IMAGE_META_PATH_COMPUTE;
+   cs = cmd_buffer->qf == RADV_QUEUE_COMPUTE || !radv_image_is_renderable(image);
 
    radv_meta_begin(cmd_buffer);
 
@@ -1928,7 +1906,7 @@ radv_CmdClearAttachments(VkCommandBuffer commandBuffer, uint32_t attachmentCount
    enum radv_cmd_flush_bits pre_flush = 0;
    enum radv_cmd_flush_bits post_flush = 0;
 
-   radv_meta_begin_rendering(cmd_buffer);
+   radv_meta_begin(cmd_buffer);
 
    for (uint32_t a = 0; a < attachmentCount; ++a) {
       for (uint32_t r = 0; r < rectCount; ++r) {
@@ -1937,6 +1915,6 @@ radv_CmdClearAttachments(VkCommandBuffer commandBuffer, uint32_t attachmentCount
       }
    }
 
-   radv_meta_end_rendering(cmd_buffer);
+   radv_meta_end(cmd_buffer);
    cmd_buffer->state.flush_bits |= post_flush;
 }

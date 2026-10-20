@@ -20,10 +20,8 @@ Capability about the features and limits of the driver/GPU.
 
 * ``pipe_caps.graphics``: Whether graphics is supported. If not, contexts can
   only be created with PIPE_CONTEXT_COMPUTE_ONLY.
-* ``pipe_caps.npot_textures``: Whether :term:`NPOT` textures may be sampled
-  with mipmap filtering and wrap modes other than clamp-to-edge. Sampling the
-  base level without mipmap filtering and with clamp-to-edge is always
-  supported.
+* ``pipe_caps.npot_textures``: Whether :term:`NPOT` textures may have repeat modes,
+  normalized coordinates, and mipmaps.
 * ``pipe_caps.max_dual_source_render_targets``: How many dual-source blend RTs are support.
   :ref:`Blend` for more information.
 * ``pipe_caps.anisotropic_filter``: Whether textures can be filtered anisotropically.
@@ -305,8 +303,6 @@ Capability about the features and limits of the driver/GPU.
 * ``pipe_caps.depth_bounds_test``: Whether bounds_test, bounds_min, and
   bounds_max states of pipe_depth_stencil_alpha_state behave according
   to the :ext:`GL_EXT_depth_bounds_test` specification.
-* ``pipe_caps.native_fp32_depth``: Whether the hardware has a true
-  floating-point depth buffer. Defaults to true.
 * ``pipe_caps.texture_query_samples``: Whether the ``TXQS`` opcode is supported
 * ``pipe_caps.force_persample_interp``: If the driver can force per-sample
   interpolation for all fragment shader inputs if

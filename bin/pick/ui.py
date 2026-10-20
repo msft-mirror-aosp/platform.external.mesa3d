@@ -74,8 +74,7 @@ class CommitWidget(urwid.Text):
 
     def __init__(self, ui: 'UI', commit: 'core.Commit'):
         reason = commit.nomination_type.name.ljust(6)
-        mr_ref = f"!{commit.mr_number}" if commit.mr_number else "no MR"
-        super().__init__(f'{commit.date} {reason} {commit.sha[:10]} ({mr_ref}) {commit.description}')
+        super().__init__(f'{commit.date()} {reason} {commit.sha[:10]} {commit.description}')
         self.ui = ui
         self.commit = commit
 

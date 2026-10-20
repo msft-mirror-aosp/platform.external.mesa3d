@@ -244,12 +244,6 @@ cos(operand a)
 }
 
 ir_expression *
-tanh(operand a)
-{
-   return expr(ir_unop_tanh, a);
-}
-
-ir_expression *
 exp(operand a)
 {
    return expr(ir_unop_exp, a);

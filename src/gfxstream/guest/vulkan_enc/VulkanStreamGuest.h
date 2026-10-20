@@ -9,10 +9,10 @@
 #include <memory>
 #include <vector>
 
-#include "BumpPool.h"
 #include "ResourceTracker.h"
-#include "Stream.h"
 #include "VulkanHandleMapping.h"
+#include "BumpPool.h"
+#include "Stream.h"
 #include "gfxstream/guest/IOStream.h"
 #include "goldfish_vk_private_defs.h"
 

@@ -37,6 +37,8 @@
 #include "indirect.h"
 #include "util/u_debug.h"
 
+#if !defined(GLX_USE_APPLEGL) || defined(GLX_USE_APPLE)
+
 extern struct _glapi_table *__glXNewIndirectAPI(void);
 
 /*
@@ -207,8 +209,6 @@ static const struct glx_context_vtable indirect_context_vtable = {
    .unbind              = indirect_unbind_context,
    .wait_gl             = indirect_wait_gl,
    .wait_x              = indirect_wait_x,
-   .copy_context        = __glXCopyContext,
-   .swap_buffers        = __glXSwapBuffers,
 };
 
 struct glx_context *
@@ -349,6 +349,7 @@ indirect_create_context_attribs(struct glx_screen *psc,
    gc->maxSmallRenderCommandSize = MIN3(bufSize, __GLX_RENDER_CMD_SIZE_LIMIT,
                                         __GLX_MAX_RENDER_CMD_SIZE);
 
+
    return gc;
 }
 
@@ -374,3 +375,4 @@ indirect_create_screen(int screen, struct glx_display * priv)
    return psc;
 }
 
+#endif

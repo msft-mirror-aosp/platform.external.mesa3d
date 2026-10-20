@@ -28,8 +28,7 @@ bi_is_pushable_ubo(bi_context *ctx, bi_instr *ins)
    unsigned ubo = pan_res_handle_get_index(ins->src[1].value);
    unsigned offset = ins->src[0].value;
 
-   return ctx->inputs->fau.pushable_ubos & BITFIELD_BIT(ubo) &&
-          (offset & 0x3) == 0;
+   return ctx->inputs->pushable_ubos & BITFIELD_BIT(ubo) && (offset & 0x3) == 0;
 }
 
 /* Represents use data for a single UBO */
@@ -97,20 +96,23 @@ bi_pick_blend_constants(bi_context *ctx, struct bi_ubo_analysis *analysis)
    /* PAN_UBO_SYSVALS from the gallium driver */
    unsigned sysval_ubo = 1;
    unsigned offset = 0;
-   struct pan_fau_layout *fau = ctx->info.fau;
 
-   assert(ctx->inputs->fau.pushable_ubos & BITFIELD_BIT(sysval_ubo));
-   /* Blend constants are the first, non-reorderable ("fixed") relocations */
-   assert(fau->count == 0 && fau->reserved == 0);
+   assert(ctx->inputs->pushable_ubos & BITFIELD_BIT(sysval_ubo));
+   assert(ctx->info.push->count == 0);
 
    for (unsigned channel = 0; channel < 4; channel++) {
-      pan_fau_emit_reloc(fau, (struct pan_ubo_relocation) {
+      struct pan_ubo_word word = {
          .ubo = sysval_ubo,
          .offset = offset + channel * 4,
-      });
+      };
+      ctx->info.push->words[ctx->info.push->count++] = word;
+      assert(ctx->info.push->count < PAN_MAX_PUSH);
    }
 
    BITSET_SET(analysis->blocks[sysval_ubo].pushed, offset);
+
+   /* The blend constant FAU slots cannot be reordered */
+   ctx->info.push_offset = MAX2(ctx->info.push_offset, ctx->info.push->count);
 }
 
 /* Select UBO words to push. A sophisticated implementation would consider the
@@ -118,7 +120,7 @@ bi_pick_blend_constants(bi_context *ctx, struct bi_ubo_analysis *analysis)
  * sophisticated. Select from the last UBO first to prioritize sysvals. */
 
 static void
-bi_pick_ubo(struct pan_fau_layout *fau, struct bi_ubo_analysis *analysis)
+bi_pick_ubo(struct pan_ubo_push *push, struct bi_ubo_analysis *analysis)
 {
    for (signed ubo = analysis->nr_blocks - 1; ubo >= 0; --ubo) {
       struct bi_ubo_block *block = &analysis->blocks[ubo];
@@ -131,14 +133,17 @@ bi_pick_ubo(struct pan_fau_layout *fau, struct bi_ubo_analysis *analysis)
             continue;
 
          /* Don't push more than possible */
-         if (pan_fau_available(fau) < range)
+         if (push->count > PAN_MAX_PUSH - range)
             return;
 
-         for (unsigned offs = 0; offs < range; ++offs)
-            pan_fau_emit_reloc(fau, (struct pan_ubo_relocation) {
+         for (unsigned offs = 0; offs < range; ++offs) {
+            struct pan_ubo_word word = {
                .ubo = ubo,
                .offset = (r + offs) * 4,
-            });
+            };
+
+            push->words[push->count++] = word;
+         }
 
          /* Mark it as pushed so we can rewrite */
          BITSET_SET(block->pushed, r);
@@ -150,15 +155,11 @@ void
 bi_opt_push_ubo(bi_context *ctx)
 {
    struct bi_ubo_analysis analysis = bi_analyze_ranges(ctx);
-   struct pan_fau_layout *fau = ctx->info.fau;
 
-   /* We first pick the blend constants, those cannot be reordered */
    if (ctx->stage == MESA_SHADER_FRAGMENT)
       bi_pick_blend_constants(ctx, &analysis);
+   bi_pick_ubo(ctx->info.push, &analysis);
 
-   ctx->ubo_reloc.start = fau->count;
-   bi_pick_ubo(fau, &analysis);
-   ctx->ubo_reloc.end = fau->count;
    ctx->ubo_mask = 0;
 
    bi_foreach_instr_global_safe(ctx, ins) {
@@ -195,7 +196,7 @@ bi_opt_push_ubo(bi_context *ctx)
       bi_foreach_src(vec, w) {
          /* FAU is grouped in pairs (2 x 4-byte) */
          unsigned base =
-            pan_lookup_pushed_ubo(ctx->info.fau, ubo, (offset + 4 * w));
+            pan_lookup_pushed_ubo(ctx->info.push, ubo, (offset + 4 * w));
 
          unsigned fau_idx = (base >> 1);
          unsigned fau_hi = (base & 1);
@@ -264,7 +265,7 @@ bi_create_fau_interference_graph(bi_context *ctx, adjacency_row *adjacency)
          if (bi_is_uniform(I->src[s])) {
             unsigned word = bi_uniform_word(I->src[s]);
 
-            if (word >= ctx->ubo_reloc.start && word < ctx->ubo_reloc.end)
+            if (word >= ctx->info.push_offset)
                nodes[node_count++] = word;
          }
       }
@@ -276,7 +277,7 @@ bi_create_fau_interference_graph(bi_context *ctx, adjacency_row *adjacency)
                continue;
 
             unsigned x = nodes[i], y = nodes[j];
-            assert(MAX2(x, y) < ctx->ubo_reloc.end);
+            assert(MAX2(x, y) < ctx->info.push->count);
 
             /* Add undirected edge between the nodes */
             BITSET_SET(adjacency[x].row, y);
@@ -300,7 +301,7 @@ bi_create_fau_interference_graph(bi_context *ctx, adjacency_row *adjacency)
  * together arbitrarily.
  *
  * After a new ordering is selected, pushed uniforms in the program and the
- * pan_fau_layout data structure must be remapped to use the new ordering.
+ * pan_ubo_push data structure must be remapped to use the new ordering.
  */
 void
 bi_opt_reorder_push(bi_context *ctx)
@@ -312,14 +313,12 @@ bi_opt_reorder_push(bi_context *ctx)
    unsigned unpaired[PAN_MAX_PUSH] = {0};
    unsigned pushed = 0, unpaired_count = 0;
 
-   struct pan_fau_layout *fau = ctx->info.fau;
-   unsigned push_offset = ctx->ubo_reloc.start;
+   struct pan_ubo_push *push = ctx->info.push;
+   unsigned push_offset = ctx->info.push_offset;
 
    bi_create_fau_interference_graph(ctx, adjacency);
 
-   for (unsigned i = push_offset; i < ctx->ubo_reloc.end; ++i) {
-      /* All our UBO relocations are contiguous */
-      assert(!BITSET_TEST(fau->is_const, i));
+   for (unsigned i = push_offset; i < push->count; ++i) {
       if (BITSET_TEST(visited, i))
          continue;
 
@@ -370,9 +369,9 @@ bi_opt_reorder_push(bi_context *ctx)
    }
 
    /* Use new ordering for push */
-   struct pan_fau_layout old = *fau;
+   struct pan_ubo_push old = *push;
    for (unsigned i = 0; i < pushed; ++i)
-      fau->words[push_offset + i] = old.words[ordering[i]];
+      push->words[push_offset + i] = old.words[ordering[i]];
 
-   assert(ctx->ubo_reloc.end == ctx->ubo_reloc.start + pushed);
+   push->count = push_offset + pushed;
 }

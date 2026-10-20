@@ -72,6 +72,12 @@ blorp_alloc_dynamic_state(struct blorp_batch *batch,
                           uint32_t alignment,
                           uint32_t *offset);
 
+UNUSED static void *
+blorp_alloc_general_state(struct blorp_batch *batch,
+                          uint32_t size,
+                          uint32_t alignment,
+                          uint32_t *offset);
+
 static void *
 blorp_alloc_vertex_buffer(struct blorp_batch *batch, uint32_t size,
                           struct blorp_address *addr);
@@ -100,6 +106,10 @@ blorp_flush_range(struct blorp_batch *batch, void *start, size_t size);
 static void
 blorp_surface_reloc(struct blorp_batch *batch, uint32_t ss_offset,
                     struct blorp_address address, uint32_t delta);
+
+static uint64_t
+blorp_get_surface_address(struct blorp_batch *batch,
+                          struct blorp_address address);
 
 #if GFX_VER >= 7
 static struct blorp_address
@@ -1435,7 +1445,6 @@ blorp_emit_surface_state(struct blorp_batch *batch,
                          uint8_t color_write_disable,
                          bool is_render_target)
 {
-   assert(!surface->buffer);
    const struct isl_device *isl_dev = batch->blorp->isl_dev;
    struct isl_surf surf = surface->surf;
 
@@ -1474,9 +1483,9 @@ blorp_emit_surface_state(struct blorp_batch *batch,
                        .surf = &surf, .view = &surface->view,
                        .aux_surf = &surface->aux_surf, .aux_usage = aux_usage,
                        .address =
-                          batch->blorp->get_surface_address(batch, surface->addr),
+                          blorp_get_surface_address(batch, surface->addr),
                        .aux_address = !use_aux_address ? 0 :
-                          batch->blorp->get_surface_address(batch, surface->aux_addr),
+                          blorp_get_surface_address(batch, surface->aux_addr),
                        .mocs = surface->addr.mocs,
                        .clear_color = surface->clear_color,
                        .write_disables = write_disable_mask);

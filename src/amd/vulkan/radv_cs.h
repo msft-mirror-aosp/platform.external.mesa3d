@@ -83,6 +83,8 @@ radeon_check_space(struct radeon_winsys *ws, struct ac_cmdbuf *cs, unsigned need
 
 #define radeon_set_sh_reg(reg, value) ac_cmdbuf_set_sh_reg(reg, value)
 
+#define radeon_set_sh_reg_idx(info, reg, idx, value) ac_cmdbuf_set_sh_reg_idx(info, reg, idx, value)
+
 /* Packet building helpers for UCONFIG registers. */
 #define radeon_set_uconfig_reg_seq(reg, num) ac_cmdbuf_set_ucfg_reg_seq(reg, num)
 
@@ -161,8 +163,7 @@ radv_gfx12_emit_buffered_regs(const struct radv_device *device, struct radv_cmd_
    radeon_check_space(device->ws, cs->b, 1 + reg_count * 2);
 
    radeon_begin(cs);
-   radeon_emit(PKT3(PKT3_SET_SH_REG_PAIRS, reg_count * 2 - 1, 0) |
-               PKT3_RESET_FILTER_CAM_S(cs->hw_ip == AMD_IP_GFX));
+   radeon_emit(PKT3(PKT3_SET_SH_REG_PAIRS, reg_count * 2 - 1, 0) | PKT3_RESET_FILTER_CAM_S(1));
    radeon_emit_array(cs->buffered_sh_regs.gfx12.regs, reg_count * 2);
    radeon_end();
 
@@ -220,8 +221,7 @@ void radv_cs_emit_write_event_eop(struct radv_cmd_stream *cs, enum amd_gfx_level
 
 void radv_cs_emit_cache_flush(struct radeon_winsys *ws, struct radv_cmd_stream *cs, enum amd_gfx_level gfx_level,
                               uint32_t *flush_cnt, uint64_t flush_va, enum radv_cmd_flush_bits flush_bits,
-                              enum ac_rgp_flush_bits *rgp_flush_bits, enum radv_pws_acquire_point pws_acquire_point,
-                              uint64_t gfx9_eop_bug_va);
+                              enum rgp_flush_bits *sqtt_flush_bits, uint64_t gfx9_eop_bug_va);
 
 VkResult radv_create_cmd_stream(const struct radv_device *device, const enum amd_ip_type ip_type,
                                 const bool is_secondary, struct radv_cmd_stream **cs_out);

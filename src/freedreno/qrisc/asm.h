@@ -14,16 +14,14 @@ extern int gpuver;
 
 struct asm_label {
    unsigned offset;
-   unsigned abs_offset;
    const char *label;
-   const char *section;
 };
 
 struct qrisc_instr *next_instr(qrisc_opc opc);
 void decl_label(const char *str);
 void decl_jumptbl(void);
 void align_instr(unsigned alignment);
-void next_section(const char *section);
+void next_section(void);
 void parse_version(struct qrisc_instr *instr);
 
 static inline uint32_t

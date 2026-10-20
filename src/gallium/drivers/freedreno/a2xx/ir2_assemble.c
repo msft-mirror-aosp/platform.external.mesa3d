@@ -316,10 +316,7 @@ static unsigned
 write_cfs(struct ir2_context *ctx, instr_cf_t *cfs, unsigned cf_idx,
           instr_cf_alloc_t *alloc, instr_cf_exec_t *exec)
 {
-   /* a shader with no instructions at all still needs its terminating
-    * EXEC_END, and that is the only way to get here with nothing to run
-    */
-   assert(exec->count || exec->opc == EXEC_END);
+   assert(exec->count);
 
    if (alloc)
       cfs[cf_idx++].alloc = *alloc;

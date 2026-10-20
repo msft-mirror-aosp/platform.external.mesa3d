@@ -1157,9 +1157,10 @@ virgl_video_create_codec(struct pipe_context *ctx,
 
     if (virgl_debug & VIRGL_DEBUG_VIDEO)
         debug_printf("VIDEO: create codec. profile=%d, level=%u, entryp=%d, "
-                     "size=%ux%u, max_ref=%u\n",
+                     "chroma_fmt=%d, size=%ux%u, max_ref=%u, expect=%d\n",
                      templ->profile, templ->level, templ->entrypoint,
-                     templ->width, templ->height, templ->max_references);
+                     templ->chroma_format, templ->width, templ->height,
+                     templ->max_references, templ->expect_chunked_decode);
 
     switch (u_reduce_video_profile(templ->profile)) {
     case PIPE_VIDEO_FORMAT_MPEG4_AVC:

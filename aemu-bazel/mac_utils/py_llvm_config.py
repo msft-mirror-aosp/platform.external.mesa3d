@@ -11,22 +11,10 @@ def main():
     # Workspace root is 4 levels up
     workspace_root = script_dir.parents[3]
 
-    if sys.argv[1:] == ["--version"]:
-        print("21.1.8")
-        sys.exit(0)
+    tool_path = os.path.join(workspace_root, "prebuilts/clang/host/darwin-x86/clang-r584948b/bin/llvm-config")
 
-    candidates = [
-        workspace_root / "prebuilts/clang/host/darwin-x86/clang-r614150/bin/llvm-config",
-        workspace_root / "prebuilts/clang/host/darwin-x86/clang-r584948b/bin/llvm-config",
-    ]
-    tool_path = None
-    for cand in candidates:
-        if cand.exists():
-            tool_path = str(cand.resolve())
-            break
-
-    if not tool_path:
-        print(f"Error: Cannot find llvm-config in candidates: {candidates}", file=sys.stderr)
+    if not os.path.exists(tool_path):
+        print(f"Error: Cannot find llvm-config at {tool_path}", file=sys.stderr)
         sys.exit(1)
 
     try:

@@ -70,33 +70,39 @@ read_const_values(nir_const_value *dst, const void *src,
 }
 
 static void
-write_const_value(void *dst, const nir_const_value src,
-                  unsigned index, unsigned bit_size)
+write_const_values(void *dst, const nir_const_value *src,
+                   nir_component_mask_t write_mask,
+                   unsigned bit_size)
 {
    switch (bit_size) {
    case 1:
       /* Booleans are special-cased to be 32-bit */
       assert(util_ptr_is_aligned(dst, 4));
-      ((uint32_t *)dst)[index] = -(int)src.b;
+      u_foreach_bit(i, write_mask)
+         ((uint32_t *)dst)[i] = -(int)src[i].b;
       break;
 
    case 8:
-      ((uint8_t *)dst)[index] = src.u8;
+      u_foreach_bit(i, write_mask)
+         ((uint8_t *)dst)[i] = src[i].u8;
       break;
 
    case 16:
       assert(util_ptr_is_aligned(dst, 2));
-      ((uint16_t *)dst)[index] = src.u16;
+      u_foreach_bit(i, write_mask)
+         ((uint16_t *)dst)[i] = src[i].u16;
       break;
 
    case 32:
       assert(util_ptr_is_aligned(dst, 4));
-      ((uint32_t *)dst)[index] = src.u32;
+      u_foreach_bit(i, write_mask)
+         ((uint32_t *)dst)[i] = src[i].u32;
       break;
 
    case 64:
       assert(util_ptr_is_aligned(dst, 8));
-      ((uint64_t *)dst)[index] = src.u64;
+      u_foreach_bit(i, write_mask)
+         ((uint64_t *)dst)[i] = src[i].u64;
       break;
 
    default:
@@ -212,7 +218,7 @@ build_constant_load(nir_builder *b, nir_deref_instr *deref,
 
 static void
 handle_constant_store(void *mem_ctx, struct var_info *info,
-                      nir_deref_instr *deref, nir_def *val,
+                      nir_deref_instr *deref, nir_const_value *val,
                       nir_component_mask_t write_mask,
                       glsl_type_size_align_func size_align)
 {
@@ -231,13 +237,9 @@ handle_constant_store(void *mem_ctx, struct var_info *info,
    if (offset >= info->constant_data_size)
       return;
 
-   write_mask &= nir_component_mask(num_components);
-
-   u_foreach_bit(i, write_mask) {
-      nir_const_value constant = nir_scalar_as_const_value(nir_scalar_resolved(val, i));
-      write_const_value((char *)info->constant_data + offset,
-                        constant, i, bit_size);
-   }
+   write_const_values((char *)info->constant_data + offset, val,
+                      write_mask & nir_component_mask(num_components),
+                      bit_size);
 }
 
 #define NIR_SMALL_CONSTANT_MAX_ABS_VALUE 255
@@ -506,15 +508,32 @@ build_small_constant_load(nir_builder *b, nir_deref_instr *deref,
    return nir_vec(b, ret, info->num_components);
 }
 
-static bool
-opt_large_constants_impl(nir_function_impl *impl,
-                         glsl_type_size_align_func size_align,
-                         unsigned threshold)
+/** Lower large constant variables to shader constant data
+ *
+ * This pass looks for large (type_size(var->type) > threshold) variables
+ * which are statically constant and moves them into shader constant data.
+ * This is especially useful when large tables are baked into the shader
+ * source code because they can be moved into a UBO by the driver to reduce
+ * register pressure and make indirect access cheaper.
+ */
+bool
+nir_opt_large_constants(nir_shader *shader,
+                        glsl_type_size_align_func size_align,
+                        unsigned threshold)
 {
+   /* Default to a natural alignment if none is provided */
+   if (size_align == NULL)
+      size_align = glsl_get_natural_size_align_bytes;
+
+   /* This only works with a single entrypoint */
+   nir_function_impl *impl = nir_shader_get_entrypoint(shader);
+
    unsigned num_locals = nir_function_impl_index_vars(impl);
 
-   if (num_locals == 0)
-      return nir_no_progress(impl);
+   if (num_locals == 0) {
+      nir_shader_preserve_all_metadata(shader);
+      return false;
+   }
 
    struct var_info *var_infos = ralloc_array(NULL, struct var_info, num_locals);
    nir_foreach_function_temp_variable(var, impl) {
@@ -527,7 +546,7 @@ opt_large_constants_impl(nir_function_impl *impl,
 
    nir_metadata_require(impl, nir_metadata_dominance);
 
-   /* First, walk through the impl and figure out what variables we can
+   /* First, walk through the shader and figure out what variables we can
     * lower to the constant blob.
     */
    nir_foreach_block(block, impl) {
@@ -556,10 +575,8 @@ opt_large_constants_impl(nir_function_impl *impl,
          switch (intrin->intrinsic) {
          case nir_intrinsic_store_deref:
             dst_deref = nir_src_as_deref(intrin->src[0]);
+            src_is_const = nir_src_is_const(intrin->src[1]);
             write_mask = nir_intrinsic_write_mask(intrin);
-            src_is_const = true;
-            u_foreach_bit(i, write_mask)
-               src_is_const &= nir_scalar_is_const(nir_scalar_resolved(intrin->src[1].ssa, i));
             break;
 
          case nir_intrinsic_load_deref:
@@ -596,8 +613,9 @@ opt_large_constants_impl(nir_function_impl *impl,
                 nir_deref_instr_has_indirect(dst_deref)) {
                info->is_constant = false;
             } else {
-               handle_constant_store(var_infos, info, dst_deref, intrin->src[1].ssa,
-                                     write_mask, size_align);
+               nir_const_value *val = nir_src_as_const_value(intrin->src[1]);
+               handle_constant_store(var_infos, info, dst_deref, val, write_mask,
+                                     size_align);
             }
          }
 
@@ -629,7 +647,6 @@ opt_large_constants_impl(nir_function_impl *impl,
     * data.  We sort them by size and content so we can easily find
     * duplicates.
     */
-   nir_shader *shader = impl->function->shader;
    const unsigned old_constant_data_size = shader->constant_data_size;
    qsort(var_infos, num_locals, sizeof(struct var_info), var_info_cmp);
    for (int i = 0; i < num_locals; i++) {
@@ -669,8 +686,9 @@ opt_large_constants_impl(nir_function_impl *impl,
    }
 
    if (!has_constant) {
+      nir_shader_preserve_all_metadata(shader);
       ralloc_free(var_infos);
-      return nir_no_progress(impl);
+      return false;
    }
 
    if (shader->constant_data_size != old_constant_data_size) {
@@ -771,29 +789,4 @@ opt_large_constants_impl(nir_function_impl *impl,
    ralloc_free(var_infos);
 
    return nir_progress(true, impl, nir_metadata_control_flow);
-}
-
-/** Lower large constant variables to shader constant data
- *
- * This pass looks for large (type_size(var->type) > threshold) variables
- * which are statically constant and moves them into shader constant data.
- * This is especially useful when large tables are baked into the shader
- * source code because they can be moved into a UBO by the driver to reduce
- * register pressure and make indirect access cheaper.
- */
-bool
-nir_opt_large_constants(nir_shader *shader,
-                        glsl_type_size_align_func size_align,
-                        unsigned threshold)
-{
-   /* Default to a natural alignment if none is provided */
-   if (size_align == NULL)
-      size_align = glsl_get_natural_size_align_bytes;
-
-   bool progress = false;
-
-   nir_foreach_function_impl(impl, shader)
-      progress |= opt_large_constants_impl(impl, size_align, threshold);
-
-   return progress;
 }

@@ -7,5 +7,4 @@ Export `MESA_LOADER_DRIVER_OVERRIDE=msm
 LD_PRELOAD=$prefix/lib/libfreedreno_noop_drm_shim.so`.
 
 By default, a630 is exposed.  The chip can be selected an enviornment
-variable like `FD_GPU_ID=307" or `FD_CHIP_ID=<hex>`.
-
+variable like `FD_GPU_ID=307"

@@ -49,8 +49,6 @@ lower_alu = [
 
    (('seq', ('fadd', 'a', 'b'), 0.0), ('seq', 'a', ('fneg', 'b'))),
    (('sne', ('fadd', 'a', 'b'), 0.0), ('sne', 'a', ('fneg', 'b'))),
-
-   (('fadd_rtne', 'a', 'b'), ('fadd', 'a', 'b')),
 ]
 
 

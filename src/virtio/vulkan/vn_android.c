@@ -206,10 +206,8 @@ vn_android_device_import_ahb(struct vn_device *dev,
       mem_reqs.memoryTypeBits = mem_type_bits;
    }
 
-   if (!mem_reqs.memoryTypeBits) {
-      vn_log(dev->instance, "No compatible AHB mem types");
+   if (!mem_reqs.memoryTypeBits)
       return VK_ERROR_INVALID_EXTERNAL_HANDLE;
-   }
 
    if (!((1 << mem_vk->memory_type_index) & mem_reqs.memoryTypeBits))
       mem_vk->memory_type_index = ffs(mem_reqs.memoryTypeBits) - 1;
@@ -217,12 +215,9 @@ vn_android_device_import_ahb(struct vn_device *dev,
    mem_vk->size = mem_reqs.size;
 
    int dup_fd = os_dupfd_cloexec(dma_buf_fd);
-   if (dup_fd < 0) {
-      vn_log(dev->instance, "os_dupfd_cloexec(%d) failed: %s", dma_buf_fd,
-             strerror(errno));
+   if (dup_fd < 0)
       return (errno == EMFILE) ? VK_ERROR_TOO_MANY_OBJECTS
                                : VK_ERROR_OUT_OF_HOST_MEMORY;
-   }
 
    /* Spec requires AHB export info to be present, so we must strip it. In
     * practice, the AHB import path here only needs the main allocation info

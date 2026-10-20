@@ -4,7 +4,7 @@
 project(
   'rustix-1-rs',
   'rust',
-  version : '1.1.4',
+  version : '1.1.2',
   license : 'Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT',
   meson_version : '>= 1.7.0',
 )
@@ -30,7 +30,6 @@ if host_machine.system() == 'linux' or host_machine.system() == 'android'
   '--cfg', 'feature="net"',
   '--cfg', 'feature="param"',
   '--cfg', 'feature="pipe"',
-  '--cfg', 'feature="thread"',
   ]
 elif host_machine.system() == 'darwin' or host_machine.system() == 'macos'
   rustix_args += [
@@ -40,13 +39,9 @@ elif host_machine.system() == 'darwin' or host_machine.system() == 'macos'
   '--cfg', 'feature="use-libc"',
   '--cfg', 'feature="std"',
   '--cfg', 'feature="alloc"',
-  '--cfg', 'feature="event"',
   '--cfg', 'feature="fs"',
-  '--cfg', 'feature="mm"',
   '--cfg', 'feature="net"',
-  '--cfg', 'feature="param"',
   '--cfg', 'feature="pipe"',
-  '--cfg', 'feature="shm"',
   ]
 elif host_machine.system() == 'windows'
   rustix_args += [

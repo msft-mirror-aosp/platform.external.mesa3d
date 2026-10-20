@@ -1,8 +1,6 @@
 # Copyright ©
 # SPDX-License-Identifier: MIT
 
-subdir('builtin_kernels')
-
 libmesa_rust_util_files = files(
   'util/lib.rs',
   'util/assert.rs',
@@ -56,7 +54,6 @@ rusticl_files = files(
   'core/format.rs',
   'core/kernel.rs',
   'core/memory.rs',
-  'core/meta.rs',
   'core/platform.rs',
   'core/program.rs',
   'core/queue.rs',
@@ -131,7 +128,7 @@ cl_c_args = [
   '-DCL_USE_DEPRECATED_OPENCL_2_0_APIS',
   '-DCL_USE_DEPRECATED_OPENCL_2_1_APIS',
   '-DCL_USE_DEPRECATED_OPENCL_2_2_APIS',
-  '-DCL_TARGET_OPENCL_VERSION=310',
+  '-DCL_TARGET_OPENCL_VERSION=300',
 ]
 
 rusticl_opencl_bindings_rs = rust.bindgen(
@@ -284,7 +281,6 @@ rusticl_mesa_bindings = rust.bindgen(
     '--allowlist-function',     'util_queue_.*',
     '--allowlist-function',     'util_vma_.*',
     '--allowlist-function',     'util_get_cpu_caps',
-    '--allowlist-function',     'util_perfetto_thread_flush',
     '--no-copy',                'util_vma_heap', # it's a linked list
     '--no-copy',                'util_queue',
     '--no-copy',                'util_queue_fence',
@@ -312,7 +308,6 @@ rusticl_mesa_bindings = rust.bindgen(
     '--bitfield-enum',          'nir_lower_int64_options',
     '--bitfield-enum',          'nir_opt_if_options',
     '--bitfield-enum',          'nir_variable_mode',
-    '--bitfield-enum',          'float_controls',
     '--allowlist-function',     'should_.*_nir',
     '--allowlist-function',     'spirv_.*',
 
@@ -321,7 +316,6 @@ rusticl_mesa_bindings = rust.bindgen(
     '--allowlist-var',          'PIPE_.*',
     '--allowlist-type',         'pipe_endian',
     '--bitfield-enum',          'pipe_map_flags',
-    '--bitfield-enum',          'pipe_query_flags',
     '--allowlist-type',         'pipe_query_type',
     '--constified-enum-module', 'pipe_query_type',
     '--allowlist-type',         'pipe_resource_usage',
@@ -332,7 +326,6 @@ rusticl_mesa_bindings = rust.bindgen(
     '--constified-enum-module', 'pipe_tex_wrap',
     '--allowlist-type',         'pipe_swizzle',
     '--constified-enum-module', 'pipe_swizzle',
-    '--blocklist-function',     'pipe_shader_state_from_tgsi',
 
     # rusticl C functions
     '--allowlist-function',     'rusticl_.*',
@@ -450,7 +443,6 @@ librusticl = static_library(
     rusticl_llvm_gen,
     rusticl_opencl_gen,
     rusticl_proc_macros,
-    rusticl_kernels_spv,
   ],
 )
 

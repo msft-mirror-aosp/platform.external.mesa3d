@@ -81,7 +81,7 @@ iris_utrace_delete_buffer(struct u_trace_context *utctx, void *timestamps)
    iris_bo_unreference(bo);
 }
 
-static bool
+static void
 iris_utrace_record_ts(struct u_trace *trace, void *cs,
                       void *timestamps, uint64_t offset_B,
                       uint32_t flags)
@@ -109,8 +109,6 @@ iris_utrace_record_ts(struct u_trace *trace, void *cs,
                                                bo, offset_B,
                                                false);
    }
-
-   return true;
 }
 
 static uint64_t

@@ -63,7 +63,7 @@ void st_update_clip( struct st_context *st )
 
    if (memcmp(&st->state.clip, &clip, sizeof(clip)) != 0) {
       st->state.clip = clip;
-      if (st->screen->caps.clip_planes)
+      if (!st->lower_ucp)
          st->pipe->set_clip_state(st->pipe, &clip);
    }
 }

@@ -357,7 +357,6 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
-        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -393,10 +392,12 @@ cc_library_static {
         "vk_extensions_headers",
         "vk_struct_type_cast",
     ],
+    generated_sources: [
+        "vk_dispatch_table_impl",
+        "vk_enum_to_str_impl",
+        "vk_extensions_impl",
+    ],
     srcs: [
-        ":vk_dispatch_table_impl",
-        ":vk_enum_to_str_impl",
-        ":vk_extensions_impl",
         "vk_alloc.c",
         "vk_format.c",
         "vk_util.c",
@@ -424,7 +425,6 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
-        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

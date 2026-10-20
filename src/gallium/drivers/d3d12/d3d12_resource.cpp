@@ -106,13 +106,12 @@ resource_is_busy(struct d3d12_context *ctx,
    if (d3d12_batch_has_references(d3d12_current_batch(ctx), res->bo, want_to_write))
       return true;
 
-   d3d12_foreach_submitted_batch(ctx, batch)
-      d3d12_reset_batch(ctx, batch, 0);
-
-   uint64_t offset;
-   struct d3d12_bo *base = d3d12_bo_get_base(res->bo, &offset);
-   struct d3d12_screen *screen = d3d12_screen(ctx->base.screen);
-   return base->last_used_fence > screen->fence->GetCompletedValue();
+   bool busy = false;
+   d3d12_foreach_submitted_batch(ctx, batch) {
+      if (!d3d12_reset_batch(ctx, batch, 0))
+         busy |= d3d12_batch_has_references(batch, res->bo, want_to_write);
+   }
+   return busy;
 }
 
 void
@@ -122,19 +121,12 @@ d3d12_resource_wait_idle(struct d3d12_context *ctx,
 {
    if (d3d12_batch_has_references(d3d12_current_batch(ctx), res->bo, want_to_write)) {
       d3d12_flush_cmdlist_and_wait(ctx);
-      return;
+   } else {
+      d3d12_foreach_submitted_batch(ctx, batch) {
+         if (d3d12_batch_has_references(batch, res->bo, want_to_write))
+            d3d12_reset_batch(ctx, batch, OS_TIMEOUT_INFINITE);
+      }
    }
-
-   uint64_t offset;
-   struct d3d12_bo *base = d3d12_bo_get_base(res->bo, &offset);
-   struct d3d12_screen *screen = d3d12_screen(ctx->base.screen);
-   uint64_t target = base->last_used_fence;
-   if (target > screen->fence->GetCompletedValue())
-      screen->fence->SetEventOnCompletion(target, nullptr);
-
-   d3d12_foreach_submitted_batch(ctx, batch)
-      d3d12_reset_batch(ctx, batch, 0);
-   d3d12_screen_reclaim_completed(screen);
 }
 
 void
@@ -321,7 +313,6 @@ init_texture(struct d3d12_screen *screen,
 
    HRESULT hres = E_FAIL;
    enum d3d12_residency_status init_residency;
-   do {
 #ifndef _GAMING_XBOX
 
    if (heap && screen->max_feature_level == D3D_FEATURE_LEVEL_1_0_GENERIC) {
@@ -409,7 +400,6 @@ init_texture(struct d3d12_screen *screen,
                                                      IID_PPV_ARGS(&d3d12_res));
       }
    }
-   } while (hres == E_OUTOFMEMORY && d3d12_screen_reclaim_one(screen));
 
    if (FAILED(hres))
       return false;
@@ -590,11 +580,8 @@ d3d12_resource_from_handle(struct pipe_screen *pscreen,
                       " match d3d12 device (%p) instance from this pipe_screen."
                       " Attempting to re-import via NT Handle...\n", screen_device.Get(), res_device.Get());
 
-         ComPtr<ID3D12Device> res_d3d12_device;
-         res_device.As(&res_d3d12_device);
-
          handle->type = WINSYS_HANDLE_TYPE_FD;
-         HRESULT hr = res_d3d12_device->CreateSharedHandle(((ID3D12DeviceChild *)handle->com_obj),
+         HRESULT hr = screen->dev->CreateSharedHandle(((ID3D12DeviceChild *)handle->com_obj),
                nullptr,
                GENERIC_ALL,
                nullptr,

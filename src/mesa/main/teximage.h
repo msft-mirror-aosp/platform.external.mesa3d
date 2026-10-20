@@ -34,7 +34,6 @@
 
 #include "mtypes.h"
 #include "formats.h"
-#include "util/u_math.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -108,15 +107,6 @@ _mesa_is_zero_size_texture(const struct gl_texture_image *texImage)
    return (texImage->Width == 0 ||
            texImage->Height == 0 ||
            texImage->Depth == 0);
-}
-
-static inline bool
-_mesa_is_power_of_two_texture(const struct gl_texture_image *texImage)
-{
-   return texImage &&
-          util_is_power_of_two_nonzero(texImage->Width2) &&
-          util_is_power_of_two_nonzero(texImage->Height2) &&
-          util_is_power_of_two_nonzero(texImage->Depth2);
 }
 
 /** \name Internal functions */

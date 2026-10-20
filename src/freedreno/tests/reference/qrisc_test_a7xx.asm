@@ -9,34 +9,50 @@ cwrite $01, [$00 + @REG_READ_ADDR]
 cwrite $02, [$00 + @REG_READ_DWORDS]
 mov $01, $regdata
 mov $02, $regdata
-add $03, $01, 0x240
-addhi $04, $02, 0x0
+add $01, $01, 0x4
+addhi $02, $02, 0x0
+mov $03, 0x1
+cwrite $01, [$00 + @MEM_READ_ADDR]
+cwrite $02, [$00 + @MEM_READ_ADDR+0x1]
+cwrite $03, [$00 + @MEM_READ_DWORDS]
+rot $04, $memdata, 0x8
+ushr $04, $04, 0x6
+sub $04, $04, 0x4
+add $01, $01, $04
+addhi $02, $02, 0x0
 mov $rem, 0x80
-cwrite $03, [$00 + @MEM_READ_ADDR]
-cwrite $04, [$00 + @MEM_READ_ADDR+0x1]
-cwrite $04, [$00 + @LOAD_STORE_HI]
+cwrite $01, [$00 + @MEM_READ_ADDR]
+cwrite $02, [$00 + @MEM_READ_ADDR+0x1]
+cwrite $02, [$00 + @LOAD_STORE_HI]
 cwrite $rem, [$00 + @MEM_READ_DWORDS]
 cwrite $00, [$00 + @PACKET_TABLE_WRITE_ADDR]
 (rep)cwrite $memdata, [$00 + @PACKET_TABLE_WRITE]
-add $03, $01, 0x440	; RBBM_PERFCTR2_SP[0xb]+0
-addhi $04, $02, 0x0
-cwrite $03, [$00 + @BV_INSTR_BASE]
-cwrite $04, [$00 + @BV_INSTR_BASE+0x1]
-mov $05, 0x1
-cwrite $05, [$00 + @BV_CNTL]
-add $03, $03, 0x280
-addhi $04, $04, 0x0
-cwrite $03, [$00 + @LPAC_INSTR_BASE]
-cwrite $04, [$00 + @LPAC_INSTR_BASE+0x1]
-cwrite $05, [$00 + @LPAC_CNTL]
+add $01, $01, 0x200
+addhi $02, $02, 0x0
+cwrite $01, [$00 + @BV_INSTR_BASE]
+cwrite $02, [$00 + @BV_INSTR_BASE+0x1]
+cwrite $03, [$00 + @BV_CNTL]
+add $01, $01, 0x4
+addhi $02, $02, 0x0
+cwrite $01, [$00 + @MEM_READ_ADDR]
+cwrite $02, [$00 + @MEM_READ_ADDR+0x1]
+cwrite $03, [$00 + @MEM_READ_DWORDS]
+rot $04, $memdata, 0x8
+ushr $04, $04, 0x6
+sub $04, $04, 0x4
+add $01, $01, $04
+addhi $02, $02, 0x0
+add $01, $01, 0x200
+addhi $02, $02, 0x0
+cwrite $01, [$00 + @LPAC_INSTR_BASE]
+cwrite $02, [$00 + @LPAC_INSTR_BASE+0x1]
+cwrite $03, [$00 + @LPAC_CNTL]
 mov $02, 0x883	; CP_SCRATCH[0].REG
 mov $03, 0xbeef
 mov $04, 0xdead << 16
 or $03, $03, $04
 cwrite $02, [$00 + @REG_WRITE_ADDR]
 cwrite $03, [$00 + @REG_WRITE]
-mov $02, 0x7f
-swrite $02, [$00 + %PREEMPT_INSTR]
 waitin
 mov $01, $data
 
@@ -75,27 +91,27 @@ mov $01, $data
 
 CP_SET_SECURE_MODE:
 mov $02, $data
-setsecure $02, #l65
+setsecure $02, #l81
 
-fxn63:
-l63:
-jump #l63
+fxn79:
+l79:
+jump #l79
 nop
-l65:
+l81:
 waitin
 mov $01, $data
 
-fxn67:
-l67:
+fxn83:
+l83:
 cmp $04, $02, $03
-breq $04, b0, #l74
-brne $04, b1, #l72
-breq $04, b2, #l67
+breq $04, b0, #l90
+brne $04, b1, #l88
+breq $04, b2, #l83
 sub $03, $03, $02
-l72:
-jump #l67
+l88:
+jump #l83
 sub $02, $02, $03
-l74:
+l90:
 ret
 nop
 
@@ -104,7 +120,7 @@ cwrite $data, [$00 + @REG_READ_ADDR]
 add $02, $regdata, 0x42
 addhi $03, $00, $regdata
 sub $02, $02, $regdata
-call #fxn67
+call #fxn83
 subhi $03, $03, $regdata
 and $02, $02, $regdata
 or $02, $02, 0x1
@@ -136,14 +152,14 @@ mov $03, $data
 mov $04, $data
 mov $05, $data
 mov $06, $data
-l110:
-breq $06, 0x0, #l116
+l126:
+breq $06, 0x0, #l132
 cwrite $03, [$00 + @LOAD_STORE_HI]
 load $07, [$02 + 0x4]!
 cwrite $05, [$00 + @LOAD_STORE_HI]
-jump #l110
+jump #l126
 store $07, [$04 + 0x4]!
-l116:
+l132:
 waitin
 mov $01, $data
 
@@ -159,17 +175,16 @@ waitin
 mov $01, $data
 
 IN_PREEMPT:
-preempt:
 cread $02, [$00 + 0x101]
-brne $02, 0x1, #l136
+brne $02, 0x1, #l152
 nop
-bl #fxn63
+bl #fxn79
 nop
 nop
 nop
 waitin
 mov $01, $data
-l136:
+l152:
 iret
 nop
 
@@ -207,8 +222,8 @@ CP_LOAD_STATE6:
 CP_LOAD_STATE6_FRAG:
 CP_LOAD_STATE6_GEOM:
 CP_LOCAL_TIMESTAMP:
-CP_MEM_TO_OC_MEM:
 CP_MEM_TO_REG:
+CP_MEM_TO_SCRATCH_MEM:
 CP_MEM_WRITE_CNTR:
 CP_MODIFY_TIMESTAMP:
 CP_NON_CONTEXT_REG_BUNCH:
@@ -327,8 +342,6 @@ cwrite $02, [$00 + @LOAD_STORE_HI]
 cwrite $rem, [$00 + @MEM_READ_DWORDS]
 cwrite $00, [$00 + @PACKET_TABLE_WRITE_ADDR]
 (rep)cwrite $memdata, [$00 + @PACKET_TABLE_WRITE]
-mov $02, 0x1e
-swrite $02, [$00 + %PREEMPT_INSTR]
 add $01, $01, 0x200
 addhi $02, $02, 0x0
 cwrite $01, [$00 + @LPAC_INSTR_BASE]
@@ -372,8 +385,8 @@ CP_LOAD_STATE6_GEOM:
 CP_LOCAL_TIMESTAMP:
 CP_MEMCPY:
 CP_MEM_TO_MEM:
-CP_MEM_TO_OC_MEM:
 CP_MEM_TO_REG:
+CP_MEM_TO_SCRATCH_MEM:
 CP_MEM_WRITE:
 CP_MEM_WRITE_CNTR:
 CP_ME_INIT:
@@ -464,9 +477,10 @@ UNKN90:
 UNKN91:
 UNKN96:
 UNKN97:
-preempt:
 waitin
 mov $01, $data
+nop
+nop
 .align 32
 jumptbl:
 .jumptbl
@@ -497,8 +511,6 @@ cwrite $02, [$00 + @LOAD_STORE_HI]
 cwrite $rem, [$00 + @MEM_READ_DWORDS]
 cwrite $00, [$00 + @PACKET_TABLE_WRITE_ADDR]
 (rep)cwrite $memdata, [$00 + @PACKET_TABLE_WRITE]
-mov $02, 0x18
-swrite $02, [$00 + %PREEMPT_INSTR]
 
 CP_BLIT:
 CP_BOOTSTRAP_UCODE:
@@ -536,8 +548,8 @@ CP_LOAD_STATE6_GEOM:
 CP_LOCAL_TIMESTAMP:
 CP_MEMCPY:
 CP_MEM_TO_MEM:
-CP_MEM_TO_OC_MEM:
 CP_MEM_TO_REG:
+CP_MEM_TO_SCRATCH_MEM:
 CP_MEM_WRITE:
 CP_MEM_WRITE_CNTR:
 CP_ME_INIT:
@@ -628,16 +640,8 @@ UNKN90:
 UNKN91:
 UNKN96:
 UNKN97:
-preempt:
 waitin
 mov $01, $data
-nop
-nop
-nop
-nop
-nop
-nop
-.align 32
 jumptbl:
 .jumptbl
 [0100beef]

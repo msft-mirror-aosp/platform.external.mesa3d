@@ -31,7 +31,6 @@
 
 #include <stdbool.h>
 
-#include "util/simple_mtx.h"
 #include "util/u_pointer.h" // for func_pointer
 
 #if DETECT_ARCH_PPC_64
@@ -72,8 +71,6 @@ struct gallivm_state
    struct lp_generated_code *code;
 #endif
    LLVMContextRef context;
-   /* Borrowed from the lp_context_ref; held across gallivm_destroy. */
-   simple_mtx_t *context_mutex;
    LLVMBuilderRef builder;
    LLVMDIBuilderRef di_builder;
    struct lp_cached_code *cache;
@@ -108,9 +105,6 @@ gallivm_create(const char *name, struct lp_context_ref *context,
 
 void
 gallivm_destroy(struct gallivm_state *gallivm);
-
-void
-gallivm_destroy_locked(struct gallivm_state *gallivm);
 
 void
 gallivm_free_ir(struct gallivm_state *gallivm);

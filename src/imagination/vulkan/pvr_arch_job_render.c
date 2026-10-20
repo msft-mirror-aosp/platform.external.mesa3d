@@ -41,6 +41,7 @@
 #include "pvr_job_context.h"
 #include "pvr_job_render.h"
 #include "pvr_macros.h"
+#include "pvr_pds.h"
 #include "pvr_physical_device.h"
 #include "pvr_query.h"
 #include "pvr_rogue_fw.h"
@@ -1151,8 +1152,7 @@ static void pvr_frag_state_stream_init(struct pvr_render_ctx *ctx,
       value.dbias_is_int = PVR_HAS_ENHANCEMENT(dev_info, 42307) &&
                            pvr_zls_format_type_is_int(job->ds.zls_format);
 
-      if (PVR_HAS_FEATURE(dev_info, gpu_multicore_support) &&
-          PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format)) {
+      if (PVR_HAS_FEATURE(dev_info, gpu_multicore_support)) {
          value.skip_init_hdrs = true;
 
          if (PVR_HAS_QUIRK(dev_info, 72168)) {

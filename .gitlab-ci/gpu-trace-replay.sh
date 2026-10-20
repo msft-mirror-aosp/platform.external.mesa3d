@@ -35,7 +35,6 @@ export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$INSTALL/lib/"
 if [ -n "${VK_DRIVER}" ]; then
   ARCH=$(uname -m)
   export VK_DRIVER_FILES="$INSTALL/share/vulkan/icd.d/${VK_DRIVER}_icd.$ARCH.json"
-  export VK_ADD_LAYER_PATH="$INSTALL/share/vulkan/explicit_layer.d"
 fi
 
 MESA_VERSION=$(head -1 "$INSTALL/VERSION" | sed 's/\./\\./g')
@@ -68,7 +67,7 @@ if [ -n "$WINE_TAG" ]; then
   export WINEDEBUG="-all"
   export WINEPREFIX="/wineprefix"
   export WINEESYNC=1
-  export WINEPATH="/apitrace-msvc-win64/bin;/renderdoc-win64"
+  export WINEPATH="/apitrace-msvc-win64/bin"
 
   # This may be useful if you're debugging DXVK loading.
   #export WINEDEBUG="+loaddll,+module"

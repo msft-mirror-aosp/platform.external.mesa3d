@@ -9,7 +9,7 @@ set -uex
 
 section_start gpu-trace-perf "Building gpu-trace-perf"
 
-GPU_TRACE_PERF_VERSION=1.9.0
+GPU_TRACE_PERF_VERSION=1.8.2
 
 commits_to_backport=(
 )

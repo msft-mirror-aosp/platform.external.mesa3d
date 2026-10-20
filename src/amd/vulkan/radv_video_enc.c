@@ -25,9 +25,9 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *
  **************************************************************************/
-#include "tools/radv_debug.h"
 #include "radv_buffer.h"
 #include "radv_cs.h"
+#include "radv_debug.h"
 #include "radv_device_memory.h"
 #include "radv_entrypoints.h"
 #include "radv_image_view.h"
@@ -35,7 +35,6 @@
 #include "radv_query.h"
 #include "radv_video.h"
 
-#include "ac_cmdbuf_video.h"
 #include "ac_vcn_enc.h"
 #include "ac_vcn_enc_av1_default_cdf.h"
 
@@ -71,11 +70,11 @@ radv_probe_video_encode(struct radv_physical_device *pdev)
 
    pdev->video_encode_enabled = false;
 
-   if (RADV_DEBUG(instance, NO_VIDEO))
+   if (instance->debug_flags & RADV_DEBUG_NO_VIDEO)
       return;
 
    /* WRITE_MEMORY is needed for SetEvent and is required to pass CTS */
-   if (pdev->info.video_caps.queue[AMD_IP_VCN_ENC].write_memory != AC_VIDEO_WRITE_MEMORY_SUPPORT_NONE) {
+   if (radv_video_write_memory_supported(pdev)) {
       pdev->video_encode_enabled = true;
       return;
    }
@@ -1870,7 +1869,7 @@ radv_enc_feedback(struct radv_cmd_buffer *cmd_buffer, uint64_t feedback_query_va
    RADEON_ENC_CS(feedback_query_va >> 32);
    RADEON_ENC_CS(feedback_query_va & 0xffffffff);
    RADEON_ENC_CS(16); // buffer_size
-   RADEON_ENC_CS(RADV_ENC_FEEDBACK_PARTITION_SIZE * sizeof(uint32_t)); // data_size
+   RADEON_ENC_CS(40); // data_size
    RADEON_ENC_END();
 }
 
@@ -2009,15 +2008,7 @@ radv_enc_qp_map(struct radv_cmd_buffer *cmd_buffer, const struct VkVideoEncodeIn
          RADEON_ENC_CS(qp_map->planes[0].surface.u.gfx9.surf_pitch);
       }
    } else {
-      uint32_t qp_map_type = RENCODE_QP_MAP_TYPE_NONE;
-
-      /* Enable cu_qp_delta on old FW */
-      if (cmd_buffer->video.vid->vk.op == VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR &&
-          !pdev->info.video_caps.enc[AC_VIDEO_CODEC_HEVC].hevc.cu_qp_delta &&
-          radv_enc_rate_control_method(cmd_buffer->video.enc.rate_control_mode) == RENCODE_RATE_CONTROL_METHOD_NONE)
-         qp_map_type = RENCODE_QP_MAP_TYPE_DELTA;
-
-      RADEON_ENC_CS(qp_map_type);
+      RADEON_ENC_CS(RENCODE_QP_MAP_TYPE_NONE);
       RADEON_ENC_CS(0);
       RADEON_ENC_CS(0);
       RADEON_ENC_CS(0);
@@ -2996,7 +2987,7 @@ radv_vcn_encode_video(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radv_enc_state *enc = &cmd_buffer->video.enc;
    struct radv_cmd_stream *cs = cmd_buffer->cs;
-   uint64_t feedback_query_va, encode_stats_va;
+   uint64_t feedback_query_va;
    switch (vid->vk.op) {
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR:
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR:
@@ -3026,18 +3017,11 @@ radv_vcn_encode_video(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
 
          feedback_query_va = radv_buffer_get_va(pool->bo);
          feedback_query_va += pool->stride * inline_queries->firstQuery;
-         cmd_buffer->video.status_offset = pool->encode_feedback.status_offset;
-         cmd_buffer->video.statistics_offset = pool->encode_feedback.statistics_offset;
       }
    }
 
    if (!inline_queries)
       feedback_query_va = cmd_buffer->video.feedback_query_va;
-
-   if (cmd_buffer->video.statistics_offset)
-      encode_stats_va = feedback_query_va + cmd_buffer->video.statistics_offset;
-   else
-      encode_stats_va = 0;
 
    // before encode
    // session info
@@ -3086,12 +3070,7 @@ radv_vcn_encode_video(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
    radv_enc_feedback(cmd_buffer, feedback_query_va);
 
    // v2 encode statistics
-   if (encode_stats_va) {
-      RADEON_ENC_BEGIN(pdev->vcn_enc_cmds.enc_statistics);
-      RADEON_ENC_CS(RENCODE_STATISTICS_TYPE_0);
-      RADEON_ENC_CS(encode_stats_va >> 32);
-      RADEON_ENC_CS(encode_stats_va & 0xffffffff);
-      RADEON_ENC_END();
+   if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_2) {
    }
    // intra_refresh
    radv_enc_intra_refresh(cmd_buffer, enc_info);
@@ -3111,10 +3090,8 @@ radv_vcn_encode_video(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
 
    if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_2) {
       radv_vcn_sq_tail(cs, &cmd_buffer->video.sq);
-      if (feedback_query_va &&
-          pdev->info.video_caps.queue[AMD_IP_VCN_ENC].write_memory == AC_VIDEO_WRITE_MEMORY_SUPPORT_FULL)
-         ac_emit_video_write_memory(cs->b, &pdev->info, cs->hw_ip, feedback_query_va + cmd_buffer->video.status_offset,
-                                    1);
+      if (feedback_query_va && radv_video_write_memory_supported(pdev) == RADV_VIDEO_WRITE_MEMORY_SUPPORT_FULL)
+         radv_vcn_write_memory(cmd_buffer, feedback_query_va + RADV_ENC_FEEDBACK_STATUS_IDX * sizeof(uint32_t), 1);
    }
 }
 
@@ -3440,15 +3417,14 @@ void
 radv_video_patch_encode_session_parameters(struct radv_device *device, struct vk_video_session_parameters *params)
 {
    struct radv_physical_device *pdev = radv_device_physical(device);
-   struct ac_video_enc_codec_caps *caps;
 
    switch (params->op) {
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR:
-      caps = &pdev->info.video_caps.enc[AC_VIDEO_CODEC_AVC];
       for (unsigned i = 0; i < params->h264_enc.h264_pps_count; i++) {
          params->h264_enc.h264_pps[i].base.pic_init_qp_minus26 = 0;
          params->h264_enc.h264_pps[i].base.pic_init_qs_minus26 = 0;
-         if (!caps->avc.transform_8x8 || !params->h264_enc.h264_pps[i].base.flags.entropy_coding_mode_flag)
+         if (pdev->enc_hw_ver < RADV_VIDEO_ENC_HW_5 ||
+             !params->h264_enc.h264_pps[i].base.flags.entropy_coding_mode_flag)
             params->h264_enc.h264_pps[i].base.flags.transform_8x8_mode_flag = 0;
 
          params->h264_enc.h264_pps[i].base.num_ref_idx_l0_default_active_minus1 = 0;
@@ -3456,16 +3432,12 @@ radv_video_patch_encode_session_parameters(struct radv_device *device, struct vk
       }
       break;
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR: {
-      caps = &pdev->info.video_caps.enc[AC_VIDEO_CODEC_HEVC];
       for (unsigned i = 0; i < params->h265_enc.h265_sps_count; i++) {
          VkExtent2D extent = {
             .width = params->h265_enc.h265_sps[i].base.pic_width_in_luma_samples,
             .height = params->h265_enc.h265_sps[i].base.pic_height_in_luma_samples,
          };
-         VkExtent2D aligned_extent = {
-            .width = align(extent.width, caps->width_alignment),
-            .height = align(extent.height, caps->height_alignment),
-         };
+         VkExtent2D aligned_extent = radv_enc_aligned_coded_extent(pdev, params->op, extent);
 
          /* Override the unaligned pic_{width,height} and make up for it with conformance window
           * cropping */
@@ -3478,25 +3450,25 @@ radv_video_patch_encode_session_parameters(struct radv_device *device, struct vk
             params->h265_enc.h265_sps[i].base.conf_win_bottom_offset += (aligned_extent.height - extent.height) / 2;
          }
 
-         params->h265_enc.h265_sps[i].base.log2_min_luma_coding_block_size_minus3 =
-            caps->hevc.log2_min_luma_coding_block_size_minus3;
-         params->h265_enc.h265_sps[i].base.log2_diff_max_min_luma_coding_block_size =
-            caps->hevc.log2_diff_max_min_luma_coding_block_size;
-         params->h265_enc.h265_sps[i].base.log2_min_luma_transform_block_size_minus2 =
-            caps->hevc.log2_min_luma_transform_block_size_minus2;
-         params->h265_enc.h265_sps[i].base.log2_diff_max_min_luma_transform_block_size =
-            caps->hevc.log2_diff_max_min_luma_transform_block_size;
-
-         if (!caps->hevc.sao)
-            params->h265_enc.h265_sps[i].base.flags.sample_adaptive_offset_enabled_flag = 0;
+         /* VCN supports only the following block sizes (resulting in 64x64 CTBs with any coding
+          * block size) */
+         params->h265_enc.h265_sps[i].base.log2_min_luma_coding_block_size_minus3 = 0;
+         params->h265_enc.h265_sps[i].base.log2_diff_max_min_luma_coding_block_size = 3;
+         params->h265_enc.h265_sps[i].base.log2_min_luma_transform_block_size_minus2 = 0;
+         params->h265_enc.h265_sps[i].base.log2_diff_max_min_luma_transform_block_size = 3;
       }
 
       for (unsigned i = 0; i < params->h265_enc.h265_pps_count; i++) {
-         params->h265_enc.h265_pps[i].base.flags.cu_qp_delta_enabled_flag = 1;
+         /* cu_qp_delta needs to be enabled if rate control is enabled. VCN2 and newer can also enable
+          * it with rate control disabled. Since we don't know what rate control will be used, we
+          * need to always force enable it.
+          * On VCN1 rate control modes are disabled.
+          */
+         params->h265_enc.h265_pps[i].base.flags.cu_qp_delta_enabled_flag = !!(pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_2);
          params->h265_enc.h265_pps[i].base.diff_cu_qp_delta_depth = 0;
          params->h265_enc.h265_pps[i].base.init_qp_minus26 = 0;
          params->h265_enc.h265_pps[i].base.flags.dependent_slice_segments_enabled_flag = 1;
-         if (!caps->hevc.transform_skip)
+         if (pdev->enc_hw_ver < RADV_VIDEO_ENC_HW_3)
             params->h265_enc.h265_pps[i].base.flags.transform_skip_enabled_flag = 0;
 
          params->h265_enc.h265_pps[i].base.num_ref_idx_l0_default_active_minus1 = 0;
@@ -3505,16 +3477,12 @@ radv_video_patch_encode_session_parameters(struct radv_device *device, struct vk
       break;
    }
    case VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR: {
-      caps = &pdev->info.video_caps.enc[AC_VIDEO_CODEC_AV1];
       /* If the resolution isn't aligned, we need to override it. */
       VkExtent2D extent = {
          .width = params->av1_enc.seq_hdr.base.max_frame_width_minus_1 + 1,
          .height = params->av1_enc.seq_hdr.base.max_frame_height_minus_1 + 1,
       };
-      VkExtent2D aligned_extent = {
-         .width = align(extent.width, caps->width_alignment),
-         .height = align(extent.height, caps->height_alignment),
-      };
+      VkExtent2D aligned_extent = radv_enc_aligned_coded_extent(pdev, params->op, extent);
       params->av1_enc.seq_hdr.base.max_frame_width_minus_1 = aligned_extent.width - 1;
       params->av1_enc.seq_hdr.base.max_frame_height_minus_1 = aligned_extent.height - 1;
 
@@ -3546,7 +3514,6 @@ radv_GetEncodedVideoSessionParametersKHR(VkDevice device,
    VK_FROM_HANDLE(vk_video_session_parameters, templ, pVideoSessionParametersInfo->videoSessionParameters);
    size_t total_size = 0;
    size_t size_limit = 0;
-   VkBool32 has_overrides = VK_FALSE;
 
    if (pData)
       size_limit = *pDataSize;
@@ -3555,16 +3522,11 @@ radv_GetEncodedVideoSessionParametersKHR(VkDevice device,
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR: {
       const struct VkVideoEncodeH264SessionParametersGetInfoKHR *h264_get_info =
          vk_find_struct_const(pVideoSessionParametersInfo->pNext, VIDEO_ENCODE_H264_SESSION_PARAMETERS_GET_INFO_KHR);
-      struct VkVideoEncodeH264SessionParametersFeedbackInfoKHR *h264_feedback_info =
-         pFeedbackInfo ? vk_find_struct(pFeedbackInfo->pNext, VIDEO_ENCODE_H264_SESSION_PARAMETERS_FEEDBACK_INFO_KHR)
-                       : NULL;
       size_t sps_size = 0, pps_size = 0;
       if (h264_get_info->writeStdSPS) {
          const StdVideoH264SequenceParameterSet *sps = vk_video_find_h264_enc_std_sps(templ, h264_get_info->stdSPSId);
          assert(sps);
          vk_video_encode_h264_sps(sps, size_limit, &sps_size, pData);
-         if (h264_feedback_info)
-            h264_feedback_info->hasStdSPSOverrides = VK_FALSE;
       }
       if (h264_get_info->writeStdPPS) {
          const StdVideoH264PictureParameterSet *pps = vk_video_find_h264_enc_std_pps(templ, h264_get_info->stdPPSId);
@@ -3572,9 +3534,13 @@ radv_GetEncodedVideoSessionParametersKHR(VkDevice device,
          char *data_ptr = pData ? (char *)pData + sps_size : NULL;
          vk_video_encode_h264_pps(pps, templ->h264_enc.profile_idc == STD_VIDEO_H264_PROFILE_IDC_HIGH, size_limit,
                                   &pps_size, data_ptr);
-         if (h264_feedback_info)
-            h264_feedback_info->hasStdPPSOverrides = VK_TRUE;
-         has_overrides = VK_TRUE;
+         if (pFeedbackInfo) {
+            struct VkVideoEncodeH264SessionParametersFeedbackInfoKHR *h264_feedback_info =
+               vk_find_struct(pFeedbackInfo->pNext, VIDEO_ENCODE_H264_SESSION_PARAMETERS_FEEDBACK_INFO_KHR);
+            pFeedbackInfo->hasOverrides = VK_TRUE;
+            if (h264_feedback_info)
+               h264_feedback_info->hasStdPPSOverrides = VK_TRUE;
+         }
       }
       total_size = sps_size + pps_size;
       break;
@@ -3582,49 +3548,53 @@ radv_GetEncodedVideoSessionParametersKHR(VkDevice device,
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR: {
       const struct VkVideoEncodeH265SessionParametersGetInfoKHR *h265_get_info =
          vk_find_struct_const(pVideoSessionParametersInfo->pNext, VIDEO_ENCODE_H265_SESSION_PARAMETERS_GET_INFO_KHR);
-      struct VkVideoEncodeH265SessionParametersFeedbackInfoKHR *h265_feedback_info =
-         pFeedbackInfo ? vk_find_struct(pFeedbackInfo->pNext, VIDEO_ENCODE_H265_SESSION_PARAMETERS_FEEDBACK_INFO_KHR)
-                       : NULL;
       size_t sps_size = 0, pps_size = 0, vps_size = 0;
       if (h265_get_info->writeStdVPS) {
          const StdVideoH265VideoParameterSet *vps = vk_video_find_h265_enc_std_vps(templ, h265_get_info->stdVPSId);
          assert(vps);
          vk_video_encode_h265_vps(vps, size_limit, &vps_size, pData);
-         if (h265_feedback_info)
-            h265_feedback_info->hasStdVPSOverrides = VK_FALSE;
       }
       if (h265_get_info->writeStdSPS) {
          const StdVideoH265SequenceParameterSet *sps = vk_video_find_h265_enc_std_sps(templ, h265_get_info->stdSPSId);
          assert(sps);
          char *data_ptr = pData ? (char *)pData + vps_size : NULL;
          vk_video_encode_h265_sps(sps, size_limit, &sps_size, data_ptr);
-         if (h265_feedback_info)
-            h265_feedback_info->hasStdSPSOverrides = VK_TRUE;
-         has_overrides = VK_TRUE;
+
+         if (pFeedbackInfo) {
+            struct VkVideoEncodeH265SessionParametersFeedbackInfoKHR *h265_feedback_info =
+               vk_find_struct(pFeedbackInfo->pNext, VIDEO_ENCODE_H265_SESSION_PARAMETERS_FEEDBACK_INFO_KHR);
+            pFeedbackInfo->hasOverrides = VK_TRUE;
+            if (h265_feedback_info)
+               h265_feedback_info->hasStdSPSOverrides = VK_TRUE;
+         }
       }
       if (h265_get_info->writeStdPPS) {
          const StdVideoH265PictureParameterSet *pps = vk_video_find_h265_enc_std_pps(templ, h265_get_info->stdPPSId);
          assert(pps);
          char *data_ptr = pData ? (char *)pData + vps_size + sps_size : NULL;
          vk_video_encode_h265_pps(pps, size_limit, &pps_size, data_ptr);
-         if (h265_feedback_info)
-            h265_feedback_info->hasStdPPSOverrides = VK_TRUE;
-         has_overrides = VK_TRUE;
+
+         if (pFeedbackInfo) {
+            struct VkVideoEncodeH265SessionParametersFeedbackInfoKHR *h265_feedback_info =
+               vk_find_struct(pFeedbackInfo->pNext, VIDEO_ENCODE_H265_SESSION_PARAMETERS_FEEDBACK_INFO_KHR);
+            pFeedbackInfo->hasOverrides = VK_TRUE;
+            if (h265_feedback_info)
+               h265_feedback_info->hasStdPPSOverrides = VK_TRUE;
+         }
       }
       total_size = sps_size + pps_size + vps_size;
       break;
    }
    case VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR: {
+      struct vk_video_av1_seq_hdr *seq_hdr = &templ->av1_enc.seq_hdr;
+      if (!seq_hdr)
+         return VK_ERROR_INVALID_VIDEO_STD_PARAMETERS_KHR;
       vk_video_encode_av1_seq_hdr(templ, size_limit, &total_size, pData);
-      has_overrides = VK_TRUE;
       break;
    }
    default:
       break;
    }
-
-   if (pFeedbackInfo)
-      pFeedbackInfo->hasOverrides = has_overrides;
 
    *pDataSize = total_size;
    return VK_SUCCESS;
@@ -3681,10 +3651,9 @@ radv_video_get_encode_session_memory_requirements(struct radv_device *device, st
 
    if (vid->vk.flags & VK_VIDEO_SESSION_CREATE_ALLOW_ENCODE_QUANTIZATION_DELTA_MAP_BIT_KHR &&
        pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_5) {
-      struct ac_video_enc_codec_caps *caps;
-      radv_video_get_caps(pdev, vid->vk.op, NULL, &caps);
-      const uint32_t map_width = DIV_ROUND_UP(vid->vk.max_coded.width, caps->qp_map_texel_size);
-      const uint32_t map_height = DIV_ROUND_UP(vid->vk.max_coded.height, caps->qp_map_texel_size);
+      const uint32_t texel_size = radv_video_get_qp_map_texel_size(vid->vk.op);
+      const uint32_t map_width = DIV_ROUND_UP(vid->vk.max_coded.width, texel_size);
+      const uint32_t map_height = DIV_ROUND_UP(vid->vk.max_coded.height, texel_size);
 
       vk_outarray_append_typed(VkVideoSessionMemoryRequirementsKHR, &out, m)
       {
@@ -3756,4 +3725,42 @@ radv_video_get_enc_dpb_image(struct radv_device *device, const struct VkVideoPro
       image->size += align(metadata_size, ENC_ALIGNMENT);
    }
    image->alignment = ENC_ALIGNMENT;
+}
+
+bool
+radv_video_encode_av1_supported(const struct radv_physical_device *pdev)
+{
+   if (pdev->info.vcn_ip_version >= VCN_5_0_0) {
+      return true;
+   } else if (pdev->info.vcn_ip_version >= VCN_4_0_0) {
+      return pdev->info.vcn_ip_version != VCN_4_0_3 && pdev->info.vcn_enc_minor_version >= 20;
+   } else {
+      return false;
+   }
+}
+
+bool
+radv_video_encode_qp_map_supported(const struct radv_physical_device *pdev)
+{
+   if (pdev->info.vcn_ip_version >= VCN_5_0_0)
+      return radv_check_vcn_fw_version(pdev, 9, 9, 28);
+   return true;
+}
+
+enum radv_video_write_memory_support
+radv_video_write_memory_supported(const struct radv_physical_device *pdev)
+{
+   if (pdev->info.vcn_ip_version >= VCN_5_0_0) {
+      return RADV_VIDEO_WRITE_MEMORY_SUPPORT_PCIE_ATOMICS;
+   } else if (pdev->info.vcn_ip_version >= VCN_4_0_0) {
+      if (pdev->info.vcn_enc_minor_version >= 22)
+         return RADV_VIDEO_WRITE_MEMORY_SUPPORT_PCIE_ATOMICS;
+   } else if (pdev->info.vcn_ip_version >= VCN_3_0_0) {
+      if (pdev->info.vcn_enc_minor_version >= 33)
+         return RADV_VIDEO_WRITE_MEMORY_SUPPORT_PCIE_ATOMICS;
+   } else if (pdev->info.vcn_ip_version >= VCN_2_0_0) {
+      if (pdev->info.vcn_enc_minor_version >= 24)
+         return RADV_VIDEO_WRITE_MEMORY_SUPPORT_PCIE_ATOMICS;
+   }
+   return RADV_VIDEO_WRITE_MEMORY_SUPPORT_NONE;
 }

@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium_5",
+    name: "files_libgallium_3",
     srcs: [
         "noop_pipe.c",
         "noop_state.c",

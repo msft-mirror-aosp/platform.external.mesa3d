@@ -1,14 +1,14 @@
 # Copyright © 2019 Google, Inc
 # SPDX-License-Identifier: MIT
 
-xml_adreno_files = [
+xml_files = [
   'adreno.xml',
 ]
 
 rules_file = 'rules-fd.xsd'
 copyright_file = 'freedreno_copyright.xml'
 
-install_files = xml_adreno_files + [rules_file, copyright_file]
+install_files = xml_files + [rules_file, copyright_file]
 
 gen_header_py = files('gen_header.py')
 freedreno_schema = files(rules_file)
@@ -16,9 +16,7 @@ freedreno_copyright = files(copyright_file)
 
 freedreno_xml_header_files = []
 
-subdir('adreno')
-
-foreach f : xml_adreno_files
+foreach f : xml_files
   _name = f + '.h'
   freedreno_xml_header_files += custom_target(
     _name,
@@ -26,7 +24,6 @@ foreach f : xml_adreno_files
     output: _name,
     command: [prog_python, '@INPUT0@', '--validate', '--rnn', rnn_src_path, '--xml', '@INPUT1@', 'c-defines'],
     capture: true,
-    depend_files: xml_files + adreno_pm4_xml
   )
 endforeach
 
@@ -45,3 +42,5 @@ if install_fd_decode_tools
     )
   endforeach
 endif
+
+subdir('adreno')

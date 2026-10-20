@@ -89,8 +89,7 @@ vs_exec_prepare(struct draw_vertex_shader *shader,
  * it's time to try doing all the other stuff separately.
  */
 static void
-vs_exec_run_linear(struct draw_context *draw,
-                   struct draw_vertex_shader *shader,
+vs_exec_run_linear(struct draw_vertex_shader *shader,
                    const float (*input)[4],
                    float (*output)[4],
                    const struct draw_buffer_info *constants,
@@ -103,9 +102,9 @@ vs_exec_run_linear(struct draw_context *draw,
    struct tgsi_exec_machine *machine = evs->machine;
    unsigned int i, j;
    unsigned slot;
-   bool clamp_vertex_color = draw->rasterizer->clamp_vertex_color;
+   bool clamp_vertex_color = shader->draw->rasterizer->clamp_vertex_color;
 
-   assert(!draw->llvm);
+   assert(!shader->draw->llvm);
    tgsi_exec_set_constant_buffers(machine, PIPE_MAX_CONSTANT_BUFFERS,
                                   (const struct tgsi_exec_consts_info *)constants);
 
@@ -113,7 +112,7 @@ vs_exec_run_linear(struct draw_context *draw,
       unsigned i = machine->SysSemanticToIndex[TGSI_SEMANTIC_INSTANCEID];
       assert(i < ARRAY_SIZE(machine->SystemValue));
       for (j = 0; j < TGSI_QUAD_SIZE; j++)
-         machine->SystemValue[i].xyzw[0].i[j] = draw->instance_id;
+         machine->SystemValue[i].xyzw[0].i[j] = shader->draw->instance_id;
    }
 
    for (i = 0; i < count; i += MAX_TGSI_VERTICES) {
@@ -132,7 +131,7 @@ vs_exec_run_linear(struct draw_context *draw,
                          input[slot][3]);
          }
 #endif
-	 int basevertex = draw->pt.user.eltSize ? draw->pt.user.eltBias : draw->start_index;
+	 int basevertex = shader->draw->pt.user.eltSize ? shader->draw->pt.user.eltBias : shader->draw->start_index;
 
          if (shader->info.uses_vertexid) {
             unsigned vid = machine->SysSemanticToIndex[TGSI_SEMANTIC_VERTEXID];
@@ -208,7 +207,7 @@ vs_exec_run_linear(struct draw_context *draw,
 
 
 static void
-vs_exec_delete(UNUSED struct draw_context *draw, struct draw_vertex_shader *dvs)
+vs_exec_delete(struct draw_vertex_shader *dvs)
 {
    FREE((void*) dvs->state.tokens);
    FREE(dvs);
@@ -242,6 +241,7 @@ draw_create_vs_exec(struct draw_context *draw,
    tgsi_scan_shader(vs->base.state.tokens, &vs->base.info);
 
    vs->base.state.stream_output = state->stream_output;
+   vs->base.draw = draw;
    vs->base.prepare = vs_exec_prepare;
    vs->base.run_linear = vs_exec_run_linear;
    vs->base.delete = vs_exec_delete;

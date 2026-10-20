@@ -143,23 +143,9 @@ impl ShaderModel for ShaderModel70 {
             | Op::Vote(_)
             | Op::Copy(_)
             | Op::Pin(_)
-            | Op::Unpin(_)
-            | Op::Ldcg(_) => true,
-            Op::F2FP(_) => self.sm() >= 86,
+            | Op::Unpin(_) => true,
             Op::Ldc(op) => op.offset.is_zero(),
-            Op::FAdd(_)
-            | Op::FFma(_)
-            | Op::FMnMx(_)
-            | Op::FMul(_)
-            | Op::F2F(_)
-            | Op::F2I(_)
-            | Op::I2F(_)
-            | Op::FRnd(_)
-            | Op::FSet(_)
-            | Op::FSetP(_)
-            | Op::IAbs(_)
-            | Op::IMnMx(_) => self.is_blackwell_b() && !op.is_fp64(),
-            // UCLEA
+            // UCLEA  USHL  USHR
             _ => false,
         }
     }
@@ -189,7 +175,6 @@ impl ShaderModel for ShaderModel70 {
                     5
                 }
             }
-            Op::Nanosleep(_) => 5,
             Op::CCtl(_op) => {
                 // CCTL.C needs 8, CCTL.I needs 11
                 11

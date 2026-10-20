@@ -1114,10 +1114,7 @@ lvp_compile_ray_tracing_pipeline(struct lvp_pipeline *pipeline,
 
    struct lvp_shader *shader = &pipeline->shaders[MESA_SHADER_RAYGEN];
    lvp_shader_init(shader, b->shader);
-
-   if (pipeline->layout)
-      shader->push_constant_size = pipeline->layout->push_constant_size;
-
+   shader->push_constant_size = pipeline->layout->push_constant_size;
    shader->shader_cso = lvp_shader_compile(device, shader, nir_shader_clone(NULL, shader->pipeline_nir->nir), false);
 
    _mesa_hash_table_destroy(compiler.functions, NULL);
@@ -1126,7 +1123,7 @@ lvp_compile_ray_tracing_pipeline(struct lvp_pipeline *pipeline,
 static VkResult
 lvp_create_ray_tracing_pipeline(VkDevice _device, const VkAllocationCallbacks *allocator,
                                 const VkRayTracingPipelineCreateInfoKHR *create_info,
-                                VkPipeline *out_pipeline, VkPipelineCreateFlags2KHR flags)
+                                VkPipeline *out_pipeline)
 {
    VK_FROM_HANDLE(lvp_device, device, _device);
    VK_FROM_HANDLE(lvp_pipeline_layout, layout, create_info->layout);
@@ -1141,10 +1138,7 @@ lvp_create_ray_tracing_pipeline(VkDevice _device, const VkAllocationCallbacks *a
    vk_object_base_init(&device->vk, &pipeline->base,
                        VK_OBJECT_TYPE_PIPELINE);
 
-   if (flags & VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT)
-      pipeline->heaps = true;
-   else
-      vk_pipeline_layout_ref(&layout->vk);
+   vk_pipeline_layout_ref(&layout->vk);
 
    pipeline->layout = layout;
    pipeline->type = LVP_PIPELINE_RAY_TRACING;
@@ -1200,15 +1194,15 @@ lvp_CreateRayTracingPipelinesKHR(
 
    uint32_t i = 0;
    for (; i < createInfoCount; i++) {
-      VkPipelineCreateFlags2KHR flags = vk_rt_pipeline_create_flags(&pCreateInfos[i]);
       VkResult tmp_result = lvp_create_ray_tracing_pipeline(
-         device, pAllocator, pCreateInfos + i, pPipelines + i, flags);
+         device, pAllocator, pCreateInfos + i, pPipelines + i);
 
       if (tmp_result != VK_SUCCESS) {
          result = tmp_result;
          pPipelines[i] = VK_NULL_HANDLE;
 
-         if (flags & VK_PIPELINE_CREATE_2_EARLY_RETURN_ON_FAILURE_BIT_KHR)
+         if (vk_rt_pipeline_create_flags(&pCreateInfos[i]) &
+             VK_PIPELINE_CREATE_2_EARLY_RETURN_ON_FAILURE_BIT_KHR)
             break;
       }
    }

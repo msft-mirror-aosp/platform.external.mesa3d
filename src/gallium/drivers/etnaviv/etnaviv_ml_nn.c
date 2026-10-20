@@ -474,8 +474,13 @@ strided_to_normal(struct etna_ml_subgraph *subgraph, struct etna_operation *oper
    operation->input_height = DIV_ROUND_UP(operation->input_height, operation->stride);
 
    if (operation->padding_same) {
-      operation->input_width += operation->weight_width / 2;
-      operation->input_height += operation->weight_height / 2;
+      if (operation->weight_width == 5) {
+         operation->input_width += 2;
+         operation->input_height += 2;
+      } else {
+         operation->input_width += 1;
+         operation->input_height += 1;
+      }
    }
 
    operation->weight_width = DIV_ROUND_UP(operation->weight_width, operation->stride);

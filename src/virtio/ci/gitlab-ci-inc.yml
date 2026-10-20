@@ -1,16 +1,5 @@
-.enforce-hw-jobs-venus-rules:
-  rules:
-    - if: '$INPUT_HW_JOBS !~ /"(all|venus|virtio.ko)"/i'
-      when: never
-
-.enforce-hw-jobs-lavapipe-venus-rules:
-  rules:
-    - if: '$INPUT_HW_JOBS !~ /"(all|lavapipe|venus|virtio.ko)"/i'
-      when: never
-
 .venus-rules:
   rules:
-    - !reference [.enforce-hw-jobs-venus-rules, rules]
     - !reference [.test, rules]
     - !reference [.vulkan-rules, rules]
     - changes: &venus_file_list
@@ -19,7 +8,6 @@
 
 .venus-manual-rules:
   rules:
-    - !reference [.enforce-hw-jobs-venus-rules, rules]
     - !reference [.test, rules]
     - !reference [.vulkan-manual-rules, rules]
     - changes: *venus_file_list
@@ -27,7 +15,6 @@
 
 .venus-collabora-rules:
   rules:
-    - !reference [.enforce-hw-jobs-venus-rules, rules]
     - !reference [.test, rules]
     - !reference [.collabora-farm-rules, rules]
     - !reference [.vulkan-rules, rules]
@@ -36,7 +23,6 @@
 
 .venus-collabora-manual-rules:
   rules:
-    - !reference [.enforce-hw-jobs-venus-rules, rules]
     - !reference [.test, rules]
     - !reference [.collabora-farm-manual-rules, rules]
     - !reference [.vulkan-manual-rules, rules]
@@ -46,7 +32,6 @@
 .venus-lavapipe-rules:
   stage: layered-backends
   rules:
-    - !reference [.enforce-hw-jobs-lavapipe-rules, rules]
     - !reference [.venus-rules, rules]
     - !reference [.lavapipe-rules, rules]
 
@@ -54,15 +39,12 @@
   stage: layered-backends-nightly
   extends: .no-auto-retry
   rules:
-    - !reference [.enforce-hw-jobs-lavapipe-rules, rules]
     - !reference [.venus-manual-rules, rules]
     - !reference [.lavapipe-manual-rules, rules]
 
 .venus-anv-rules:
   stage: layered-backends
   rules:
-    - !reference [.enforce-hw-jobs-venus-rules, rules]
-    - !reference [.enforce-hw-jobs-anv-rules, rules]
     - !reference [.venus-collabora-rules, rules]
     - !reference [.anv-rules, rules]
 
@@ -70,16 +52,12 @@
   stage: layered-backends-nightly
   extends: .no-auto-retry
   rules:
-    - !reference [.enforce-hw-jobs-venus-rules, rules]
-    - !reference [.enforce-hw-jobs-anv-rules, rules]
     - !reference [.venus-collabora-manual-rules, rules]
     - !reference [.anv-manual-rules, rules]
 
 .venus-tu-rules:
   stage: layered-backends
   rules:
-    - !reference [.enforce-hw-jobs-venus-rules, rules]
-    - !reference [.enforce-hw-jobs-turnip-rules, rules]
     - !reference [.venus-collabora-rules, rules]
     - !reference [.collabora-turnip-rules, rules]
 
@@ -87,8 +65,6 @@
   stage: layered-backends-nightly
   extends: .no-auto-retry
   rules:
-    - !reference [.enforce-hw-jobs-venus-rules, rules]
-    - !reference [.enforce-hw-jobs-turnip-rules, rules]
     - !reference [.venus-collabora-manual-rules, rules]
     - !reference [.collabora-turnip-manual-rules, rules]
 

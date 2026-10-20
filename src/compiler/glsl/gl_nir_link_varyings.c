@@ -3998,8 +3998,7 @@ check_against_input_limit(struct gl_shader_program *prog,
 }
 
 static bool
-check_against_output_limit(const struct pipe_screen *screen,
-                           struct gl_shader_program *prog,
+check_against_output_limit(struct gl_shader_program *prog,
                            const struct gl_constants *consts,
                            gl_api api, nir_shader *nir)
 {
@@ -4007,10 +4006,34 @@ check_against_output_limit(const struct pipe_screen *screen,
    uint32_t patch_outputs_written = nir->info.patch_outputs_written;
    uint16_t outputs_written_16bit = nir->info.outputs_written_16bit;
 
-   /* Outputs consumed by fixed-function hardware don't take up varying
-    * storage, so they don't count against the limit.
-    */
-   outputs_written &= ~screen->caps.ignored_output_varyings[nir->info.stage];
+   if (nir->info.stage == MESA_SHADER_VERTEX ||
+       nir->info.stage == MESA_SHADER_TESS_EVAL ||
+       nir->info.stage == MESA_SHADER_GEOMETRY ||
+       nir->info.stage == MESA_SHADER_MESH) {
+      /* The FS cannot or might not read the following.
+       * We could make it more accurate if needed.
+       */
+      outputs_written &= ~(VARYING_BIT_POS |
+                           VARYING_BIT_PSIZ |
+                           VARYING_BIT_CLIP_VERTEX |
+                           /* In theory, these shouldn't count against
+                            * limits if the FS doesn't read them.
+                            */
+                           VARYING_BIT_CLIP_DIST0 |
+                           VARYING_BIT_CLIP_DIST1 |
+                           VARYING_BIT_CULL_DIST0 |
+                           VARYING_BIT_CULL_DIST1 |
+                           VARYING_BIT_LAYER |
+                           VARYING_BIT_VIEWPORT |
+                           VARYING_BIT_VIEWPORT_MASK |
+                           VARYING_BIT_PRIMITIVE_INDICES);
+   } else if (nir->info.stage == MESA_SHADER_TESS_CTRL) {
+      /* These don't count against the limit. */
+      outputs_written &= ~(VARYING_BIT_TESS_LEVEL_INNER |
+                           VARYING_BIT_TESS_LEVEL_OUTER |
+                           VARYING_BIT_BOUNDING_BOX0 |
+                           VARYING_BIT_BOUNDING_BOX1);
+   }
 
    unsigned num_output_comps = (util_bitcount64(outputs_written) +
                                 util_bitcount(outputs_written_16bit)) * 4;
@@ -4327,8 +4350,7 @@ link_varyings(const struct pipe_screen *screen,
          if (i != first && !check_against_input_limit(prog, consts, api, nir))
             return false;
 
-         if (i != last &&
-             !check_against_output_limit(screen, prog, consts, api, nir))
+         if (i != last && !check_against_output_limit(prog, consts, api, nir))
             return false;
       }
    }
@@ -4483,7 +4505,7 @@ link_mesh_pipeline_varyings(const struct pipe_screen *screen,
       nir_shader_gather_info(frag_nir, nir_shader_get_entrypoint(frag_nir));
 
       if (!check_against_input_limit(prog, consts, api, frag_nir) ||
-          !check_against_output_limit(screen, prog, consts, api, mesh_nir))
+          !check_against_output_limit(prog, consts, api, mesh_nir))
          return false;
    }
 

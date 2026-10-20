@@ -5,7 +5,6 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "gfx/si_gfx.h"
 #include "si_build_pm4.h"
 #include "si_pipe.h"
 #include "sid.h"
@@ -99,9 +98,9 @@ void si_flush_gfx_cs(struct si_context *ctx, unsigned flags, struct pipe_fence_h
    if (sscreen->info.is_amdgpu && sscreen->info.drm_minor >= 39)
       flags |= RADEON_FLUSH_START_NEXT_GFX_IB_NOW;
 
-   if (ctx->gfx_level <= GFX7) {
-      /* Random hangs without waiting for shaders and flushing cache */
-      wait_flags |= wait_ps_cs | SI_BARRIER_INV_L2;
+   if (ctx->gfx_level == GFX6) {
+      /* The kernel flushes L2 before shaders are finished. */
+      wait_flags |= wait_ps_cs;
    } else if (!(flags & RADEON_FLUSH_START_NEXT_GFX_IB_NOW) ||
               ((flags & RADEON_FLUSH_TOGGLE_SECURE_SUBMISSION) &&
                 !ws->cs_is_secure(cs))) {
@@ -114,7 +113,7 @@ void si_flush_gfx_cs(struct si_context *ctx, unsigned flags, struct pipe_fence_h
    /* Drop this flush if it's a no-op. */
    if (!radeon_emitted(cs, ctx->initial_gfx_cs_size) &&
        (!wait_flags || !ctx->gfx_last_ib_is_busy) &&
-       !(flags & (RADEON_FLUSH_TOGGLE_SECURE_SUBMISSION | RADEON_FLUSH_FORCE))) {
+       !(flags & RADEON_FLUSH_TOGGLE_SECURE_SUBMISSION)) {
       tc_driver_internal_flush_notify(ctx->tc);
       return;
    }
@@ -198,9 +197,6 @@ void si_flush_gfx_cs(struct si_context *ctx, unsigned flags, struct pipe_fence_h
       start_ts = si_ds_begin_submit(&ctx->ds_queue);
       submission_id = ctx->ds_queue.submission_id;
    }
-
-   if (unlikely(ctx->sqtt))
-      si_sqtt_describe_flush(ctx);
 
    /* Flush the CS. */
    ws->cs_flush(cs, flags, &ctx->last_gfx_fence);
@@ -337,10 +333,6 @@ void si_begin_new_gfx_cs(struct si_context *ctx, bool first_cs)
 
    u_trace_init(&ctx->trace, &ctx->ds.trace_context);
 
-   /* Reset timestamp command tracking */
-   ctx->last_timestamp_cmd = NULL;
-   ctx->last_timestamp_cmd_cdw = UINT32_MAX;
-
    if (unlikely(radeon_uses_secure_bos(ctx->ws))) {
       is_secure = ctx->ws->cs_is_secure(&ctx->gfx_cs);
 
@@ -442,9 +434,6 @@ void si_begin_new_gfx_cs(struct si_context *ctx, bool first_cs)
       ctx->initial_gfx_cs_size = ctx->gfx_cs.current.cdw;
       return;
    }
-
-   if (unlikely(ctx->sqtt))
-      si_sqtt_describe_begin(ctx, &ctx->gfx_cs);
 
    if (ctx->has_tessellation) {
       radeon_add_to_buffer_list(ctx, &ctx->gfx_cs,

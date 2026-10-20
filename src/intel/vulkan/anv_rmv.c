@@ -569,6 +569,7 @@ anv_rmv_log_cmd_buffer_create(struct anv_device *device,
    uint64_t data_size =
       cmd_buffer->surface_state_stream.total_size +
       cmd_buffer->dynamic_state_stream.total_size +
+      cmd_buffer->general_state_stream.total_size +
       cmd_buffer->indirect_push_descriptor_stream.total_size;
 
    uint64_t executable_size = 0;
@@ -602,6 +603,8 @@ anv_rmv_log_cmd_buffer_create(struct anv_device *device,
                                        &cmd_buffer->surface_state_stream);
    bind_cmd_buffer_state_stream_locked(device, create_token.resource_id,
                                        &cmd_buffer->dynamic_state_stream);
+   bind_cmd_buffer_state_stream_locked(device, create_token.resource_id,
+                                       &cmd_buffer->general_state_stream);
    bind_cmd_buffer_state_stream_locked(device, create_token.resource_id,
                                        &cmd_buffer->indirect_push_descriptor_stream);
    simple_mtx_unlock(&device->vk.memory_trace_data.token_mtx);
@@ -731,7 +734,7 @@ anv_rmv_log_event_create(struct anv_device *device,
 
    vk_rmv_emit_token(&device->vk.memory_trace_data, VK_RMV_TOKEN_TYPE_RESOURCE_CREATE, &create_token);
    log_state_pool_bind_locked(device, create_token.resource_id,
-                              anv_device_get_dynamic_state_pool(device),
+                              &device->dynamic_state_pool,
                               &event->state);
    simple_mtx_unlock(&device->vk.memory_trace_data.token_mtx);
 }

@@ -21,20 +21,6 @@ filegroup {
     ],
 }
 
-filegroup {
-    name: "float32_glsl_file",
-    srcs: [
-        "float32.glsl",
-    ],
-}
-
-filegroup {
-    name: "float64_glsl_file",
-    srcs: [
-        "float64.glsl",
-    ],
-}
-
 python_binary_host {
     name: "ir_expression_operation_py_binary",
     main: "ir_expression_operation.py",

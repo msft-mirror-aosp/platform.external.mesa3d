@@ -82,12 +82,9 @@ XEXT_GENERATE_FIND_DISPLAY(find_display, appledri_info,
 
      static XEXT_GENERATE_CLOSE_DISPLAY(close_display, appledri_info)
 
-     static void (*surface_notify_handler) (Display *dpy, unsigned int uid,
-                                            int kind);
+     static void (*surface_notify_handler) ();
 
-     void *XAppleDRISetSurfaceNotifyHandler(void (*fun) (Display *dpy,
-                                                         unsigned int uid,
-                                                         int kind))
+     void *XAppleDRISetSurfaceNotifyHandler(void (*fun) ())
 {
    void *old = surface_notify_handler;
    surface_notify_handler = fun;
@@ -129,7 +126,9 @@ wire_to_event(Display *dpy, XEvent *re, xEvent *event)
 
 
 Bool
-XAppleDRIQueryExtension(Display *dpy, int *event_basep, int *error_basep)
+XAppleDRIQueryExtension(dpy, event_basep, error_basep)
+     Display *dpy;
+     int *event_basep, *error_basep;
 {
    XExtDisplayInfo *info = find_display(dpy);
 
@@ -147,8 +146,11 @@ XAppleDRIQueryExtension(Display *dpy, int *event_basep, int *error_basep)
 }
 
 Bool
-XAppleDRIQueryVersion(Display *dpy, int *majorVersion, int *minorVersion,
-                      int *patchVersion)
+XAppleDRIQueryVersion(dpy, majorVersion, minorVersion, patchVersion)
+     Display *dpy;
+     int *majorVersion;
+     int *minorVersion;
+     int *patchVersion;
 {
    XExtDisplayInfo *info = find_display(dpy);
    xAppleDRIQueryVersionReply rep;
@@ -177,7 +179,10 @@ XAppleDRIQueryVersion(Display *dpy, int *majorVersion, int *minorVersion,
 }
 
 Bool
-XAppleDRIQueryDirectRenderingCapable(Display *dpy, int screen, Bool *isCapable)
+XAppleDRIQueryDirectRenderingCapable(dpy, screen, isCapable)
+     Display *dpy;
+     int screen;
+     Bool *isCapable;
 {
    XExtDisplayInfo *info = find_display(dpy);
    xAppleDRIQueryDirectRenderingCapableReply rep;
@@ -205,7 +210,10 @@ XAppleDRIQueryDirectRenderingCapable(Display *dpy, int screen, Bool *isCapable)
 }
 
 Bool
-XAppleDRIAuthConnection(Display *dpy, int screen, unsigned int magic)
+XAppleDRIAuthConnection(dpy, screen, magic)
+     Display *dpy;
+     int screen;
+     unsigned int magic;
 {
    XExtDisplayInfo *info = find_display(dpy);
    xAppleDRIAuthConnectionReq *req;
@@ -234,9 +242,13 @@ XAppleDRIAuthConnection(Display *dpy, int screen, unsigned int magic)
 }
 
 Bool
-XAppleDRICreateSurface(Display *dpy, int screen, Drawable drawable,
-                       unsigned int client_id, unsigned int key[2],
-                       unsigned int *uid)
+XAppleDRICreateSurface(dpy, screen, drawable, client_id, key, uid)
+     Display *dpy;
+     int screen;
+     Drawable drawable;
+     unsigned int client_id;
+     unsigned int *key;
+     unsigned int *uid;
 {
    XExtDisplayInfo *info = find_display(dpy);
    xAppleDRICreateSurfaceReply rep;
@@ -269,7 +281,10 @@ XAppleDRICreateSurface(Display *dpy, int screen, Drawable drawable,
 }
 
 Bool
-XAppleDRIDestroySurface(Display *dpy, int screen, Drawable drawable)
+XAppleDRIDestroySurface(dpy, screen, drawable)
+     Display *dpy;
+     int screen;
+     Drawable drawable;
 {
    XExtDisplayInfo *info = find_display(dpy);
    xAppleDRIDestroySurfaceReq *req;

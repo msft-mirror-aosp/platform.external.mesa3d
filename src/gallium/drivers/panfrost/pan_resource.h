@@ -1,5 +1,5 @@
 /*
- * © Copyright 2018-2019 Alyssa Rosenzweig
+ * © Copyright2018-2019 Alyssa Rosenzweig
  * SPDX-License-Identifier: MIT
  */
 
@@ -76,6 +76,10 @@ struct panfrost_resource {
    struct panfrost_bo *bo;
 
    struct {
+      /* Is the checksum for this image valid? Implicitly refers to
+       * the first slice; we only checksum non-mipmapped 2D images */
+      bool crc;
+
       /* Has anything been written to this slice? */
       BITSET_DECLARE(data, PAN_MAX_MIP_LEVELS);
    } valid;
@@ -97,9 +101,6 @@ struct panfrost_resource {
 
    /* Whether the resource owns the backing BO's label */
    bool owns_label;
-
-   /* CRC state */
-   struct pan_crc_state crc_state;
 
    /* AFBC-P state */
    struct pan_afbcp *afbcp;
@@ -143,6 +144,37 @@ void panfrost_resource_screen_init(struct pipe_screen *screen);
 void panfrost_resource_screen_destroy(struct pipe_screen *screen);
 
 void panfrost_resource_context_init(struct pipe_context *pctx);
+
+/* Blitting */
+
+enum panfrost_blitter_op /* bitmask */
+{
+   PAN_SAVE_TEXTURES = 1,
+   PAN_SAVE_FRAMEBUFFER = 2,
+   PAN_SAVE_FRAGMENT_STATE = 4,
+   PAN_SAVE_FRAGMENT_CONSTANT = 8,
+   PAN_DISABLE_RENDER_COND = 16,
+};
+
+enum {
+   PAN_RENDER_BLIT =
+      PAN_SAVE_TEXTURES | PAN_SAVE_FRAMEBUFFER | PAN_SAVE_FRAGMENT_STATE,
+   PAN_RENDER_BLIT_COND = PAN_SAVE_TEXTURES | PAN_SAVE_FRAMEBUFFER |
+                          PAN_SAVE_FRAGMENT_STATE | PAN_DISABLE_RENDER_COND,
+   PAN_RENDER_BASE = PAN_SAVE_FRAMEBUFFER | PAN_SAVE_FRAGMENT_STATE,
+   PAN_RENDER_COND =
+      PAN_SAVE_FRAMEBUFFER | PAN_SAVE_FRAGMENT_STATE | PAN_DISABLE_RENDER_COND,
+   PAN_RENDER_CLEAR = PAN_SAVE_FRAGMENT_STATE | PAN_SAVE_FRAGMENT_CONSTANT,
+};
+
+/* Callers should ensure that all AFBC/AFRC resources that will be used in the
+ * blit operation are legalized before calling blitter operations, otherwise
+ * we may trigger a recursive blit */
+void panfrost_blitter_save(struct panfrost_context *ctx,
+                           const enum panfrost_blitter_op blitter_op);
+
+void panfrost_blit(struct pipe_context *pipe,
+                   const struct pipe_blit_info *info);
 
 void panfrost_resource_set_damage_region(struct pipe_screen *screen,
                                          struct pipe_resource *res,
@@ -209,16 +241,15 @@ void pan_resource_modifier_convert(struct panfrost_context *ctx,
                                    struct panfrost_resource *rsrc,
                                    uint64_t modifier, bool copy_resource,
                                    const char *reason);
-void pan_resource_modifier_legalize(struct panfrost_context *ctx,
-                                    struct panfrost_resource *rsrc,
-                                    enum pipe_format format, bool write,
-                                    bool discard);
 
+void pan_legalize_format(struct panfrost_context *ctx,
+                         struct panfrost_resource *rsrc,
+                         enum pipe_format format, bool write,
+                         bool discard);
 void pan_dump_resource(struct panfrost_context *ctx,
                        struct panfrost_resource *rsc);
 
-bool panfrost_resource_wait(struct panfrost_resource *rsrc,
-                            struct panfrost_context *ctx, int64_t timeout_ns,
-                            bool wait_readers);
+void panfrost_blit_no_afbc_legalization(struct pipe_context *pipe,
+                                        const struct pipe_blit_info *info);
 
 #endif /* PAN_RESOURCE_H */

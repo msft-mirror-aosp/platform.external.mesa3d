@@ -123,7 +123,6 @@ void config_writer_set_callback(
  *
  * /param   writer      writer instance
  * /param   type        config type
- * /param   pipe_idx    pipe instance
  */
 void config_writer_set_type(struct config_writer *writer, enum config_type type, uint32_t pipe_idx);
 
@@ -140,8 +139,7 @@ void config_writer_set_type(struct config_writer *writer, enum config_type type,
  * /param   type        config type
  * /param   pipe_idx    pipe instance
  */
-void config_writer_force_new_with_type(
-    struct config_writer *writer, enum config_type type, uint32_t pipe_idx);
+void config_writer_force_new_with_type(struct config_writer *writer, enum config_type type);
 
 /** fill the value to the buffer.
  * If the dword exceeds the config packet size limit,

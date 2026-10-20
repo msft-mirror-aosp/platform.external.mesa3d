@@ -5,14 +5,12 @@
 
 set -e
 python3 external/fetch_sources.py
-python3 external/fetch_video_decode_samples.py
-python3 external/fetch_video_encode_samples.py
 
 rm -rf build
 mkdir build
-cmake -B build . -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDEQP_TARGET=default
+cmake -B build . -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDEQP_TARGET=x11_egl
 
 echo
-echo !!! CTS is not supposed to be installed !!!
+echo !!! GLCTS is not supposed to be installed !!!
 echo Type:
 echo '   ninja -Cbuild'

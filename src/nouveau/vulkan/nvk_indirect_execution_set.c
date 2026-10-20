@@ -128,8 +128,7 @@ nvk_ies_set_gfx_pipeline(struct nvk_device *dev,
       if (stage != MESA_SHADER_FRAGMENT)
          last_vtgm = stage;
 
-      uint32_t type = mesa_to_nv9097_shader_type(
-         stage, pipeline->stages & VK_SHADER_STAGE_TASK_BIT_EXT);
+      uint32_t type = mesa_to_nv9097_shader_type(stage);
       type_shader[type] = shader;
    }
 

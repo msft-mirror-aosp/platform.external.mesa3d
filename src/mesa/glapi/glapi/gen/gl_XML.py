@@ -294,12 +294,6 @@ class gl_enum( gl_item ):
 
             self.default_count = c
 
-        temp = element.get('group')
-        if temp:
-            self.group = temp.split( ',' )
-        else:
-            self.group = []
-
         return
 
 
@@ -401,8 +395,6 @@ class gl_parameter(object):
         self.img_send_null      = is_attr_true( element, 'img_send_null' )
 
         self.is_padding = is_attr_true( element, 'padding' )
-
-        self.group = element.get('group')
         return
 
 

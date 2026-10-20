@@ -21,7 +21,6 @@
 #include "util/u_process.h"
 #include "vk_util.h"
 
-#include "common/freedreno_common.h"
 #include "tu_cmd_buffer.h"
 #include "tu_cs.h"
 #include "tu_device.h"
@@ -444,7 +443,7 @@ out:
    return VK_ERROR_UNKNOWN;
 }
 
-static VkResult
+VkResult
 virtio_queue_wait_fence(struct tu_queue *queue, uint32_t fence,
                         uint64_t timeout_ns)
 {
@@ -539,7 +538,6 @@ static VkResult
 virtio_allocate_userspace_iova_locked(struct tu_device *dev,
                                       uint32_t gem_handle,
                                       uint64_t size,
-                                      uint64_t align,
                                       uint64_t client_iova,
                                       enum tu_bo_alloc_flags flags,
                                       uint64_t *iova)
@@ -558,7 +556,7 @@ virtio_allocate_userspace_iova_locked(struct tu_device *dev,
 
    tu_free_zombie_vma_locked(dev, false);
 
-   result = tu_allocate_userspace_iova(dev, size, align, client_iova, flags, iova);
+   result = tu_allocate_userspace_iova(dev, size, client_iova, flags, iova);
    if (result == VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS) {
       /* Address may be already freed by us, but not considered as
        * freed by the kernel. We have to wait until all work that
@@ -566,7 +564,7 @@ virtio_allocate_userspace_iova_locked(struct tu_device *dev,
        * be replayed only by debug tooling, it should be ok to wait.
        */
       tu_free_zombie_vma_locked(dev, true);
-      result = tu_allocate_userspace_iova(dev, size, align, client_iova, flags, iova);
+      result = tu_allocate_userspace_iova(dev, size, client_iova, flags, iova);
    }
 
    return result;
@@ -647,7 +645,7 @@ tu_bo_init(struct tu_device *dev,
  * reduce overhead.
  */
 static void
-tu_bo_set_kernel_name(struct tu_device *dev, struct tu_bo *bo, const char *name, size_t sz)
+tu_bo_set_kernel_name(struct tu_device *dev, struct tu_bo *bo, const char *name)
 {
    MESA_TRACE_FUNC();
    bool kernel_bo_names = dev->bo_sizes != NULL;
@@ -657,16 +655,7 @@ tu_bo_set_kernel_name(struct tu_device *dev, struct tu_bo *bo, const char *name,
    if (!kernel_bo_names)
       return;
 
-   char name_buf[FD_MSM_GEM_NAME_LENGTH + 1];
-   if (sz > FD_MSM_GEM_NAME_LENGTH) {
-      mesa_logd("Truncating BO name: %s", name);
-
-      memcpy(name_buf, name, FD_MSM_GEM_NAME_LENGTH);
-      name_buf[FD_MSM_GEM_NAME_LENGTH] = '\0';
-
-      name = name_buf;
-      sz = FD_MSM_GEM_NAME_LENGTH;
-   }
+   size_t sz = strlen(name);
 
    unsigned req_len = sizeof(struct msm_ccmd_gem_set_name_req) + align(sz, 4);
 
@@ -687,7 +676,6 @@ virtio_bo_init(struct tu_device *dev,
                struct vk_object_base *base,
                struct tu_bo **out_bo,
                uint64_t size,
-               uint64_t align,
                uint64_t client_iova,
                VkMemoryPropertyFlags mem_property,
                enum tu_bo_alloc_flags flags,
@@ -734,7 +722,7 @@ virtio_bo_init(struct tu_device *dev,
       req.iova = lazy_vma->msm.iova;
    } else {
       mtx_lock(&dev->vma_mutex);
-      result = virtio_allocate_userspace_iova_locked(dev, 0, size, align, client_iova,
+      result = virtio_allocate_userspace_iova_locked(dev, 0, size, client_iova,
                                                      flags, &req.iova);
       mtx_unlock(&dev->vma_mutex);
    }
@@ -749,7 +737,7 @@ virtio_bo_init(struct tu_device *dev,
    req.blob_id = p_atomic_inc_return(&vdev->next_blob_id);;
 
    uint32_t handle =
-      vdrm_bo_create(vdev->vdrm, size, blob_flags, req.blob_id, 0, &req.hdr);
+      vdrm_bo_create(vdev->vdrm, size, blob_flags, req.blob_id, &req.hdr);
 
    if (!handle) {
       result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
@@ -773,7 +761,7 @@ virtio_bo_init(struct tu_device *dev,
       lazy_vma->msm.backs_lazy_bo = true;
 
    /* We don't use bo->name here because for the !TU_DEBUG=bo case bo->name is NULL. */
-   tu_bo_set_kernel_name(dev, bo, name, strlen(name));
+   tu_bo_set_kernel_name(dev, bo, name);
 
    if ((mem_property & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) &&
        !(mem_property & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
@@ -803,7 +791,6 @@ static VkResult
 virtio_bo_init_dmabuf(struct tu_device *dev,
                    struct tu_bo **out_bo,
                    uint64_t size,
-                   uint64_t align,
                    enum tu_bo_alloc_flags flags,
                    int prime_fd)
 {
@@ -859,8 +846,8 @@ virtio_bo_init_dmabuf(struct tu_device *dev,
    bo->res_id = res_id;
 
    mtx_lock(&dev->vma_mutex);
-   result = virtio_allocate_userspace_iova_locked(dev, handle, size, align,
-                                                  0, flags, &iova);
+   result = virtio_allocate_userspace_iova_locked(dev, handle, size, 0, flags,
+                                                  &iova);
    mtx_unlock(&dev->vma_mutex);
    if (result != VK_SUCCESS) {
       vdrm_bo_close(vdrm, handle);
@@ -942,7 +929,7 @@ virtio_sparse_vma_init(struct tu_device *dev,
                        struct tu_sparse_vma *out_vma,
                        uint64_t *out_iova,
                        enum tu_sparse_vma_flags flags,
-                       uint64_t size, uint64_t align, uint64_t client_iova)
+                       uint64_t size, uint64_t client_iova)
 {
    VkResult result;
    enum tu_bo_alloc_flags bo_flags =
@@ -952,7 +939,7 @@ virtio_sparse_vma_init(struct tu_device *dev,
    out_vma->msm.size = size;
 
    mtx_lock(&dev->vma_mutex);
-   result = virtio_allocate_userspace_iova_locked(dev, 0, size, align, client_iova,
+   result = virtio_allocate_userspace_iova_locked(dev, 0, size, client_iova,
                                                   bo_flags, &out_vma->msm.iova);
    mtx_unlock(&dev->vma_mutex);
 
@@ -1355,7 +1342,6 @@ tu_knl_drm_virtio_load(struct tu_instance *instance,
    device->ubwc_config.highest_bank_bit = caps.u.msm.highest_bank_bit;
    device->has_set_iova   = true;
    device->has_lazy_bos   = true;
-   device->has_iova_align = true;
    device->has_preemption = has_preemption;
    device->is_perf_cntr_selectable = true;
    device->uche_trap_base = uche_trap_base;

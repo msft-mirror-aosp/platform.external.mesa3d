@@ -69,12 +69,8 @@ ir3_delayslots(struct ir3_compiler *compiler,
    if (is_meta(assigner) || is_meta(consumer))
       return 0;
 
-   if (writes_addr0(assigner) || writes_addr1(assigner)) {
-      if (assigner->opc == OPC_MOV)
-         return compiler->delay_slots.non_alu;
-      else
-         return 0;
-   }
+   if (writes_addr0(assigner) || writes_addr1(assigner))
+      return compiler->delay_slots.non_alu;
 
    if (soft && needs_ss(compiler, assigner, consumer))
       return soft_ss_delay(assigner);

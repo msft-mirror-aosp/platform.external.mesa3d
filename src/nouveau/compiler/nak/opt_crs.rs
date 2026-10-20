@@ -27,12 +27,12 @@ fn opt_crs(f: &mut Function) {
         | Op::PBk(OpPBk { target })
         | Op::PCnt(OpPCnt { target }) => {
             if live_targets.contains(target) {
-                [instr].into()
+                MappedInstrs::One(instr)
             } else {
-                [].into()
+                MappedInstrs::None
             }
         }
-        _ => [instr].into(),
+        _ => MappedInstrs::One(instr),
     });
 }
 

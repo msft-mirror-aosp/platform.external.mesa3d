@@ -138,6 +138,11 @@ dEQP-GLES2.functional.uniform_api.value.initial.render.nested_structs_arrays.mat
 dEQP-GLES2.functional.uniform_api.value.initial.render.struct_in_array.mat4_mat2_both,Fail
 dEQP-GLES2.functional.uniform_api.value.initial.render.struct_in_array.mat4_mat2_fragment,Fail
 
+# depth texture is sampling as as white instead of red.
+KHR-GLES2.core.internalformat.texture2d.depth_component_unsigned_int_depth_component16,Fail
+KHR-GLES2.core.internalformat.texture2d.depth_component_unsigned_int_depth_component24,Fail
+KHR-GLES2.core.internalformat.texture2d.depth_component_unsigned_short_depth_component16,Fail
+
 # https://gitlab.freedesktop.org/mesa/mesa/-/issues/4979
 # Non-unrolled loops, but they should be unrollable.
 KHR-GLES2.shaders.aggressive_optimizations.sin_vec2_frag,Fail
@@ -376,6 +381,7 @@ spec@arb_texture_compression@texwrap formats bordercolor@GL_COMPRESSED_RGBA- bor
 spec@ati_texture_compression_3dc@texwrap formats bordercolor,Fail
 spec@ati_texture_compression_3dc@texwrap formats bordercolor@GL_COMPRESSED_LUMINANCE_ALPHA_3DC_ATI- border color only,Fail
 
+spec@arb_texture_cube_map@copyteximage cube,Fail
 spec@arb_texture_rectangle@glsl-fs-shadow2drect,Fail
 spec@arb_texture_rectangle@glsl-fs-shadow2drect-01,Fail
 spec@arb_texture_rectangle@glsl-fs-shadow2drect-03,Fail
@@ -397,6 +403,9 @@ spec@arb_texture_rectangle@texwrap rect proj bordercolor@GL_RGBA8- projected- bo
 #  PIGLIT: {"subtest": {"mov 8*c0" : "fail"}}"
 spec@ati_fragment_shader@ati_fragment_shader-render-ops,Fail
 spec@ati_fragment_shader@ati_fragment_shader-render-ops@mov 8*c0,Fail
+
+spec@egl 1.4@eglterminate then unbind context,Fail
+spec@egl_khr_surfaceless_context@viewport,Fail
 
 spec@ext_direct_state_access@program-uniform,Fail
 spec@ext_direct_state_access@program-uniform@ProgramUniformMatrixfEXT,Fail
@@ -604,6 +613,12 @@ spec@glsl-1.10@execution@built-in-functions@fs-op-assign-add-vec2-float,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-assign-add-vec3-float,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-assign-add-vec4-float,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-assign-div-float-float,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-assign-div-int-int,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-assign-div-ivec2-ivec2,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-assign-div-ivec3-int,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-assign-div-ivec3-ivec3,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-assign-div-ivec4-int,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-assign-div-ivec4-ivec4,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-assign-div-mat2-float,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-assign-div-mat2-mat2,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-assign-div-mat3-float,Fail
@@ -642,6 +657,14 @@ spec@glsl-1.10@execution@built-in-functions@fs-op-div-float-mat4,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-div-float-vec2,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-div-float-vec3,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-div-float-vec4,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-div-int-int,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-div-int-ivec2,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-div-int-ivec4,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-div-ivec2-ivec2,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-div-ivec3-int,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-div-ivec3-ivec3,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-div-ivec4-int,Fail
+spec@glsl-1.10@execution@built-in-functions@fs-op-div-ivec4-ivec4,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-div-mat2-float,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-div-mat2-mat2,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-op-div-mat3-float,Fail
@@ -777,6 +800,7 @@ spec@glsl-1.10@execution@samplers@glsl-fs-shadow2dproj,Fail
 spec@glsl-1.10@execution@samplers@glsl-fs-shadow2dproj-bias,Fail
 
 spec@glsl-1.10@execution@temp-array-indexing@glsl-fs-vec4-indexing-temp-dst-in-nested-loop-combined,Fail
+spec@glsl-1.10@execution@temp-array-indexing@glsl-fs-vec4-indexing-temp-src-in-loop,Fail
 spec@glsl-1.10@execution@temp-array-indexing@glsl-fs-vec4-indexing-temp-src-in-nested-loop-combined,Fail
 spec@glsl-1.10@execution@temp-array-indexing@glsl-fs-vec4-indexing-temp-src-in-nested-loop-inner,Fail
 spec@glsl-1.10@execution@temp-array-indexing@glsl-fs-vec4-indexing-temp-src-in-nested-loop-outer,Fail
@@ -1005,9 +1029,3 @@ spec@intel_performance_query@intel_performance_query-issue_2235,Fail
 spec@nv_primitive_restart@primitive-restart-draw-mode-lines,Fail
 spec@nv_primitive_restart@primitive-restart-draw-mode-quad_strip,Fail
 spec@nv_primitive_restart@primitive-restart-draw-mode-quads,Fail
-
-# uprev Piglit in Mesa
-spec@arb_texture_cube_map@copyteximage cube,Fail
-
-# Nightly run expectations update
-spec@glsl-1.10@execution@samplers@glsl-fs-shadow2d-consecutive-draws,Fail

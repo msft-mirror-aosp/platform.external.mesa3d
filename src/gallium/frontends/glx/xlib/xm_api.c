@@ -177,17 +177,13 @@ xmesa_close_display(Display *display)
    /* don't forget to clean up mesaDisplay */
    XMesaDisplay xmdpy = &info->mesaDisplay;
 
-   if (xmdpy->pipe) {
-      xmdpy->pipe->destroy(xmdpy->pipe);
-      xmdpy->pipe = NULL;
-   }
-
-   if (xmdpy->screen) {
-      xmdpy->screen->destroy(xmdpy->screen);
-      xmdpy->screen = NULL;
-   }
-
-   mtx_destroy(&xmdpy->mutex);
+   /**
+    * XXX: Don't destroy the screens here, since there may still
+    * be some dangling screen pointers that are used after this point
+    * if (xmdpy->screen) {
+    *    xmdpy->screen->destroy(xmdpy->screen);
+    * }
+    */
 
    st_screen_destroy(xmdpy->fscreen);
    free(xmdpy->fscreen);
@@ -1153,9 +1149,7 @@ XMesaCreatePixmapTextureBuffer(XMesaVisual v, Pixmap p,
 
    if (target == 0) {
       /* examine dims */
-      if (_mesa_has_ARB_texture_non_power_of_two(ctx) ||
-          _mesa_has_OES_texture_npot(ctx) ||
-          (_mesa_is_desktop_gl(ctx) && ctx->Version >= 20)) {
+      if (ctx->Extensions.ARB_texture_non_power_of_two) {
          target = GLX_TEXTURE_2D_EXT;
       }
       else if (   util_bitcount(b->width)  == 1

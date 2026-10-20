@@ -5,7 +5,6 @@ use crate::api::icd::*;
 use crate::api::types::DeleteContextCB;
 use crate::api::util::bit_check;
 use crate::core::device::*;
-use crate::core::event::EventSig;
 use crate::core::format::*;
 use crate::core::gl::*;
 use crate::core::memory::*;
@@ -17,6 +16,7 @@ use mesa_rust::pipe::context::RWFlags;
 use mesa_rust::pipe::fence::FenceFd;
 use mesa_rust::pipe::resource::*;
 use mesa_rust::pipe::screen::ResourceType;
+use mesa_rust::util;
 use mesa_rust_gen::*;
 use mesa_rust_util::conversion::*;
 use mesa_rust_util::properties::Properties;
@@ -117,6 +117,7 @@ pub struct Context {
     >,
     svm: Mutex<SVMContext>,
     pub gl_ctx_manager: Option<GLCtxManager>,
+    pub worker_queue: util::queue::Queue,
 }
 
 impl_cl_type_trait!(cl_context, Context, CL_INVALID_CONTEXT);
@@ -127,6 +128,9 @@ impl Context {
         properties: Properties<cl_context_properties>,
         gl_ctx_manager: Option<GLCtxManager>,
     ) -> Arc<Context> {
+        let worker_count = u32::max(util::cpu_count() / 2, 1);
+        let max_job_count = worker_count * 8;
+
         Arc::new(Self {
             base: CLObjectBase::new(RusticlTypes::Context),
             devs: devs,
@@ -137,6 +141,7 @@ impl Context {
                 svm_ptrs: TrackedPointers::new(),
             }),
             gl_ctx_manager: gl_ctx_manager,
+            worker_queue: util::queue::Queue::new(c"clctxworker", max_job_count, worker_count),
         })
     }
 
@@ -503,41 +508,26 @@ impl Context {
 
     pub fn clear_svm<const T: usize>(
         &self,
-        dev: &Device,
+        ctx: &QueueContext,
         svm_ptr: usize,
         size: usize,
         pattern: [u8; T],
-    ) -> CLResult<EventSig> {
+    ) -> CLResult<()> {
         let svm = self.svm.lock().unwrap();
 
-        if svm.svm_ptrs.find_alloc(svm_ptr).is_some() {
-            match dev.optimize_buffer_fill(&pattern, svm_ptr, size) {
-                DeviceFillBuffer::Meta(pattern) => {
-                    Platform::get()
-                        .meta
-                        .clear_svm(dev, svm_ptr, pattern.to_vec(), size)
-                }
-                DeviceFillBuffer::Clear(pattern) => Ok(Box::new(move |cl_ctx, ctx| {
-                    let svm = cl_ctx.svm.lock().unwrap();
-                    if let Some((base, alloc)) = svm.svm_ptrs.find_alloc(svm_ptr) {
-                        let res = alloc.alloc.get_res_for_access(ctx, RWFlags::WR)?;
-                        let offset = svm_ptr - base;
-                        ctx.clear_buffer(res, &pattern, offset as u32, size as u32);
-                    }
-                    Ok(())
-                })),
-            }
+        if let Some((base, alloc)) = svm.svm_ptrs.find_alloc(svm_ptr) {
+            let res = alloc.alloc.get_res_for_access(ctx, RWFlags::WR)?;
+            let offset = svm_ptr - base;
+            ctx.clear_buffer(res, &pattern, offset as u32, size as u32);
         } else {
-            Ok(Box::new(move |_, _| {
-                let slice = unsafe {
-                    slice::from_raw_parts_mut(svm_ptr as *mut _, size / size_of_val(&pattern))
-                };
+            let slice = unsafe {
+                slice::from_raw_parts_mut(svm_ptr as *mut _, size / size_of_val(&pattern))
+            };
 
-                slice.fill(pattern);
-
-                Ok(())
-            }))
+            slice.fill(pattern);
         }
+
+        Ok(())
     }
 
     pub fn migrate_svm(

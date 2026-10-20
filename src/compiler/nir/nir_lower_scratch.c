@@ -74,34 +74,21 @@ static bool
 only_used_for_load_store(nir_deref_instr *deref)
 {
    nir_foreach_use(src, &deref->def) {
-      if (!nir_src_use_instr(src))
+      if (!nir_src_parent_instr(src))
          return false;
-      if (nir_src_use_instr(src)->type == nir_instr_type_deref) {
-         if (!only_used_for_load_store(nir_instr_as_deref(nir_src_use_instr(src))))
+      if (nir_src_parent_instr(src)->type == nir_instr_type_deref) {
+         if (!only_used_for_load_store(nir_instr_as_deref(nir_src_parent_instr(src))))
             return false;
-      } else if (nir_src_use_instr(src)->type != nir_instr_type_intrinsic) {
+      } else if (nir_src_parent_instr(src)->type != nir_instr_type_intrinsic) {
          return false;
       } else {
-         nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(nir_src_use_instr(src));
+         nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(nir_src_parent_instr(src));
          if (intrin->intrinsic != nir_intrinsic_load_deref &&
              intrin->intrinsic != nir_intrinsic_store_deref)
             return false;
       }
    }
    return true;
-}
-
-static bool
-has_vars_to_lower(struct util_dynarray *vars)
-{
-   util_dynarray_foreach(vars, nir_variable *, var_ptr) {
-      nir_variable *var = *var_ptr;
-
-      if (var->data.pass_flags)
-         return true;
-   }
-
-   return false;
 }
 
 /**
@@ -136,16 +123,7 @@ nir_lower_vars_to_scratch_global(nir_shader *shader,
                                  glsl_type_size_align_func scratch_layout_size_align,
                                  nir_lower_vars_to_scratch_cb cb, void *data)
 {
-   /* To make sure drivers can make deterministic decisions, pass the
-    * variables as an ordered list instead of an unordered set.
-    * nir_variable::pass_flags is used to mark variables that should get
-    * lowered. Start with clearing them all.
-    */
-   nir_foreach_variable_in_shader(var, shader)
-      var->data.pass_flags = false;
-
-   struct util_dynarray vars;
-   util_dynarray_init(&vars, NULL);
+   struct set *set = _mesa_pointer_set_create(NULL);
 
    /* First, we walk the instructions and flag any variables we want to lower
     * by removing them from their respective list and setting the mode to 0.
@@ -172,24 +150,23 @@ nir_lower_vars_to_scratch_global(nir_shader *shader,
             if (!var)
                continue;
 
-            /* We set pass_flags to true to indicate that a variable will be
-             * moved to scratch.  Don't assign a scratch location twice.
+            /* We set var->mode to 0 to indicate that a variable will be moved
+             * to scratch.  Don't assign a scratch location twice.
              */
-            if (var->data.pass_flags)
+            if (var->data.mode == 0)
                continue;
 
-            var->data.pass_flags = true;
-            util_dynarray_append(&vars, var);
+            _mesa_set_add(set, var);
          }
       }
    }
 
    /* Have the driver pick which variables to lower (if any) */
-   if (vars.size != 0)
-      cb(&vars, data);
+   if (set->entries != 0)
+      cb(set, data);
 
-   if (!has_vars_to_lower(&vars)) {
-      util_dynarray_fini(&vars);
+   if (set->entries == 0) {
+      _mesa_set_destroy(set, NULL);
       return false;
    }
 
@@ -211,30 +188,27 @@ nir_lower_vars_to_scratch_global(nir_shader *shader,
             if (deref->deref_type != nir_deref_type_var)
                continue;
 
-            if (!deref->var->data.pass_flags)
+            struct set_entry *entry = _mesa_set_search(set, deref->var);
+            if (!entry)
                continue;
 
             if (!only_used_for_load_store(deref))
-               deref->var->data.pass_flags = false;
+               _mesa_set_remove(set, entry);
          }
       }
    }
 
-   util_dynarray_foreach(&vars, nir_variable *, var_ptr) {
-      nir_variable *var = *var_ptr;
-
-      if (!var->data.pass_flags)
-         continue;
+   set_foreach(set, entry) {
+      nir_variable *var = (void *)entry->key;
 
       /* Remove it from its list */
       exec_node_remove(&var->node);
+      /* Invalid mode used to flag "moving to scratch" */
+      var->data.mode = 0;
 
-      /* Assign scratch location. */
-      unsigned var_size, var_align;
-      scratch_layout_size_align(var->type, &var_size, &var_align);
-
-      var->data.location = ALIGN_POT(shader->scratch_size, var_align);
-      shader->scratch_size = var->data.location + var_size;
+      /* We don't allocate space here as iteration in this loop is
+       * non-deterministic due to the nir_variable pointers. */
+      var->data.location = INT_MAX;
    }
 
    nir_foreach_function_impl(impl, shader) {
@@ -252,9 +226,17 @@ nir_lower_vars_to_scratch_global(nir_shader *shader,
                continue;
 
             nir_variable *var = nir_intrinsic_get_var(intrin, 0);
-            /* Variables flagged for lowering above have pass_flags == true */
-            if (!var || !var->data.pass_flags)
+            /* Variables flagged for lowering above have mode == 0 */
+            if (!var || var->data.mode)
                continue;
+
+            if (var->data.location == INT_MAX) {
+               unsigned var_size, var_align;
+               scratch_layout_size_align(var->type, &var_size, &var_align);
+
+               var->data.location = ALIGN_POT(shader->scratch_size, var_align);
+               shader->scratch_size = var->data.location + var_size;
+            }
 
             lower_load_store(&build, intrin, scratch_layout_size_align);
             impl_progress = true;
@@ -265,7 +247,7 @@ nir_lower_vars_to_scratch_global(nir_shader *shader,
                                nir_metadata_control_flow);
    }
 
-   util_dynarray_fini(&vars);
+   _mesa_set_destroy(set, NULL);
 
    return progress;
 }
@@ -280,16 +262,16 @@ struct nir_lower_vars_to_scratch_state {
  * that are under the size threshold.
  */
 static void
-nir_lower_vars_to_scratch_size_cb(struct util_dynarray *vars, void *data)
+nir_lower_vars_to_scratch_size_cb(struct set *set, void *data)
 {
    struct nir_lower_vars_to_scratch_state *state = data;
 
-   util_dynarray_foreach(vars, nir_variable *, var_ptr) {
-      nir_variable *var = *var_ptr;
+   set_foreach(set, entry) {
+      nir_variable *var = (void *)entry->key;
       unsigned var_size, var_align;
       state->variable_size_align(var->type, &var_size, &var_align);
       if (var_size <= state->size_threshold)
-         var->data.pass_flags = false;
+         _mesa_set_remove(set, entry);
    }
 }
 

@@ -61,6 +61,13 @@ brw_optimize(brw_shader &s)
     */
    OPT(brw_insert_load_reg);
 
+   /* Track how much non-SSA at this point. */
+   {
+      const brw_def_analysis &defs = s.def_analysis.require();
+      s.shader_stats.non_ssa_registers_after_nir =
+         defs.count() - defs.ssa_count();
+   }
+
    do {
       progress = false;
       pass_num = 0;
@@ -89,16 +96,6 @@ brw_optimize(brw_shader &s)
       OPT(brw_opt_copy_propagation);
       OPT(brw_opt_register_coalesce);
       OPT(brw_opt_dead_code_eliminate);
-   }
-
-   while (OPT(brw_opt_predicate_logic)) {
-      /* The dead code elimination after brw_opt_predicate_logic can cause the
-       * first comparison in the set to have a NULL destination. That can make
-       * it a candidate for additional brw_opt_cmod_propagation and additional
-       * brw_opt_predicate_logic.
-       */
-      if (OPT(brw_opt_dead_code_eliminate) && OPT(brw_opt_cmod_propagation))
-         OPT(brw_opt_dead_code_eliminate);
    }
 
    if (OPT(brw_lower_pack)) {
@@ -205,8 +202,7 @@ brw_optimize(brw_shader &s)
    if (s.devinfo->ver >= 30)
       OPT(brw_opt_send_gather_to_send);
 
-   if (!s.devinfo->has_lsc)
-      OPT(brw_lower_uniform_pull_constant_loads);
+   OPT(brw_lower_uniform_pull_constant_loads);
 
    /* Do this before brw_lower_send_descriptors. */
    OPT(brw_workaround_memory_fence_before_eot);
@@ -748,10 +744,10 @@ brw_opt_send_gather_to_send(brw_shader &s)
        *
        * TODO: Pass LSC address length or infer it so valid splits can work.
        */
-      if (payload2_len && (send->sfid == GEN_SFID_UGM ||
-                           send->sfid == GEN_SFID_TGM ||
-                           send->sfid == GEN_SFID_SLM ||
-                           send->sfid == GEN_SFID_URB)) {
+      if (payload2_len && (send->sfid == BRW_SFID_UGM ||
+                           send->sfid == BRW_SFID_TGM ||
+                           send->sfid == BRW_SFID_SLM ||
+                           send->sfid == BRW_SFID_URB)) {
          enum lsc_opcode lsc_op = lsc_msg_desc_opcode(devinfo, send->desc);
          if (lsc_op_num_data_values(lsc_op) > 0)
             continue;

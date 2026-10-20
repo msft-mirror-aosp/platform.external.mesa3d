@@ -72,7 +72,6 @@ fn generate_dep_graph(sm: &ShaderModelInfo, instrs: &[Instr]) -> DepGraph {
 
     let mut last_memory_op = None;
     let mut last_barrier_op = None;
-    let mut last_carry_op = None;
 
     for ip in 0..instrs.len() {
         let instr = &instrs[ip];
@@ -99,17 +98,6 @@ fn generate_dep_graph(sm: &ShaderModelInfo, instrs: &[Instr]) -> DepGraph {
         }
 
         for (i, src) in instr.srcs().iter().enumerate() {
-            if src.src_ref.is_carry() {
-                if let Some(carry_ip) = last_carry_op {
-                    if carry_ip < ip {
-                        g.add_edge(carry_ip, ip, EdgeLabel { latency: 0 });
-                    } else {
-                        debug_assert!(carry_ip == ip);
-                    }
-                }
-                last_carry_op = Some(ip);
-            }
-
             for ssa in src.src_ref.iter_ssa() {
                 if let Some(&(def_ip, def_idx)) = defs.get(ssa) {
                     let def_instr = &instrs[def_ip];
@@ -151,17 +139,6 @@ fn generate_dep_graph(sm: &ShaderModelInfo, instrs: &[Instr]) -> DepGraph {
         }
 
         for (i, dst) in instr.dsts().iter().enumerate() {
-            if dst.is_carry() {
-                if let Some(carry_ip) = last_carry_op {
-                    if carry_ip < ip {
-                        g.add_edge(carry_ip, ip, EdgeLabel { latency: 0 });
-                    } else {
-                        debug_assert!(carry_ip == ip);
-                    }
-                }
-                last_carry_op = Some(ip);
-            }
-
             for &ssa in dst.iter_ssa() {
                 defs.insert(ssa, (ip, i));
             }
@@ -299,22 +276,15 @@ const SPILL_FILES: [(RegFile, RegFile, i32); 5] = [
     (RegFile::GPR, RegFile::Mem, 32 + 32),
 ];
 
-/// Models how many registers will be used after spilling other register files
-fn calc_used_regs(
-    mut p: PerRegFile<i32>,
-    max_regs: PerRegFile<i32>,
-) -> PerRegFile<i32> {
+/// Models how many gprs will be used after spilling other register files
+fn calc_used_gprs(mut p: PerRegFile<i32>, max_regs: PerRegFile<i32>) -> i32 {
     for (src, dest, _) in SPILL_FILES {
         if p[src] > max_regs[src] {
             p[dest] += p[src] - max_regs[src];
         }
     }
 
-    p
-}
-
-fn calc_used_gprs(p: PerRegFile<i32>, max_regs: PerRegFile<i32>) -> i32 {
-    calc_used_regs(p, max_regs)[RegFile::GPR]
+    p[RegFile::GPR]
 }
 
 fn calc_score_part(
@@ -403,8 +373,8 @@ impl<'a> GenerateOrder<'a> {
         })
     }
 
-    fn current_used_regs(&self) -> PerRegFile<i32> {
-        calc_used_regs(
+    fn current_used_gprs(&self) -> i32 {
+        calc_used_gprs(
             PerRegFile::new_with(|f| self.live.count(f).try_into().unwrap()),
             self.max_regs,
         )
@@ -475,7 +445,7 @@ impl<'a> GenerateOrder<'a> {
         let mut current_cycle = 0;
         let mut instr_order = Vec::with_capacity(g.nodes.len());
         loop {
-            let used_regs = self.current_used_regs();
+            let used_gprs = self.current_used_gprs();
 
             // Move ready instructions to the ready list
             loop {
@@ -511,10 +481,7 @@ impl<'a> GenerateOrder<'a> {
             }
 
             // Pick an instruction to schedule
-            let next_idx = if used_regs[RegFile::GPR]
-                <= thresholds.heuristic_threshold
-                && used_regs[RegFile::Pred] < self.max_regs[RegFile::Pred]
-            {
+            let next_idx = if used_gprs <= thresholds.heuristic_threshold {
                 let ReadyInstr { index, .. } = ready_instrs.pop_last().unwrap();
                 index
             } else {
@@ -607,7 +574,7 @@ impl<'a> GenerateOrder<'a> {
             current_cycle += 1;
 
             debug_assert_eq!(
-                self.current_used_regs()[RegFile::GPR],
+                self.current_used_gprs(),
                 predicted_new_used_gprs_net
             );
         }

@@ -86,6 +86,10 @@ void GLAPIENTRY
 _mesa_CullFace(GLenum mode)
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glCullFace %s\n", _mesa_enum_to_string(mode));
+
    cull_face(ctx, mode, false);
 }
 
@@ -131,6 +135,10 @@ void GLAPIENTRY
 _mesa_FrontFace(GLenum mode)
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glFrontFace %s\n", _mesa_enum_to_string(mode));
+
    front_face(ctx, mode, false);
 }
 
@@ -153,6 +161,11 @@ polygon_mode(struct gl_context *ctx, GLenum face, GLenum mode, bool no_error)
    bool old_mode_has_fill_rectangle =
       ctx->Polygon.FrontMode == GL_FILL_RECTANGLE_NV ||
       ctx->Polygon.BackMode == GL_FILL_RECTANGLE_NV;
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glPolygonMode %s %s\n",
+                  _mesa_enum_to_string(face),
+                  _mesa_enum_to_string(mode));
 
    if (!no_error) {
       switch (mode) {
@@ -243,6 +256,9 @@ _mesa_PolygonStipple(const GLubyte *pattern)
 {
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glPolygonStipple\n");
+
    FLUSH_VERTICES(ctx, 0, GL_POLYGON_STIPPLE_BIT);
    ST_SET_STATE(ctx->NewDriverState, ST_NEW_POLY_STIPPLE);
 
@@ -267,6 +283,9 @@ void GLAPIENTRY
 _mesa_GetnPolygonStippleARB( GLsizei bufSize, GLubyte *dest )
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE&VERBOSE_API)
+      _mesa_debug(ctx, "glGetPolygonStipple\n");
 
    if (ctx->Pack.BufferObj)
       ctx->Pack.BufferObj->UsageHistory |= USAGE_PIXEL_PACK_BUFFER;
@@ -311,6 +330,10 @@ void GLAPIENTRY
 _mesa_PolygonOffset( GLfloat factor, GLfloat units )
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE&VERBOSE_API)
+      _mesa_debug(ctx, "glPolygonOffset %f %f\n", factor, units);
+
    _mesa_polygon_offset_clamp(ctx, factor, units, 0.0);
 }
 
@@ -324,6 +347,9 @@ _mesa_PolygonOffsetClampEXT( GLfloat factor, GLfloat units, GLfloat clamp )
                   "unsupported function (%s) called", "glPolygonOffsetClamp");
       return;
    }
+
+   if (MESA_VERBOSE&VERBOSE_API)
+      _mesa_debug(ctx, "glPolygonOffsetClamp %f %f %f\n", factor, units, clamp);
 
    _mesa_polygon_offset_clamp(ctx, factor, units, clamp);
 }

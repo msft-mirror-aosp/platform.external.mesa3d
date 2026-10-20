@@ -92,7 +92,8 @@ nir_options = {
    .compact_arrays = true,
    .lower_ineg = true,
    .lower_fneg = true,
-   .float_mul_add64 = nir_float_muladd_support_has_ffma,
+   .lower_ffma16 = true,
+   .lower_ffma32 = true,
    .lower_isign = true,
    .lower_fsign = true,
    .lower_iabs = true,
@@ -179,10 +180,8 @@ dxil_get_nir_compiler_options(nir_shader_compiler_options *options,
       options->lower_unpack_64_2x32_split = false;
       options->lower_int64_options = ~0;
    }
-   if (!(supported_float_sizes & 64)) {
+   if (!(supported_float_sizes & 64))
       options->lower_doubles_options = ~0;
-      options->float_mul_add64 = 0;
-   }
    if (shader_model_max >= SHADER_MODEL_6_4) {
       options->has_sdot_4x8 = true;
       options->has_udot_4x8 = true;
@@ -2137,7 +2136,7 @@ static bool
 is_phi_src(nir_def *ssa)
 {
    nir_foreach_use(src, ssa)
-      if (nir_src_use_instr(src)->type == nir_instr_type_phi)
+      if (nir_src_parent_instr(src)->type == nir_instr_type_phi)
          return true;
    return false;
 }
@@ -2902,7 +2901,6 @@ emit_alu(struct ntd_context *ctx, nir_alu_instr *alu)
 
    switch (alu->op) {
    case nir_op_iadd:
-   case nir_op_fadd_rtne:
    case nir_op_fadd: return emit_binop(ctx, alu, DXIL_BINOP_ADD, src[0], src[1]);
 
    case nir_op_isub:
@@ -3093,10 +3091,7 @@ emit_barrier_impl(struct ntd_context *ctx, nir_variable_mode modes, mesa_scope e
        (mem_scope > SCOPE_WORKGROUP || !is_compute)) {
       flags |= DXIL_BARRIER_MODE_UAV_FENCE_GLOBAL;
    } else {
-      /* This used to be DXIL_BARRIER_MODE_UAV_FENCE_THREAD_GROUP. However, since 
-       * it's inaccessible in HLSL, certain drivers (eg. for Intel Iris Xe Graphics) 
-       * do not seem robust against it, and appear to ignore the barrier instruction. */
-      flags |= DXIL_BARRIER_MODE_UAV_FENCE_GLOBAL;
+      flags |= DXIL_BARRIER_MODE_UAV_FENCE_THREAD_GROUP;
    }
 
    if ((modes & nir_var_mem_shared) && is_compute)
@@ -5117,16 +5112,10 @@ emit_phi(struct ntd_context *ctx, nir_phi_instr *instr)
 {
    const struct dxil_type *type = NULL;
    nir_foreach_phi_src(src, instr) {
-      /* All sources have the same type, so use the first one that's already
-       * been emitted. Phi-source order is not stable, and back-edge sources
-       * (e.g. for a loop-header phi) won't have been emitted yet. */
-      const struct dxil_value *val = ctx->defs[src->src.ssa->index].chans[0];
-      if (val) {
-         type = dxil_value_get_type(val);
-         break;
-      }
+      /* All sources have the same type, just use the first one */
+      type = dxil_value_get_type(ctx->defs[src->src.ssa->index].chans[0]);
+      break;
    }
-   assert(type);
 
    struct phi_block *vphi = ralloc(ctx->phis, struct phi_block);
    vphi->num_components = instr->def.num_components;
@@ -6357,7 +6346,7 @@ optimize_nir(struct nir_shader *s, const struct nir_to_dxil_options *opts)
       NIR_PASS(progress, s, nir_opt_algebraic_late);
    } while (progress);
 
-   NIR_PASS(_, s, nir_lower_undef_to_zero, NULL);
+   NIR_PASS(_, s, nir_lower_undef_to_zero);
 }
 
 static
@@ -6541,7 +6530,7 @@ allocate_sysvalues(struct ntd_context *ctx)
    return true;
 }
 
-static unsigned
+static int
 type_size_vec4(const struct glsl_type *type, bool bindless)
 {
    return glsl_count_attribute_slots(type, false);

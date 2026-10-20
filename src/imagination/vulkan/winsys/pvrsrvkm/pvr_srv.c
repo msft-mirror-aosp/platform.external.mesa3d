@@ -251,39 +251,38 @@ static VkResult pvr_srv_memctx_init(struct pvr_srv_winsys *srv_ws)
       if (result != VK_SUCCESS)
          goto err_pvr_srv_int_ctx_destroy;
 
-#define pvr_srv_heap_needs_init(heap_index, name1, name2) \
-   ((heap_index) == -1 &&                                 \
-       strncmp((name1),                                   \
-               (name2),                                   \
-               sizeof((name2))) == 0)
-
-      if (pvr_srv_heap_needs_init(general_heap_idx, heap_name,
-                                  PVR_SRV_GENERAL_HEAP_IDENT)) {
+      if (general_heap_idx == -1 &&
+          strncmp(heap_name,
+                  PVR_SRV_GENERAL_HEAP_IDENT,
+                  sizeof(PVR_SRV_GENERAL_HEAP_IDENT)) == 0) {
          general_heap_idx = i;
-
-      } else if (pvr_srv_heap_needs_init(pds_heap_idx, heap_name,
-                                         PVR_SRV_PDSCODEDATA_HEAP_IDENT)) {
+      } else if (pds_heap_idx == -1 &&
+                 strncmp(heap_name,
+                         PVR_SRV_PDSCODEDATA_HEAP_IDENT,
+                         sizeof(PVR_SRV_PDSCODEDATA_HEAP_IDENT)) == 0) {
          pds_heap_idx = i;
-
-      } else if (pvr_srv_heap_needs_init(rgn_hdr_heap_idx, heap_name,
-                                         PVR_SRV_RGNHDR_BRN_63142_HEAP_IDENT)) {
+      } else if (rgn_hdr_heap_idx == -1 &&
+                 strncmp(heap_name,
+                         PVR_SRV_RGNHDR_BRN_63142_HEAP_IDENT,
+                         sizeof(PVR_SRV_RGNHDR_BRN_63142_HEAP_IDENT)) == 0) {
          rgn_hdr_heap_idx = i;
-
-      } else if (pvr_srv_heap_needs_init(transfer_3d_heap_idx, heap_name,
-                                         PVR_SRV_TRANSFER_3D_HEAP_IDENT)) {
+      } else if (transfer_3d_heap_idx == -1 &&
+                 strncmp(heap_name,
+                         PVR_SRV_TRANSFER_3D_HEAP_IDENT,
+                         sizeof(PVR_SRV_TRANSFER_3D_HEAP_IDENT)) == 0) {
          transfer_3d_heap_idx = i;
-
-      } else if (pvr_srv_heap_needs_init(usc_heap_idx, heap_name,
-                                         PVR_SRV_USCCODE_HEAP_IDENT)) {
+      } else if (usc_heap_idx == -1 &&
+                 strncmp(heap_name,
+                         PVR_SRV_USCCODE_HEAP_IDENT,
+                         sizeof(PVR_SRV_USCCODE_HEAP_IDENT)) == 0) {
          usc_heap_idx = i;
-
-      } else if (pvr_srv_heap_needs_init(vis_test_heap_idx, heap_name,
-                                         PVR_SRV_VISIBILITY_TEST_HEAP_IDENT)) {
+      } else if (vis_test_heap_idx == -1 &&
+                 strncmp(heap_name,
+                         PVR_SRV_VISIBILITY_TEST_HEAP_IDENT,
+                         sizeof(PVR_SRV_VISIBILITY_TEST_HEAP_IDENT)) == 0) {
          vis_test_heap_idx = i;
       }
    }
-
-#undef pvr_srv_heap_needs_init
 
    /* Check for and initialise required heaps. */
    if (general_heap_idx == -1 || pds_heap_idx == -1 ||

@@ -1201,7 +1201,8 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
       break;
    case GL_TEXTURE_BUFFER_DATA_STORE_BINDING_ARB:
       {
-         buf = ctx->Texture.Unit[ctx->Texture.CurrentUnit]
+         struct gl_buffer_object *buf =
+            ctx->Texture.Unit[ctx->Texture.CurrentUnit]
             .CurrentTex[TEXTURE_BUFFER_INDEX]->BufferObject;
          v->value_int = buf ? buf->Name : 0;
       }

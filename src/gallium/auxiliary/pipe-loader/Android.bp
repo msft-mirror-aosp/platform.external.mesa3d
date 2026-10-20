@@ -100,7 +100,6 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
-        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

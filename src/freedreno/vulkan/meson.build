@@ -17,21 +17,10 @@ tu_entrypoints = custom_target(
   depend_files : vk_entrypoints_gen_depend_files,
 )
 
-tu_drirc = custom_target(
-  'tu_drirc',
-  input  : [files('tu_drirc_gen.py'), drirc_gen, '00-turnip-defaults.conf'],
-  output : ['tu_drirc.c', 'tu_drirc.h'],
-  command : [
-    prog_python, '@INPUT0@',
-    '--import-path', join_paths(dir_source_root, 'src/util'),
-    '--drirc-src', '@OUTPUT0@',
-    '--drirc-hdr', '@OUTPUT1@',
-    '--validate', '@INPUT2@',
-  ],
-)
 
 libtu_files = files(
-  'bvh/tu_bvh_defines.h',
+  'bvh/tu_bvh.h',
+  'bvh/tu_build_interface.h',
   'layers/tu_rmv_layer.cc',
   'tu_acceleration_structure.cc',
   'tu_autotune.cc',
@@ -149,11 +138,6 @@ if freedreno_kmds.contains('virtio')
   tu_deps += dep_libdrm
 endif
 
-tu_build_id = get_option('tu-build-id')
-if tu_build_id != ''
-  tu_flags += '-DTU_BUILD_ID_OVERRIDE="' + tu_build_id + '"'
-endif
-
 tu_tracepoints = custom_target(
   'tu_tracepoints.[ch]',
   input: 'tu_tracepoints.py',
@@ -171,7 +155,6 @@ tu_tracepoints = custom_target(
 if with_perfetto
   libtu_files += ['tu_perfetto.cc']
   tu_deps += dep_perfetto
-  tu_deps += idep_parson
 endif
 
 tu_cpp_args = []
@@ -195,13 +178,9 @@ tu_cpp_args += cpp.get_supported_arguments([
   '-Wno-write-strings',
 ])
 
-if cpp.get_id() == 'gcc'
-  tu_cpp_args += cpp.get_supported_arguments(['-Wno-misleading-indentation'])
-endif
-
 libvulkan_freedreno = shared_library(
   'vulkan_freedreno',
-  [libtu_files, tu_drirc, tu_entrypoints, tu_tracepoints, freedreno_xml_header_files, sha1_h, u_format_pack_h, bvh_spv],
+  [libtu_files, tu_entrypoints, tu_tracepoints, freedreno_xml_header_files, sha1_h, u_format_pack_h, bvh_spv],
   include_directories : libtu_includes,
   link_with : [
     libfreedreno_ir3,
@@ -223,8 +202,8 @@ libvulkan_freedreno = shared_library(
     idep_vulkan_wsi,
     idep_mesautil,
   ],
-  c_args : [no_override_init_args, tu_flags, soong_compat_c_args],
-  cpp_args : [tu_cpp_args, tu_flags, soong_compat_cpp_args],
+  c_args : [no_override_init_args, tu_flags],
+  cpp_args : [tu_cpp_args, tu_flags],
   gnu_symbol_visibility : 'hidden',
   link_args : [vulkan_icd_link_args, ld_args_bsymbolic, ld_args_gc_sections, ld_args_build_id],
   link_depends : vulkan_icd_link_depends,

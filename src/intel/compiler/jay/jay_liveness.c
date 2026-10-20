@@ -6,6 +6,7 @@
 #include "util/bitset.h"
 #include "util/macros.h"
 #include "util/sparse_bitset.h"
+#include "util/u_math.h"
 #include "util/u_worklist.h"
 #include "jay_ir.h"
 #include "jay_opcodes.h"
@@ -28,79 +29,34 @@ update_liveness_for_inst(BITSET_WORD *dead_defs,
       }
    }
 
-   jay_foreach_src_index(I, src_idx, comp, index) {
-      u_sparse_bitset_set(live_in, index);
-   }
-}
-
-void
-jay_calculate_last_use(jay_function *func)
-{
-   jay_foreach_block(func, block) {
-      ralloc_free(block->last_use);
-
-      /* First, count the number of indices in the block. This will size our
-       * bitset and avoid any dynamic allocations later.
-       */
-      signed nr = 0;
-      jay_foreach_inst_in_block(block, I) {
-         if (I->op != JAY_OPCODE_PHI_SRC) {
-            jay_foreach_src_index(I, s, c, i) {
-               nr++;
-            }
-         }
+   if (I->op == JAY_OPCODE_PHI_SRC) {
+      /* Phi sources do not require last-use bits. */
+      jay_foreach_src_index(I, src_idx, comp, index) {
+         u_sparse_bitset_set(live_in, index);
       }
+   } else {
+      BITSET_ZERO(I->last_use);
+      unsigned last_use_i = 0;
 
-      block->last_use = BITSET_RZALLOC(func, nr);
-
-      /* Now iterate liveness collecting kill bits in reverse order */
-      struct u_sparse_bitset live;
-      u_sparse_bitset_dup(&live, &block->live_out);
-
-      jay_foreach_inst_in_block_rev(block, I) {
-         /* No destination is live-in before the instruction, but any
-          * destination not live-in after is immediately dead.
+      jay_foreach_src_index(I, s, comp, index) {
+         /* If the source is not live after this instruction, but becomes
+          * live at this instruction, this is the last use.
           */
-         jay_foreach_dst_index(I, _, def) {
-            if (u_sparse_bitset_test(&live, def)) {
-               u_sparse_bitset_clear(&live, def);
-            }
+         if (!u_sparse_bitset_test(live_in, index)) {
+            assert(last_use_i < JAY_NUM_LAST_USE_BITS);
+            BITSET_SET(I->last_use, last_use_i);
          }
 
-         /* Decrement first so the first appearance of a source is killed. RA
-          * depends on this for killing duplicated sources properly.
-          */
-         if (I->op != JAY_OPCODE_PHI_SRC) {
-            jay_foreach_src_index(I, s, c, index) {
-               --nr;
-            }
-         }
-
-         unsigned offs = 0;
-         jay_foreach_src_index(I, s, comp, index) {
-            /* If the source is not live after this instruction, but becomes
-             * live at this instruction, this is the last use.
-             */
-            if (I->op != JAY_OPCODE_PHI_SRC &&
-                !u_sparse_bitset_test(&live, index)) {
-               assert(nr >= 0 && "sizes match");
-               BITSET_SET(block->last_use, nr + offs);
-            }
-
-            u_sparse_bitset_set(&live, index);
-            offs++;
-         }
+         u_sparse_bitset_set(live_in, index);
+         ++last_use_i;
       }
-
-      assert(nr == 0 && "sizes match exactly");
-      u_sparse_bitset_free(&live);
    }
 }
 
 /**
  * Calculate liveness information for SSA values.
  *
- * This populates the jay_block::live_in/live_out bitsets.
+ * This populates the jay_block::live_in/live_out bitsets and last_use flags.
  */
 void
 jay_compute_liveness(jay_function *f)
@@ -110,20 +66,15 @@ jay_compute_liveness(jay_function *f)
 
    ralloc_free(f->dead_defs);
    f->dead_defs = BITSET_RZALLOC(f, f->ssa_alloc);
-   BITSET_WORD *uniform = BITSET_CALLOC(f->ssa_alloc);
 
    jay_foreach_block(f, block) {
+      u_sparse_bitset_free(&block->live_in);
       u_sparse_bitset_free(&block->live_out);
-      u_sparse_bitset_init(&block->live_out, f->ssa_alloc, block);
-      jay_worklist_push_head(&worklist, block);
-   }
 
-   jay_foreach_inst_in_func(f, _, I) {
-      jay_foreach_dst_index(I, dst, index) {
-         if (jay_is_uniform(dst) || dst.file == FLAG) {
-            BITSET_SET(uniform, index);
-         }
-      }
+      u_sparse_bitset_init(&block->live_in, f->ssa_alloc, block);
+      u_sparse_bitset_init(&block->live_out, f->ssa_alloc, block);
+
+      jay_worklist_push_head(&worklist, block);
    }
 
    while (!u_worklist_is_empty(&worklist)) {
@@ -134,7 +85,6 @@ jay_compute_liveness(jay_function *f)
        * 1. Assume everything liveout from this block was live_in
        * 2. Clear live_in for anything defined in this block
        */
-      u_sparse_bitset_free(&block->live_in);
       u_sparse_bitset_dup(&block->live_in, &block->live_out);
 
       jay_foreach_inst_in_block_rev(block, inst) {
@@ -143,26 +93,9 @@ jay_compute_liveness(jay_function *f)
 
       /* Propagate block->live_in[] to the live_out[] of predecessors. Since
        * phis are split, they are handled naturally without special cases.
-       *
-       * The physical control flow graph is a subset of the logical control flow
-       * graph. So, edges that are in both can use the fast merge, and other
-       * edges are physical-only and need to merge only UGPRs.
        */
-      jay_foreach_predecessor(block, p, UGPR) {
-         bool progress = false;
-
-         if (jay_cfg_has_edge(*p, block, GPR)) {
-            progress = u_sparse_bitset_merge(&(*p)->live_out, &block->live_in);
-         } else {
-            U_SPARSE_BITSET_FOREACH_SET(&block->live_in, i) {
-               if (BITSET_TEST(uniform, i)) {
-                  progress |= !u_sparse_bitset_test(&(*p)->live_out, i);
-                  u_sparse_bitset_set(&(*p)->live_out, i);
-               }
-            }
-         }
-
-         if (progress) {
+      jay_foreach_predecessor(block, p) {
+         if (u_sparse_bitset_merge(&(*p)->live_out, &block->live_in)) {
             jay_worklist_push_tail(&worklist, *p);
          }
       }
@@ -177,17 +110,17 @@ jay_compute_liveness(jay_function *f)
 #endif
 
    u_worklist_fini(&worklist);
-   free(uniform);
 }
 
 /*
  * Calculate the register demand for each SSA file using the previously
- * calculated liveness & last-use analysis. SSA makes this exact in linear-time.
+ * calculated liveness analysis. SSA makes this exact in linear-time.
  */
 void
 jay_calculate_register_demands(jay_function *func)
 {
    enum jay_file *files = calloc(func->ssa_alloc, sizeof(enum jay_file));
+   BITSET_WORD *killed = BITSET_CALLOC(func->ssa_alloc);
    unsigned *max_demand = func->demand;
    memset(max_demand, 0, sizeof(func->demand));
 
@@ -197,23 +130,8 @@ jay_calculate_register_demands(jay_function *func)
       }
    }
 
-   /* Model the implicit demand from preloading inputs. In a function like:
-    *
-    *    %0 = preload r10
-    *    %1 = add %0, %0
-    *    return %1
-    *
-    * ...the "true" register demand is 1, but we need to clamp the demand to 11
-    * to make sure r10 actually exists.
-    */
-   jay_foreach_preload(func, I) {
-      uint32_t max = jay_preload_reg(I) + jay_num_values(I->dst);
-      max_demand[I->dst.file] = MAX2(max_demand[I->dst.file], max);
-   }
-
    jay_foreach_block(func, block) {
       unsigned demands[JAY_NUM_SSA_FILES] = {};
-      unsigned kill_idx = 0, print_kill_idx = 0;
 
       /* Everything live-in. */
       U_SPARSE_BITSET_FOREACH_SET(&block->live_in, i) {
@@ -225,9 +143,20 @@ jay_calculate_register_demands(jay_function *func)
       }
 
       jay_foreach_inst_in_block(block, I) {
+         /* We must have enough register file space for the register payload */
+         if (I->op == JAY_OPCODE_PRELOAD) {
+            uint32_t max = jay_preload_reg(I) + jay_num_values(I->dst);
+            max_demand[I->dst.file] = MAX2(max_demand[I->dst.file], max);
+         }
+
+         /* Collect source values to kill */
+         jay_foreach_killed(I, s, c) {
+            BITSET_SET(killed, jay_channel(I->src[s], c));
+         }
+
          /* Make destinations live */
          jay_foreach_dst(I, d) {
-            demands[d.file] += jay_num_values(d);
+            demands[d.file] += util_next_power_of_two(jay_num_values(d));
          }
 
          /* Update maximum demands */
@@ -245,31 +174,30 @@ jay_calculate_register_demands(jay_function *func)
             }
          }
 
-         /* Late-kill sources. Duplicated sources are only marked killed once,
-          * so we do not need to filter out duplicates.
-          */
-         if (I->op != JAY_OPCODE_PHI_SRC) {
-            jay_foreach_src_index(I, s, c, idx) {
-               if (BITSET_TEST(block->last_use, kill_idx)) {
-                  assert(demands[I->src[s].file] > 0);
-                  --demands[I->src[s].file];
-               }
+         jay_foreach_dst(I, d) {
+            unsigned n = jay_num_values(d);
+            demands[d.file] -= util_next_power_of_two(n) - n;
+         }
 
-               ++kill_idx;
+         /* Late-kill sources */
+         jay_foreach_killed(I, s, c) {
+            uint32_t index = jay_channel(I->src[s], c);
+
+            if (BITSET_TEST(killed, index)) {
+               BITSET_CLEAR(killed, index);
+
+               assert(demands[I->src[s].file] > 0);
+               --demands[I->src[s].file];
             }
          }
 
          if (jay_debug & JAY_DBG_PRINTDEMAND) {
             printf("(LA) [G:%u\tU:%u] ", demands[GPR], demands[UGPR]);
-            jay_print_inst_with_lu(stdout, func, block, I, &print_kill_idx);
+            jay_print_inst(stdout, I);
          }
-      }
-
-      jay_foreach_ssa_file(f) {
-         block->demand_max[f] = max_demand[f];
-         block->demand_out[f] = demands[f];
       }
    }
 
    free(files);
+   free(killed);
 }

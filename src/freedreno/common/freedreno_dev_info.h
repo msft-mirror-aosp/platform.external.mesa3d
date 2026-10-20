@@ -205,11 +205,6 @@ struct fd_dev_info {
       /* see enum a6xx_ccu_cache_size */
       uint32_t gmem_ccu_color_cache_fraction;
       uint32_t gmem_per_ccu_color_cache_size;
-
-      /* Custom shader resolves can write depth through the CCU while input
-       * attachments are still in GMEM, so the driver needs to make sure it will
-       * not overwrite pixel data in GMEM that is still needed.
-       */
       uint32_t gmem_ccu_depth_cache_fraction;
       uint32_t gmem_per_ccu_depth_cache_size;
       uint32_t sysmem_ccu_color_cache_fraction;
@@ -310,9 +305,6 @@ struct fd_dev_info {
       /* A702 cuts A LOT of things.. */
       bool is_a702;
 
-      /* Number of transform feedback streams supported. */
-      uint32_t num_xfb_streams;
-
       /* maximum number of descriptor sets */
       uint32_t max_sets;
 
@@ -339,12 +331,6 @@ struct fd_dev_info {
 
       /* True if PC_DGEN_SO_CNTL is present. */
       bool has_pc_dgen_so_cntl;
-
-      /* Some GPUs have an errata where fair scheduling in round-robin mode is
-       * not guaranteed unless at most 8 waves are resident, out of a maximum
-       * of 16.
-       */
-      bool round_robin_errata;
 
       /*
        * A7XX / gen7
@@ -488,32 +474,6 @@ struct fd_dev_info {
 
       /* The amount of valid draw state IDs. */
       uint32_t max_draw_states;
-
-      /* Whether GRAS_CL_INTERP_CNTL has FACENESS/CENTERRHW and thus
-       * being able to avoid setting ij_linear_sample for FragFace/FragCoord.
-       */
-      bool has_implicit_fragface_fragcoord_ij_linear;
-
-      uint32_t max_texel_buffer_range_elements;
-      uint32_t max_storage_buffer_range_bytes;
-
-      /* On a7xx alias.tex may hang when in between mova and (ul). */
-      bool alias_mova_quirk;
-
-      /* On some HW alias.tex may hang when predicated (i.e. between
-       * predt/predf and prede).
-       */
-      bool alias_predication_quirk;
-
-      /* There seems to be a HW bug where a dummy prefetch sam.s2en always
-       * reads its src2 from fiber 0. This may cause faults when fiber 0 is a
-       * helper and helpers are disabled. We work around this by keeping
-       * helpers enabled until after such sam.s2en.
-       */
-      bool prefetch_sam_helpers_quirk;
-
-      /* On a750+ SUBPASS_FENCE also implicitly does CCU_RESOLVE_CLEAN */
-      bool subpass_fence_cleans_resolve;
    } props;
 };
 
@@ -553,7 +513,7 @@ fd_dev_is_supported(const struct fd_dev_id *id) {
 }
 
 /* Final dev info with dbg options and everything else applied.  */
-struct fd_dev_info fd_dev_info(const struct fd_dev_id *id);
+const struct fd_dev_info fd_dev_info(const struct fd_dev_id *id);
 
 const struct fd_dev_info *fd_dev_info_raw_by_name(const char *name);
 

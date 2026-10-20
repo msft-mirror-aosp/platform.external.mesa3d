@@ -37,8 +37,7 @@ function get_stats(pkt, base)
 	}
 
 	if (pkt == pm4.CP_EXEC_CS_INDIRECT) or
-	   (pkt == pm4.CP_EXEC_CS) or
-	   (pkt == pm4.CP_RUN_OPENCL) then
+	   (pkt == pm4.CP_EXEC_CS) then
 		append_stats(r.SP_CS_CONFIG, r.shaderstat.cs, base, stats)
 		return stats
 	end

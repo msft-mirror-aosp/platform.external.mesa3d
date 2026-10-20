@@ -30,16 +30,16 @@
 #include "drm-uapi/i915_drm.h"
 
 static int
-vk_priority_to_i915(VkQueueGlobalPriority priority)
+vk_priority_to_i915(VkQueueGlobalPriorityKHR priority)
 {
    switch (priority) {
-   case VK_QUEUE_GLOBAL_PRIORITY_LOW:
+   case VK_QUEUE_GLOBAL_PRIORITY_LOW_KHR:
       return INTEL_CONTEXT_LOW_PRIORITY;
-   case VK_QUEUE_GLOBAL_PRIORITY_MEDIUM:
+   case VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR:
       return INTEL_CONTEXT_MEDIUM_PRIORITY;
-   case VK_QUEUE_GLOBAL_PRIORITY_HIGH:
+   case VK_QUEUE_GLOBAL_PRIORITY_HIGH_KHR:
       return INTEL_CONTEXT_HIGH_PRIORITY;
-   case VK_QUEUE_GLOBAL_PRIORITY_REALTIME:
+   case VK_QUEUE_GLOBAL_PRIORITY_REALTIME_KHR:
       return INTEL_CONTEXT_REALTIME_PRIORITY;
    default:
       UNREACHABLE("Invalid priority");
@@ -59,7 +59,7 @@ anv_gem_set_context_param(int fd, uint32_t context, uint32_t param, uint64_t val
 }
 
 static bool
-anv_gem_has_context_priority(int fd, VkQueueGlobalPriority priority)
+anv_gem_has_context_priority(int fd, VkQueueGlobalPriorityKHR priority)
 {
    return !anv_gem_set_context_param(fd, 0, I915_CONTEXT_PARAM_PRIORITY,
                                      priority);
@@ -128,13 +128,13 @@ anv_i915_physical_device_get_parameters(struct anv_physical_device *device)
    }
 
    /* Start with medium; sorted low to high */
-   const VkQueueGlobalPriority priorities[] = {
-         VK_QUEUE_GLOBAL_PRIORITY_LOW,
-         VK_QUEUE_GLOBAL_PRIORITY_MEDIUM,
-         VK_QUEUE_GLOBAL_PRIORITY_HIGH,
-         VK_QUEUE_GLOBAL_PRIORITY_REALTIME,
+   const VkQueueGlobalPriorityKHR priorities[] = {
+         VK_QUEUE_GLOBAL_PRIORITY_LOW_KHR,
+         VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR,
+         VK_QUEUE_GLOBAL_PRIORITY_HIGH_KHR,
+         VK_QUEUE_GLOBAL_PRIORITY_REALTIME_KHR,
    };
-   device->max_context_priority = VK_QUEUE_GLOBAL_PRIORITY_LOW;
+   device->max_context_priority = VK_QUEUE_GLOBAL_PRIORITY_LOW_KHR;
    for (unsigned i = 0; i < ARRAY_SIZE(priorities); i++) {
       if (!anv_gem_has_context_priority(fd, priorities[i]))
          break;
@@ -154,13 +154,13 @@ anv_i915_physical_device_init_memory_types(struct anv_physical_device *device)
       device->memory.type_count = 3;
       device->memory.types[0] = (struct anv_memory_type) {
          .propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-         .heapIndex = 0,/* lmem */
+         .heapIndex = 0,
       };
       device->memory.types[1] = (struct anv_memory_type) {
          .propertyFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
                           VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-         .heapIndex = 1,/* smem */
+         .heapIndex = 1,
       };
       device->memory.types[2] = (struct anv_memory_type) {
          .propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
@@ -230,7 +230,7 @@ VkResult
 anv_i915_set_queue_parameters(
       struct anv_device *device,
       uint32_t context_id,
-      const VkDeviceQueueGlobalPriorityCreateInfo *queue_priority)
+      const VkDeviceQueueGlobalPriorityCreateInfoKHR *queue_priority)
 {
    struct anv_physical_device *physical_device = device->physical;
 
@@ -243,9 +243,9 @@ anv_i915_set_queue_parameters(
    anv_gem_set_context_param(device->fd, context_id,
                              I915_CONTEXT_PARAM_RECOVERABLE, false);
 
-   VkQueueGlobalPriority priority =
+   VkQueueGlobalPriorityKHR priority =
       queue_priority ? queue_priority->globalPriority :
-      VK_QUEUE_GLOBAL_PRIORITY_MEDIUM;
+         VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR;
 
    /* As per spec, the driver implementation may deny requests to acquire
     * a priority above the default priority (MEDIUM) if the caller does not
@@ -316,10 +316,9 @@ anv_i915_device_setup_context(struct anv_device *device,
       return result;
 
    /* Check if client specified queue priority. */
-   const VkDeviceQueueGlobalPriorityCreateInfo *queue_priority =
-      num_queues == 0 ? NULL :
+   const VkDeviceQueueGlobalPriorityCreateInfoKHR *queue_priority =
       vk_find_struct_const(pCreateInfo->pQueueCreateInfos[0].pNext,
-                           DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO);
+                           DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO_KHR);
 
    result = anv_i915_set_queue_parameters(device, device->context_id,
                                           queue_priority);
@@ -334,9 +333,7 @@ fail_context:
 }
 
 static VkResult
-anv_gem_context_get_reset_stats(struct anv_device *device,
-                                struct anv_queue *queue,
-                                int context)
+anv_gem_context_get_reset_stats(struct anv_device *device, int context)
 {
    struct drm_i915_reset_stats stats = {
       .ctx_id = context,
@@ -345,13 +342,13 @@ anv_gem_context_get_reset_stats(struct anv_device *device,
    int ret = intel_ioctl(device->fd, DRM_IOCTL_I915_GET_RESET_STATS, &stats);
    if (ret == -1) {
       /* We don't know the real error. */
-      return anv_queue_set_lost(queue, errno, "get_reset_stats failed: %m");
+      return vk_device_set_lost(&device->vk, "get_reset_stats failed: %m");
    }
 
    if (stats.batch_active) {
-      return anv_queue_set_lost(queue, ECANCELED, "GPU hung on one of our command buffers");
+      return vk_device_set_lost(&device->vk, "GPU hung on one of our command buffers");
    } else if (stats.batch_pending) {
-      return anv_queue_set_lost(queue, ECANCELED, "GPU hung with commands in-flight");
+      return vk_device_set_lost(&device->vk, "GPU hung with commands in-flight");
    }
 
    return VK_SUCCESS;
@@ -366,23 +363,19 @@ anv_i915_device_check_status(struct vk_device *vk_device)
    if (device->physical->has_vm_control) {
       for (uint32_t i = 0; i < device->queue_count; i++) {
          result = anv_gem_context_get_reset_stats(device,
-                                                  &device->queues[i],
                                                   device->queues[i].context_id);
          if (result != VK_SUCCESS)
             goto done;
 
          if (device->queues[i].companion_rcs_id != 0) {
-            result = anv_gem_context_get_reset_stats(device,
-                                                     &device->queues[i],
-                                                     device->queues[i].companion_rcs_id);
+            uint32_t context_id = device->queues[i].companion_rcs_id;
+            result = anv_gem_context_get_reset_stats(device, context_id);
             if (result != VK_SUCCESS)
                goto done;
          }
       }
    } else {
-      result = anv_gem_context_get_reset_stats(device,
-                                               &device->queues[0],
-                                               device->context_id);
+      result = anv_gem_context_get_reset_stats(device, device->context_id);
    }
 
  done:

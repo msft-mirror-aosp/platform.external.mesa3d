@@ -10,6 +10,7 @@
 
 #include "radeon_compiler.h"
 #include "radeon_compiler_util.h"
+#include "radeon_list.h"
 #include "radeon_swizzle.h"
 #include "radeon_variable.h"
 
@@ -76,7 +77,9 @@ copy_propagate_scan_read(void *data, struct rc_instruction *inst, struct rc_src_
       return;
    }
 
-   /* Texture instructions cannot read from the constants file. */
+   /* These instructions cannot read from the constants file.
+    * see radeonTransformTEX()
+    */
    if (reader_data->Writer->U.I.SrcReg[0].File != RC_FILE_TEMPORARY &&
        reader_data->Writer->U.I.SrcReg[0].File != RC_FILE_INPUT &&
        reader_data->Writer->U.I.SrcReg[0].File != RC_FILE_NONE &&
@@ -647,14 +650,14 @@ omod_filter_writer_cb(void *userdata, struct rc_instruction *inst, rc_register_f
 
 static int
 peephole_mul_omod(struct radeon_compiler *c, struct rc_instruction *inst_mul,
-                  struct util_dynarray *var_list)
+                  struct rc_list *var_list)
 {
    unsigned int chan = 0, swz, i;
    int const_index = -1;
    int temp_index = -1;
    float const_value;
    rc_omod_op omod_op = RC_OMOD_DISABLE;
-   struct util_dynarray *writer_list;
+   struct rc_list *writer_list;
    struct rc_variable *var;
    struct peephole_mul_cb_data cb_data;
    unsigned writemask_sum;
@@ -753,11 +756,10 @@ peephole_mul_omod(struct radeon_compiler *c, struct rc_instruction *inst_mul,
    if (!writer_list) {
       return 0;
    }
-   struct rc_variable *writer = rc_variable_list_first(writer_list);
 
    cb_data.Clobbered = 0;
    cb_data.Writer = &inst_mul->U.I.DstReg;
-   for (var = writer; var; var = var->Friend) {
+   for (var = writer_list->Item; var; var = var->Friend) {
       struct rc_instruction *inst;
       const struct rc_opcode_info *info = rc_get_opcode_info(var->Inst->U.I.Opcode);
       if (info->HasTexture) {
@@ -788,7 +790,7 @@ peephole_mul_omod(struct radeon_compiler *c, struct rc_instruction *inst_mul,
       return 0;
    }
 
-   writemask_sum = rc_variable_writemask_sum(writer);
+   writemask_sum = rc_variable_writemask_sum(writer_list->Item);
 
    /* rc_normal_rewrite_writemask can't expand a previous writemask to store
     * more channels replicated.
@@ -797,7 +799,7 @@ peephole_mul_omod(struct radeon_compiler *c, struct rc_instruction *inst_mul,
       return 0;
 
    /* Rewrite the instructions */
-   for (var = writer; var; var = var->Friend) {
+   for (var = writer_list->Item; var; var = var->Friend) {
       struct rc_variable *writer = var;
       unsigned conversion_swizzle = RC_SWIZZLE_UUUU;
       for (chan = 0; chan < 4; chan++) {
@@ -1372,8 +1374,7 @@ copy_propagate_constant_swizzle(struct radeon_compiler *c, struct rc_instruction
             }
             struct rc_src_register new_src = cur->U.I.SrcReg[src];
             new_src.Swizzle = new_swizzle;
-            if (!new_src.Abs)
-               new_src.Negate ^= negate;
+            new_src.Negate ^= negate;
             if (!c->SwizzleCaps->IsNative(cur->U.I.Opcode, new_src))
                continue;
 
@@ -1508,7 +1509,7 @@ rc_optimize(struct radeon_compiler *c, void *user)
 
    /* Output modifiers. */
    inst = c->Program.Instructions.Next;
-   struct util_dynarray *var_list = NULL;
+   struct rc_list *var_list = NULL;
    while (inst != &c->Program.Instructions) {
       struct rc_instruction *cur = inst;
       inst = inst->Next;

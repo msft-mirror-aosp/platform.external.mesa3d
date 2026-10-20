@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "common/intel_common.h"
 #include "brw_eu.h"
 #include "brw_shader.h"
 #include "brw_cfg.h"
@@ -120,13 +119,11 @@ namespace {
          td(inst->dst.type), sd(DIV_ROUND_UP(inst->size_written, REG_SIZE)),
          tx(get_exec_type(inst)), sx(0), ss(0),
          sc(has_bank_conflict(isa, inst) ? sd : 0),
-         sfid(0), fused_send_disable(false), efficient_64bit(false)
+         desc(0), sfid(0), fused_send_disable(false)
       {
          const brw_send_inst *send = inst->as_send();
          if (send) {
-            efficient_64bit = send->efficient_64bit;
-            desc = efficient_64bit ? send->combined_desc : send->desc;
-
+            desc = send->desc;
             sfid = send->sfid;
             /* We typically want the maximum source size, except for split send
              * messages which require the total size.
@@ -181,16 +178,14 @@ namespace {
       unsigned ss;
       /** Bank conflict penalty size in GRF units (equal to sd if non-zero). */
       unsigned sc;
-      /** Send message descriptor (64bit in efficient_64bit mode, 32bit otherwise). */
-      uint64_t desc;
+      /** Send message descriptor. */
+      uint32_t desc;
       /** Send message shared function ID. */
       uint8_t sfid;
       /** Repeat count for DPAS instructions. */
       uint8_t rcount;
       /** Whether SEND message fusion is disabled (Gfx12.x only) */
-      bool fused_send_disable:1;
-      /** Efficient 64bit message (Gfx35+ only) */
-      bool efficient_64bit:1;
+      bool fused_send_disable;
    };
 
    /**
@@ -348,7 +343,6 @@ namespace {
       case BRW_OPCODE_ADD:
       case BRW_OPCODE_ADD3:
       case BRW_OPCODE_MUL:
-      case BRW_OPCODE_MULLH:
       case SHADER_OPCODE_MOV_RELOC_IMM:
          if (devinfo->ver >= 11) {
             return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
@@ -433,7 +427,6 @@ namespace {
       case SHADER_OPCODE_LOG2:
       case SHADER_OPCODE_SIN:
       case SHADER_OPCODE_COS:
-      case SHADER_OPCODE_TANH:
          return calculate_desc(info, EU_UNIT_EM, -2, 4, 0, 0, 4,
                                0, 16, 0, 0, 0, 0);
 
@@ -598,18 +591,11 @@ namespace {
       case SHADER_OPCODE_SEND:
       case SHADER_OPCODE_SEND_GATHER:
          switch (info.sfid) {
-         case GEN_SFID_HDC_READ_ONLY:
+         case BRW_SFID_HDC_READ_ONLY:
             /* See FS_OPCODE_UNIFORM_PULL_CONSTANT_LOAD */
             return calculate_desc(info, EU_UNIT_DP_CC, 2, 0, 0, 0, 16 /* XXX */,
                                   10 /* XXX */, 100 /* XXX */, 0, 0, 0, 0);
-         case GEN_SFID_RENDER_CACHE:
-            if (info.efficient_64bit) {
-               return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0,
-                                     0, 400 /* XXX */,
-                                     10 /* XXX */, 300 /* XXX */, 0, 0,
-                                     0, 0);
-            }
-
+         case BRW_SFID_RENDER_CACHE:
             switch (brw_dp_desc_msg_type(devinfo, info.desc)) {
             case GFX7_DATAPORT_RC_TYPED_ATOMIC_OP:
                return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0,
@@ -621,9 +607,9 @@ namespace {
                                      30 /* XXX */, 0,
                                      10 /* XXX */, 300 /* XXX */, 0, 0, 0, 0);
             default:
-               if (devinfo->ver >= 20)
+               if (devinfo->ver >= 30)
                   return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0,
-                                        0, 300 /* XXX */,
+                                        0, 400 /* XXX */,
                                         10 /* XXX */, 300 /* XXX */, 0, 0,
                                         0, 0);
                else
@@ -632,13 +618,13 @@ namespace {
                                         10 /* XXX */, 300 /* XXX */, 0, 0,
                                         0, 0);
             }
-         case GEN_SFID_SAMPLER: {
+         case BRW_SFID_SAMPLER: {
             return calculate_desc(info, EU_UNIT_SAMPLER, 2, 0, 0, 0, 16,
                                   8, 750, 0, 0, 2, 0);
          }
-         case GEN_SFID_HDC0:
+         case BRW_SFID_HDC0:
             switch (brw_dp_desc_msg_type(devinfo, info.desc)) {
-            case GEN_DATAPORT_DC_MEMORY_FENCE:
+            case GFX7_DATAPORT_DC_MEMORY_FENCE:
                return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
                                      30 /* XXX */, 0,
                                      10 /* XXX */, 100 /* XXX */, 0, 0, 0, 0);
@@ -649,12 +635,12 @@ namespace {
                                      0, 0);
             }
 
-         case GEN_SFID_HDC1:
+         case BRW_SFID_HDC1:
             switch (brw_dp_desc_msg_type(devinfo, info.desc)) {
-            case GEN_DATAPORT_DC_PORT1_UNTYPED_ATOMIC_OP:
-            case GEN_DATAPORT_DC_PORT1_UNTYPED_ATOMIC_OP_SIMD4X2:
-            case GEN_DATAPORT_DC_PORT1_TYPED_ATOMIC_OP_SIMD4X2:
-            case GEN_DATAPORT_DC_PORT1_TYPED_ATOMIC_OP:
+            case HSW_DATAPORT_DC_PORT1_UNTYPED_ATOMIC_OP:
+            case HSW_DATAPORT_DC_PORT1_UNTYPED_ATOMIC_OP_SIMD4X2:
+            case HSW_DATAPORT_DC_PORT1_TYPED_ATOMIC_OP_SIMD4X2:
+            case HSW_DATAPORT_DC_PORT1_TYPED_ATOMIC_OP:
                return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
                                      30 /* XXX */, 400 /* XXX */,
                                      10 /* XXX */, 100 /* XXX */, 0, 0,
@@ -667,17 +653,14 @@ namespace {
                                      0, 0);
             }
 
-         case GEN_SFID_PIXEL_INTERPOLATOR:
+         case BRW_SFID_PIXEL_INTERPOLATOR:
             return calculate_desc(info, EU_UNIT_PI, 2, 0, 0, 14 /* XXX */, 0,
                                   0, 90 /* XXX */, 0, 0, 0, 0);
 
-         case GEN_SFID_UGM:
-         case GEN_SFID_TGM:
-         case GEN_SFID_SLM: {
-            uint8_t opcode = info.efficient_64bit ?
-                             gen_64bit_msg_desc_get_opcode(info.desc) :
-                             lsc_msg_desc_opcode(devinfo, info.desc);
-            switch (opcode) {
+         case BRW_SFID_UGM:
+         case BRW_SFID_TGM:
+         case BRW_SFID_SLM:
+            switch (lsc_msg_desc_opcode(devinfo, info.desc)) {
             case LSC_OP_LOAD:
             case LSC_OP_STORE:
             case LSC_OP_LOAD_CMASK:
@@ -720,20 +703,16 @@ namespace {
             default:
                abort();
             }
-         }
 
-         case GEN_SFID_MESSAGE_GATEWAY:
-         case GEN_SFID_BINDLESS_THREAD_DISPATCH: /* or THREAD_SPAWNER */
-         case GEN_SFID_RAY_TRACE_ACCELERATOR:
+         case BRW_SFID_MESSAGE_GATEWAY:
+         case BRW_SFID_BINDLESS_THREAD_DISPATCH: /* or THREAD_SPAWNER */
+         case BRW_SFID_RAY_TRACE_ACCELERATOR:
             return calculate_desc(info, EU_UNIT_SPAWNER, 2, 0, 0, 0 /* XXX */, 0,
                                   10 /* XXX */, 0, 0, 0, 0, 0);
 
-         case GEN_SFID_URB: {
-            uint8_t opcode = info.efficient_64bit ?
-                             gen_64bit_msg_desc_get_opcode(info.desc) :
-                             brw_urb_desc_msg_type(devinfo, info.desc);
-
-            if (opcode == GEN_GFX125_URB_OPCODE_FENCE) {
+         case BRW_SFID_URB:
+            if (brw_urb_desc_msg_type(devinfo, info.desc) ==
+                GFX125_URB_OPCODE_FENCE) {
                return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
                                      30 /* XXX */, 0,
                                      10 /* XXX */, 100 /* XXX */, 0, 0, 0, 0);
@@ -741,7 +720,6 @@ namespace {
 
             return calculate_desc(info, EU_UNIT_URB, 2, 0, 0, 0, 6 /* XXX */,
                                   32 /* XXX */, 200 /* XXX */, 0, 0, 0, 0);
-         }
 
          default:
             abort();
@@ -872,7 +850,7 @@ namespace {
     * condition of a Gfx12+ SWSB.
     */
    enum intel_eu_dependency_id
-   gen_swsb_rd_dependency_id(gen_swsb swsb)
+   tgl_swsb_rd_dependency_id(tgl_swsb swsb)
    {
       if (swsb.mode) {
          assert(swsb.sbid < EU_DEPENDENCY_ID_GRF0 - EU_DEPENDENCY_ID_SBID_RD0);
@@ -887,7 +865,7 @@ namespace {
     * condition of a Gfx12+ SWSB.
     */
    enum intel_eu_dependency_id
-   gen_swsb_wr_dependency_id(gen_swsb swsb)
+   tgl_swsb_wr_dependency_id(tgl_swsb swsb)
    {
       if (swsb.mode) {
          assert(swsb.sbid <
@@ -927,8 +905,7 @@ namespace {
 
       /* Stall on any source dependencies. */
       for (unsigned i = 0; i < inst->sources; i++) {
-         const unsigned read = regs_read(devinfo, inst, i);
-         for (unsigned j = 0; j < read; j++)
+         for (unsigned j = 0; j < regs_read(devinfo, inst, i); j++)
             stall_on_dependency(
                st, reg_dependency_id(devinfo, inst->src[i], j));
       }
@@ -950,8 +927,7 @@ namespace {
 
       /* Stall on any write dependencies. */
       if (inst->dst.file != BAD_FILE && !inst->dst.is_null()) {
-         const unsigned written = regs_written(inst);
-         for (unsigned j = 0; j < written; j++)
+         for (unsigned j = 0; j < regs_written(inst); j++)
             stall_on_dependency(
                st, reg_dependency_id(devinfo, inst->dst, j));
       }
@@ -972,10 +948,10 @@ namespace {
       }
 
       /* Stall on any SBID dependencies. */
-      if (inst->sched.mode & (GEN_SBID_SET | GEN_SBID_DST))
-         stall_on_dependency(st, gen_swsb_wr_dependency_id(inst->sched));
-      else if (inst->sched.mode & GEN_SBID_SRC)
-         stall_on_dependency(st, gen_swsb_rd_dependency_id(inst->sched));
+      if (inst->sched.mode & (TGL_SBID_SET | TGL_SBID_DST))
+         stall_on_dependency(st, tgl_swsb_wr_dependency_id(inst->sched));
+      else if (inst->sched.mode & TGL_SBID_SRC)
+         stall_on_dependency(st, tgl_swsb_rd_dependency_id(inst->sched));
 
       /* Execute the instruction. */
       execute_instruction(st, perf);
@@ -984,8 +960,7 @@ namespace {
       if (inst->is_send()) {
          for (unsigned i = 0; i < inst->sources; i++) {
             if (inst->is_payload(i)) {
-               const unsigned read = regs_read(devinfo, inst, i);
-               for (unsigned j = 0; j < read; j++)
+               for (unsigned j = 0; j < regs_read(devinfo, inst, i); j++)
                   mark_read_dependency(
                      st, perf, reg_dependency_id(devinfo, inst->src[i], j));
             }
@@ -994,8 +969,7 @@ namespace {
 
       /* Mark any destination dependencies. */
       if (inst->dst.file != BAD_FILE && !inst->dst.is_null()) {
-         const unsigned written = regs_written(inst);
-         for (unsigned j = 0; j < written; j++) {
+         for (unsigned j = 0; j < regs_written(inst); j++) {
             mark_write_dependency(st, perf,
                                   reg_dependency_id(devinfo, inst->dst, j));
          }
@@ -1017,9 +991,9 @@ namespace {
       }
 
       /* Mark any SBID dependencies. */
-      if (inst->sched.mode & GEN_SBID_SET) {
-         mark_read_dependency(st, perf, gen_swsb_rd_dependency_id(inst->sched));
-         mark_write_dependency(st, perf, gen_swsb_wr_dependency_id(inst->sched));
+      if (inst->sched.mode & TGL_SBID_SET) {
+         mark_read_dependency(st, perf, tgl_swsb_rd_dependency_id(inst->sched));
+         mark_write_dependency(st, perf, tgl_swsb_wr_dependency_id(inst->sched));
       }
    }
 
@@ -1058,7 +1032,7 @@ namespace {
             grf_used = DIV_ROUND_UP(max_regs_live, reg_unit(s->devinfo));
          }
 
-         return 32 / MAX2(3, intel_register_blocks(s->devinfo, grf_used) + 1);
+         return 32 / MAX2(3, ptl_register_blocks(grf_used) + 1);
       } else {
          return s->devinfo->num_thread_per_eu;
       }

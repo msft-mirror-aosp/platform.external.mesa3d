@@ -77,7 +77,7 @@ struct va_stats {
    unsigned nr_fau_uniforms;
 };
 
-void va_count_instr_stats(bi_instr *I, struct va_stats *stats, unsigned arch);
+void va_count_instr_stats(bi_instr *I, struct va_stats *stats);
 
 #ifdef __cplusplus
 } /* extern C */

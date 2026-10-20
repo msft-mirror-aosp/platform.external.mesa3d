@@ -37,12 +37,7 @@ struct vn_renderer_bo {
  * The main difference is that drm_syncobj can have unsignaled value 0.
  */
 struct vn_renderer_sync {
-   union {
-      /* for virtgpu backend */
-      uint32_t syncobj_handle;
-      /* for vtest backend */
-      uint32_t sync_id;
-   };
+   uint32_t sync_id;
 };
 
 struct vn_renderer_info {
@@ -66,7 +61,6 @@ struct vn_renderer_info {
 
    bool has_dma_buf_import;
    bool has_external_sync;
-   bool has_timeline_sync;
    bool has_implicit_fencing;
    bool has_guest_vram;
 
@@ -100,8 +94,23 @@ struct vn_renderer_submit_batch {
 
    /* syncs to update when the timeline is signaled */
    struct vn_renderer_sync *const *syncs;
+   /* TODO allow NULL when syncs are all binary? */
    const uint64_t *sync_values;
    uint32_t sync_count;
+};
+
+struct vn_renderer_submit {
+   /* BOs to pin and to fence implicitly
+    *
+    * TODO track all bos and automatically pin them.  We don't do it yet
+    * because each vn_command_buffer owns a bo.  We can probably make do by
+    * returning the bos to a bo cache and exclude bo cache from pinning.
+    */
+   struct vn_renderer_bo *const *bos;
+   uint32_t bo_count;
+
+   const struct vn_renderer_submit_batch *batches;
+   uint32_t batch_count;
 };
 
 struct vn_renderer_wait {
@@ -109,6 +118,7 @@ struct vn_renderer_wait {
    uint64_t timeout;
 
    struct vn_renderer_sync *const *syncs;
+   /* TODO allow NULL when syncs are all binary? */
    const uint64_t *sync_values;
    uint32_t sync_count;
 };
@@ -118,7 +128,7 @@ struct vn_renderer_ops {
                    const VkAllocationCallbacks *alloc);
 
    VkResult (*submit)(struct vn_renderer *renderer,
-                      const struct vn_renderer_submit_batch *batch);
+                      const struct vn_renderer_submit *submit);
 
    /*
     * On success, returns VK_SUCCESS or VK_TIMEOUT.  On failure, returns
@@ -138,7 +148,6 @@ struct vn_renderer_shmem_ops {
 struct vn_renderer_bo_ops {
    VkResult (*create_from_device_memory)(
       struct vn_renderer *renderer,
-      struct vn_renderer_submit_batch *batch,
       VkDeviceSize size,
       vn_object_id mem_id,
       VkMemoryPropertyFlags flags,
@@ -174,9 +183,15 @@ struct vn_renderer_bo_ops {
                       VkDeviceSize size);
 };
 
+enum vn_renderer_sync_flags {
+   VN_RENDERER_SYNC_SHAREABLE = 1u << 0,
+   VN_RENDERER_SYNC_BINARY = 1u << 1,
+};
+
 struct vn_renderer_sync_ops {
    VkResult (*create)(struct vn_renderer *renderer,
                       uint64_t initial_val,
+                      uint32_t flags,
                       struct vn_renderer_sync **out_sync);
 
    VkResult (*create_from_syncobj)(struct vn_renderer *renderer,
@@ -190,9 +205,10 @@ struct vn_renderer_sync_ops {
                          struct vn_renderer_sync *sync,
                          bool sync_file);
 
-   /* reset the counter to zero */
+   /* reset the counter */
    VkResult (*reset)(struct vn_renderer *renderer,
-                     struct vn_renderer_sync *sync);
+                     struct vn_renderer_sync *sync,
+                     uint64_t initial_val);
 
    /* read the current value from the counter */
    VkResult (*read)(struct vn_renderer *renderer,
@@ -231,17 +247,13 @@ vn_renderer_create(struct vn_instance *instance,
                    struct vn_renderer **renderer)
 {
 #ifdef HAVE_LIBDRM
-   VkResult result;
    if (VN_DEBUG(VTEST)) {
-      result = vn_renderer_create_vtest(instance, alloc, renderer);
-      if (result != VK_SUCCESS)
-         result = vn_renderer_create_virtgpu(instance, alloc, renderer);
-   } else {
-      result = vn_renderer_create_virtgpu(instance, alloc, renderer);
-      if (result != VK_SUCCESS)
-         result = vn_renderer_create_vtest(instance, alloc, renderer);
+      VkResult result = vn_renderer_create_vtest(instance, alloc, renderer);
+      if (result == VK_SUCCESS)
+         return VK_SUCCESS;
    }
-   return result;
+
+   return vn_renderer_create_virtgpu(instance, alloc, renderer);
 #else
    return vn_renderer_create_vtest(instance, alloc, renderer);
 #endif
@@ -256,7 +268,7 @@ vn_renderer_destroy(struct vn_renderer *renderer,
 
 static inline VkResult
 vn_renderer_submit(struct vn_renderer *renderer,
-                   const struct vn_renderer_submit_batch *submit)
+                   const struct vn_renderer_submit *submit)
 {
    return renderer->ops.submit(renderer, submit);
 }
@@ -303,7 +315,6 @@ vn_renderer_shmem_unref(struct vn_renderer *renderer,
 static inline VkResult
 vn_renderer_bo_create_from_device_memory(
    struct vn_renderer *renderer,
-   struct vn_renderer_submit_batch *batch,
    VkDeviceSize size,
    vn_object_id mem_id,
    VkMemoryPropertyFlags flags,
@@ -312,7 +323,7 @@ vn_renderer_bo_create_from_device_memory(
 {
    struct vn_renderer_bo *bo;
    VkResult result = renderer->bo_ops.create_from_device_memory(
-      renderer, batch, size, mem_id, flags, external_handles, &bo);
+      renderer, size, mem_id, flags, external_handles, &bo);
    if (result != VK_SUCCESS)
       return result;
 
@@ -403,9 +414,10 @@ vn_renderer_bo_invalidate(struct vn_renderer *renderer,
 static inline VkResult
 vn_renderer_sync_create(struct vn_renderer *renderer,
                         uint64_t initial_val,
+                        uint32_t flags,
                         struct vn_renderer_sync **out_sync)
 {
-   return renderer->sync_ops.create(renderer, initial_val, out_sync);
+   return renderer->sync_ops.create(renderer, initial_val, flags, out_sync);
 }
 
 static inline VkResult
@@ -435,9 +447,10 @@ vn_renderer_sync_export_syncobj(struct vn_renderer *renderer,
 
 static inline VkResult
 vn_renderer_sync_reset(struct vn_renderer *renderer,
-                       struct vn_renderer_sync *sync)
+                       struct vn_renderer_sync *sync,
+                       uint64_t initial_val)
 {
-   return renderer->sync_ops.reset(renderer, sync);
+   return renderer->sync_ops.reset(renderer, sync, initial_val);
 }
 
 static inline VkResult

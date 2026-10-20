@@ -116,6 +116,7 @@ typedef struct _pco_fs_data {
       bool fbfetch; /** Whether the shader fetches from the framebuffer. */
       bool depth_feedback;
       bool discard;
+      bool early_frag;
       bool sample_shading;
       bool sample_locations;
       bool alpha_to_coverage;
@@ -133,7 +134,6 @@ typedef struct _pco_cs_data {
 
    pco_range shmem;
    bool zero_shmem;
-   bool global_shmem;
 } pco_cs_data;
 
 /** PCO image descriptor metadata. */
@@ -163,9 +163,6 @@ typedef struct _pco_binding_data {
 
    /** Whether the descriptor binding is a combined image sampler. */
    bool is_img_smp;
-
-   /** Whether the descriptor binding is an inline uniform block. */
-   bool is_inline_ubo;
 } pco_binding_data;
 
 /** PCO descriptor set data. */

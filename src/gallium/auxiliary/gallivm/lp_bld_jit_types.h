@@ -45,6 +45,11 @@ enum {
 };
 
 LLVMValueRef
+lp_llvm_descriptor_base(struct gallivm_state *gallivm,
+                        LLVMValueRef buffers_ptr,
+                        LLVMValueRef index, unsigned buffers_limit);
+
+LLVMValueRef
 lp_llvm_buffer_base(struct gallivm_state *gallivm,
                     LLVMValueRef buffers_ptr,
                     LLVMValueRef buffers_offset, unsigned buffers_limit);
@@ -73,7 +78,6 @@ struct lp_jit_texture
    uint8_t last_level;    /* contains num_samples for multisample */
    uint32_t mip_offsets[PIPE_MAX_TEXTURE_LEVELS]; /* sample stride is in mip_offsets[15] */
    uint32_t sampler_index;
-   float view_min_lod;
 };
 
 enum {
@@ -87,7 +91,6 @@ enum {
    LP_JIT_TEXTURE_LAST_LEVEL,
    LP_JIT_TEXTURE_MIP_OFFSETS,
    LP_JIT_SAMPLER_INDEX_DUMMY,
-   LP_JIT_TEXTURE_VIEW_MIN_LOD,
    LP_JIT_TEXTURE_NUM_FIELDS  /* number of fields above */
 };
 
@@ -198,10 +201,6 @@ LLVMTypeRef lp_build_sample_function_type(struct gallivm_state *gallivm, uint32_
 LLVMTypeRef lp_build_size_function_type(struct gallivm_state *gallivm,
                                         const struct lp_sampler_size_query_params *params);
 
-LLVMTypeRef lp_build_image_function_component_type(struct gallivm_state *gallivm,
-                                                   const struct lp_img_params *params,
-                                                   bool is64, bool integer);
-
 LLVMTypeRef lp_build_image_function_type(struct gallivm_state *gallivm,
                                          const struct lp_img_params *params, bool ms,
                                          bool is64);
@@ -239,31 +238,26 @@ struct lp_jit_bindless_texture
 {
    const void *base;
    const void *residency;
-   uint32_t base_offset;
-   float view_min_lod; /* VK_EXT_image_view_min_lod, relative to first_level */
+   uint32_t sampler_index;
 };
 
-struct lp_image_descriptor {
+struct lp_descriptor {
    union {
-      struct lp_jit_bindless_texture texture;
-      struct lp_jit_image image;
+      struct {
+         struct lp_jit_bindless_texture texture;
+         struct lp_jit_sampler sampler;
+      };
+      struct {
+         struct lp_jit_image image;
+      };
+      struct lp_jit_buffer buffer;
+      uint64_t accel_struct;
    };
 
    /* Store sample/image functions in the same location since some d3d12 games
     * rely on mismatched descriptor types with null descriptors.
     */
    void *functions;
-
-   uint32_t padding[2];
-};
-
-struct lp_sampler_descriptor {
-   struct lp_jit_sampler jit;
-   uint32_t sampler_index;
-};
-
-struct lp_buffer_descriptor {
-   struct lp_jit_buffer jit;
 };
 
 #define LP_MAX_TEX_FUNC_ARGS 32

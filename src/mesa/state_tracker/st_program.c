@@ -52,7 +52,6 @@
 #include "pipe/p_defines.h"
 #include "pipe/p_shader_tokens.h"
 #include "draw/draw_context.h"
-#include "draw/draw_nir.h"
 
 #include "util/u_dump.h"
 #include "util/u_memory.h"
@@ -238,7 +237,7 @@ delete_variant(struct st_context *st, struct st_variant *v, unsigned stage)
           ((struct st_common_variant*)v)->key.is_draw_shader) {
          /* Draw shader. */
          draw_delete_vertex_shader(st->draw, v->driver_shader);
-      } else if (st->screen->caps.shareable_shaders || v->st == st) {
+      } else if (st->has_shareable_shaders || v->st == st) {
          /* The shader's context matches the calling context, or we
           * don't care.
           */
@@ -398,7 +397,7 @@ st_prog_to_nir_postprocess(struct st_context *st, nir_shader *nir,
 
    st_update_state_param_locations(st->ctx, prog, nir);
 
-   if (st->screen->caps.call_finalize_nir_in_linker) {
+   if (st->allow_st_finalize_nir_twice) {
       st_serialize_base_nir(prog, nir);
       st_finalize_nir(st, prog, NULL, nir, true, false);
 
@@ -621,6 +620,9 @@ static const struct nir_shader_compiler_options draw_nir_options = {
    .lower_bitfield_insert = true,
    .lower_bitfield_extract = true,
    .lower_fdph = true,
+   .lower_ffma16 = true,
+   .lower_ffma32 = true,
+   .lower_ffma64 = true,
    .lower_flrp16 = true,
    .lower_fmod = true,
    .lower_hadd = true,
@@ -815,9 +817,6 @@ st_create_common_variant(struct st_context *st,
    state.ir.nir = get_nir_shader(st, prog, key->is_draw_shader);
    const nir_shader_compiler_options *options = state.ir.nir->options;
 
-   if (key->is_draw_shader)
-      NIR_PASS(_, state.ir.nir, draw_nir_lower_opcodes);
-
    if (key->clamp_color) {
       NIR_PASS(_, state.ir.nir, nir_lower_clamp_color_outputs);
    }
@@ -841,7 +840,7 @@ st_create_common_variant(struct st_context *st,
       finalize = true;
    }
 
-   if (!st->screen->caps.gl_clamp &&
+   if (st->emulate_gl_clamp &&
          (key->gl_clamp[0] || key->gl_clamp[1] || key->gl_clamp[2])) {
       nir_lower_tex_options tex_opts = {0};
       tex_opts.saturate_s = key->gl_clamp[0];
@@ -850,7 +849,7 @@ st_create_common_variant(struct st_context *st,
       NIR_PASS(finalize, state.ir.nir, nir_lower_tex, &tex_opts);
    }
 
-   if (finalize || !st->screen->caps.call_finalize_nir_in_linker || key->is_draw_shader) {
+   if (finalize || !st->allow_st_finalize_nir_twice || key->is_draw_shader) {
       st_finalize_nir(st, prog, prog->shader_program, state.ir.nir, false,
                       key->is_draw_shader);
    }
@@ -880,7 +879,7 @@ st_create_common_variant(struct st_context *st,
       finalize = true;
    }
 
-   if (finalize || !st->screen->caps.call_finalize_nir_in_linker || key->is_draw_shader) {
+   if (finalize || !st->allow_st_finalize_nir_twice || key->is_draw_shader) {
       struct pipe_screen *screen = st->screen;
       if (!key->is_draw_shader && screen->finalize_nir)
          screen->finalize_nir(screen, state.ir.nir, false);
@@ -900,7 +899,7 @@ st_create_common_variant(struct st_context *st,
    }
 
    if (key->is_draw_shader) {
-      NIR_PASS(_, state.ir.nir, gl_nir_lower_images, NULL, false);
+      NIR_PASS(_, state.ir.nir, gl_nir_lower_images, false);
       v->base.driver_shader = draw_create_vertex_shader(st->draw, &state);
    }
    else
@@ -1080,8 +1079,7 @@ st_create_fp_variant(struct st_context *st,
 
    if (fp->ati_fs) {
       if (key->fog) {
-         NIR_PASS(_, state.ir.nir, st_nir_lower_fog, key->fog,
-                  key->fog_coord_abs, fp->Parameters,
+         NIR_PASS(_, state.ir.nir, st_nir_lower_fog, key->fog, fp->Parameters,
                   st->ctx->Const.PackedDriverUniformStorage);
       }
 
@@ -1123,7 +1121,7 @@ st_create_fp_variant(struct st_context *st,
       nir_lower_sample_shading(shader);
    }
 
-   if (!st->screen->caps.gl_clamp &&
+   if (st->emulate_gl_clamp &&
          (key->gl_clamp[0] || key->gl_clamp[1] || key->gl_clamp[2])) {
       nir_lower_tex_options tex_opts = {0};
       tex_opts.saturate_s = key->gl_clamp[0];
@@ -1188,8 +1186,7 @@ st_create_fp_variant(struct st_context *st,
                   key->external.lower_yx_xvxu || key->external.lower_xy_vxux ||
                   key->external.lower_ayuv || key->external.lower_xyuv ||
                   key->external.lower_yuv || key->external.lower_yu_yv ||
-                  key->external.lower_yv_yu || key->external.lower_y41x ||
-                  key->external.external_y2y)) {
+                  key->external.lower_yv_yu || key->external.lower_y41x)) {
 
       st_nir_lower_samplers(st->screen, state.ir.nir,
                               fp->shader_program, fp);
@@ -1213,13 +1210,12 @@ st_create_fp_variant(struct st_context *st,
       options.bt709_external = key->external.bt709;
       options.bt2020_external = key->external.bt2020;
       options.yuv_full_range_external = key->external.yuv_full_range;
-      options.bypass_csc_external = key->external.external_y2y;
       NIR_PASS(_, state.ir.nir, nir_lower_tex, &options);
       finalize = true;
       need_lower_tex_src_plane = true;
    }
 
-   if (finalize || !st->screen->caps.call_finalize_nir_in_linker)
+   if (finalize || !st->allow_st_finalize_nir_twice)
       st_finalize_nir(st, fp, fp->shader_program, state.ir.nir, false, false);
 
    /* This pass needs to happen *after* nir_lower_sampler */
@@ -1261,7 +1257,7 @@ st_create_fp_variant(struct st_context *st,
                nir_var_shader_in | nir_var_shader_out);
    }
 
-   if (finalize || !st->screen->caps.call_finalize_nir_in_linker) {
+   if (finalize || !st->allow_st_finalize_nir_twice) {
       /* Some of the lowering above may have introduced new varyings */
       nir_shader_gather_info(state.ir.nir,
                               nir_shader_get_entrypoint(state.ir.nir));
@@ -1431,7 +1427,7 @@ st_destroy_program_variants(struct st_context *st)
    /* If shaders can be shared with other contexts, the last context will
     * call DeleteProgram on all shaders, releasing everything.
     */
-   if (st->screen->caps.shareable_shaders)
+   if (st->has_shareable_shaders)
       return;
 
    /* ARB vert/frag program */
@@ -1474,7 +1470,7 @@ st_precompile_shader_variant(struct st_context *st,
          key.clamp_color = true;
       }
 
-      key.st = st->screen->caps.shareable_shaders ? NULL : st;
+      key.st = st->has_shareable_shaders ? NULL : st;
       st_get_common_variant(st, prog, &key, report_compile_error, &error);
       return error;
    }
@@ -1484,7 +1480,7 @@ st_precompile_shader_variant(struct st_context *st,
 
       memset(&key, 0, sizeof(key));
 
-      key.st = st->screen->caps.shareable_shaders ? NULL : st;
+      key.st = st->has_shareable_shaders ? NULL : st;
       key.lower_alpha_func = COMPARE_FUNC_ALWAYS;
       if (prog->ati_fs) {
          for (int i = 0; i < ARRAY_SIZE(key.texture_index); i++)

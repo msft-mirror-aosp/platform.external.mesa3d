@@ -15,8 +15,6 @@
 
 #include "util/os_misc.h"
 
-#include "common/amd_family.h"
-
 #define FUNCTION_LIST                                                                                                  \
    ITEM(CreateInstance)                                                                                                \
    ITEM(DestroyInstance)                                                                                               \
@@ -54,8 +52,6 @@ public:
 
    void get_pipeline_key(uint32_t code_size, const uint32_t *code, VkPipelineBinaryKeyKHR *pipeline_key,
                          VkPipelineCreateFlags flags = 0);
-
-   void get_global_pipeline_key(enum radeon_family family, VkPipelineBinaryKeyKHR *pipeline_key);
 
    uint64_t get_pipeline_hash(VkShaderStageFlags stage);
 

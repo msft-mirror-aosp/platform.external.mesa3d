@@ -32,7 +32,7 @@ pub struct ZCull {
 }
 
 impl ZCull {
-    #[unsafe(no_mangle)]
+    #[no_mangle]
     pub extern "C" fn nil_zcull_new(
         dev: &nv_zcull_device_info,
         x: u32,

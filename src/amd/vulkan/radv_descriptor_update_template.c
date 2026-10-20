@@ -24,7 +24,7 @@ radv_CreateDescriptorUpdateTemplate(VkDevice _device, const VkDescriptorUpdateTe
    struct radv_descriptor_update_template *templ;
    uint32_t i;
 
-   templ = vk_zalloc2(&device->vk.alloc, pAllocator, size, 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   templ = vk_alloc2(&device->vk.alloc, pAllocator, size, 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (!templ)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
@@ -143,8 +143,7 @@ radv_update_descriptor_set_with_template_impl(struct radv_device *device, struct
          }
          case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
          case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-            radv_write_buffer_descriptor_impl(device, templ->entry[i].descriptor_type, pDst,
-                                              (struct VkDescriptorBufferInfo *)pSrc);
+            radv_write_buffer_descriptor_impl(device, pDst, (struct VkDescriptorBufferInfo *)pSrc);
             break;
          case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
          case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:

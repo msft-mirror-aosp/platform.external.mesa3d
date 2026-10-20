@@ -28,7 +28,6 @@
 #include "wgl.h"
 
 #include <stdio.h>
-#include <stdbool.h>
 
 #define RESOLVE_DECL(type) \
     static type type##proc = NULL;

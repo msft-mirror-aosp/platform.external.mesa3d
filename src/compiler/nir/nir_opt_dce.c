@@ -111,24 +111,6 @@ struct loop_state {
    nir_block *preheader;
 };
 
-static void
-remove_instr(nir_instr *instr, struct exec_list *dead_instrs)
-{
-#ifndef NDEBUG
-   /* Fail an assertion if an input load is dead. This is a debug option. */
-   if (instr->type == nir_instr_type_intrinsic) {
-      nir_shader *nir =
-         instr->block->impl->function->shader;
-
-      if (nir->info.assert_inputs_not_dead)
-         assert(!nir_is_input_load(nir_instr_as_intrinsic(instr)));
-   }
-#endif
-
-   nir_instr_remove(instr);
-   exec_list_push_tail(dead_instrs, &instr->node);
-}
-
 static bool
 dce_block(nir_block *block, BITSET_WORD *defs_live, struct loop_state *loop,
           struct exec_list *dead_instrs)
@@ -154,7 +136,8 @@ dce_block(nir_block *block, BITSET_WORD *defs_live, struct loop_state *loop,
       if (loop->preheader) {
          instr->pass_flags = live;
       } else if (!live) {
-         remove_instr(instr, dead_instrs);
+         nir_instr_remove(instr);
+         exec_list_push_tail(dead_instrs, &instr->node);
          progress = true;
       }
    }
@@ -221,7 +204,8 @@ dce_cf_list(struct exec_list *cf_list, BITSET_WORD *defs_live,
             nir_foreach_block_in_cf_node(block, cf_node) {
                nir_foreach_instr_safe(instr, block) {
                   if (!instr->pass_flags) {
-                     remove_instr(instr, dead_instrs);
+                     nir_instr_remove(instr);
+                     exec_list_push_tail(dead_instrs, &instr->node);
                      progress = true;
                   }
                }

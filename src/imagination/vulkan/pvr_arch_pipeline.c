@@ -49,6 +49,7 @@
 #include "pvr_macros.h"
 #include "pvr_nir_lower_ycbcr.h"
 #include "pvr_pass.h"
+#include "pvr_pds.h"
 #include "pvr_physical_device.h"
 #include "pvr_robustness.h"
 #include "pvr_sampler.h"
@@ -617,16 +618,6 @@ static VkResult pvr_pds_descriptor_program_create_and_upload(
       };
    }
 
-   /* Pass the 64-bit address (as 2x32-bit regs) of the global shmem buffer. */
-   if (stage == MESA_SHADER_COMPUTE && data->cs.shmem.count > 0 &&
-       data->cs.global_shmem) {
-      program.buffers[program.buffer_count++] = (struct pvr_pds_buffer){
-         .type = PVR_BUFFER_TYPE_GLOBAL_SHMEM,
-         .size_in_dwords = sizeof(uint64_t) / sizeof(uint32_t),
-         .destination = data->cs.shmem.start,
-      };
-   }
-
    pds_info->entries_size_in_bytes = const_entries_size_in_bytes;
 
    pvr_pds_generate_descriptor_upload_program(&program, NULL, pds_info);
@@ -926,8 +917,7 @@ static void pvr_pipeline_finish(struct pvr_device *device,
 
 static void pvr_early_init_shader_data(pco_data *data,
                                        nir_shader *nir,
-                                       const void *pCreateInfo,
-                                       struct pvr_device *const device);
+                                       const void *pCreateInfo);
 
 static void
 pvr_preprocess_shader_data(pco_data *data,
@@ -1022,8 +1012,8 @@ static VkResult pvr_compute_pipeline_compile(
    if (result != VK_SUCCESS)
       goto err_free_build_context;
 
-   pvr_early_init_shader_data(&shader_data, nir, pCreateInfo, device);
-   pco_preprocess_nir(pco_ctx, nir, &shader_data);
+   pvr_early_init_shader_data(&shader_data, nir, pCreateInfo);
+   pco_preprocess_nir(pco_ctx, nir);
    pvr_preprocess_shader_data(&shader_data,
                               nir,
                               pCreateInfo,
@@ -1083,8 +1073,7 @@ static VkResult pvr_compute_pipeline_compile(
    if (result != VK_SUCCESS)
       goto err_free_build_context;
 
-   if (compute_pipeline->cs_data.cs.zero_shmem &&
-       !compute_pipeline->cs_data.cs.global_shmem) {
+   if (compute_pipeline->cs_data.cs.zero_shmem) {
       uint32_t start = compute_pipeline->cs_data.cs.shmem.start;
       uint32_t count = compute_pipeline->cs_data.cs.shmem.count;
       pco_shader *zero_init_shader =
@@ -1344,7 +1333,10 @@ static void pvr_fragment_state_save(struct pvr_graphics_pipeline *gfx_pipeline,
    const pco_data *shader_data = pco_shader_data(fs);
    memcpy(&gfx_pipeline->fs_data, shader_data, sizeof(*shader_data));
 
-   if (shader_data->fs.uses.depth_feedback)
+   /* TODO: add selection for other values of pass type and sample rate. */
+
+   /* TODO: do this dynamically as well */
+   if (shader_data->fs.uses.depth_feedback && !shader_data->fs.uses.early_frag)
       fragment_state->pass_type = ROGUE_TA_PASSTYPE_DEPTH_FEEDBACK;
    else if (shader_data->fs.uses.discard)
       fragment_state->pass_type = ROGUE_TA_PASSTYPE_PUNCH_THROUGH;
@@ -2024,9 +2016,6 @@ static void pvr_init_fs_outputs_mrt(pco_data *data,
    unsigned u;
    pco_fs_data *fs = &data->fs;
 
-   if (!vk_render_pass_state_has_attachment_info(rp))
-      goto early_exit;
-
    for (u = 0; u < PVR_MAX_COLOR_ATTACHMENTS; u++) {
       if (!(rp->attachments & MESA_VK_RP_ATTACHMENT_COLOR_BIT(u)))
          continue;
@@ -2047,7 +2036,6 @@ static void pvr_init_fs_outputs_mrt(pco_data *data,
       }
    }
 
-early_exit:
    fs->z_replicate = ~0u;
 }
 
@@ -2429,27 +2417,25 @@ static void pvr_alloc_cs_shmem(pco_data *data, nir_shader *nir)
 {
    assert(!nir->info.cs.has_variable_shared_mem);
 
+   data->cs.shmem.start = data->common.coeffs;
+   data->cs.shmem.count = nir->info.shared_size >> 2;
+   data->common.coeffs += data->cs.shmem.count;
    data->cs.zero_shmem = nir->info.zero_initialize_shared_memory;
-   data->cs.shmem.count = nir->info.shared_size;
-
-   if (data->cs.global_shmem) {
-      /* Reserve space for the shared memory buffer base address. */
-      data->cs.shmem.start = data->common.shareds;
-      data->common.shareds += 2;
-   } else {
-      /* Reserve space in coefficients for use as shared memory. */
-      data->cs.shmem.start = data->common.coeffs;
-      data->common.coeffs += data->cs.shmem.count;
-
-      /* DWORD granularity. */
-      data->cs.shmem.count >>= 2;
-   }
 }
 
 static void pvr_init_descriptors(pco_data *data,
                                  nir_shader *nir,
                                  struct vk_pipeline_layout *layout)
 {
+   const struct pvr_device *device = vk_to_pvr_device(layout->base.device);
+   data->common.robust_buffer_access =
+      device->vk.enabled_features.robustBufferAccess;
+
+   data->common.null_descriptor = device->vk.enabled_features.nullDescriptor;
+
+   data->common.image_2d_view_of_3d =
+      device->vk.enabled_features.image2DViewOf3D;
+
    for (unsigned desc_set = 0; desc_set < layout->set_count; ++desc_set) {
       const struct pvr_descriptor_set_layout *set_layout =
          vk_to_pvr_descriptor_set_layout(layout->set_layouts[desc_set]);
@@ -2474,9 +2460,6 @@ static void pvr_init_descriptors(pco_data *data,
 
          binding_data->is_img_smp = layout_binding->type ==
                                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-
-         binding_data->is_inline_ubo = layout_binding->type ==
-                                       VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK;
       }
    }
 }
@@ -2699,9 +2682,6 @@ pvr_preprocess_shader_data(pco_data *data,
          data->fs.meta_present.color_write_enable = true;
       }
 
-      if (state->ms)
-         nir->info.fs.uses_sample_shading |= state->ms->sample_shading_enable;
-
       /* TODO: push consts, dynamic state, etc. */
       break;
    }
@@ -2780,18 +2760,9 @@ static void pvr_postprocess_shader_data(pco_data *data,
 
 static void pvr_early_init_shader_data(pco_data *data,
                                        nir_shader *nir,
-                                       const void *pCreateInfo,
-                                       struct pvr_device *const device)
+                                       const void *pCreateInfo)
 {
    const VkGraphicsPipelineCreateInfo *pGraphicsCreateInfo = pCreateInfo;
-
-   data->common.robust_buffer_access =
-      device->vk.enabled_features.robustBufferAccess;
-
-   data->common.null_descriptor = device->vk.enabled_features.nullDescriptor;
-
-   data->common.image_2d_view_of_3d =
-      device->vk.enabled_features.image2DViewOf3D;
 
    switch (nir->info.stage) {
    case MESA_SHADER_VERTEX:
@@ -2938,9 +2909,8 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
 
       pvr_early_init_shader_data(&shader_data[stage],
                                  nir_shaders[stage],
-                                 pCreateInfo,
-                                 device);
-      pco_preprocess_nir(pco_ctx, nir_shaders[stage], &shader_data[stage]);
+                                 pCreateInfo);
+      pco_preprocess_nir(pco_ctx, nir_shaders[stage]);
    }
 
    for (mesa_shader_stage stage = 0; stage < MESA_SHADER_STAGES; ++stage) {
@@ -3506,7 +3476,7 @@ static uint32_t pvr_get_executable_count(struct pvr_pipeline *pipeline)
    return exe_count;
 }
 
-VkResult PVR_PER_ARCH(GetPipelineExecutableStatisticsKHR)(
+VkResult pvr_GetPipelineExecutableStatisticsKHR(
    UNUSED VkDevice _device,
    const VkPipelineExecutableInfoKHR *pExecutableInfo,
    uint32_t *pStatisticCount,
@@ -3548,7 +3518,7 @@ VkResult PVR_PER_ARCH(GetPipelineExecutableStatisticsKHR)(
    return vk_outarray_status(&out);
 }
 
-VkResult PVR_PER_ARCH(GetPipelineExecutablePropertiesKHR)(
+VkResult pvr_GetPipelineExecutablePropertiesKHR(
    VkDevice _device,
    const VkPipelineInfoKHR *pPipelineInfo,
    uint32_t *pExecutableCount,
@@ -3637,7 +3607,7 @@ write_ir_text(VkPipelineExecutableInternalRepresentationKHR *ir,
    return true;
 }
 
-VkResult PVR_PER_ARCH(GetPipelineExecutableInternalRepresentationsKHR)(
+VkResult pvr_GetPipelineExecutableInternalRepresentationsKHR(
    UNUSED VkDevice _device,
    UNUSED const VkPipelineExecutableInfoKHR *pExecutableInfo,
    uint32_t *pInternalRepresentationCount,

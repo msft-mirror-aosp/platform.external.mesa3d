@@ -43,38 +43,22 @@ extern "C" {
 #include <vulkan/vulkan_core.h>
 
 struct vk_pnext_iterator {
-   void *pos;
+   VkBaseOutStructure *pos;
 #ifndef NDEBUG
-   void *half_pos;
+   VkBaseOutStructure *half_pos;
    unsigned idx;
 #endif
    bool done;
 };
-
-#define VK_PNEXT_OFFSET offsetof(VkBaseOutStructure, pNext)
-
-static inline void
-vk_pnext_set_next(void *s, void *next)
-{
-   memcpy((char *)s + VK_PNEXT_OFFSET, &next, sizeof(next));
-}
-
-static inline void *
-vk_pnext_get_next(const void *s)
-{
-   void *next;
-   memcpy(&next, (const char *)s + VK_PNEXT_OFFSET, sizeof(next));
-   return next;
-}
 
 static inline struct vk_pnext_iterator
 vk_pnext_iterator_init(void *start)
 {
    struct vk_pnext_iterator iter;
 
-   iter.pos = start;
+   iter.pos = (VkBaseOutStructure *)start;
 #ifndef NDEBUG
-   iter.half_pos = start;
+   iter.half_pos = (VkBaseOutStructure *)start;
    iter.idx = 0;
 #endif
    iter.done = false;
@@ -88,23 +72,10 @@ vk_pnext_iterator_init_const(const void *start)
    return vk_pnext_iterator_init((void *)start);
 }
 
-static inline VkStructureType
-vk_pnext_stype(struct vk_pnext_iterator *iter)
+static inline VkBaseOutStructure *
+vk_pnext_iterator_next(struct vk_pnext_iterator *iter)
 {
-   /* This should never be read, but return something deterministic and invalid. */
-   if (!iter->pos)
-      return (VkStructureType) UINT32_MAX;
-
-   /* Use memcpy instead of casts to avoid strict aliasing issues. */
-   VkBaseOutStructure curr;
-   memcpy(&curr, iter->pos, sizeof(curr));
-   return curr.sType;
-}
-
-static inline void *
-vk_pnext_iterator_next(struct vk_pnext_iterator *iter, VkStructureType *stype)
-{
-   iter->pos = vk_pnext_get_next(iter->pos);
+   iter->pos = iter->pos->pNext;
 
 #ifndef NDEBUG
    if (iter->idx++ & 1) {
@@ -116,13 +87,12 @@ vk_pnext_iterator_next(struct vk_pnext_iterator *iter, VkStructureType *stype)
        * this distance will be an integer multiple of the loop length, at
        * which point the two pointers will be equal.
        */
-      iter->half_pos = vk_pnext_get_next(iter->half_pos);
+      iter->half_pos = iter->half_pos->pNext;
       if (iter->half_pos == iter->pos)
          assert(!"Vulkan input pNext chain has a loop!");
    }
 #endif
 
-   *stype = vk_pnext_stype(iter);
    return iter->pos;
 }
 
@@ -130,18 +100,18 @@ vk_pnext_iterator_next(struct vk_pnext_iterator *iter, VkStructureType *stype)
  * the inner loop, breaks and continues should work exactly the same as if
  * there were only one for loop.
  */
-#define vk_foreach_struct(__stype, __e, __start) \
+#define vk_foreach_struct(__e, __start) \
    for (struct vk_pnext_iterator __iter = vk_pnext_iterator_init(__start); \
         !__iter.done; __iter.done = true) \
-      for (VkStructureType __stype = vk_pnext_stype(&__iter), __dummy = (VkStructureType)0; __dummy == (VkStructureType)0; __dummy = (VkStructureType)1) \
-         for (void *__e = __iter.pos; __e; __e = vk_pnext_iterator_next(&__iter, &__stype))
+      for (VkBaseOutStructure *__e = __iter.pos; \
+           __e; __e = vk_pnext_iterator_next(&__iter))
 
-#define vk_foreach_struct_const(__stype, __e, __start) \
+#define vk_foreach_struct_const(__e, __start) \
    for (struct vk_pnext_iterator __iter = \
             vk_pnext_iterator_init_const(__start); \
         !__iter.done; __iter.done = true) \
-      for (VkStructureType __stype = vk_pnext_stype(&__iter), __dummy = (VkStructureType)0; __dummy == (VkStructureType)0; __dummy = (VkStructureType)1) \
-         for (const void *__e = __iter.pos; __e; __e = vk_pnext_iterator_next(&__iter, &__stype))
+      for (const VkBaseInStructure *__e = (VkBaseInStructure *)__iter.pos; \
+           __e; __e = (VkBaseInStructure *)vk_pnext_iterator_next(&__iter))
 
 /**
  * A wrapper for a Vulkan output array. A Vulkan output array is one that
@@ -289,8 +259,8 @@ __vk_outarray_next(struct __vk_outarray *a, size_t elem_size)
 static inline void *
 __vk_find_struct(void *start, VkStructureType sType)
 {
-   vk_foreach_struct(iter_sType, s, start) {
-      if (iter_sType == sType)
+   vk_foreach_struct(s, start) {
+      if (s->sType == sType)
          return s;
    }
 
@@ -308,11 +278,13 @@ __vk_find_struct(void *start, VkStructureType sType)
 static inline void
 __vk_append_struct(void *start, void *element)
 {
-   void *tail = NULL;
-   vk_foreach_struct(sType, s, start)
-      tail = s;
-   assert(tail);
-   vk_pnext_set_next(tail, element);
+   vk_foreach_struct(s, start) {
+      if (s->pNext)
+         continue;
+
+      s->pNext = (struct VkBaseOutStructure *) element;
+      break;
+   }
 }
 
 uint32_t vk_get_driver_version(void);
@@ -346,41 +318,6 @@ static inline VkShaderStageFlagBits
 mesa_to_vk_shader_stage(mesa_shader_stage mesa_stage)
 {
    return (VkShaderStageFlagBits) (1 << ((uint32_t) mesa_stage));
-}
-
-/* this needs spec fixes */
-#define MESA_VK_SHADER_STAGE_WORKGRAPH_HACK_BIT_FIXME (1<<30)
-
-/* Internal version of VK_SHADER_STAGE_ALL which only includes valid bits. */
-#define MESA_VK_SHADER_STAGE_ALL (VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT |              \
-                                  VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR |        \
-                                  VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR |      \
-                                  VK_SHADER_STAGE_INTERSECTION_BIT_KHR | VK_SHADER_STAGE_CALLABLE_BIT_KHR | \
-                                  VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT)
-
-static inline VkShaderStageFlags
-vk_shader_stages_from_bind_point(VkPipelineBindPoint pipelineBindPoint)
-{
-   switch (pipelineBindPoint) {
-#ifdef VK_ENABLE_BETA_EXTENSIONS
-    case VK_PIPELINE_BIND_POINT_EXECUTION_GRAPH_AMDX:
-      return VK_SHADER_STAGE_COMPUTE_BIT | MESA_VK_SHADER_STAGE_WORKGRAPH_HACK_BIT_FIXME;
-#endif
-   case VK_PIPELINE_BIND_POINT_COMPUTE:
-      return VK_SHADER_STAGE_COMPUTE_BIT;
-   case VK_PIPELINE_BIND_POINT_GRAPHICS:
-      return VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT;
-   case VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR:
-      return VK_SHADER_STAGE_RAYGEN_BIT_KHR |
-             VK_SHADER_STAGE_ANY_HIT_BIT_KHR |
-             VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
-             VK_SHADER_STAGE_MISS_BIT_KHR |
-             VK_SHADER_STAGE_INTERSECTION_BIT_KHR |
-             VK_SHADER_STAGE_CALLABLE_BIT_KHR;
-   default:
-      UNREACHABLE("unknown bind point!");
-   }
-   return 0;
 }
 
 /* iterate over a sequence of indexed multidraws for VK_EXT_multi_draw extension */
@@ -476,6 +413,11 @@ enum mesa_prim vk_topology_to_mesa(VkPrimitiveTopology topology);
 
 #define vk_add_exec_statistic_bool(out, name, description, value)               \
    vk_add_exec_statistic(out, name, description, BOOL32, b32, value)
+
+#define vk_add_exec_statistic_str(out, name, description, value)               \
+   do {                                                                        \
+      /* Ignore string statistics in Vulkan drivers, at least for now */       \
+   } while(0)
 
 #ifdef __cplusplus
 }

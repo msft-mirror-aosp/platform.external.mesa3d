@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium_4",
+    name: "files_libgallium_1",
     srcs: [
         "draw_context.c",
         "draw_fs.c",
@@ -58,20 +58,6 @@ filegroup {
         "draw_vs_exec.c",
         "draw_vs_llvm.c",
         "draw_vs_variant.c",
-    ],
-}
-
-python_binary_host {
-    name: "draw_nir_lower_opcodes_py_binary",
-    main: "draw_nir_lower_opcodes.py",
-    srcs: [
-        ":nir_algebraic.py",
-        ":nir_opcodes.py",
-        "draw_nir_lower_opcodes.py",
-    ],
-    libs: [
-        "mako",
-        "pyyaml",
     ],
 }
 

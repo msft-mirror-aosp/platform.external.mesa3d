@@ -130,6 +130,12 @@ const struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
       .IsStandardScalar = 1,
    },
    {
+      .Opcode = RC_OPCODE_LIT,
+      .Name = "LIT",
+      .NumSrcRegs = 1,
+      .HasDstReg = 1,
+   },
+   {
       .Opcode = RC_OPCODE_LOG,
       .Name = "LOG",
       .NumSrcRegs = 1,
@@ -493,6 +499,9 @@ rc_compute_sources_for_writemask(const struct rc_instruction *inst, unsigned int
       case RC_OPCODE_EXP:
       case RC_OPCODE_LOG:
          srcmasks[0] |= RC_MASK_XY;
+         break;
+      case RC_OPCODE_LIT:
+         srcmasks[0] |= RC_MASK_X | RC_MASK_Y | RC_MASK_W;
          break;
       default:
          break;

@@ -35,7 +35,6 @@
 #include "lp_fence.h"
 #include "lp_debug.h"
 #include "lp_context.h"
-#include "lp_screen.h"
 #include "lp_state_fs.h"
 #include "lp_setup_context.h"
 
@@ -52,7 +51,7 @@ struct resource_ref {
 #define SHADER_REF_SZ 32
 /** List of shader variant references */
 struct shader_ref {
-   struct util_shader_variant *variant[SHADER_REF_SZ];
+   struct lp_fragment_shader_variant *variant[SHADER_REF_SZ];
    int count;
    struct shader_ref *next;
 };
@@ -282,8 +281,8 @@ lp_scene_end_rasterization(struct lp_scene *scene)
          if (LP_DEBUG & DEBUG_SETUP)
             debug_printf("shader %d: %p\n", j, (void *) ref->variant[i]);
          j++;
-         util_shader_variant_reference(&llvmpipe_screen(scene->pipe->screen)->fs_variant_opts,
-                                       &ref->variant[i], NULL);
+         lp_fs_variant_reference(llvmpipe_context(scene->pipe),
+                                 &ref->variant[i], NULL);
       }
    }
 
@@ -469,7 +468,7 @@ lp_scene_add_frag_shader_reference(struct lp_scene *scene,
       /* Search for this resource:
        */
       for (int i = 0; i < ref->count; i++)
-         if (ref->variant[i] == &variant->base)
+         if (ref->variant[i] == variant)
             return true;
 
       if (ref->count < SHADER_REF_SZ) {
@@ -493,8 +492,8 @@ lp_scene_add_frag_shader_reference(struct lp_scene *scene,
 
    /* Append the reference to the reference block.
     */
-   util_shader_variant_reference(&llvmpipe_screen(scene->pipe->screen)->fs_variant_opts,
-                                 &ref->variant[ref->count++], &variant->base);
+   lp_fs_variant_reference(llvmpipe_context(scene->pipe),
+                           &ref->variant[ref->count++], variant);
 
    return true;
 }
@@ -535,34 +534,60 @@ lp_scene_is_resource_referenced(const struct lp_scene *scene,
 }
 
 
+/** advance curr_x,y to the next bin */
+static bool
+next_bin(struct lp_scene *scene)
+{
+   scene->curr_x++;
+   if (scene->curr_x >= scene->tiles_x) {
+      scene->curr_x = 0;
+      scene->curr_y++;
+   }
+   if (scene->curr_y >= scene->tiles_y) {
+      /* no more bins */
+      return false;
+   }
+   return true;
+}
+
+
 void
 lp_scene_bin_iter_begin(struct lp_scene *scene)
 {
    scene->curr_x = scene->curr_y = -1;
-   p_atomic_set(&scene->curr_bin, 0);
 }
 
 
 /**
  * Return pointer to next bin to be rendered.
+ * The lp_scene::curr_x and ::curr_y fields will be advanced.
  * Multiple rendering threads will call this function to get a chunk
  * of work (a bin) to work on.
  */
 struct cmd_bin *
 lp_scene_bin_iter_next(struct lp_scene *scene , int *x, int *y)
 {
-   const int total_tiles = (int)(scene->tiles_x * scene->tiles_y);
-   int idx = p_atomic_fetch_add(&scene->curr_bin, 1);
+   struct cmd_bin *bin = NULL;
 
-   if (idx >= total_tiles)
-      return NULL;
+   mtx_lock(&scene->mutex);
 
-   int bx = idx % scene->tiles_x;
-   int by = idx / scene->tiles_x;
+   if (scene->curr_x < 0) {
+      /* first bin */
+      scene->curr_x = 0;
+      scene->curr_y = 0;
+   } else if (!next_bin(scene)) {
+      /* no more bins left */
+      goto end;
+   }
 
-   *x = bx;
-   *y = by;
-   return lp_scene_get_bin(scene, bx, by);
+   bin = lp_scene_get_bin(scene, scene->curr_x, scene->curr_y);
+   *x = scene->curr_x;
+   *y = scene->curr_y;
+
+end:
+   /*printf("return bin %p at %d, %d\n", (void *) bin, *bin_x, *bin_y);*/
+   mtx_unlock(&scene->mutex);
+   return bin;
 }
 
 

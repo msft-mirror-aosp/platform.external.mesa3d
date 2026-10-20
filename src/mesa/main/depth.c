@@ -46,6 +46,9 @@ _mesa_ClearDepth( GLclampd depth )
 {
    GET_CURRENT_CONTEXT(ctx);
 
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glClearDepth(%f)\n", depth);
+
    ctx->PopAttribState |= GL_DEPTH_BUFFER_BIT;
    ctx->Depth.Clear = CLAMP( depth, 0.0, 1.0 );
 }
@@ -100,6 +103,10 @@ void GLAPIENTRY
 _mesa_DepthFunc(GLenum func)
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glDepthFunc %s\n", _mesa_enum_to_string(func));
+
    depth_func(ctx, func, false);
 }
 
@@ -109,6 +116,9 @@ void GLAPIENTRY
 _mesa_DepthMask( GLboolean flag )
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glDepthMask %d\n", flag);
 
    /*
     * GL_TRUE indicates depth buffer writing is enabled (default)
@@ -132,6 +142,9 @@ void GLAPIENTRY
 _mesa_DepthBoundsEXT( GLclampd zmin, GLclampd zmax )
 {
    GET_CURRENT_CONTEXT(ctx);
+
+   if (MESA_VERBOSE & VERBOSE_API)
+      _mesa_debug(ctx, "glDepthBounds(%f, %f)\n", zmin, zmax);
 
    if (zmin > zmax) {
       _mesa_error(ctx, GL_INVALID_VALUE, "glDepthBoundsEXT(zmin > zmax)");

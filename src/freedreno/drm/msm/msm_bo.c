@@ -13,16 +13,24 @@ bo_allocate(struct msm_bo *msm_bo)
 {
    struct fd_bo *bo = &msm_bo->base;
    if (!msm_bo->offset) {
+      struct drm_msm_gem_info req = {
+         .handle = bo->handle,
+         .info = MSM_INFO_GET_OFFSET,
+      };
+      int ret;
+
       /* if the buffer is already backed by pages then this
        * doesn't actually do anything (other than giving us
        * the offset)
        */
-      int ret = msm_common_gem_info_get(bo->dev->fd, bo->handle,
-                                        MSM_INFO_GET_OFFSET, &msm_bo->offset);
+      ret =
+         drmCommandWriteRead(bo->dev->fd, DRM_MSM_GEM_INFO, &req, sizeof(req));
       if (ret) {
          ERROR_MSG("alloc failed: %s", strerror(errno));
          return ret;
       }
+
+      msm_bo->offset = req.value;
    }
 
    return 0;
@@ -76,41 +84,74 @@ msm_bo_madvise(struct fd_bo *bo, int willneed)
 static uint64_t
 msm_bo_iova(struct fd_bo *bo)
 {
-   uint64_t value;
-   int ret = msm_common_gem_info_get(bo->dev->fd, bo->handle, MSM_INFO_GET_IOVA,
-                                     &value);
+   struct drm_msm_gem_info req = {
+      .handle = bo->handle,
+      .info = MSM_INFO_GET_IOVA,
+   };
+   int ret;
+
+   ret = drmCommandWriteRead(bo->dev->fd, DRM_MSM_GEM_INFO, &req, sizeof(req));
    if (ret)
       return 0;
 
-   return value;
+   return req.value;
 }
 
 static void
 msm_bo_set_name(struct fd_bo *bo, const char *fmt, va_list ap)
 {
-   char buf[FD_MSM_GEM_NAME_LENGTH + 1];
+   struct drm_msm_gem_info req = {
+      .handle = bo->handle,
+      .info = MSM_INFO_SET_NAME,
+   };
+   char buf[32];
    int sz;
 
    if (bo->dev->version < FD_VERSION_SOFTPIN)
       return;
 
    sz = vsnprintf(buf, sizeof(buf), fmt, ap);
-   sz = MIN2(sz, FD_MSM_GEM_NAME_LENGTH);
 
-   msm_common_bo_set_name(bo->dev->fd, bo->handle, buf, sz);
+   req.value = VOID2U64(buf);
+   req.len = MIN2(sz, sizeof(buf));
+
+   drmCommandWrite(bo->dev->fd, DRM_MSM_GEM_INFO, &req, sizeof(req));
 }
 
 static void
 msm_bo_set_metadata(struct fd_bo *bo, void *metadata, uint32_t metadata_size)
 {
-   msm_common_set_metadata(bo->dev->fd, bo->handle, metadata, metadata_size);
+   struct drm_msm_gem_info req = {
+      .handle = bo->handle,
+      .info = MSM_INFO_SET_METADATA,
+      .value = (uintptr_t)(void *)metadata,
+      .len = metadata_size,
+   };
+
+   int ret = drmCommandWrite(bo->dev->fd, DRM_MSM_GEM_INFO, &req, sizeof(req));
+   if (ret) {
+      mesa_logw_once("Failed to set BO metadata with DRM_MSM_GEM_INFO: %d",
+                     ret);
+   }
 }
 
 static int
 msm_bo_get_metadata(struct fd_bo *bo, void *metadata, uint32_t metadata_size)
 {
-   return msm_common_get_metadata(bo->dev->fd, bo->handle, metadata,
-                                  metadata_size);
+   struct drm_msm_gem_info req = {
+      .handle = bo->handle,
+      .info = MSM_INFO_GET_METADATA,
+      .value = (uintptr_t)(void *)metadata,
+      .len = metadata_size,
+   };
+
+   int ret = drmCommandWrite(bo->dev->fd, DRM_MSM_GEM_INFO, &req, sizeof(req));
+   if (ret) {
+      mesa_logw_once("Failed to get BO metadata with DRM_MSM_GEM_INFO: %d",
+                     ret);
+   }
+
+   return ret;
 }
 
 static const struct fd_bo_funcs funcs = {
@@ -130,20 +171,29 @@ static const struct fd_bo_funcs funcs = {
 static int
 new_handle(struct fd_device *dev, uint32_t size, uint32_t flags, uint32_t *handle)
 {
-   uint32_t msm_flags = 0;
+   struct drm_msm_gem_new req = {
+      .size = size,
+   };
+   int ret;
 
    if (flags & FD_BO_SCANOUT)
-      msm_flags |= MSM_BO_SCANOUT;
+      req.flags |= MSM_BO_SCANOUT;
 
    if (flags & FD_BO_GPUREADONLY)
-      msm_flags |= MSM_BO_GPU_READONLY;
+      req.flags |= MSM_BO_GPU_READONLY;
 
    if (flags & FD_BO_CACHED_COHERENT)
-      msm_flags |= MSM_BO_CACHED_COHERENT;
+      req.flags |= MSM_BO_CACHED_COHERENT;
    else
-      msm_flags |= MSM_BO_WC;
+      req.flags |= MSM_BO_WC;
 
-   return msm_common_gem_new(dev->fd, size, msm_flags, handle);
+   ret = drmCommandWriteRead(dev->fd, DRM_MSM_GEM_NEW, &req, sizeof(req));
+   if (ret)
+      return ret;
+
+   *handle = req.handle;
+
+   return 0;
 }
 
 /* allocate a new buffer object */

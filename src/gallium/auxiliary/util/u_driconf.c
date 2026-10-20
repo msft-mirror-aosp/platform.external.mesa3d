@@ -47,7 +47,6 @@ u_driconf_fill_st_options(struct st_config_options *options,
    query_bool_option(force_compat_shaders);
    query_bool_option(force_glsl_extensions_warn);
    query_int_option(force_glsl_version);
-   query_int_option(default_glsl_version);
    query_bool_option(allow_extra_pp_tokens);
    query_bool_option(allow_glsl_extension_directive_midshader);
    query_bool_option(allow_glsl_120_subset_in_110);
@@ -68,7 +67,6 @@ u_driconf_fill_st_options(struct st_config_options *options,
    query_bool_option(allow_draw_out_of_order);
    query_bool_option(glthread_nop_check_framebuffer_status);
    query_bool_option(ignore_map_unsynchronized);
-   query_bool_option(zero_invalidated_buffers);
    query_bool_option(ignore_discard_framebuffer);
    query_bool_option(force_gl_map_buffer_synchronized);
    query_bool_option(force_gl_depth_component_type_int);

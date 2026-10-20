@@ -53,15 +53,11 @@ v3d_cl_ensure_space(struct v3d_cl *cl, uint32_t space, uint32_t alignment)
         struct v3d_device_info *devinfo = &cl->job->v3d->screen->devinfo;
 
         /* If we are growing, double the BO allocation size to reduce the
-         * number of allocations with large command buffers, capped so that
-         * jobs recording an extreme number of draws without flushing keep
-         * adding BO handles and hit the flush thresholds in v3d_draw_vbo()
-         * instead of growing ever larger CL BOs until memory exhaustion.
+         * number of allocations with large command buffers.
          */
         space = align(space, devinfo->page_size);
         if (cl->bo)
-                space = MAX2(MIN2(cl->bo->size * 2, V3D_CL_MAX_GROW_SIZE),
-                             space);
+                space = MAX2(cl->bo->size * 2, space);
 
         v3d_bo_unreference(&cl->bo);
         cl->bo = v3d_bo_alloc(cl->job->v3d->screen, space, "CL");
@@ -93,8 +89,7 @@ v3d_cl_ensure_space_with_branch(struct v3d_cl *cl, uint32_t space)
          */
         space = align(space + unusable_size, devinfo->page_size);
         if (cl->bo)
-                space = MAX2(MIN2(cl->bo->size * 2, V3D_CL_MAX_GROW_SIZE),
-                             space);
+                space = MAX2(cl->bo->size * 2, space);
 
         struct v3d_bo *new_bo = v3d_bo_alloc(cl->job->v3d->screen, space, "CL");
 

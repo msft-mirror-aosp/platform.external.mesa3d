@@ -216,6 +216,7 @@ pushfield(lua_State *L, struct rnntypeinfo *info, struct rnn *rnn,
       bitfieldsnum = info->bitfieldsnum;
       break;
    default:
+      printf("invalid register type: %d\n", info->type);
       return 0;
    }
 
@@ -265,7 +266,8 @@ l_rnn_etype(lua_State *L, struct rnn *rnn, struct rnndelem *elem,
       return l_rnn_etype(L, rnn, elem->subelems[0], offset);
    default:
       /* hmm.. */
-      return luaL_error(L, "unhandled type: %d\n", elem->type);
+      printf("unhandled type: %d\n", elem->type);
+      return 0;
    }
 }
 
@@ -291,7 +293,7 @@ l_rnn_struct_meta_index(lua_State *L)
       }
    }
 
-   return luaL_error(L, "no such member: %s", name);
+   return 0;
 }
 
 static const struct luaL_Reg l_meta_rnn_struct[] = {
@@ -337,6 +339,8 @@ l_rnn_array_meta_index(lua_State *L)
    } else {
       return l_rnn_etype_struct(L, rnndoff->rnn, elem, offset);
    }
+
+   return 0;
 }
 
 static const struct luaL_Reg l_meta_rnn_array[] = {
@@ -373,7 +377,7 @@ l_rnn_reg_meta_index(lua_State *L)
    int ret = pushfield(L, info, rnndoff->rnn, rnndoff->offset, name);
 
    if (!ret)
-      return luaL_error(L, "No such member: %s\n", name);
+      printf("invalid member: %s\n", name);
 
    return ret;
 }
@@ -434,7 +438,7 @@ l_rnn_enumtype_meta_index(lua_State *L)
 
    int val = rnn_enumval(et->rnn, et->e->name, name);
    if (val < 0)
-      return luaL_error(L, "no such member: %s", name);
+      return 0;
 
    pushenum(L, et->rnn, val, et->e);
 
@@ -515,7 +519,7 @@ l_rnn_meta_dom_index(lua_State *L)
       }
    }
 
-   return luaL_error(L, "No such member: %s", lua_tostring(L, 2));
+   return 0;
 }
 
 /*
@@ -588,7 +592,7 @@ l_rnn_meta_shaderstat_index(lua_State *L)
    } else if (!strcmp(name, "cs")) {
       stage = MESA_SHADER_COMPUTE;
    } else {
-      return luaL_error(L, "No such member: %s", name);
+      return 0;
    }
 
    struct shader_stats *stats = get_shader_stats(stage);
@@ -638,7 +642,7 @@ l_rnn_meta_index(lua_State *L)
    if (e)
       return l_rnn_etype_enumtype(L, rnn, e);
 
-   return luaL_error(L, "No such member: %s", name);
+   return 0;
 }
 
 static int
@@ -816,7 +820,7 @@ l_bo_write(lua_State *L)
 static int
 l_bo_index(lua_State *L)
 {
-   uint64_t addr = (uint64_t)lua_tonumber(L, 2);
+   uint64_t addr = (uint64_t)lua_tonumber(L, 1);
    uint32_t *ptr = hostptr(addr);
    if (!ptr)
       return 0;
@@ -835,25 +839,8 @@ static const struct luaL_Reg l_bos[] = {
 static void
 openlib(lua_State *state, const char *lib, const luaL_Reg *reg)
 {
-   lua_CFunction index_func = NULL;
-
-   for (int i = 0; reg[i].name; i++) {
-      if (!strcmp(reg[i].name, "__index")) {
-         index_func = reg[i].func;
-         break;
-      }
-   }
-
    lua_newtable(state);
    luaL_setfuncs(state, reg, 0);
-
-   if (index_func) {
-      lua_newtable(state);
-      lua_pushcfunction(state, index_func);
-      lua_setfield(state, -2, "__index");
-      lua_setmetatable(state, -2);
-   }
-
    lua_setglobal(state, lib);
 }
 

@@ -28,8 +28,6 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "util/hash_table.h"
-#include "util/u_dynarray.h"
 #include "util/macros.h"
 #include "util/u_atomic.h"
 #include "util/u_queue.h"
@@ -81,12 +79,6 @@ struct u_trace_printer;
  */
 #define U_TRACE_NO_TIMESTAMP ((uint64_t) 0)
 
-enum u_trace_backend_type {
-   U_TRACE_BACKEND_PRINT,
-   U_TRACE_BACKEND_JSON,
-   U_TRACE_BACKEND_PERFETTO,
-};
-
 /**
  * Address representation
  */
@@ -123,7 +115,7 @@ typedef void (*u_trace_delete_buffer)(struct u_trace_context *utctx,
  * a fixed rate, even as the GPU freq changes.  The same source used for
  * GL_TIMESTAMP queries should be appropriate.
  */
-typedef bool (*u_trace_record_ts)(struct u_trace *ut,
+typedef void (*u_trace_record_ts)(struct u_trace *ut,
                                   void *cs,
                                   void *timestamps,
                                   uint64_t offset_B,
@@ -197,7 +189,6 @@ enum u_trace_type {
    U_TRACE_TYPE_MARKERS = 1u << 4,
    U_TRACE_TYPE_INDIRECTS = 1u << 5,
    U_TRACE_TYPE_CSV = 1u << 6,
-   U_TRACE_TYPE_RANGES = 1u << 7,
 
    U_TRACE_TYPE_PRINT_CSV = U_TRACE_TYPE_PRINT | U_TRACE_TYPE_CSV,
    U_TRACE_TYPE_PRINT_JSON = U_TRACE_TYPE_PRINT | U_TRACE_TYPE_JSON,
@@ -207,23 +198,12 @@ enum u_trace_type {
    /*
     * A mask of traces that require appending to the tracepoint chunk list.
     */
-   U_TRACE_TYPE_REQUIRE_QUEUING = U_TRACE_TYPE_PRINT | U_TRACE_TYPE_PERFETTO | U_TRACE_TYPE_RANGES,
+   U_TRACE_TYPE_REQUIRE_QUEUING = U_TRACE_TYPE_PRINT | U_TRACE_TYPE_PERFETTO,
    /*
     * A mask of traces that require processing the tracepoint chunk list.
     */
    U_TRACE_TYPE_REQUIRE_PROCESSING =
-      U_TRACE_TYPE_PRINT | U_TRACE_TYPE_PERFETTO_ACTIVE | U_TRACE_TYPE_RANGES,
-};
-
-struct u_trace_tracepoint_range {
-   struct hash_table child_ranges;
-   uint32_t count;
-   uint64_t duration_ns;
-};
-
-struct u_trace_begin_tracepoint {
-   const void *event;
-   uint64_t timestamp_ns;
+      U_TRACE_TYPE_PRINT | U_TRACE_TYPE_PERFETTO_ACTIVE,
 };
 
 /**
@@ -272,25 +252,10 @@ struct u_trace_context {
    uint32_t event_nr;
    bool start_of_frame;
 
-   /* State for printing timestamps. */
-   uint32_t indentation;
-
-   /* State for accumulating timestamps. */
-   struct util_dynarray begin_tracepoints;
-   struct hash_table tracepoint_ranges;
-   uint32_t accumulated_frame_count;
-
    void *dummy_indirect_data;
 
    /* list of unprocessed trace chunks in fifo order: */
-   struct util_dynarray flushed_traces;
-};
-
-typedef struct linear_ctx linear_ctx;
-
-struct u_trace_buffer_view {
-   uint32_t buffer_index;
-   uint32_t offset;
+   struct list_head flushed_trace_chunks;
 };
 
 /**
@@ -307,12 +272,10 @@ struct u_trace_buffer_view {
 struct u_trace {
    struct u_trace_context *utctx;
 
-   linear_ctx *linear_alloc;
-   struct util_dynarray events;
+   uint32_t num_traces;
 
-   struct u_trace_buffer_view last_timestamp;
-
-   struct util_dynarray buffers[2];
+   struct list_head
+      trace_chunks; /* list of unflushed trace chunks in fifo order */
 };
 
 void u_trace_context_init(struct u_trace_context *utctx,
@@ -345,36 +308,18 @@ bool u_trace_is_enabled(enum u_trace_type type);
 
 bool u_trace_has_points(struct u_trace *ut);
 
-uint32_t u_trace_num_events(struct u_trace *ut);
-
 struct u_trace_iterator {
    struct u_trace *ut;
+   struct u_trace_chunk *chunk;
    uint32_t event_idx;
 };
 
-static inline struct u_trace_iterator
-u_trace_begin_iterator(struct u_trace *ut)
-{
-   struct u_trace_iterator iterator;
-   iterator.ut = ut;
-   iterator.event_idx = 0;
-   return iterator;
-}
+struct u_trace_iterator u_trace_begin_iterator(struct u_trace *ut);
 
-static inline struct u_trace_iterator
-u_trace_end_iterator(struct u_trace *ut)
-{
-   struct u_trace_iterator iterator;
-   iterator.ut = ut;
-   iterator.event_idx = u_trace_num_events(ut);
-   return iterator;
-}
+struct u_trace_iterator u_trace_end_iterator(struct u_trace *ut);
 
-static inline bool
-u_trace_iterator_equal(struct u_trace_iterator a, struct u_trace_iterator b)
-{
-   return a.ut == b.ut && a.event_idx == b.event_idx;
-}
+bool u_trace_iterator_equal(struct u_trace_iterator a,
+                            struct u_trace_iterator b);
 
 typedef void (*u_trace_copy_buffer)(struct u_trace_context *utctx,
                                     void *cmdstream,
@@ -400,9 +345,6 @@ void u_trace_clone_append(struct u_trace_iterator begin_it,
                           struct u_trace *into,
                           void *cmdstream,
                           u_trace_copy_buffer copy_buffer);
-
-uint32_t u_trace_clone_append_copy_count(struct u_trace_iterator begin_it,
-                                         struct u_trace_iterator end_it);
 
 void u_trace_disable_event_range(struct u_trace_iterator begin_it,
                                  struct u_trace_iterator end_it);

@@ -297,17 +297,6 @@ i915_gem_supports_protected_context(int fd)
 }
 
 bool
-i915_gem_supports_huc(int fd)
-{
-   int val = 0;
-
-   if (!i915_gem_get_param(fd, I915_PARAM_HUC_STATUS, &val))
-      return false;
-
-   return val > 0;
-}
-
-bool
 i915_gem_get_param(int fd, uint32_t param, int *value)
 {
    drm_i915_getparam_t gp = {

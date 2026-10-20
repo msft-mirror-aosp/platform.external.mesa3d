@@ -279,25 +279,14 @@ static bool color_update_input_cs(struct vpe_priv *vpe_priv, enum color_space in
 
 static bool can_bypass_degamma(const struct stream_ctx *stream_ctx)
 {
-    bool can_bypass = false;
-    // Linear FP16
-    if ((vpe_is_fp16(stream_ctx->stream.surface_info.format) == true) &&
-        (stream_ctx->stream.surface_info.cs.tf == VPE_TF_G10)) {
-        can_bypass = true;
-    }
-    // 3D LUT
-    if ((stream_ctx->stream.tm_params.UID != 0) || (stream_ctx->stream.tm_params.enable_3dlut)) {
-        can_bypass = true;
-    }
-    // First and intermediate passes of multi-pass VPE
-    if (stream_ctx->geometric_scaling) {
-        can_bypass = true;
-    }
-    if (stream_ctx->stream.surface_info.format == VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBE) {
-        can_bypass = true;
-    }
+    if (vpe_is_fp16(stream_ctx->stream.surface_info.format))
+        return true;
+    if ((stream_ctx->stream.tm_params.UID != 0) || (stream_ctx->stream.tm_params.enable_3dlut))
+        return true;
+    if (stream_ctx->geometric_scaling)
+        return true;
 
-    return can_bypass;
+    return false;
 }
 
 bool vpe_use_csc_adjust(const struct vpe_color_adjust *adjustments)
@@ -629,6 +618,8 @@ enum vpe_status vpe_color_update_3dlut(
         stream_ctx->lut3d_func->state.bits.is_dma = 0;
     }
 
+    stream_ctx->uid_3dlut = stream_ctx->stream.tm_params.UID;
+
     return VPE_STATUS_OK;
 }
 
@@ -678,7 +669,6 @@ enum vpe_status vpe_color_update_color_space_and_tf(
     struct fixed31_32  y_scale                   = vpe_fixpt_one;
     bool               geometric_update          = false;
     bool               geometric_scaling         = false;
-    const uint32_t     vpe_fp_1_6_12_one         = 0x1F000; // 1.0 in 1.6.12 float format
 
     status = vpe_allocate_cm_memory(vpe_priv, param);
     if (status == VPE_STATUS_OK) {
@@ -700,30 +690,9 @@ enum vpe_status vpe_color_update_color_space_and_tf(
                 stream_ctx->stream.tm_params.UID != 0 || stream_ctx->stream.tm_params.enable_3dlut;
             bool require_update = stream_ctx->uid_3dlut != stream_ctx->stream.tm_params.UID;
 
-            // handle 3dlut compound case
             if (stream_ctx->stream.lut_compound.enabled) {
-                stream_ctx->input_tf->type = TF_TYPE_BYPASS; // always bypass degamma for custom TF
-
-                // similarly for bias&scale, for custom keep at bias=0.0, scale=1.0
-                // as we don't know anything about surface other than format
-                stream_ctx->bias_scale->scale_red   = vpe_fp_1_6_12_one;
-                stream_ctx->bias_scale->scale_green = vpe_fp_1_6_12_one;
-                stream_ctx->bias_scale->scale_blue  = vpe_fp_1_6_12_one;
-                stream_ctx->bias_scale->bias_red    = 0;
-                stream_ctx->bias_scale->bias_green  = 0;
-                stream_ctx->bias_scale->bias_blue   = 0;
-
-                // apply the matrix provided in the 3DLUT compound case
+                // handle 3dlut compound case
                 vpe_color_update_3dlut_matrix(vpe_priv, stream_ctx);
-
-                stream_ctx->enable_3dlut = true;
-
-                if (output_ctx->dirty_bits.transfer_function ||
-                    output_ctx->dirty_bits.color_space || require_update) {
-                    vpe_priv->resource.update_blnd_gamma(
-                        vpe_priv, param, &stream_ctx->stream, stream_ctx->blend_tf);
-                }
-
                 continue; // skip the rest of color space and tf update
             }
 
@@ -834,7 +803,6 @@ enum vpe_status vpe_color_update_shaper(const struct vpe_priv *vpe_priv, uint16_
     }
 
     // Force PQ curve when FP16 format
-
     if (stream_ctx->tf == TRANSFER_FUNC_LINEAR) {
         // tf = stream_ctx->stream.tm_params.shaper_tf;
         tf = tf_in_3dlut;
@@ -954,11 +922,6 @@ enum vpe_status vpe_color_setup_dma_lut(struct vpe_3dlut *lut3d_func, struct str
         lut3d_func->dma_params.format     = VPE_3DLUT_MEM_FORMAT_16161616_UNORM_12MSB;
         break;
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA16161616:
-        lut3d_func->dma_params.crossbar_b = VPE_3DLUT_CROSSBAR_BIT_SLICE_48_63;
-        lut3d_func->dma_params.crossbar_g = VPE_3DLUT_CROSSBAR_BIT_SLICE_32_47;
-        lut3d_func->dma_params.crossbar_r = VPE_3DLUT_CROSSBAR_BIT_SLICE_16_31;
-        lut3d_func->dma_params.format     = VPE_3DLUT_MEM_FORMAT_16161616_UNORM_12MSB;
-        break;
     default:
         lut3d_func->dma_params.crossbar_b = VPE_3DLUT_CROSSBAR_BIT_SLICE_48_63;
         lut3d_func->dma_params.crossbar_g = VPE_3DLUT_CROSSBAR_BIT_SLICE_32_47;
@@ -1069,18 +1032,15 @@ enum vpe_status vpe_color_update_movable_cm(
                 vpe_color_update_3dlut(vpe_priv, stream_ctx, enable_3dlut);
             }
 
-            if (!stream_ctx->stream.lut_compound.enabled) {
-                vpe_priv->resource.calculate_shaper(vpe_priv, stream_ctx);
+            vpe_priv->resource.calculate_shaper(vpe_priv, stream_ctx);
 
-                vpe_color_build_tm_cs(
-                    &stream_ctx->stream.tm_params, &vpe_priv->output_ctx.surface, &tm_out_cs);
+            vpe_color_build_tm_cs(
+                &stream_ctx->stream.tm_params, &vpe_priv->output_ctx.surface, &tm_out_cs);
 
-                vpe_color_get_color_space_and_tf(&tm_out_cs, &out_lut_cs, &tf);
-                vpe_color_update_gamut(vpe_priv, out_lut_cs, vpe_priv->output_ctx.cs,
-                    output_ctx->gamut_remap, !enable_3dlut);
-            }
+            vpe_color_get_color_space_and_tf(&tm_out_cs, &out_lut_cs, &tf);
+            vpe_color_update_gamut(vpe_priv, out_lut_cs, vpe_priv->output_ctx.cs,
+                output_ctx->gamut_remap, !enable_3dlut);
 
-            stream_ctx->uid_3dlut = stream_ctx->stream.tm_params.UID;
         }
     }
 exit:
@@ -1120,9 +1080,6 @@ void vpe_color_get_color_space_and_tf(
     case VPE_TF_HLG:
         *tf = TRANSFER_FUNC_HLG;
         break;
-    case VPE_TF_CUSTOM:
-        *tf = TRANSFER_FUNC_CUSTOM;
-        break;
     default:
         break;
     }
@@ -1152,9 +1109,6 @@ void vpe_color_get_color_space_and_tf(
         case VPE_PRIMARIES_JFIF:
             *cs = colorRange == VPE_COLOR_RANGE_FULL ? COLOR_SPACE_YCBCR_JFIF : COLOR_SPACE_UNKNOWN;
             break;
-        case VPE_PRIMARIES_CUSTOM:
-            *cs = COLOR_SPACE_CUSTOM;
-            break;
         default:
             break;
         }
@@ -1182,9 +1136,6 @@ void vpe_color_get_color_space_and_tf(
          */
         case VPE_PRIMARIES_JFIF:
             *cs = colorRange == VPE_COLOR_RANGE_FULL ? COLOR_SPACE_RGB_JFIF : COLOR_SPACE_UNKNOWN;
-            break;
-        case VPE_PRIMARIES_CUSTOM:
-            *cs = COLOR_SPACE_CUSTOM;
             break;
         default:
             break;
@@ -1257,28 +1208,22 @@ enum vpe_status vpe_color_update_whitepoint(
     const struct vpe_priv *vpe_priv, const struct vpe_build_param *param)
 {
 
-    struct stream_ctx       *stream         = vpe_priv->stream_ctx;
-    const struct output_ctx *output_ctx     = &vpe_priv->output_ctx;
-    bool                     output_isHDR   = vpe_is_HDR(vpe_priv->output_ctx.tf);
-    bool                     input_isHDR    = false;
-    bool                     is_yCbCr       = false;
-    bool                     is_g24         = false;
-    bool                     is_fp16_linear = false;
-    bool is_compound = stream->stream.lut_compound.enabled;
+    struct stream_ctx            *stream       = vpe_priv->stream_ctx;
+    const struct output_ctx      *output_ctx   = &vpe_priv->output_ctx;
+    const struct vpe_color_space *vpe_cs       = &stream->stream.surface_info.cs;
+    bool                          output_isHDR = vpe_is_HDR(vpe_priv->output_ctx.tf);
+    bool                          input_isHDR  = false;
+    bool                          is_yCbCr     = false;
+    bool                          is_g24       = false;
+    bool                          is_fp16      = false;
 
     for (unsigned int stream_index = 0; stream_index < vpe_priv->num_streams; stream_index++) {
 
         input_isHDR = vpe_is_HDR(stream->tf);
         is_yCbCr    = stream->is_yuv_input;
-        is_g24      = (stream->stream.surface_info.cs.tf == VPE_TF_G24);
-        // Only FP16 G10 input has data in [0, CCCS_NORM] range
-        is_fp16_linear = (vpe_is_fp16(stream->stream.surface_info.format) &&
-                          (stream->stream.surface_info.cs.tf == VPE_TF_G10));
-
-        if (is_compound) {
-            stream->white_point_gain = vpe_fixpt_one;
-        } else if (!input_isHDR && output_isHDR) {
-
+        is_g24      = (vpe_cs->tf == VPE_TF_G24);
+        is_fp16     = vpe_is_fp16(stream->stream.surface_info.format);
+        if (!input_isHDR && output_isHDR) {
             int sdrWhiteLevel = (is_yCbCr || is_g24) ? SDR_VIDEO_WHITE_POINT : SDR_WHITE_POINT;
             stream->white_point_gain = vpe_fixpt_from_fraction(sdrWhiteLevel, 10000);
         } else if (input_isHDR && !output_isHDR) {
@@ -1291,8 +1236,7 @@ enum vpe_status vpe_color_update_whitepoint(
             stream->white_point_gain = vpe_fixpt_one;
         }
 
-        if ((is_fp16_linear == true) ||
-            (stream->stream.surface_info.format == VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBE)) {
+        if (is_fp16) {
             stream->white_point_gain = vpe_fixpt_div_int(stream->white_point_gain, CCCS_NORM);
         }
 

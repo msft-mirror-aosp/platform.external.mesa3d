@@ -16,7 +16,6 @@
 #include "ac_rtld.h"
 #include "si_build_pm4.h"
 #include "si_tracepoints.h"
-#include "gfx/si_gfx.h"
 
 #if (GFX_VER == 6)
 #define GFX(name) name##GFX6
@@ -48,14 +47,7 @@
 static inline uint32_t hash_shader_for_sqtt(XXH64_state_t* xh, struct si_shader *shader)
 {
    /* Hash the key. */
-   if (shader->selector->stage == MESA_SHADER_FRAGMENT) {
-      XXH64_update(xh, &shader->key.ps, sizeof(shader->key.ps));
-   } else {
-      const unsigned key_size =
-         sizeof(shader->key.ge) - sizeof(shader->key.ge.opt.inlined_uniform_values) +
-         shader->key.ge.opt.inline_uniforms * sizeof(shader->key.ge.opt.inlined_uniform_values[0]);
-      XXH64_update(xh, &shader->key.ge, key_size);
-   }
+   XXH64_update(xh, &shader->key, sizeof(shader->key));
    /* Hash the main part binary. */
    XXH64_update(xh, shader->binary.code_buffer, shader->binary.code_size);
 
@@ -644,7 +636,8 @@ static void si_cp_dma_prefetch_inline(struct radeon_cmdbuf *cs, uint64_t address
 {
    assert(GFX_VERSION >= GFX7);
 
-   size = MIN2(size, 32768 - SI_CPDMA_ALIGNMENT);
+   if (GFX_VERSION >= GFX11)
+      size = MIN2(size, 32768 - SI_CPDMA_ALIGNMENT);
 
    /* The prefetch address and size must be aligned, so that we don't have to apply
     * the complicated hw bug workaround.
@@ -654,6 +647,7 @@ static void si_cp_dma_prefetch_inline(struct radeon_cmdbuf *cs, uint64_t address
     */
    assert(size % SI_CPDMA_ALIGNMENT == 0);
    assert(address % SI_CPDMA_ALIGNMENT == 0);
+   assert(size < S_415_BYTE_COUNT(~0u));
    assert(address || size == 0);
 
    uint32_t header = S_501_SRC_SEL(V_501_SRC_ADDR_USING_L2);
@@ -815,12 +809,8 @@ static unsigned si_get_init_multi_vgt_param(struct si_screen *sscreen, union si_
    bool partial_es_wave = false;
 
    if (key->u.uses_tess) {
-      /* SWITCH_ON_EOI must be set if PrimID is used.
-       * On GFX6 single-SE chips (Cape Verde, max_se == 1), SWITCH_ON_EOI doesn't
-       * work in hardware, so it's unnecessary and causes wave splitting (partial_es_wave).
-       * Those chips instead limit TCS workgroup to 1 patch via has_primid_instancing_bug.
-       */
-      if (key->u.tess_uses_prim_id && !sscreen->info.compiler_info.has_primid_instancing_bug)
+      /* SWITCH_ON_EOI must be set if PrimID is used. */
+      if (key->u.tess_uses_prim_id)
          ia_switch_on_eoi = true;
 
       /* Bug with tessellation and GS on Bonaire and older 2 SE chips. */
@@ -1362,8 +1352,7 @@ gfx11_emit_buffered_sh_regs_inline(struct si_context *sctx,
    unsigned padded_reg_count = align(reg_count, 2);
 
    radeon_begin(cs);
-   radeon_emit(PKT3(packet, (padded_reg_count / 2) * 3, 0) |
-               PKT3_RESET_FILTER_CAM_S(sctx->is_gfx_queue));
+   radeon_emit(PKT3(packet, (padded_reg_count / 2) * 3, 0) | PKT3_RESET_FILTER_CAM_S(1));
    radeon_emit(padded_reg_count);
    radeon_emit_array(reg_pairs, (reg_count / 2) * 3);
 
@@ -1380,11 +1369,10 @@ gfx11_emit_buffered_sh_regs_inline(struct si_context *sctx,
    radeon_end();
 }
 
-#define gfx12_emit_buffered_sh_regs_inline(num_regs, regs, reset_filter_cam) do { \
+#define gfx12_emit_buffered_sh_regs_inline(num_regs, regs) do { \
    unsigned __reg_count = *(num_regs); \
    if (__reg_count) { \
-      radeon_emit(PKT3(PKT3_SET_SH_REG_PAIRS, __reg_count * 2 - 1, 0) | \
-                  PKT3_RESET_FILTER_CAM_S(reset_filter_cam)); \
+      radeon_emit(PKT3(PKT3_SET_SH_REG_PAIRS, __reg_count * 2 - 1, 0) | PKT3_RESET_FILTER_CAM_S(1)); \
       radeon_emit_array(regs, __reg_count * 2); \
       *(num_regs) = 0; \
    } \
@@ -1397,8 +1385,7 @@ void si_emit_buffered_compute_sh_regs(struct si_context *sctx, struct radeon_cmd
    if (sctx->gfx_level >= GFX12) {
       radeon_begin(cs);
       gfx12_emit_buffered_sh_regs_inline(&sctx->buffered_compute_sh_regs.num,
-                                         sctx->buffered_compute_sh_regs.gfx12.regs,
-                                         sctx->is_gfx_queue);
+                                         sctx->buffered_compute_sh_regs.gfx12.regs);
       radeon_end();
    } else {
       gfx11_emit_buffered_sh_regs_inline(sctx, cs, &sctx->buffered_compute_sh_regs.num,
@@ -1412,7 +1399,7 @@ void si_emit_buffered_gfx_sh_regs_for_mesh(struct si_context *sctx)
    if (sctx->gfx_level >= GFX12) {
       radeon_begin(&sctx->gfx_cs);
       gfx12_emit_buffered_sh_regs_inline(&sctx->buffered_gfx_sh_regs.num,
-                                         sctx->buffered_gfx_sh_regs.gfx12.regs, true);
+                                         sctx->buffered_gfx_sh_regs.gfx12.regs);
       radeon_end();
    } else {
       gfx11_emit_buffered_sh_regs_inline(sctx, &sctx->gfx_cs,
@@ -1571,7 +1558,7 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
 
       if (GFX_VERSION >= GFX12) {
          gfx12_emit_buffered_sh_regs_inline(&sctx->buffered_gfx_sh_regs.num,
-                                            sctx->buffered_gfx_sh_regs.gfx12.regs, true);
+                                            sctx->buffered_gfx_sh_regs.gfx12.regs);
       } else if (HAS_SH_PAIRS_PACKED) {
          radeon_end();
          gfx11_emit_buffered_sh_regs_inline(sctx, cs, &sctx->buffered_gfx_sh_regs.num,
@@ -1699,7 +1686,7 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
 
       if (GFX_VERSION >= GFX12) {
          gfx12_emit_buffered_sh_regs_inline(&sctx->buffered_gfx_sh_regs.num,
-                                            sctx->buffered_gfx_sh_regs.gfx12.regs, true);
+                                            sctx->buffered_gfx_sh_regs.gfx12.regs);
       } else if (HAS_SH_PAIRS_PACKED) {
          radeon_end();
          gfx11_emit_buffered_sh_regs_inline(sctx, cs, &sctx->buffered_gfx_sh_regs.num,

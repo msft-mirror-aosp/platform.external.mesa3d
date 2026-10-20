@@ -37,7 +37,6 @@
 
 
 #include "main/mtypes.h"
-#include "main/fog.h"
 #include "main/framebuffer.h"
 #include "main/state.h"
 #include "main/texobj.h"
@@ -76,7 +75,7 @@ get_texture_index(struct gl_context *ctx, const unsigned unit)
 static void
 update_gl_clamp(struct st_context *st, struct gl_program *prog, uint32_t *gl_clamp)
 {
-   if (st->screen->caps.gl_clamp)
+   if (!st->emulate_gl_clamp)
       return;
 
    if (!st->ctx->Texture.NumSamplersWithClamp)
@@ -134,18 +133,18 @@ st_update_fp( struct st_context *st )
       /* use memset, not an initializer to be sure all memory is zeroed */
       memset(&key, 0, sizeof(key));
 
-      key.st = st->screen->caps.shareable_shaders ? NULL : st;
+      key.st = st->has_shareable_shaders ? NULL : st;
 
-      key.lower_flatshade = !st->screen->caps.flatshade &&
+      key.lower_flatshade = st->lower_flatshade &&
                             st->ctx->Light.ShadeModel == GL_FLAT;
 
       /* _NEW_COLOR */
       key.lower_alpha_func = COMPARE_FUNC_ALWAYS;
-      if (!st->screen->caps.alpha_test && _mesa_is_alpha_test_enabled(st->ctx))
+      if (st->lower_alpha_test && _mesa_is_alpha_test_enabled(st->ctx))
          key.lower_alpha_func = st->ctx->Color.AlphaFunc;
 
       /* _NEW_LIGHT_STATE | _NEW_PROGRAM */
-      key.lower_two_sided_color = !st->screen->caps.two_sided_color &&
+      key.lower_two_sided_color = st->lower_two_sided_color &&
          _mesa_vertex_program_two_side_enabled(st->ctx);
 
       /* gl_driver_flags::NewFragClamp */
@@ -162,12 +161,6 @@ st_update_fp( struct st_context *st )
 
       if (fp->ati_fs) {
          key.fog = st->ctx->Fog._PackedEnabledMode;
-
-         /* When the fixed-function vertex program feeds the fog coordinate as
-          * signed eye-space Z, ATI_fragment_shader fog must take abs() of it
-          * per fragment (GL_EYE_PLANE_ABSOLUTE_NV).  See mesa #15407.
-          */
-         key.fog_coord_abs = _mesa_fog_coord_needs_deferred_abs(st->ctx);
 
          for (unsigned u = 0; u < MAX_NUM_FRAGMENT_REGISTERS_ATI; u++) {
             key.texture_index[u] = get_texture_index(st->ctx, u);
@@ -226,7 +219,7 @@ st_update_vp( struct st_context *st )
 
       memset(&key, 0, sizeof(key));
 
-      key.st = st->screen->caps.shareable_shaders ? NULL : st;
+      key.st = st->has_shareable_shaders ? NULL : st;
 
       /* When this is true, we will add an extra input to the vertex
        * shader translation (for edgeflags), an extra output with
@@ -250,7 +243,7 @@ st_update_vp( struct st_context *st )
          if (st->lower_point_size)
             key.export_point_size = !st->ctx->VertexProgram.PointSizeEnabled && !st->ctx->PointSizeIsSet;
          /* _NEW_TRANSFORM */
-         if (!st->screen->caps.clip_planes && st_user_clip_planes_enabled(st->ctx))
+         if (st->lower_ucp && st_user_clip_planes_enabled(st->ctx))
             key.lower_ucp = st->ctx->Transform.ClipPlanesEnabled;
       }
 
@@ -287,7 +280,7 @@ st_update_common_program(struct st_context *st, struct gl_program *prog,
    /* use memset, not an initializer to be sure all memory is zeroed */
    memset(&key, 0, sizeof(key));
 
-   key.st = st->screen->caps.shareable_shaders ? NULL : st;
+   key.st = st->has_shareable_shaders ? NULL : st;
 
    if (pipe_shader == MESA_SHADER_GEOMETRY ||
        pipe_shader == MESA_SHADER_TESS_EVAL) {
@@ -299,7 +292,7 @@ st_update_common_program(struct st_context *st, struct gl_program *prog,
                           VARYING_SLOT_BFC0 |
                           VARYING_SLOT_BFC1));
 
-      if (!st->screen->caps.clip_planes && st_user_clip_planes_enabled(st->ctx) &&
+      if (st->lower_ucp && st_user_clip_planes_enabled(st->ctx) &&
           (pipe_shader == MESA_SHADER_GEOMETRY ||
              !st->ctx->GeometryProgram._Current))
          key.lower_ucp = st->ctx->Transform.ClipPlanesEnabled;

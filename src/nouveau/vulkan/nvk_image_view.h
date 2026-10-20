@@ -5,21 +5,13 @@
 #ifndef NVK_IMAGE_VIEW_H
 #define NVK_IMAGE_VIEW_H 1
 
-#include "nvk_descriptor_types.h"
+#include "nvk_private.h"
 
 #include "vk_image.h"
 
 #include "nil.h"
 
 struct nvk_device;
-
-struct nvk_image_view_descriptor {
-   /* The actual descriptor data which gets copied into the heap */
-   union nvk_image_descriptor desc;
-
-   /** Index in the image descriptor table, else 0 */
-   uint32_t desc_index;
-};
 
 struct nvk_image_view {
    struct vk_image_view vk;
@@ -30,11 +22,17 @@ struct nvk_image_view {
    struct {
       uint8_t image_plane;
 
-      nil_sample_layout sample_layout;
+      enum nil_sample_layout sample_layout;
 
-      struct nvk_image_view_descriptor sampled;
-      struct nvk_image_view_descriptor storage;
+      /** Index in the image descriptor table for the sampled image descriptor */
+      uint32_t sampled_desc_index;
+
+      /** Index in the image descriptor table for the storage image descriptor */
+      uint32_t storage_desc_index;
    } planes[NVK_MAX_IMAGE_PLANES];
+
+   /* Surface info for Kepler storage images */
+   struct nil_su_info su_info;
 };
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(nvk_image_view, vk.base, VkImageView,

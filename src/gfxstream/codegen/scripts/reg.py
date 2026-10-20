@@ -669,6 +669,7 @@ class Registry:
 
         if not f.required:
             return
+
         # If feature is not required, or has already been declared, return
         if f.declared:
             return

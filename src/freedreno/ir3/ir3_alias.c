@@ -56,7 +56,7 @@ can_alias_srcs_of_def(struct ir3_register *src)
 }
 
 static bool
-alias_srcs(struct ir3_instruction *instr, const struct ir3_compiler *compiler)
+alias_srcs(struct ir3_instruction *instr)
 {
    bool progress = false;
 
@@ -138,14 +138,6 @@ alias_srcs(struct ir3_instruction *instr, const struct ir3_compiler *compiler)
       progress = true;
    }
 
-   /* On a7xx, alias is not supported between mova and (ul). Force the
-    * scheduler to avoid putting potentially-aliasing instructions between mova
-    * and the last use of the mova.
-    */
-   if (num_aliases > 0 && compiler->info->props.alias_mova_quirk) {
-      ir3_dst_create(instr, REG_A0_X, IR3_REG_HALF);
-   }
-
    return progress;
 }
 
@@ -170,27 +162,13 @@ ir3_create_alias_tex_regs(struct ir3 *ir)
       return false;
 
    bool progress = false;
-   bool block_is_predicated = false;
 
    foreach_block (block, &ir->block_list) {
-      /* All current HW has a limitation where alias.tex is not allowed inside a
-       * predt/predf/prede sequence.
-       */
-      if (!ir->compiler->info->props.alias_predication_quirk ||
-          !block_is_predicated) {
-         foreach_instr (instr, &block->instr_list) {
-            if (supports_alias_srcs(instr)) {
-               progress |= alias_srcs(instr, ir->compiler);
-            }
+      foreach_instr (instr, &block->instr_list) {
+         if (supports_alias_srcs(instr)) {
+            progress |= alias_srcs(instr);
          }
       }
-
-      /* If a block ends in pred[tf] then the subsequent block is predicated
-       * (inside a predt/predf/prede sequence).
-       */
-      struct ir3_instruction *terminator = ir3_block_get_terminator(block);
-      block_is_predicated = terminator &&
-         (terminator->opc == OPC_PREDT || terminator->opc == OPC_PREDF);
    }
 
    return progress;

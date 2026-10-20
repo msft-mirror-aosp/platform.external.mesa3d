@@ -22,7 +22,8 @@ compute_block_liveness(struct ir3_liveness *live, struct ir3_block *block,
                        BITSET_WORD *tmp_live, unsigned bitset_words,
                        reg_filter_cb filter_src, reg_filter_cb filter_dst)
 {
-   __bitset_copy(tmp_live, live->live_out[block->index], bitset_words);
+   memcpy(tmp_live, live->live_out[block->index],
+          bitset_words * sizeof(BITSET_WORD));
 
    /* Process instructions */
    foreach_instr_rev (instr, &block->instr_list) {
@@ -54,7 +55,8 @@ compute_block_liveness(struct ir3_liveness *live, struct ir3_block *block,
       }
    }
 
-   __bitset_copy(live->live_in[block->index], tmp_live, bitset_words);
+   memcpy(live->live_in[block->index], tmp_live,
+          bitset_words * sizeof(BITSET_WORD));
 
    bool progress = false;
    for (unsigned i = 0; i < block->predecessors_count; i++) {

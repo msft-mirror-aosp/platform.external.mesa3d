@@ -21,10 +21,7 @@ cc_library_static {
     cpp_std: "c++17",
     host_supported: true,
     defaults: [
-        "_trial_c",
         "_trial_msvc",
-        "_trial_soong_c",
-        "_trial_soong_cpp",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -61,12 +58,7 @@ cc_library_static {
         "platform_virtgpu_drm",
         "platform_virtgpu_kumquat",
         "vulkan_util",
-    ] + select((os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
-        ("android", "true"): [
-            "libperfetto_client_experimental",
-        ],
-        (default, default): [],
-    }) + select(arch(), {
+    ] + select(arch(), {
         "x86_64": [
             "mesa_util_clflush",
             "mesa_util_clflushopt",

@@ -10,7 +10,6 @@ freedreno_devices_h = custom_target(
     '-p', join_paths(meson.project_build_root(), 'src/freedreno/registers/adreno/')
   ],
   depends: freedreno_py_header_files,
-  depend_files: [files('freedreno_dev_info.py')],
   capture: true,
 )
 
@@ -34,8 +33,8 @@ libfreedreno_common = static_library(
     'redump.h'
   ],
   include_directories : [inc_freedreno, inc_include, inc_src],
-  c_args : [no_override_init_args, soong_compat_c_args],
-  build_by_default : false,
+  c_args : [no_override_init_args],
+  build_by_default : true,
   dependencies: [idep_mesautil],
   gnu_symbol_visibility : 'hidden',
 )

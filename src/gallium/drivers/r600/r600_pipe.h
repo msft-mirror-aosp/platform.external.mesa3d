@@ -20,22 +20,18 @@
 #include "util/u_memory.h"
 #include "util/u_framebuffer.h"
 
-#define R600_NUM_ATOMS 62
+#include "tgsi/tgsi_scan.h"
 
-#define R600_MAX_PS_RESOURCES 176
-#define R600_MAX_VS_RESOURCES 160
+#define R600_NUM_ATOMS 57
 
 #define R600_MAX_IMAGES 8
-#define R600_MAX_SSBOS 12 /* CB0 -> CB11 */
-#define R600_MAX_USABLE_SSBOS (R600_MAX_SSBOS - 1)
-
 /*
  * ranges reserved for images on evergreen
  * first set for the immediate buffers,
  * second for the actual resources for RESQ.
  */
-#define R600_IMAGE_IMMED_RESOURCE_OFFSET (R600_MAX_VS_RESOURCES - 2 * R600_MAX_SSBOS)
-#define R600_IMAGE_REAL_RESOURCE_OFFSET (R600_MAX_VS_RESOURCES - 1 * R600_MAX_SSBOS)
+#define R600_IMAGE_IMMED_RESOURCE_OFFSET 160
+#define R600_IMAGE_REAL_RESOURCE_OFFSET 168
 
 /* read caches */
 #define R600_CONTEXT_INV_VERTEX_CACHE		(R600_CONTEXT_PRIVATE_FLAG << 0)
@@ -320,22 +316,6 @@ struct r600_dsa_state {
 
 struct r600_pipe_shader;
 
-struct r600_pipe_shader_selector_info {
-	unsigned images_declared;
-	bool writes_memory;
-	bool fs_early_depth_stencil;
-	bool vs_window_space;
-	bool writes_viewport_index;
-	int image_file_max;
-	unsigned ps_nr_cbufs;
-
-	enum mesa_prim tes_prim_mode;
-	unsigned tes_spacing;
-	bool tes_vertex_order_cw;
-	bool tes_point_mode;
-	unsigned tcs_vertices_out;
-};
-
 struct r600_pipe_shader_selector {
 	struct r600_pipe_shader *current;
 
@@ -346,7 +326,7 @@ struct r600_pipe_shader_selector {
 	void   *nir_blob;
 
 	struct pipe_stream_output_info  so;
-	struct r600_pipe_shader_selector_info nir_info;
+	struct tgsi_shader_info		info;
 
 	unsigned	num_shaders;
 
@@ -395,6 +375,7 @@ struct r600_sampler_states {
 	uint32_t			enabled_mask;
 	uint32_t			dirty_mask;
 	uint32_t			has_bordercolor_mask; /* which states contain the border color */
+	bool				shared_state;
 };
 
 struct r600_textures_info {
@@ -471,7 +452,6 @@ struct r600_image_view {
 	uint32_t resource_words[8];
 	bool skip_mip_address_reloc;
 	uint32_t buf_size;
-	uint32_t va_offset;
 };
 
 struct r600_image_state {
@@ -482,8 +462,7 @@ struct r600_image_state {
 	uint32_t			compressed_colortex_mask;
 	uint32_t			incomplete_mask;
 	bool				dirty_buffer_constants;
-	struct r600_image_view views[R600_MAX_SSBOS];
-	unsigned			last_offset;
+	struct r600_image_view views[R600_MAX_IMAGES];
 };
 
 /* Used to spill shader temps */
@@ -576,9 +555,9 @@ struct r600_context {
 	struct r600_vgt_state		vgt_state;
 	struct r600_atomic_buffer_state atomic_buffer_state;
 	/* only have images on fragment shader */
-	struct r600_image_state         fragment_images[2];
+	struct r600_image_state         fragment_images;
 	struct r600_image_state         compute_images;
-	struct r600_image_state         fragment_buffers[MESA_SHADER_FRAGMENT + 1];
+	struct r600_image_state         fragment_buffers;
 	struct r600_image_state         compute_buffers;
 	/* Shaders and shader resources. */
 	struct r600_cso_state		vertex_fetch_shader;
@@ -654,25 +633,12 @@ struct r600_context {
 	struct pipe_resource *append_fence;
 	uint32_t append_fence_id;
 	bool cayman_dealloc_state;
-	bool sampler_vs_as_ls_offset18_state;
 
 	/* Debug */
 #ifndef NDEBUG
 	unsigned cdw_saved;
 #endif
 };
-
-static inline bool r600_check_image_shader_supported(const enum mesa_shader_stage shader)
-{
-	return shader == MESA_SHADER_VERTEX ||
-		shader == MESA_SHADER_FRAGMENT ||
-		shader == MESA_SHADER_COMPUTE;
-}
-
-static inline bool r600_check_buffer_shader_supported(const enum mesa_shader_stage shader)
-{
-	return shader <= MESA_SHADER_COMPUTE;
-}
 
 static inline void r600_emit_command_buffer(struct radeon_cmdbuf *cs,
 					    struct r600_command_buffer *cb)

@@ -26,10 +26,9 @@ bit_block(bi_context *ctx)
 }
 
 static inline bi_builder *
-bit_builder(void *memctx, unsigned arch = 7)
+bit_builder(void *memctx)
 {
    bi_context *ctx = rzalloc(memctx, bi_context);
-   ctx->arch = arch;
    list_inithead(&ctx->blocks);
    ctx->inputs = rzalloc(memctx, struct pan_compile_inputs);
 
@@ -105,8 +104,8 @@ bit_shader_equal(bi_context *A, bi_context *B)
 
 #define INSTRUCTION_CASE(instr, expected, pass)                                \
    do {                                                                        \
-      bi_builder *A = bit_builder(mem_ctx, arch);                              \
-      bi_builder *B = bit_builder(mem_ctx, arch);                              \
+      bi_builder *A = bit_builder(mem_ctx);                                    \
+      bi_builder *B = bit_builder(mem_ctx);                                    \
       {                                                                        \
          bi_builder *b = A;                                                    \
          instr;                                                                \

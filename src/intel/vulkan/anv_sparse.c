@@ -231,6 +231,13 @@ static const VkExtent3D block_shapes_2d_8samples[] = {
    /* 64 bits:  */ { .width = 32, .height =  32, .depth = 1 },
    /* 128 bits: */ { .width = 16, .height =  32, .depth = 1 },
 };
+static const VkExtent3D block_shapes_2d_16samples[] = {
+   /* 8 bits:   */ { .width = 64, .height = 64, .depth = 1 },
+   /* 16 bits:  */ { .width = 64, .height = 32, .depth = 1 },
+   /* 32 bits:  */ { .width = 32, .height = 32, .depth = 1 },
+   /* 64 bits:  */ { .width = 32, .height = 16, .depth = 1 },
+   /* 128 bits: */ { .width = 16, .height = 16, .depth = 1 },
+};
 
 static VkExtent3D
 anv_sparse_get_standard_image_block_shape(enum isl_format format,
@@ -269,6 +276,9 @@ anv_sparse_get_standard_image_block_shape(enum isl_format format,
       break;
    case VK_SAMPLE_COUNT_8_BIT:
       block_shape = block_shapes_2d_8samples[table_idx];
+      break;
+   case VK_SAMPLE_COUNT_16_BIT:
+      block_shape = block_shapes_2d_16samples[table_idx];
       break;
    default:
       fprintf(stderr, "unexpected sample count: %d\n", samples);
@@ -1124,6 +1134,10 @@ is_xe2_non_standard_msaa_block_shape(struct anv_physical_device *pdevice,
       if (bpb == 8 || bpb == 32)
          return true;
       break;
+   case VK_SAMPLE_COUNT_16_BIT:
+      if (bpb == 64)
+         return true;
+      break;
    default:
       break;
    }
@@ -1631,6 +1645,8 @@ anv_sparse_image_check_support(struct anv_physical_device *pdevice,
       valid_samples &= ~VK_SAMPLE_COUNT_4_BIT;
    if (!pdevice->vk.supported_features.sparseResidency8Samples)
       valid_samples &= ~VK_SAMPLE_COUNT_8_BIT;
+   if (!pdevice->vk.supported_features.sparseResidency16Samples)
+      valid_samples &= ~VK_SAMPLE_COUNT_16_BIT;
    valid_samples &= ~(VK_SAMPLE_COUNT_32_BIT | VK_SAMPLE_COUNT_64_BIT);
 
    /* Here we return NOT_PRESENT since the user is asking for sample counts we
@@ -1642,30 +1658,15 @@ anv_sparse_image_check_support(struct anv_physical_device *pdevice,
       return VK_ERROR_FEATURE_NOT_PRESENT;
    }
 
-   /* Please see ISL's filter_tiling() functions for accurate explanations on
-    * why depth/stencil images are not always supported with the tiling
-    * formats we want.
+   /* While our hardware allows us to support sparse with some depth/stencil
+    * formats (e.g., single-sampled 2D), the spec seems to be expecting that,
+    * if we support a format, we have to support it with all the multi-sampled
+    * flags we support for non-sparse. Therefore, just give up depth/stencil
+    * entirely since games don't seem to be requiring it.
     */
    VkImageAspectFlags aspects = vk_format_aspects(vk_format);
-   if (aspects & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
-      /* For multi-sampled images, the image layouts for color and
-       * depth/stencil are different, and only the color layout is compatible
-       * with the standard block shapes.
-       */
-      valid_samples &= VK_SAMPLE_COUNT_1_BIT;
-
-      /* For 125+, isl_gfx125_filter_tiling() claims 3D is not supported.
-       * For the previous platforms, isl_gfx6_filter_tiling() says only 2D is
-       * supported.
-       */
-      if (pdevice->info.verx10 >= 125) {
-         if (type == VK_IMAGE_TYPE_3D)
-            return VK_ERROR_FORMAT_NOT_SUPPORTED;
-      } else {
-         if (type != VK_IMAGE_TYPE_2D)
-            return VK_ERROR_FORMAT_NOT_SUPPORTED;
-      }
-   }
+   if (aspects & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))
+      return VK_ERROR_FORMAT_NOT_SUPPORTED;
 
    const struct anv_format *anv_format = anv_get_format(pdevice, vk_format);
    if (!anv_format)
@@ -1707,9 +1708,6 @@ anv_sparse_image_check_support(struct anv_physical_device *pdevice,
 
    if (valid_samples_out)
       *valid_samples_out = valid_samples;
-
-   if (!valid_samples)
-      return VK_ERROR_FORMAT_NOT_SUPPORTED;
 
    return VK_SUCCESS;
 }

@@ -222,15 +222,10 @@ struct gfx9_meta_equation {
 struct gfx12_hiz_layout {
    uint64_t offset;
    uint32_t size;
-   uint32_t slice_size;
    uint16_t width_in_tiles;
    uint16_t height_in_tiles;
    uint8_t swizzle_mode;
    uint8_t alignment_log2;
-   struct {
-      uint32_t offset;
-      uint32_t size;
-   } mip_levels[RADEON_SURF_MAX_LEVELS];
 };
 
 struct gfx9_surf_layout {
@@ -565,7 +560,6 @@ struct ac_surface_copy_region {
    uint64_t mem_slice_pitch;
 
    bool is_stencil_only;
-   bool memcpy;
 };
 
 bool ac_surface_copy_mem_to_surface(struct ac_addrlib *addrlib, const struct radeon_info *info,

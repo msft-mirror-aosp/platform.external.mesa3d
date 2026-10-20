@@ -44,7 +44,7 @@ tu_wsi_init(struct tu_physical_device *physical_device)
                             tu_wsi_proc_addr,
                             &physical_device->instance->vk.alloc,
                             physical_device->master_fd,
-                            &physical_device->instance->drirc.options,
+                            &physical_device->instance->dri_options,
                             &options);
    if (result != VK_SUCCESS)
       return result;

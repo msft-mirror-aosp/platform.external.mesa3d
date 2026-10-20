@@ -670,7 +670,7 @@ impl CopyBytes for RawCopyToLinear {
     }
 }
 
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub unsafe extern "C" fn nil_copy_linear_to_tiled(
     tiled_dst: *mut c_void,
     level_extent_B: Extent4D<units::Bytes>,
@@ -749,7 +749,7 @@ pub unsafe extern "C" fn nil_copy_linear_to_tiled(
     }
 }
 
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub unsafe extern "C" fn nil_copy_tiled_to_linear(
     linear_dst: *mut c_void,
     linear_row_stride_B: usize,

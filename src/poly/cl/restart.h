@@ -134,8 +134,7 @@ poly_work_group_first_true(bool cond, local void *scratch)
 static inline global void *
 poly_setup_unroll_for_draw(global struct poly_heap *heap,
                            constant uint *in_draw, global uint *out_draw,
-                           enum mesa_prim mode, uint in_index_size_B,
-                           uint out_index_size_B)
+                           enum mesa_prim mode, uint index_size_B)
 {
    /* Determine an upper bound on the memory required for the index buffer.
     * Restarts only decrease the unrolled index buffer size, so the maximum size
@@ -143,7 +142,7 @@ poly_setup_unroll_for_draw(global struct poly_heap *heap,
     */
    uint max_prims = u_decomposed_prims_for_vertices(mode, in_draw[0]);
    uint max_verts = max_prims * mesa_vertices_per_prim(mode);
-   uint alloc_size = max_verts * out_index_size_B;
+   uint alloc_size = max_verts * index_size_B;
 
    /* Allocate unrolled index buffer.
     *
@@ -153,29 +152,26 @@ poly_setup_unroll_for_draw(global struct poly_heap *heap,
    uint old_heap_bottom_B = poly_heap_alloc_offs(heap, alloc_size);
 
    /* Setup most of the descriptor. Count will be determined after unroll. */
-   uint vertex_offset_idx = in_index_size_B > 0 ? 3 : 2;
-   out_draw[1] = in_draw[1];                           /* instance count */
-   out_draw[2] = old_heap_bottom_B / out_index_size_B; /* index offset */
-   out_draw[3] = in_draw[vertex_offset_idx];           /* index bias */
-   out_draw[4] = in_draw[vertex_offset_idx + 1];       /* base instance */
+   out_draw[1] = in_draw[1];                       /* instance count */
+   out_draw[2] = old_heap_bottom_B / index_size_B; /* index offset */
+   out_draw[3] = in_draw[3];                       /* index bias */
+   out_draw[4] = in_draw[4];                       /* base instance */
 
    /* Return the index buffer we allocated */
    return (global uchar *)heap->base + old_heap_bottom_B;
 }
 
 static inline void
-poly_unroll_geometry(global uint32_t *out_draw,
-                     global struct poly_heap *heap,
-                     constant uint *in_draw,
-                     uint64_t index_buffer,
-                     uint32_t index_buffer_range_el,
-                     uint32_t in_index_size_B,
-                     uint32_t out_index_size_B,
-                     uint32_t restart_index,
-                     uint32_t flatshade_first,
-                     uint32_t emulate_flatshade_last,
-                     enum mesa_prim mode,
-                     local void *scratch)
+poly_unroll_restart(global uint32_t *out_draw,
+                    global struct poly_heap *heap,
+                    constant uint *in_draw,
+                    uint64_t index_buffer,
+                    uint32_t index_buffer_range_el,
+                    uint32_t index_size_B,
+                    uint32_t restart_index,
+                    uint32_t flatshade_first,
+                    enum mesa_prim mode,
+                    local void *scratch)
 {
    uint tid = cl_local_id.x;
    uint count = in_draw[0];
@@ -183,8 +179,7 @@ poly_unroll_geometry(global uint32_t *out_draw,
    uintptr_t out_ptr;
    if (tid == 0) {
       out_ptr = (uintptr_t)poly_setup_unroll_for_draw(heap, in_draw, out_draw,
-                                                      mode, in_index_size_B,
-                                                      out_index_size_B);
+                                                      mode, index_size_B);
       if (get_num_sub_groups() > 1)
          *(uintptr_t *)scratch = out_ptr;
    }
@@ -197,9 +192,7 @@ poly_unroll_geometry(global uint32_t *out_draw,
    }
 
    uintptr_t in_ptr = (uintptr_t)(poly_index_buffer(
-      index_buffer, index_buffer_range_el, in_draw[2], in_index_size_B));
-   uint in_range_el = poly_index_buffer_range_el(
-      index_buffer_range_el, in_draw[2]);
+      index_buffer, index_buffer_range_el, in_draw[2], index_size_B));
 
    uint out_prims = 0;
    uint needle = 0;
@@ -210,8 +203,8 @@ poly_unroll_geometry(global uint32_t *out_draw,
       for (;;) {
          uint idx = next_restart + tid;
          bool restart =
-            idx >= count || poly_load_index(in_ptr, in_range_el, idx,
-                                            in_index_size_B) == restart_index;
+            idx >= count || poly_load_index(in_ptr, index_buffer_range_el, idx,
+                                            index_size_B) == restart_index;
 
          uint next_offs = poly_work_group_first_true(restart, scratch);
 
@@ -230,13 +223,11 @@ poly_unroll_geometry(global uint32_t *out_draw,
                                                   vtx, subprims);
             uint offset = needle + id;
 
-            uint vtx_out = poly_output_vertex_id_for_topology(
-               mode, flatshade_first, emulate_flatshade_last, vtx);
-            uint x = ((out_prims_base + i) * per_prim) + vtx_out;
-            uint y = poly_load_index(in_ptr, in_range_el, offset,
-                                     in_index_size_B);
+            uint x = ((out_prims_base + i) * per_prim) + vtx;
+            uint y = poly_load_index(in_ptr, index_buffer_range_el, offset,
+                                     index_size_B);
 
-            poly_store_index(out_ptr, out_index_size_B, x, y);
+            poly_store_index(out_ptr, index_size_B, x, y);
          }
       }
 
@@ -246,23 +237,6 @@ poly_unroll_geometry(global uint32_t *out_draw,
 
    if (tid == 0)
       out_draw[0] = out_prims * per_prim;
-}
-
-static inline void
-poly_unroll_restart(global uint32_t *out_draw,
-                    global struct poly_heap *heap,
-                    constant uint *in_draw,
-                    uint64_t index_buffer,
-                    uint32_t index_buffer_range_el,
-                    uint32_t index_size_B,
-                    uint32_t restart_index,
-                    uint32_t flatshade_first,
-                    enum mesa_prim mode,
-                    local void *scratch)
-{
-   poly_unroll_geometry(out_draw, heap, in_draw, index_buffer,
-                        index_buffer_range_el, index_size_B, index_size_B,
-                        restart_index, flatshade_first, false, mode, scratch);
 }
 
 static inline uint32_t
@@ -279,8 +253,6 @@ poly_count_restart_prims(constant uint *in_draw,
 
    uintptr_t in_ptr = (uintptr_t)(poly_index_buffer(
       index_buffer, index_buffer_range_el, in_draw[2], index_size_B));
-   uint in_range_el = poly_index_buffer_range_el(
-      index_buffer_range_el, in_draw[2]);
 
    uint out_prims = 0;
    uint needle = 0;
@@ -291,7 +263,7 @@ poly_count_restart_prims(constant uint *in_draw,
       for (;;) {
          uint idx = next_restart + tid;
          bool restart =
-            idx >= count || poly_load_index(in_ptr, in_range_el, idx,
+            idx >= count || poly_load_index(in_ptr, index_buffer_range_el, idx,
                                             index_size_B) == restart_index;
 
          uint next_offs = poly_work_group_first_true(restart, scratch);

@@ -10,8 +10,7 @@ struct radeon_winsys;
 struct pipe_screen_config;
 
 struct pipe_screen* r300_screen_create(struct radeon_winsys *rws,
-                                       const struct pipe_screen_config *config,
-                                       uint64_t debug_flags);
+                                       const struct pipe_screen_config *config);
 
 #ifdef __cplusplus
 } // extern "C"

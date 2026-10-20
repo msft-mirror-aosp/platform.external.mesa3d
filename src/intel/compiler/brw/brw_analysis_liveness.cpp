@@ -30,8 +30,9 @@
 
 void
 brw_live_variables::setup_one_read(struct block_data *bd,
-                                   int ip, int var)
+                                   int ip, const brw_reg &reg)
 {
+   int var = var_from_reg(reg);
    assert(var < num_vars);
 
    vars_range[var] = merge(vars_range[var], ip);
@@ -46,8 +47,9 @@ brw_live_variables::setup_one_read(struct block_data *bd,
 
 void
 brw_live_variables::setup_one_write(struct block_data *bd, brw_inst *inst,
-                                    int ip, int var)
+                                    int ip, const brw_reg &reg)
 {
+   int var = var_from_reg(reg);
    assert(var < num_vars);
 
    vars_range[var] = merge(vars_range[var], ip);
@@ -55,10 +57,12 @@ brw_live_variables::setup_one_write(struct block_data *bd, brw_inst *inst,
    /* The def[] bitset marks when an initialization in a block completely
     * screens off previous updates of that variable (VGRF channel).
     */
-   if (!inst->is_partial_write() && !BITSET_TEST(bd->use, var))
-      BITSET_SET(bd->def, var);
+   if (inst->dst.file == VGRF) {
+      if (!inst->is_partial_write() && !BITSET_TEST(bd->use, var))
+         BITSET_SET(bd->def, var);
 
-   BITSET_SET(bd->defout, var);
+      BITSET_SET(bd->defout, var);
+   }
 }
 
 /**
@@ -85,23 +89,26 @@ brw_live_variables::setup_def_use()
       foreach_inst_in_block(brw_inst, inst, block) {
          /* Set use[] for this instruction */
          for (unsigned int i = 0; i < inst->sources; i++) {
-            if (inst->src[i].file != VGRF)
+            brw_reg reg = inst->src[i];
+
+            if (reg.file != VGRF)
                continue;
 
-            const int var = var_from_reg(inst->src[i]);
-            const unsigned read = regs_read(devinfo, inst, i);
-            for (unsigned j = 0; j < read; j++)
-               setup_one_read(bd, ip, var + j);
+            for (unsigned j = 0; j < regs_read(devinfo, inst, i); j++) {
+               setup_one_read(bd, ip, reg);
+               reg.offset += REG_SIZE;
+            }
          }
 
          bd->flag_use[0] |= inst->flags_read(devinfo) & ~bd->flag_def[0];
 
          /* Set def[] for this instruction */
          if (inst->dst.file == VGRF) {
-            const int var = var_from_reg(inst->dst);
-            const unsigned written = regs_written(inst);
-            for (unsigned j = 0; j < written; j++)
-               setup_one_write(bd, inst, ip, var + j);
+            brw_reg reg = inst->dst;
+            for (unsigned j = 0; j < regs_written(inst); j++) {
+               setup_one_write(bd, inst, ip, reg);
+               reg.offset += REG_SIZE;
+            }
          }
 
          if (!inst->predicate && inst->exec_size >= 8)

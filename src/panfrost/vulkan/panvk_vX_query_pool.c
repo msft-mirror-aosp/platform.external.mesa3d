@@ -54,7 +54,7 @@ panvk_per_arch(CreateQueryPool)(VkDevice _device,
       const struct panvk_physical_device *phys_dev =
          to_panvk_physical_device(device->vk.physical);
 
-      reports_per_query = pan_query_core_id_range(&phys_dev->kmod.dev->props);
+      pan_query_core_count(&phys_dev->kmod.dev->props, &reports_per_query);
 #else
       reports_per_query = 1;
 #endif

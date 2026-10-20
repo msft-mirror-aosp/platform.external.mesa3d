@@ -10,8 +10,6 @@
 #include "sfn_debug.h"
 #include "sfn_instr.h"
 
-#include "pipe/p_shader_tokens.h"
-
 #include <algorithm>
 #include <iostream>
 #include <queue>
@@ -1051,6 +1049,7 @@ ValueFactory::get_shader_info(r600_shader *sh_info)
          sh_info->arrays->gpr_count = arr->size();
          sh_info->arrays->comp_mask = ((1 << arr->nchannels()) - 1) << arr->frac();
       }
+      sh_info->indirect_files |= 1 << TGSI_FILE_TEMPORARY;
    }
 }
 

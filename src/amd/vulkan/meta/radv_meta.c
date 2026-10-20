@@ -7,7 +7,7 @@
  */
 
 #include "radv_meta.h"
-#include "tools/radv_debug_nir.h"
+#include "radv_debug_nir.h"
 #include "radv_shader_object.h"
 
 #include "vk_common_entrypoints.h"
@@ -40,7 +40,7 @@ radv_suspend_queries(struct radv_meta_saved_state *state, struct radv_cmd_buffer
 
    /* Primitives generated queries (legacy). */
    if (cmd_buffer->state.active_prims_gen_queries) {
-      cmd_buffer->state.streamout.suspended = true;
+      cmd_buffer->state.suspend_streamout = true;
       cmd_buffer->state.dirty |= RADV_CMD_DIRTY_STREAMOUT_ENABLE;
    }
 
@@ -83,7 +83,7 @@ radv_resume_queries(const struct radv_meta_saved_state *state, struct radv_cmd_b
 
    /* Primitives generated queries (legacy). */
    if (cmd_buffer->state.active_prims_gen_queries) {
-      cmd_buffer->state.streamout.suspended = false;
+      cmd_buffer->state.suspend_streamout = false;
       cmd_buffer->state.dirty |= RADV_CMD_DIRTY_STREAMOUT_ENABLE;
    }
 
@@ -223,7 +223,7 @@ radv_meta_end(struct radv_cmd_buffer *cmd_buffer)
                                  state->graphics_descriptors.old_descriptor_set0, 0);
       }
       descriptors_state->descriptor_buffers[0] = state->graphics_descriptors.old_descriptor_buffer0;
-      descriptors_state->dirty_heaps |= state->graphics_descriptors.old_descriptor_heaps_dirty;
+      descriptors_state->dirty_heaps = state->graphics_descriptors.old_descriptor_heaps_dirty;
    }
 
    if (state->flags & RADV_META_SAVE_COMPUTE_DESCRIPTORS) {
@@ -234,7 +234,7 @@ radv_meta_end(struct radv_cmd_buffer *cmd_buffer)
                                  state->compute_descriptors.old_descriptor_set0, 0);
       }
       descriptors_state->descriptor_buffers[0] = state->compute_descriptors.old_descriptor_buffer0;
-      descriptors_state->dirty_heaps |= state->compute_descriptors.old_descriptor_heaps_dirty;
+      descriptors_state->dirty_heaps = state->compute_descriptors.old_descriptor_heaps_dirty;
    }
 
    if (state->flags & RADV_META_SAVE_CONSTANTS) {
@@ -262,29 +262,8 @@ radv_meta_end(struct radv_cmd_buffer *cmd_buffer)
    radv_resume_queries(state, cmd_buffer);
 }
 
-void
-radv_meta_begin_rendering(struct radv_cmd_buffer *cmd_buffer)
-{
-   assert(cmd_buffer->state.render.active);
-
-   radv_meta_begin(cmd_buffer);
-
-   /* We always enable HiZ within meta operations, so this needs to be set for meta draws which
-    * don't have their own render pass instance.
-    */
-   cmd_buffer->state.dirty |= RADV_CMD_DIRTY_GFX12_HIZ_WA_STATE;
-}
-
-void
-radv_meta_end_rendering(struct radv_cmd_buffer *cmd_buffer)
-{
-   assert(cmd_buffer->state.render.active);
-   radv_meta_end(cmd_buffer);
-   cmd_buffer->state.dirty |= RADV_CMD_DIRTY_GFX12_HIZ_WA_STATE;
-}
-
 VkImageViewType
-radv_meta_get_view_type(const struct radv_image *image, bool use_2d_array_for_3d)
+radv_meta_get_view_type(const struct radv_image *image)
 {
    switch (image->vk.image_type) {
    case VK_IMAGE_TYPE_1D:
@@ -292,7 +271,7 @@ radv_meta_get_view_type(const struct radv_image *image, bool use_2d_array_for_3d
    case VK_IMAGE_TYPE_2D:
       return VK_IMAGE_VIEW_TYPE_2D;
    case VK_IMAGE_TYPE_3D:
-      return use_2d_array_for_3d ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_3D;
+      return VK_IMAGE_VIEW_TYPE_3D;
    default:
       UNREACHABLE("bad VkImageViewType");
    }
@@ -368,7 +347,7 @@ radv_device_init_meta(struct radv_device *device)
 
    if (pdev->emulate_etc2) {
       device->meta_state.etc_decode.allocator = &device->meta_state.alloc;
-      device->meta_state.etc_decode.nir_options = &device->compiler_info.nir_options[MESA_SHADER_COMPUTE];
+      device->meta_state.etc_decode.nir_options = &pdev->nir_options[MESA_SHADER_COMPUTE];
       device->meta_state.etc_decode.pipeline_cache = device->meta_state.cache;
 
       vk_texcompress_etc2_init(&device->vk, &device->meta_state.etc_decode);
@@ -397,6 +376,8 @@ radv_device_finish_meta(struct radv_device *device)
       if (device->meta_state.astc_decode)
          vk_texcompress_astc_finish(&device->vk, &device->meta_state.alloc, device->meta_state.astc_decode);
    }
+
+   radv_device_finish_accel_struct_build_state(device);
 
    vk_common_DestroyPipelineCache(radv_device_to_handle(device), device->meta_state.cache, NULL);
    mtx_destroy(&device->meta_state.mtx);

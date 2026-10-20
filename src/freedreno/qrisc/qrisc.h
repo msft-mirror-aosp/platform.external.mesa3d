@@ -39,7 +39,6 @@ typedef enum {
    ALU(ISHR)  /* signed shift right by immediate */
    ALU(ROT)   /* rotate left (left shift with wrap-around) */
    ALU(MUL8)  /* 8bit multiply by immediate */
-   ALU(MUL16) /* 16bit multiply by immediate */
    ALU(MIN)
    ALU(MAX)
    ALU(CMP)   /* compare src to immed */
@@ -57,8 +56,6 @@ typedef enum {
     * with STORE, so it can only be used with the two-source encoding.
     */
    OPC_MSB,
-   /* population count, return the number of bits set in src2 */
-   OPC_POPCOUNT,
 
    /* These seem something to do with setting some external state..
     * doesn't seem to map *directly* to registers, but I guess that
@@ -106,7 +103,7 @@ typedef enum {
    OPC_BL,            /* Branch and Link (same as the MIPS/ARM instruction) */
    OPC_SETSECURE,     /* switch secure mode on/off */
    OPC_JUMPR,         /* indirect jump with a register offset */
-   OPC_JUMPD,          /* mysterious indirect jump instruction, seems to be equivelent to jumpr */
+   OPC_SRET,          /* Return instruction to use with "bl" */
    OPC_JUMPA,         /* Absolute jump instruction */
 
    /* pseudo-opcodes without an actual encoding */
@@ -152,28 +149,6 @@ typedef enum {
    REG_DATA    = 0x1f,
 } qrisc_reg;
 
-struct qrisc_label_ref {
-   char *str;
-   char *section;
-   bool absolute;
-};
-
-/* Calculate ref1 * ref1_scale +/- ref2 * ref2_scale. This is the most we need
- * from relocations at the moment, but could be expanded in the future.
- */
-enum qrisc_label_op {
-   LABEL_OP_ADD,
-   LABEL_OP_SUB,
-};
-
-struct qrisc_label_expr {
-   struct qrisc_label_ref ref1;
-   unsigned ref1_scale;
-   struct qrisc_label_ref ref2;
-   unsigned ref2_scale;
-   enum qrisc_label_op op;
-};
-
 struct qrisc_instr {
    qrisc_opc opc;
 
@@ -187,7 +162,7 @@ struct qrisc_instr {
    uint8_t sds;
    uint32_t literal;
    int offset;
-   struct qrisc_label_expr label;
+   const char *label;
 
    bool has_immed : 1;
    bool has_shift : 1;

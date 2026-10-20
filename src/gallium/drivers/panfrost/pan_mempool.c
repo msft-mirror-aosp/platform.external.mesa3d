@@ -7,7 +7,6 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
-#include "pan_context.h"
 #include "pan_device.h"
 #include "pan_mempool.h"
 #include "pan_trace.h"
@@ -103,10 +102,17 @@ panfrost_pool_get_bo_handles(struct panfrost_pool *pool, uint32_t *handles)
 
    unsigned idx = 0;
    util_dynarray_foreach(&pool->bos, struct panfrost_bo *, bo) {
-      uint32_t handle = panfrost_bo_handle(*bo);
+      assert(panfrost_bo_handle(*bo) > 0);
+      handles[idx++] = panfrost_bo_handle(*bo);
 
-      assert(handle > 0);
-      handles[idx++] = handle;
+      /* Update the BO access flags so that panfrost_bo_wait() knows
+       * about all pending accesses.
+       * We only keep the READ/WRITE info since this is all the BO
+       * wait logic cares about.
+       * We also preserve existing flags as this batch might not
+       * be the first one to access the BO.
+       */
+      (*bo)->gpu_access |= PAN_BO_ACCESS_RW;
    }
 }
 

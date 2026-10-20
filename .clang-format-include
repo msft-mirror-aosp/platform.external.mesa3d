@@ -12,5 +12,3 @@ src/amd/compiler/**/*
 src/egl/**/*
 src/etnaviv/isa/**/*
 src/imagination/**/*
-src/kosmickrisp/**/*
-src/gfxstream/**/*

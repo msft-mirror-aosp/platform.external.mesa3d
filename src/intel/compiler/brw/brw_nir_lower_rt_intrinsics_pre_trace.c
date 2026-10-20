@@ -83,7 +83,7 @@ brw_nir_lower_rt_intrinsics_pre_trace(nir_shader *nir)
                   nir_intrinsic_instr *intrin = (void *)entry->key;
 
                   /* Coming from a different function, ignore */
-                  if (intrin->instr.block->impl != impl)
+                  if (nir_cf_node_get_function(&intrin->instr.block->cf_node) != impl)
                      continue;
 
                   /* The trace dominates the intrinsic, move it before */

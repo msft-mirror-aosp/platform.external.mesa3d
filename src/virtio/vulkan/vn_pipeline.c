@@ -10,10 +10,10 @@
 
 #include "vn_pipeline.h"
 
-#include "vn_protocol_driver_pipeline.h"
-#include "vn_protocol_driver_pipeline_cache.h"
-#include "vn_protocol_driver_pipeline_layout.h"
-#include "vn_protocol_driver_shader_module.h"
+#include "venus-protocol/vn_protocol_driver_pipeline.h"
+#include "venus-protocol/vn_protocol_driver_pipeline_cache.h"
+#include "venus-protocol/vn_protocol_driver_pipeline_layout.h"
+#include "venus-protocol/vn_protocol_driver_shader_module.h"
 
 #include "vn_descriptor_set.h"
 #include "vn_device.h"
@@ -421,8 +421,7 @@ vn_CreatePipelineCache(VkDevice device,
 
       local_create_info = *pCreateInfo;
       local_create_info.initialDataSize -= header->header_size;
-      local_create_info.pInitialData =
-         (const char *)local_create_info.pInitialData + header->header_size;
+      local_create_info.pInitialData += header->header_size;
       pCreateInfo = &local_create_info;
    }
 
@@ -516,9 +515,9 @@ vn_GetPipelineCacheData(VkDevice device,
    memcpy(header->uuid, props->pipelineCacheUUID, VK_UUID_SIZE);
 
    *pDataSize -= header->header_size;
-   result = vn_call_vkGetPipelineCacheData(
-      target_ring, device, pipelineCache, pDataSize,
-      (char *)pData + header->header_size);
+   result =
+      vn_call_vkGetPipelineCacheData(target_ring, device, pipelineCache,
+                                     pDataSize, pData + header->header_size);
    if (result < VK_SUCCESS)
       return vn_error(dev->instance, result);
 
@@ -1409,11 +1408,11 @@ vn_multisample_info_pnext_init(
    VkPipelineSampleLocationsStateCreateInfoEXT *sl =
       &fix_tmp->sl_infos[index];
 
-   void *cur = (void *)fix_tmp->infos[index].pMultisampleState;
+   VkBaseOutStructure *cur = (void *)fix_tmp->infos[index].pMultisampleState;
 
-   vk_foreach_struct_const(sType, src, info->pNext) {
+   vk_foreach_struct_const(src, info->pNext) {
       void *next = NULL;
-      switch (sType) {
+      switch (src->sType) {
       case VK_STRUCTURE_TYPE_PIPELINE_SAMPLE_LOCATIONS_STATE_CREATE_INFO_EXT:
          memcpy(sl, src, sizeof(*sl));
          next = sl;
@@ -1423,12 +1422,12 @@ vn_multisample_info_pnext_init(
       }
 
       if (next) {
-         vk_pnext_set_next(cur, next);
+         cur->pNext = next;
          cur = next;
       }
    }
 
-   vk_pnext_set_next(cur, NULL);
+   cur->pNext = NULL;
 }
 
 static void
@@ -1517,11 +1516,11 @@ vn_graphics_pipeline_create_info_pnext_init(
    VkRenderingAttachmentLocationInfo *ral = &fix_tmp->ral_infos[index];
    VkRenderingInputAttachmentIndexInfo *riai = &fix_tmp->riai_infos[index];
 
-   void *cur = &fix_tmp->infos[index];
+   VkBaseOutStructure *cur = (void *)&fix_tmp->infos[index];
 
-   vk_foreach_struct_const(sType, src, info->pNext) {
+   vk_foreach_struct_const(src, info->pNext) {
       void *next = NULL;
-      switch (sType) {
+      switch (src->sType) {
       case VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT:
          memcpy(gpl, src, sizeof(*gpl));
          next = gpl;
@@ -1563,12 +1562,12 @@ vn_graphics_pipeline_create_info_pnext_init(
       }
 
       if (next) {
-         vk_pnext_set_next(cur, next);
+         cur->pNext = next;
          cur = next;
       }
    }
 
-   vk_pnext_set_next(cur, NULL);
+   cur->pNext = NULL;
 }
 
 static void
@@ -1645,7 +1644,7 @@ vn_fix_graphics_pipeline_create_infos(
  * VK_EXT_pipeline_creation_feedback, the pNext chain was input-only.
  */
 static void
-vn_invalidate_pipeline_creation_feedback(const void *chain)
+vn_invalidate_pipeline_creation_feedback(const VkBaseInStructure *chain)
 {
    const VkPipelineCreationFeedbackCreateInfo *feedback_info =
       vk_find_struct_const(chain, PIPELINE_CREATION_FEEDBACK_CREATE_INFO);
@@ -1726,7 +1725,8 @@ vn_CreateGraphicsPipelines(VkDevice device,
          pipeline->layout = vn_pipeline_layout_ref(dev, layout);
       }
 
-      vn_invalidate_pipeline_creation_feedback(pCreateInfos[i].pNext);
+      vn_invalidate_pipeline_creation_feedback(
+         (const VkBaseInStructure *)pCreateInfos[i].pNext);
    }
 
    struct vn_ring *target_ring = vn_get_target_ring(dev);
@@ -1794,7 +1794,8 @@ vn_CreateComputePipelines(VkDevice device,
           VN_PIPELINE_CREATE_SYNC_MASK)
          want_sync = true;
 
-      vn_invalidate_pipeline_creation_feedback(pCreateInfos[i].pNext);
+      vn_invalidate_pipeline_creation_feedback(
+         (const VkBaseInStructure *)pCreateInfos[i].pNext);
    }
 
    struct vn_ring *target_ring = vn_get_target_ring(dev);
@@ -1879,7 +1880,8 @@ vn_CreateRayTracingPipelinesKHR(
           VN_PIPELINE_CREATE_SYNC_MASK)
          want_sync = true;
 
-      vn_invalidate_pipeline_creation_feedback(pCreateInfos[i].pNext);
+      vn_invalidate_pipeline_creation_feedback(
+         (const VkBaseInStructure *)pCreateInfos[i].pNext);
    }
 
    /* TODO take deferredOperation into consideration */

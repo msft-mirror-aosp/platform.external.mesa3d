@@ -121,7 +121,10 @@ void vlVaHandlePictureParameterBufferH264(vlVaDriver *drv, vlVaContext *context,
 
    if (context->decoder && (context->templat.max_references != context->desc.h264.num_ref_frames)) {
       context->templat.max_references = MIN2(context->desc.h264.num_ref_frames, 16);
-      pipe_video_codec_reference(&context->decoder, NULL);
+      mtx_lock(&context->mutex);
+      context->decoder->destroy(context->decoder);
+      context->decoder = NULL;
+      mtx_unlock(&context->mutex);
    } else if (!context->decoder && context->desc.h264.num_ref_frames > 0)
       context->templat.max_references = MIN2(context->desc.h264.num_ref_frames, 16);
 

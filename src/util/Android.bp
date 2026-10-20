@@ -21,13 +21,6 @@ filegroup {
     ],
 }
 
-filegroup {
-    name: "drirc_gen.py",
-    srcs: [
-        "drirc_gen.py",
-    ],
-}
-
 python_binary_host {
     name: "driconf_static_py_binary",
     main: "driconf_static.py",
@@ -45,18 +38,6 @@ python_binary_host {
     main: "format_srgb.py",
     srcs: [
         "format_srgb.py",
-    ],
-    libs: [
-        "mako",
-        "pyyaml",
-    ],
-}
-
-python_binary_host {
-    name: "glsl2spirv_py_binary",
-    main: "glsl2spirv.py",
-    srcs: [
-        "glsl2spirv.py",
     ],
     libs: [
         "mako",
@@ -83,7 +64,6 @@ genrule {
     ],
     srcs: [
         "00-mesa-defaults.conf",
-        ":files_drirc",
     ],
     tools: [
         "driconf_static_py_binary",
@@ -93,7 +73,7 @@ genrule {
         "src/util",
     ],
     cmd: "$(location driconf_static_py_binary) $(location 00-mesa-defaults.conf) " +
-        "$(location :files_drirc) $(location src/util/driconf_static.h)",
+        "$(location src/util/driconf_static.h)",
 }
 
 genrule {
@@ -235,7 +215,6 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
-        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -260,11 +239,13 @@ cc_library_static {
         "u_format_gen.h",
         "u_format_pack.h",
     ],
+    generated_sources: [
+        "format_srgb",
+        "u_format_table.c",
+    ],
     srcs: [
         ":files_mesa_format",
         ":files_mesa_util",
-        ":format_srgb",
-        ":u_format_table.c",
         "anon_file.c",
         "bitscan.c",
         "blob.c",
@@ -331,7 +312,6 @@ cc_library_static {
         "u_qsort.cpp",
         "u_queue.c",
         "u_range_remap.c",
-        "u_shader_variant_cache.c",
         "u_string.c",
         "u_sync_provider.c",
         "u_thread.c",
@@ -345,16 +325,6 @@ cc_library_static {
         ],
         ("arm64", "linux_musl"): [
             "cache_ops_aarch64.c",
-            "u_debug_stack.c",
-            "u_debug_symbol.c",
-        ],
-        ("x86_64", "linux_glibc"): [
-            "u_debug_stack.c",
-            "u_debug_symbol.c",
-        ],
-        ("x86_64", "linux_musl"): [
-            "u_debug_stack.c",
-            "u_debug_symbol.c",
         ],
         (default, default): [],
     }) + select(os(), {
@@ -362,6 +332,20 @@ cc_library_static {
             "u_debug_stack_android.cpp",
         ],
         default: [],
+    }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
+        ("x86_64", "linux_glibc", default): [
+            "u_debug_stack.c",
+            "u_debug_symbol.c",
+        ],
+        ("x86_64", "linux_musl", default): [
+            "u_debug_stack.c",
+            "u_debug_symbol.c",
+        ],
+        ("arm64", "linux_musl", default): [
+            "u_debug_stack.c",
+            "u_debug_symbol.c",
+        ],
+        (default, default, default): [],
     }),
     static_libs: [
         "blake3",
@@ -385,7 +369,6 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
-        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [
@@ -473,7 +456,6 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
-        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "mesa_util_simd_c_flags",
@@ -511,7 +493,6 @@ cc_library_static {
     host_supported: true,
     defaults: [
         "_trial_msvc",
-        "_trial_soong_c",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -561,7 +542,6 @@ cc_library_static {
     }),
     shared_libs: [
         "libdrm",
-        "libz",
         "libzstd",
     ] + select(os(), {
         "android": [

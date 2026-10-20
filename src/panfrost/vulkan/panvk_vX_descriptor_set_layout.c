@@ -1,7 +1,6 @@
 /*
  * Copyright © 2024 Collabora Ltd.
  * Copyright © 2025 Arm Ltd.
- * Copyright © 2026 Google LLC
  * SPDX-License-Identifier: MIT
  */
 
@@ -28,7 +27,6 @@
 #include "panvk_descriptor_set_layout.h"
 #include "panvk_device.h"
 #include "panvk_entrypoints.h"
-#include "panvk_image.h"
 #include "panvk_macros.h"
 #include "panvk_sampler.h"
 
@@ -42,7 +40,6 @@ is_texture(VkDescriptorType type)
    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
    case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-   case VK_DESCRIPTOR_TYPE_MUTABLE_EXT:
       return true;
 
    default:
@@ -56,7 +53,6 @@ is_sampler(VkDescriptorType type)
    switch (type) {
    case VK_DESCRIPTOR_TYPE_SAMPLER:
    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-   case VK_DESCRIPTOR_TYPE_MUTABLE_EXT:
       return true;
 
    default:
@@ -79,10 +75,9 @@ set_immutable_sampler(struct panvk_descriptor_set_binding_layout *binding_layout
    if (!sampler->vk.ycbcr_conversion)
       return;
 
-   const unsigned yuv_tex_count = panvk_image_get_tex_count(
-      PAN_ARCH, sampler->vk.ycbcr_conversion->state.format);
    binding_layout->textures_per_desc =
-      MAX2(yuv_tex_count, binding_layout->textures_per_desc);
+      MAX2(vk_format_get_plane_count(sampler->vk.ycbcr_conversion->state.format),
+           binding_layout->textures_per_desc);
    binding_layout->samplers_per_desc =
       MAX2(sampler->desc_count, binding_layout->samplers_per_desc);
 }
@@ -326,9 +321,10 @@ panvk_per_arch(GetDescriptorSetLayoutSupport)(
             if (!sampler->vk.ycbcr_conversion)
                continue;
 
-            const unsigned yuv_tex_count = panvk_image_get_tex_count(
-               PAN_ARCH, sampler->vk.ycbcr_conversion->state.format);
-            textures_per_desc = MAX2(yuv_tex_count, textures_per_desc);
+            textures_per_desc =
+               MAX2(vk_format_get_plane_count(
+                       sampler->vk.ycbcr_conversion->state.format),
+                    textures_per_desc);
             samplers_per_desc =
                MAX2(sampler->desc_count, samplers_per_desc);
          }

@@ -311,6 +311,8 @@ brw_cs_thread_payload::brw_cs_thread_payload(const brw_shader &v)
 
    unsigned r = reg_unit(v.devinfo);
 
+   prog_data->uses_inline_push_addr = v.key->uses_inline_push_addr;
+
    /* See nir_setup_uniforms for subgroup_id in earlier versions. */
    if (v.devinfo->verx10 >= 125) {
       subgroup_id_ = brw_ud1_grf(0, 2);
@@ -330,13 +332,14 @@ brw_cs_thread_payload::brw_cs_thread_payload(const brw_shader &v)
       if (prog_data->uses_btd_stack_ids)
          r += reg_unit(v.devinfo);
 
-      if (v.stage == MESA_SHADER_COMPUTE) {
-         /* Since it is the last field of the thread payload, always expect
-          * inline parameters.  Register allocator will reuse any unused space.
-          */
+      if (v.stage == MESA_SHADER_COMPUTE &&
+          (prog_data->uses_inline_data ||
+           prog_data->uses_inline_push_addr)) {
          inline_parameter = brw_ud1_grf(r, 0);
          r += reg_unit(v.devinfo);
       }
+   } else {
+      assert(!prog_data->uses_inline_push_addr);
    }
 
    num_regs = r;
@@ -368,6 +371,9 @@ brw_task_mesh_thread_payload::brw_task_mesh_thread_payload(brw_shader &v)
     *  R3: Inline Parameter
     *
     * Local_ID.X values are 16 bits.
+    *
+    * Inline parameter is optional but always present since we use it to pass
+    * the address to descriptors.
     */
 
    const brw_builder bld = brw_builder(&v);
@@ -403,9 +409,11 @@ brw_task_mesh_thread_payload::brw_task_mesh_thread_payload(brw_shader &v)
    if (v.devinfo->ver < 20 && v.dispatch_width == 32)
       r += reg_unit(v.devinfo);
 
-   /* See comment on inline parameters in the CS handling. */
-   inline_parameter = brw_ud1_grf(r, 0);
-   r += reg_unit(v.devinfo);
+   struct brw_cs_prog_data *prog_data = brw_cs_prog_data(v.prog_data);
+   if (prog_data->uses_inline_data || prog_data->uses_inline_push_addr) {
+      inline_parameter = brw_ud1_grf(r, 0);
+      r += reg_unit(v.devinfo);
+   }
 
    num_regs = r;
 }

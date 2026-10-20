@@ -67,7 +67,8 @@ struct ir3_context {
    struct ir3_instruction *frag_face, *frag_coord;
 
    /* For vertex shaders, keep track of the system values sources */
-   struct ir3_instruction *vertex_id, *instance_id, *view_index;
+   struct ir3_instruction *vertex_id, *basevertex, *instance_id, *base_instance,
+      *draw_id, *view_index, *is_indexed_draw;
 
    /* For fragment shaders: */
    struct ir3_instruction *samp_id, *samp_mask_in;
@@ -162,11 +163,11 @@ struct ir3_context_funcs {
    void (*emit_intrinsic_image_size)(struct ir3_context *ctx,
                                      nir_intrinsic_instr *intr,
                                      struct ir3_instruction **dst);
-   void (*emit_intrinsic_load_global)(struct ir3_context *ctx,
-                                      nir_intrinsic_instr *intr,
-                                      struct ir3_instruction **dst);
-   void (*emit_intrinsic_store_global)(struct ir3_context *ctx,
-                                       nir_intrinsic_instr *intr);
+   void (*emit_intrinsic_load_global_ir3)(struct ir3_context *ctx,
+                                          nir_intrinsic_instr *intr,
+                                          struct ir3_instruction **dst);
+   void (*emit_intrinsic_store_global_ir3)(struct ir3_context *ctx,
+                                           nir_intrinsic_instr *intr);
    struct ir3_instruction *(*emit_intrinsic_atomic_global)(
       struct ir3_context *ctx, nir_intrinsic_instr *intr);
 };

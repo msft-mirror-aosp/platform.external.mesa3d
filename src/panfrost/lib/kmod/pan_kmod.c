@@ -60,19 +60,11 @@ pan_kmod_dev_create(int fd, uint32_t flags,
    if (!allocator)
       allocator = &default_allocator;
 
-   const char *drv_name = version->name;
-   const struct pan_kmod_driver drv_info = {
-      .version = {
-         .major = version->version_major,
-         .minor = version->version_minor,
-      },
-   };
-
    for (unsigned i = 0; i < ARRAY_SIZE(drivers); i++) {
-      if (!strcmp(drivers[i].name, drv_name)) {
+      if (!strcmp(drivers[i].name, version->name)) {
          const struct pan_kmod_ops *ops = drivers[i].ops;
 
-         dev = ops->dev_create(fd, flags, &drv_info, allocator);
+         dev = ops->dev_create(fd, flags, version, allocator);
          break;
       }
    }
@@ -284,13 +276,8 @@ pan_kmod_queue_bo_map_sync(struct pan_kmod_bo *bo, uint64_t bo_offset,
        MAX_PENDING_SYNC_OPS)
       pan_kmod_flush_bo_map_syncs_locked(dev);
 
-   /* Architectures that use cache_ops_null.c will always return 0 for
-    * util_cache_granularity(). But using that result would make
-    * pan_kmod_deferred_bo_sync be initialized with size = 0.
-    */
-   uint64_t granularity = util_has_cache_ops() ? util_cache_granularity() : 64;
-   uint64_t start = bo_offset & ~(granularity - 1);
-   uint64_t end = ALIGN_POT(bo_offset + range, granularity);
+   uint64_t start = bo_offset & ~((uint64_t)util_cache_granularity() - 1);
+   uint64_t end = ALIGN_POT(bo_offset + range, util_cache_granularity());
 
    struct pan_kmod_deferred_bo_sync new_sync = {
       .bo = bo,

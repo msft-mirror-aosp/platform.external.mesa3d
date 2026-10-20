@@ -112,24 +112,15 @@ bool anv_nir_apply_pipeline_layout(nir_shader *shader,
                                    enum brw_robustness_flags robust_flags,
                                    struct anv_descriptor_set_layout * const *set_layouts,
                                    uint32_t set_count,
-                                   bool device_bindable,
+                                   const uint32_t *dynamic_offset_start,
                                    struct anv_pipeline_bind_map *map,
                                    struct anv_pipeline_push_map *push_map,
                                    void *push_map_mem_ctx);
-
-bool
-anv_nir_lower_descriptor_heap(nir_shader *shader,
-                              const struct anv_device *device,
-                              uint32_t embedded_sampler_count,
-                              const struct vk_sampler_state* embedded_samplers,
-                              struct anv_pipeline_bind_map *map);
 
 struct anv_nir_push_layout_info {
    bool separate_tessellation;
    bool fragment_dynamic;
    bool mesh_dynamic;
-   bool use_fs_color_offset;
-   bool use_fs_color_map;
 };
 
 bool anv_nir_shrink_push_constant_ranges(nir_shader *nir);
@@ -158,7 +149,7 @@ bool anv_nir_lower_unaligned_dispatch(nir_shader *shader);
 
 bool anv_nir_lower_resource_intel(nir_shader *shader,
                                   const struct anv_physical_device *device,
-                                  enum anv_shader_binding_mode binding_mode);
+                                  enum anv_descriptor_set_layout_type desc_type);
 
 bool anv_nir_add_base_work_group_id(nir_shader *shader);
 
@@ -179,8 +170,6 @@ uint32_t anv_nir_push_desc_ubo_fully_promoted(nir_shader *nir,
 void anv_apply_per_prim_attr_wa(struct nir_shader *ms_nir,
                                 struct nir_shader *fs_nir,
                                 struct anv_device *device);
-
-bool anv_nir_xe2_r11g11b10_atomic_swap_wa(nir_shader *nir);
 
 static inline bool
 anv_nir_is_promotable_ubo_binding(nir_src src)

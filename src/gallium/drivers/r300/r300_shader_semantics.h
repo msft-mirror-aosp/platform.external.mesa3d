@@ -10,8 +10,12 @@
 #define ATTR_COLOR_COUNT        2
 #define ATTR_GENERIC_COUNT      32
 
-/* Information about what attributes are written by VS or read by FS.
- * The variables contain output/input register indices. */
+/* This structure contains information about what attributes are written by VS
+ * or read by FS. (but not both) It's much easier to work with than
+ * tgsi_shader_info.
+ *
+ * The variables contain indices to tgsi_shader_info semantics and those
+ * indices are nothing else than input/output register numbers. */
 struct r300_shader_semantics {
     int pos;
     int psize;
@@ -23,9 +27,6 @@ struct r300_shader_semantics {
     int wpos;
 
     int num_generic;
-
-    /* Total number of used inputs/outputs. */
-    unsigned num_total;
 };
 
 static inline void r300_shader_semantics_reset(
@@ -49,7 +50,6 @@ static inline void r300_shader_semantics_reset(
     }
 
     info->num_generic = 0;
-    info->num_total = 0;
 }
 
 #endif

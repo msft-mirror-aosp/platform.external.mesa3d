@@ -9,6 +9,7 @@
 
 #include "r300_reg.h"
 #include "radeon_compiler_util.h"
+#include "radeon_list.h"
 #include "radeon_variable.h"
 
 #include "util/compiler.h"
@@ -18,11 +19,11 @@
  */
 static void
 r500_transform_IF_instr(struct radeon_compiler *c, struct rc_instruction *inst_if,
-                        struct util_dynarray *var_list)
+                        struct rc_list *var_list)
 {
 
    struct rc_variable *writer;
-   struct util_dynarray *writer_list;
+   struct rc_list *writer_list, *list_ptr;
    unsigned int generic_if = 0;
    unsigned int alu_chan;
 
@@ -33,9 +34,9 @@ r500_transform_IF_instr(struct radeon_compiler *c, struct rc_instruction *inst_i
 
       /* Make sure it is safe for the writers to write to
        * ALU Result */
-      util_dynarray_foreach(writer_list, struct rc_variable *, writer_ptr) {
+      for (list_ptr = writer_list; list_ptr; list_ptr = list_ptr->Next) {
          struct rc_instruction *inst;
-         writer = *writer_ptr;
+         writer = list_ptr->Item;
          /* We are going to modify the destination register
           * of writer, so if it has a reader other than
           * inst_if (aka ReaderCount > 1) we must fall back to
@@ -93,8 +94,8 @@ r500_transform_IF_instr(struct radeon_compiler *c, struct rc_instruction *inst_i
    } else {
       rc_compare_func compare_func = RC_COMPARE_FUNC_NEVER;
       unsigned int preserve_opcode = 0;
-      util_dynarray_foreach(writer_list, struct rc_variable *, writer_ptr) {
-         writer = *writer_ptr;
+      for (list_ptr = writer_list; list_ptr; list_ptr = list_ptr->Next) {
+         writer = list_ptr->Item;
          switch (writer->Inst->U.I.Opcode) {
          case RC_OPCODE_SEQ:
             compare_func = RC_COMPARE_FUNC_EQUAL;
@@ -134,7 +135,7 @@ r500_transform_IF_instr(struct radeon_compiler *c, struct rc_instruction *inst_i
 void
 r500_transform_IF(struct radeon_compiler *c, void *user)
 {
-   struct util_dynarray *var_list = rc_get_variables(c);
+   struct rc_list *var_list = rc_get_variables(c);
 
    struct rc_instruction *inst = c->Program.Instructions.Next;
    while (inst != &c->Program.Instructions) {

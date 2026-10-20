@@ -24,9 +24,12 @@ static const struct spirv_to_nir_options spirv_options = {
 };
 
 struct nir_shader_compiler_options generic_opts = {
-   .float_mul_add16 = nir_float_muladd_support_keep_weak_ffma,
-   .float_mul_add32 = nir_float_muladd_support_keep_weak_ffma,
-   .float_mul_add64 = nir_float_muladd_support_keep_weak_ffma,
+   /* TODO: Do we want to set has_*? Will drivers be able to lower
+    * appropriately?
+    */
+   .fuse_ffma16 = true,
+   .fuse_ffma32 = true,
+   .fuse_ffma64 = true,
 
    .max_unroll_iterations = 32,
    .max_unroll_iterations_fp64 = 32,
@@ -307,12 +310,7 @@ main(int argc, char **argv)
       return 1;
    }
 
-   if (fread(map, 1, len, fin) != len) {
-      fprintf(stderr, "Failed to read map buffer\n");
-      free(map);
-      fclose(fin);
-      return 1;
-   }
+   fread(map, 1, len, fin);
    fclose(fin);
 
    FILE *fp_c = fopen(outcfile, "w");

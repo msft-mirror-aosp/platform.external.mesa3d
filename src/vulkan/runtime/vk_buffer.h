@@ -24,7 +24,6 @@
 #define VK_BUFFER_H
 
 #include "vk_object.h"
-#include "vk_util.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,7 +39,7 @@ struct vk_buffer {
    VkDeviceSize size;
 
    /** VkBufferCreateInfo::usage or VkBufferUsageFlags2CreateInfoKHR::usage */
-   VkBufferUsageFlags2 usage;
+   VkBufferUsageFlags2KHR usage;
 
    /** Set by the implementation
     *
@@ -123,18 +122,6 @@ vk_strided_device_address_range(const struct vk_buffer *buffer,
    }
 
    return addr_range;
-}
-
-static inline VkBufferUsageFlags2
-vk_buffer_usage_flags(const VkBufferCreateInfo *info)
-{
-   const VkBufferUsageFlags2CreateInfo *usage2_info =
-      vk_find_struct_const(info->pNext,
-                           BUFFER_USAGE_FLAGS_2_CREATE_INFO);
-   if (usage2_info)
-      return usage2_info->usage;
-   else
-      return info->usage;
 }
 
 #ifdef __cplusplus

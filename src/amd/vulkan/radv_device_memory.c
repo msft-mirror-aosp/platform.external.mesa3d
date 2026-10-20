@@ -9,12 +9,11 @@
  */
 
 #include "radv_device_memory.h"
-#include "tools/radv_debug.h"
-#include "tools/radv_rmv.h"
 #include "radv_android.h"
 #include "radv_buffer.h"
 #include "radv_entrypoints.h"
 #include "radv_image.h"
+#include "radv_rmv.h"
 
 #include "vk_debug_utils.h"
 #include "vk_log.h"
@@ -179,6 +178,23 @@ radv_alloc_memory(struct radv_device *device, const VkMemoryAllocateInfo *pAlloc
          close(import_info->fd);
       }
       mem->import_handle_type = import_info->handleType;
+
+      if (mem->image && mem->image->plane_count == 1 && !vk_format_is_depth_or_stencil(mem->image->vk.format) &&
+          mem->image->vk.samples == 1 && mem->image->vk.tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
+         struct radeon_bo_metadata metadata;
+         device->ws->buffer_get_metadata(device->ws, mem->bo, &metadata);
+
+         struct radv_image_create_info create_info = {.no_metadata_planes = true, .bo_metadata = &metadata};
+
+         /* This gives a basic ability to import radeonsi images
+          * that don't have DCC. This is not guaranteed by any
+          * spec and can be removed after we support modifiers. */
+         result = radv_image_create_layout(device, create_info, NULL, NULL, mem->image);
+         if (result != VK_SUCCESS) {
+            radv_bo_destroy(device, &mem->base, mem->bo);
+            goto fail;
+         }
+      }
    } else if (host_ptr_info) {
       assert(host_ptr_info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT);
       result = radv_bo_from_ptr(device, host_ptr_info->pHostPointer, pAllocateInfo->allocationSize, priority, mem);
@@ -190,6 +206,7 @@ radv_alloc_memory(struct radv_device *device, const VkMemoryAllocateInfo *pAlloc
       mem->import_handle_type = host_ptr_info->handleType;
    } else {
       const struct radv_physical_device *pdev = radv_device_physical(device);
+      const struct radv_instance *instance = radv_physical_device_instance(pdev);
       uint64_t alloc_size = align64(pAllocateInfo->allocationSize, 4096);
       uint32_t heap_index;
 
@@ -219,7 +236,7 @@ radv_alloc_memory(struct radv_device *device, const VkMemoryAllocateInfo *pAlloc
          flags |= RADEON_FLAG_ZERO_VRAM;
 
       /* Only apply the workaround for BOs created by the application, not by the driver. */
-      if (pdev->drirc.debug.wait_for_vm_map_updates)
+      if (instance->drirc.debug.wait_for_vm_map_updates)
          flags |= RADEON_FLAG_VM_UPDATE_WAIT;
 
       /* On GFX12, DCC is transparent to the userspace driver and PTE.DCC is

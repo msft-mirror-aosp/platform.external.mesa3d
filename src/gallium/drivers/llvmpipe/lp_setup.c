@@ -856,8 +856,9 @@ lp_setup_set_vertex_info(struct lp_setup_context *setup,
 }
 
 
-bool
-lp_setup_linear_rasterizer_supported(void)
+void
+lp_setup_set_linear_mode(struct lp_setup_context *setup,
+                         bool mode)
 {
    /* The linear rasterizer requires sse2 both at compile and runtime,
     * in particular for the code in lp_rast_linear_fallback.c.  This
@@ -865,19 +866,11 @@ lp_setup_linear_rasterizer_supported(void)
     * baseline.
     */
 #if DETECT_ARCH_SSE
-   return util_get_cpu_caps()->has_sse2;
+   setup->permit_linear_rasterizer = (mode &&
+                                      util_get_cpu_caps()->has_sse2);
 #else
-   return false;
+   setup->permit_linear_rasterizer = false;
 #endif
-}
-
-
-void
-lp_setup_set_linear_mode(struct lp_setup_context *setup,
-                         bool mode)
-{
-   setup->permit_linear_rasterizer = mode &&
-                                     lp_setup_linear_rasterizer_supported();
 }
 
 
@@ -1295,10 +1288,10 @@ lp_setup_update_state(struct lp_setup_context *setup,
 
       assert(lp->dirty == 0);
 
-      assert(lp->cached_setup_key.size ==
+      assert(lp->setup_variant.key.size ==
              setup->setup.variant->key.size);
 
-      assert(memcmp(&lp->cached_setup_key,
+      assert(memcmp(&lp->setup_variant.key,
                     &setup->setup.variant->key,
                     setup->setup.variant->key.size) == 0);
    }

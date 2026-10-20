@@ -25,7 +25,6 @@
     - .windows-docker-msvc
     - .windows-shell-tags
   rules:
-    - !reference [.no_downstream_pipeline-rules, rules]
     - !reference [.common-rules, rules]
     - !reference [.microsoft-farm-container-rules, rules]
     - !reference [.container-rules, rules]
@@ -53,7 +52,6 @@ windows_build_msvc:
   extends:
     - .windows_container_build
   rules:
-    - !reference [.no_downstream_pipeline-rules, rules]
     - !reference [.common-rules, rules]
     - !reference [.microsoft-farm-rules, rules]
     - !reference [.container-rules, rules]
@@ -74,7 +72,6 @@ windows_test_msvc:
   extends:
     - .windows_container_build
   rules:
-    - !reference [.no_downstream_pipeline-rules, rules]
     - !reference [.common-rules, rules]
     - !reference [.microsoft-farm-rules, rules]
     - !reference [.container-rules, rules]

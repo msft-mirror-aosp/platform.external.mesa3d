@@ -88,6 +88,36 @@ _mesa_print_state( const char *msg, GLuint state )
 
 
 /**
+ * Print information about this Mesa version and build options.
+ */
+void _mesa_print_info( struct gl_context *ctx )
+{
+   _mesa_debug(NULL, "Mesa GL_VERSION = %s\n",
+	   (char *) _mesa_GetString(GL_VERSION));
+   _mesa_debug(NULL, "Mesa GL_RENDERER = %s\n",
+	   (char *) _mesa_GetString(GL_RENDERER));
+   _mesa_debug(NULL, "Mesa GL_VENDOR = %s\n",
+	   (char *) _mesa_GetString(GL_VENDOR));
+
+   /* use ctx as GL_EXTENSIONS will not work on 3.0 or higher
+    * core contexts.
+    */
+   _mesa_debug(NULL, "Mesa GL_EXTENSIONS = %s\n", ctx->Extensions.String);
+
+#if DETECT_ARCH_X86
+   _mesa_debug(NULL, "Mesa x86-optimized: YES\n");
+#else
+   _mesa_debug(NULL, "Mesa x86-optimized: NO\n");
+#endif
+#if DETECT_ARCH_SPARC64
+   _mesa_debug(NULL, "Mesa sparc-optimized: YES\n");
+#else
+   _mesa_debug(NULL, "Mesa sparc-optimized: NO\n");
+#endif
+}
+
+
+/**
  * Set verbose logging flags.  When these flags are set, GL API calls
  * in the various categories will be printed to stderr.
  * \param str  a comma-separated list of keywords
@@ -101,9 +131,17 @@ set_verbose_flags(const char *str)
       GLbitfield flag;
    };
    static const struct option opts[] = {
+      { "varray",    VERBOSE_VARRAY },
+      { "tex",       VERBOSE_TEXTURE },
+      { "mat",       VERBOSE_MATERIAL },
+      { "pipe",      VERBOSE_PIPELINE },
+      { "driver",    VERBOSE_DRIVER },
       { "state",     VERBOSE_STATE },
-      { "list",      VERBOSE_DISPLAY_LIST },
       { "api",       VERBOSE_API },
+      { "list",      VERBOSE_DISPLAY_LIST },
+      { "lighting",  VERBOSE_LIGHTING },
+      { "disassem",  VERBOSE_DISASSEM },
+      { "swap",      VERBOSE_SWAPBUFFERS }
    };
    GLuint i;
 
@@ -160,10 +198,6 @@ set_debug_flags(const char *str)
 void
 _mesa_init_debug( struct gl_context *ctx )
 {
-   const char *mesa_debug = os_get_option("MESA_DEBUG");
-
-   set_debug_flags(mesa_debug);
+   set_debug_flags(os_get_option("MESA_DEBUG"));
    set_verbose_flags(os_get_option("MESA_VERBOSE"));
-   ctx->Const.AllowGLTextureLinearTiling =
-      mesa_debug && strstr(mesa_debug, "api-tiling-linear");
 }

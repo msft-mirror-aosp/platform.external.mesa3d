@@ -12,11 +12,6 @@ PanVK, the Vulkan implementation in the Panfrost driver stack, is currently
 **conformant** on `Mali-G610 <https://www.khronos.org/conformance/adopters/conformant-products#submission_939>`__,
 but *non-conformant* on other GPUs.
 
-On GPUs where PanVK support is experimental, the driver refuses to load by
-default. Setting PAN_I_WANT_A_BROKEN_VULKAN_DRIVER=1 enables it. Experimental
-support comes with no guarantees: it may be broken, may require newer kernel
-driver versions, and may be removed.
-
 The following hardware is currently supported:
 
 +--------------------+---------------+-----------+--------+--------+
@@ -27,22 +22,17 @@ The following hardware is currently supported:
 | T760, T820, T830   | Midgard (v5)  | 3.1       | 3.1    |        |
 | T860, T880         |               |           |        |        |
 +--------------------+---------------+-----------+--------+--------+
-| G72                | Bifrost (v6)  | 3.1       | 3.1    | 1.3    |
+| G72                | Bifrost (v6)  | 3.1       | 3.1    | 1.0    |
 +--------------------+---------------+-----------+--------+--------+
-| G31, G51, G52, G76 | Bifrost (v7)  | 3.1       | 3.1    | 1.3    |
+| G31, G51, G52, G76 | Bifrost (v7)  | 3.1       | 3.1    | 1.0    |
 +--------------------+---------------+-----------+--------+--------+
-| G57, G68           | Valhall (v9)  | 3.1       | 3.1    |        |
+| G57                | Valhall (v9)  | 3.1       | 3.1    |        |
 +--------------------+---------------+-----------+--------+--------+
 | G310, G610         | Valhall (v10) | 3.1       | 3.1    | 1.4    |
-+--------------------+---------------+-----------+--------+--------+
-| G615, G715         | Valhall (v11) | 3.1       | 3.1    | 1.4    |
 +--------------------+---------------+-----------+--------+--------+
 | G720               | 5th Gen (v12) | 3.1       | 3.1    | 1.4    |
 +--------------------+---------------+-----------+--------+--------+
 | G725               | 5th Gen (v13) | 3.1       | 3.1    | 1.4    |
-+--------------------+---------------+-----------+--------+--------+
-| G1-Pro, G1-Premium | 5th Gen (v14) | 3.1       | 3.1    | 1.4    |
-| G1-Ultra           |               |           |        |        |
 +--------------------+---------------+-----------+--------+--------+
 
 Other Midgard and Bifrost chips (e.g. G71) are not yet supported.

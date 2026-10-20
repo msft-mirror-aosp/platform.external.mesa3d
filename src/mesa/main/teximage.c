@@ -1016,23 +1016,13 @@ _mesa_legal_texture_dimensions(struct gl_context *ctx, GLenum target,
 {
    GLint maxSize;
 
-   /* From the OpenGL ES 2.0 spec, section 3.7.1 (Texture Image Specification):
-    * If level is greater than zero, and either width or height is not a power
-    * of two, the error INVALID_VALUE is generated.
-    */
-   const bool allow_npot =
-      _mesa_has_ARB_texture_non_power_of_two(ctx) ||
-      _mesa_has_OES_texture_npot(ctx) ||
-      (_mesa_is_desktop_gl(ctx) && ctx->Version >= 20) ||
-      (_mesa_is_gles2(ctx) && level == 0);
-
    switch (target) {
    case GL_TEXTURE_1D:
    case GL_PROXY_TEXTURE_1D:
       maxSize = ctx->Const.MaxTextureSize >> level;
       if (width < 2 * border || width > 2 * border + maxSize)
          return GL_FALSE;
-      if (!allow_npot) {
+      if (!ctx->Extensions.ARB_texture_non_power_of_two) {
          if (width > 0 && !util_is_power_of_two_nonzero(width - 2 * border))
             return GL_FALSE;
       }
@@ -1047,7 +1037,7 @@ _mesa_legal_texture_dimensions(struct gl_context *ctx, GLenum target,
          return GL_FALSE;
       if (height < 2 * border || height > 2 * border + maxSize)
          return GL_FALSE;
-      if (!allow_npot) {
+      if (!ctx->Extensions.ARB_texture_non_power_of_two) {
          if (width > 0 && !util_is_power_of_two_nonzero(width - 2 * border))
             return GL_FALSE;
          if (height > 0 && !util_is_power_of_two_nonzero(height - 2 * border))
@@ -1065,7 +1055,7 @@ _mesa_legal_texture_dimensions(struct gl_context *ctx, GLenum target,
          return GL_FALSE;
       if (depth < 2 * border || depth > 2 * border + maxSize)
          return GL_FALSE;
-      if (!allow_npot) {
+      if (!ctx->Extensions.ARB_texture_non_power_of_two) {
          if (width > 0 && !util_is_power_of_two_nonzero(width - 2 * border))
             return GL_FALSE;
          if (height > 0 && !util_is_power_of_two_nonzero(height - 2 * border))
@@ -1102,7 +1092,7 @@ _mesa_legal_texture_dimensions(struct gl_context *ctx, GLenum target,
          return GL_FALSE;
       if (height < 2 * border || height > 2 * border + maxSize)
          return GL_FALSE;
-      if (!allow_npot) {
+      if (!ctx->Extensions.ARB_texture_non_power_of_two) {
          if (width > 0 && !util_is_power_of_two_nonzero(width - 2 * border))
             return GL_FALSE;
          if (height > 0 && !util_is_power_of_two_nonzero(height - 2 * border))
@@ -1117,7 +1107,7 @@ _mesa_legal_texture_dimensions(struct gl_context *ctx, GLenum target,
          return GL_FALSE;
       if (height < 0 || height > ctx->Const.MaxArrayTextureLayers)
          return GL_FALSE;
-      if (!allow_npot) {
+      if (!ctx->Extensions.ARB_texture_non_power_of_two) {
          if (width > 0 && !util_is_power_of_two_nonzero(width - 2 * border))
             return GL_FALSE;
       }
@@ -1134,7 +1124,7 @@ _mesa_legal_texture_dimensions(struct gl_context *ctx, GLenum target,
          return GL_FALSE;
       if (depth < 0 || depth > ctx->Const.MaxArrayTextureLayers)
          return GL_FALSE;
-      if (!allow_npot) {
+      if (!ctx->Extensions.ARB_texture_non_power_of_two) {
          if (width > 0 && !util_is_power_of_two_nonzero(width - 2 * border))
             return GL_FALSE;
          if (height > 0 && !util_is_power_of_two_nonzero(height - 2 * border))
@@ -1155,7 +1145,7 @@ _mesa_legal_texture_dimensions(struct gl_context *ctx, GLenum target,
          return GL_FALSE;
       if (level >= ctx->Const.MaxCubeTextureLevels)
          return GL_FALSE;
-      if (!allow_npot) {
+      if (!ctx->Extensions.ARB_texture_non_power_of_two) {
          if (width > 0 && !util_is_power_of_two_nonzero(width - 2 * border))
             return GL_FALSE;
          if (height > 0 && !util_is_power_of_two_nonzero(height - 2 * border))
@@ -1996,16 +1986,6 @@ texture_error_check( struct gl_context *ctx,
       return GL_TRUE;
    }
 
-   /* GL_EXT_YUV_target: TEXTURE_EXTERNAL_OES with YUV format can only be
-    * specified via EGLImageTargetTexture2DOES, not via TexImage*
-    */
-   if (target == GL_TEXTURE_EXTERNAL_OES) {
-      _mesa_error(ctx, GL_INVALID_OPERATION,
-                  "glTexImage%dD(TEXTURE_EXTERNAL_OES can only be specified "
-                  "via EGLImageTargetTexture2DOES)", dimensions);
-      return GL_TRUE;
-   }
-
    /* additional checks for ycbcr textures */
    if (internalFormat == GL_YCBCR_MESA) {
       assert(ctx->Extensions.MESA_ycbcr_texture);
@@ -2046,6 +2026,7 @@ texture_error_check( struct gl_context *ctx,
 
    /* additional checks for compressed textures */
    if (_mesa_is_compressed_format(ctx, internalFormat)) {
+      GLenum err;
       if (!_mesa_target_can_be_compressed(ctx, target, internalFormat, &err)) {
          _mesa_error(ctx, err,
                      "glTexImage%dD(target can't be compressed)", dimensions);
@@ -2286,13 +2267,6 @@ texsubimage_error_check(struct gl_context *ctx, GLuint dimensions,
       return GL_TRUE;
    }
 
-    /* GL_EXT_YUV_target: Cannot update YUV textures with TexSubImage */
-   if (util_format_is_yuv(texImage->TexFormat)) {
-      _mesa_error(ctx, GL_INVALID_OPERATION,
-                  "%s(cannot update YUV texture)", callerName);
-      return GL_TRUE;
-   }
-
    err = _mesa_error_check_format_and_type(ctx, format, type);
    if (err != GL_NO_ERROR) {
       _mesa_error(ctx, err,
@@ -2388,14 +2362,6 @@ copytexture_error_check( struct gl_context *ctx, GLuint dimensions,
    GLint rb_base_format;
    struct gl_renderbuffer *rb;
    GLenum rb_internal_format;
-
-   /* GL_EXT_YUV_target: CopyTexImage not allowed for TEXTURE_EXTERNAL_OES */
-   if (target == GL_TEXTURE_EXTERNAL_OES) {
-      _mesa_error(ctx, GL_INVALID_ENUM,
-                  "glCopyTexImage%dD(target=GL_TEXTURE_EXTERNAL_OES not allowed)",
-                  dimensions);
-      return GL_TRUE;
-   }
 
    /* level check */
    if (level < 0 || level >= _mesa_max_texture_levels(ctx, target)) {
@@ -2511,13 +2477,6 @@ copytexture_error_check( struct gl_context *ctx, GLuint dimensions,
    if (rb == NULL) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "glCopyTexImage%dD(read buffer)", dimensions);
-      return GL_TRUE;
-   }
-
-   /* GL_EXT_YUV_target: Cannot copy from a YUV renderable surface */
-   if (util_format_is_yuv(rb->Format)) {
-      _mesa_error(ctx, GL_INVALID_OPERATION,
-                  "glCopyTexImage%dD(cannot copy from YUV source)", dimensions);
       return GL_TRUE;
    }
 
@@ -2755,13 +2714,6 @@ copytexsubimage_error_check(struct gl_context *ctx, GLuint dimensions,
       /* destination image does not exist */
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "%s(invalid texture level %d)", caller, level);
-      return GL_TRUE;
-   }
-
-   /* GL_EXT_YUV_target: Cannot copy to YUV textures */
-   if (util_format_is_yuv(texImage->TexFormat)) {
-      _mesa_error(ctx, GL_INVALID_OPERATION,
-                  "%s(cannot copy to YUV texture)", caller);
       return GL_TRUE;
    }
 
@@ -3165,6 +3117,25 @@ teximage(struct gl_context *ctx, GLboolean compressed, GLuint dims,
    MESA_TRACE_FUNC();
 
    FLUSH_VERTICES(ctx, 0, 0);
+
+   if (MESA_VERBOSE & (VERBOSE_API|VERBOSE_TEXTURE)) {
+      if (compressed)
+         _mesa_debug(ctx,
+                     "glCompressedTexImage%uD %s %d %s %d %d %d %d %p\n",
+                     dims,
+                     _mesa_enum_to_string(target), level,
+                     _mesa_enum_to_string(internalFormat),
+                     width, height, depth, border, pixels);
+      else
+         _mesa_debug(ctx,
+                     "glTexImage%uD %s %d %s %d %d %d %d %s %s %p\n",
+                     dims,
+                     _mesa_enum_to_string(target), level,
+                     _mesa_enum_to_string(internalFormat),
+                     width, height, depth, border,
+                     _mesa_enum_to_string(format),
+                     _mesa_enum_to_string(type), pixels);
+   }
 
    internalFormat = override_internal_format(internalFormat, width, height);
 
@@ -3882,6 +3853,14 @@ texsubimage_err(struct gl_context *ctx, GLuint dims, GLenum target, GLint level,
    texImage = _mesa_select_tex_image(texObj, target, level);
    /* texsubimage_error_check ensures that texImage is not NULL */
 
+   if (MESA_VERBOSE & (VERBOSE_API|VERBOSE_TEXTURE))
+      _mesa_debug(ctx, "glTexSubImage%uD %s %d %d %d %d %d %d %d %s %s %p\n",
+                  dims,
+                  _mesa_enum_to_string(target), level,
+                  xoffset, yoffset, zoffset, width, height, depth,
+                  _mesa_enum_to_string(format),
+                  _mesa_enum_to_string(type), pixels);
+
    texture_sub_image(ctx, dims, texObj, texImage, target, level,
                      xoffset, yoffset, zoffset, width, height, depth,
                      format, type, pixels);
@@ -3921,6 +3900,14 @@ texturesubimage(struct gl_context *ctx, GLuint dims,
    struct gl_texture_object *texObj;
    struct gl_texture_image *texImage;
    int i;
+
+   if (MESA_VERBOSE & (VERBOSE_API|VERBOSE_TEXTURE))
+      _mesa_debug(ctx,
+                  "glTextureSubImage%uD %d %d %d %d %d %d %d %d %s %s %p\n",
+                  dims, texture, level,
+                  xoffset, yoffset, zoffset, width, height, depth,
+                  _mesa_enum_to_string(format),
+                  _mesa_enum_to_string(type), pixels);
 
    /* Get the texture object by Name. */
    if (!no_error) {
@@ -4477,6 +4464,11 @@ copy_texture_sub_image_err(struct gl_context *ctx, GLuint dims,
 {
    FLUSH_VERTICES(ctx, 0, 0);
 
+   if (MESA_VERBOSE & (VERBOSE_API|VERBOSE_TEXTURE))
+      _mesa_debug(ctx, "%s %s %d %d %d %d %d %d %d %d\n", caller,
+                  _mesa_enum_to_string(target),
+                  level, xoffset, yoffset, zoffset, x, y, width, height);
+
    _mesa_update_pixel(ctx);
 
    if (ctx->NewState & _NEW_BUFFERS)
@@ -4527,6 +4519,13 @@ copyteximage(struct gl_context *ctx, GLuint dims, struct gl_texture_object *texO
    MESA_TRACE_FUNC();
 
    FLUSH_VERTICES(ctx, 0, 0);
+
+   if (MESA_VERBOSE & (VERBOSE_API|VERBOSE_TEXTURE))
+      _mesa_debug(ctx, "glCopyTexImage%uD %s %d %s %d %d %d %d %d\n",
+                  dims,
+                  _mesa_enum_to_string(target), level,
+                  _mesa_enum_to_string(internalFormat),
+                  x, y, width, height, border);
 
    _mesa_update_pixel(ctx);
 
@@ -7025,6 +7024,11 @@ texture_image_multisample(struct gl_context *ctx, GLuint dims,
    mesa_format texFormat;
    GLenum sample_count_error;
    bool dsa = strstr(func, "ture") ? true : false;
+
+   if (MESA_VERBOSE & (VERBOSE_API|VERBOSE_TEXTURE)) {
+      _mesa_debug(ctx, "%s(target=%s, samples=%d, internalformat=%s)\n", func,
+                  _mesa_enum_to_string(target), samples, _mesa_enum_to_string(internalformat));
+   }
 
    if (!((ctx->Extensions.ARB_texture_multisample
          && _mesa_is_desktop_gl(ctx))) && !_mesa_is_gles31(ctx)) {

@@ -29,7 +29,6 @@ print_usage(char *exec_name, FILE *f)
       "Options:\n"
       "  -h  --help              Print this help.\n"
       "  -o, --out <filename>    Specify the output filename.\n"
-      "      --32bit             Compile for 32 bit SPIR-V\n"
       "  -v, --verbose           Print more information during compilation.\n",
       exec_name);
 }
@@ -37,9 +36,7 @@ print_usage(char *exec_name, FILE *f)
 int
 main(int argc, char **argv)
 {
-   int address_bits = 64;
-   struct option long_options[] = {
-      {"32bit", no_argument, &address_bits, 32},
+   static struct option long_options[] = {
       {"help", no_argument, 0, 'h'},
       {"in", required_argument, 0, 'i'},
       {"out", required_argument, 0, 'o'},
@@ -78,9 +75,6 @@ main(int argc, char **argv)
          depfile = optarg;
          break;
       default:
-         /* handling for long args with no short version */
-         if (ch == 0 && !optarg)
-            break;
          fprintf(stderr, "Unrecognized option \"%s\".\n", optarg);
          print_usage(argv[0], stderr);
          return 1;
@@ -130,12 +124,7 @@ main(int argc, char **argv)
          return 1;
       }
 
-      if (fread(map, 1, len, fp) != len) {
-         fprintf(stderr, "Failed to read map buffer\n");
-         ralloc_free(mem_ctx);
-         fclose(fp);
-         return 1;
-      }
+      fread(map, 1, len, fp);
       map[len] = 0;
       fclose(fp);
 
@@ -145,7 +134,6 @@ main(int argc, char **argv)
          .args = util_dynarray_begin(&clang_args),
          .num_args = util_dynarray_num_elements(&clang_args, char *),
          .c_compatible = true,
-         .address_bits = address_bits,
          .features = {
             .atomic_order_seq_cst = true,
             .atomic_scope_device = true,

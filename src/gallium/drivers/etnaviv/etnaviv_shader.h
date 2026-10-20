@@ -29,15 +29,12 @@
 
 #include "mesa/main/config.h"
 #include "etna_core_info.h"
-#include "etnaviv_internal.h"
 #include "nir.h"
 #include "pipe/p_state.h"
 #include "util/disk_cache.h"
 #include "util/u_queue.h"
-#include "util/u_shader_variant_cache.h"
 
 struct etna_context;
-struct etna_screen;
 struct etna_shader_variant;
 struct nir_shader;
 
@@ -56,11 +53,8 @@ struct etna_shader_key
          unsigned sprite_coord_yinvert : 1;
          /* do we need to lower sample_tex_compare */
          unsigned has_sample_tex_compare : 1;
-         /* lowered shadow compare must not clamp the ref (float depth32f) */
-         unsigned shadow_compare_no_clamp : 1;
          /* color varyings should be flat shaded */
          unsigned flatshade : 1;
-         unsigned has_128bit_rt : 1;
       };
       uint32_t global;
    };
@@ -68,13 +62,6 @@ struct etna_shader_key
    int num_texture_states;
    nir_lower_tex_shadow_swizzle tex_swizzle[16];
    enum compare_func tex_compare_func[16];
-
-   unsigned tex_is_128bit : 16;
-   unsigned tex_mag_switchover : 16;
-   unsigned sampler_companion[16];
-
-   unsigned rt_is_128bit : ETNA_MAX_128BIT_RTS;
-   unsigned rt_companion[ETNA_MAX_128BIT_RTS];
 };
 
 static inline bool
@@ -82,10 +69,7 @@ etna_shader_key_equal(const struct etna_shader_key* const a,
                       const struct etna_shader_key* const b)
 {
    /* slow-path if we need to check tex_{swizzle,compare_func} */
-   if (unlikely(a->has_sample_tex_compare || b->has_sample_tex_compare) ||
-       unlikely(a->tex_is_128bit || b->tex_is_128bit) ||
-       unlikely(a->tex_mag_switchover || b->tex_mag_switchover) ||
-       unlikely(a->rt_is_128bit || b->rt_is_128bit))
+   if (unlikely(a->has_sample_tex_compare || b->has_sample_tex_compare))
       return memcmp(a, b, sizeof(struct etna_shader_key)) == 0;
    else
       return a->global == b->global;
@@ -100,11 +84,8 @@ struct etna_shader {
    const struct etna_core_info *info;
    const struct etna_specs *specs;
    struct etna_compiler *compiler;
-   struct etna_screen *screen;
 
-   uint16_t tex_lod_samplers;
-
-   struct util_shader_variant_list variants;
+   struct etna_shader_variant *variants;
 
    cache_key cache_key;     /* shader disk-cache key */
 

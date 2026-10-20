@@ -170,8 +170,10 @@ TEST_F(xmlconfig_test, copy_cache)
     * "mesa_test_option" so the test shouldn't end up with something from the
     * user's homedir/environment that would override us.
     */
-   driConfigFileParseParams params = { .driverName = "driver", .kernelDriverName = "drm" };
-   driParseConfigFiles(&cache, &options, &params);
+   driParseConfigFiles(&cache, &options,
+                       0, "driver", "drm", NULL,
+                       NULL, 0,
+                       NULL, 0);
 
    /* Can we inspect the cache? */
    EXPECT_EQ(driCheckOption(&cache, "mesa_b_option", DRI_BOOL), true);
@@ -204,15 +206,10 @@ xmlconfig_test::drirc_init(const char *driver, const char *drm,
    /* This should parse the "user" drirc files under ./tests/drirc_test/,
     * based on the setting of $HOME by meson.build.
     */
-   driConfigFileParseParams params = {
-      .driverName = driver,
-      .kernelDriverName = drm,
-      .applicationName = app,
-      .applicationVersion = (uint32_t)appver,
-      .engineName = engine,
-      .engineVersion = (uint32_t)enginever,
-   };
-   driParseConfigFiles(&cache, &options, &params);
+   driParseConfigFiles(&cache, &options,
+                       0, driver, drm, NULL,
+                       app, appver,
+                       engine, enginever);
 
    return cache;
 }

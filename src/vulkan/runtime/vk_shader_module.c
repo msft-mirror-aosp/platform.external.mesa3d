@@ -42,13 +42,7 @@ void vk_shader_module_init(struct vk_device *device,
    module->size = create_info->codeSize;
    memcpy(module->data, create_info->pCode, module->size);
 
-   vk_shader_module_hash(create_info, module->hash);
-}
-
-void vk_shader_module_hash(const VkShaderModuleCreateInfo *create_info,
-                           blake3_hash hash)
-{
-   _mesa_blake3_compute(create_info->pCode, create_info->codeSize, hash);
+   _mesa_blake3_compute(module->data, module->size, module->hash);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL

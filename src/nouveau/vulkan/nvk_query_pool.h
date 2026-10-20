@@ -28,12 +28,6 @@ enum nvk_query_pool_layout {
     * byte 16.
     */
    NVK_QUERY_POOL_LAYOUT_ALIGNED_INTERLEAVED,
-
-   /* Stores the availables and the timestamp in nvk_query_report
-    *
-    * This allows to write a timestamp with only one command.
-    */
-   NVK_QUERY_POOL_LAYOUT_TIMESTAMP_PACKED,
 };
 
 struct nvk_query_pool {
@@ -43,7 +37,6 @@ struct nvk_query_pool {
 
    uint32_t reports_start;
    uint32_t query_stride;
-   uint32_t statistics_counter_mask;
 
    struct nvkmd_mem *mem;
 };

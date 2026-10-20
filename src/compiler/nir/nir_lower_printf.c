@@ -28,19 +28,6 @@
 #include "util/u_math.h"
 #include "util/u_printf.h"
 
-static unsigned
-printf_args_size(const u_printf_info *info)
-{
-   unsigned size = 0;
-
-   for (unsigned i = 0; i < info->num_args; i++) {
-      size += info->arg_sizes[i];
-      size = align(size, 4);
-   }
-
-   return size;
-}
-
 static bool
 lower_printf_intrin(nir_builder *b, nir_intrinsic_instr *prntf, void *_options)
 {
@@ -81,16 +68,16 @@ lower_printf_intrin(nir_builder *b, nir_intrinsic_instr *prntf, void *_options)
    }
 
    uint32_t fmt_str_id = nir_intrinsic_fmt_idx(prntf);
-   assert(fmt_str_id - 1 < b->shader->printf_info_count && "must be in-bounds");
-   const u_printf_info *printf_info = &b->shader->printf_info[fmt_str_id - 1];
-
    if (options->hash_format_strings) {
       /* Rather than store the index of the format string, instead store the
        * hash of the format string itself. This is invariant across shaders
        * which may be more convenient.
        */
-      u_printf_singleton_add(printf_info, 1);
-      fmt_str_id = u_printf_hash(printf_info);
+      assert(fmt_str_id - 1 < b->shader->printf_info_count && "must be in-bounds");
+
+      u_printf_singleton_add(&b->shader->printf_info[fmt_str_id - 1], 1);
+      uint32_t hash = u_printf_hash(&b->shader->printf_info[fmt_str_id - 1]);
+      fmt_str_id = hash;
    }
 
    /* Atomic add a buffer size counter to determine where to write. If
@@ -100,14 +87,14 @@ lower_printf_intrin(nir_builder *b, nir_intrinsic_instr *prntf, void *_options)
       nir_build_deref_cast(b, buffer_addr, nir_var_mem_global,
                            glsl_array_type(glsl_uint8_t_type(), 0, 1), 0);
 
+   /* Align the struct size to 4 */
    nir_deref_instr *args = nir_src_as_deref(prntf->src[0]);
 
    int args_size = 0;
    int fmt_str_id_size = 4;
    if (args != NULL) {
       assert(glsl_type_is_struct_or_ifc(args->type));
-      assert(printf_info->num_args == glsl_get_length(args->type));
-      args_size = printf_args_size(printf_info);
+      args_size = align(glsl_get_cl_size(args->type), 4);
    }
 
    /* Increment the counter at the beginning of the buffer */
@@ -153,10 +140,6 @@ lower_printf_intrin(nir_builder *b, nir_intrinsic_instr *prntf, void *_options)
          nir_deref_instr *arg_deref = nir_build_deref_struct(b, args, i);
          nir_def *arg = nir_load_deref(b, arg_deref);
          const struct glsl_type *arg_type = arg_deref->type;
-         if (glsl_type_is_boolean(arg_type)) {
-            arg = nir_b2i32(b, arg);
-            arg_type = glsl_vector_type(GLSL_TYPE_UINT, arg->num_components);
-         }
 
          unsigned field_offset = glsl_get_struct_field_offset(args->type, i);
          nir_def *arg_offset =
@@ -253,15 +236,14 @@ nir_vprintf_fmt(nir_builder *b, unsigned ptr_bit_size, const char *fmt, va_list 
 
       ASSERTED nir_def *def = va_arg(ap, nir_def *);
       assert(def->bit_size / 8 == arg_size);
-      arg_size *= def->num_components == 3 ? 4 : def->num_components;
+      arg_size *= def->num_components;
 
       info.num_args++;
       info.arg_sizes = reralloc(b->shader, info.arg_sizes, unsigned,
                                 info.num_args);
       info.arg_sizes[info.num_args - 1] = arg_size;
 
-      /* Match u_printf, which 4-aligns the read cursor after each argument. */
-      args_size = align(args_size + arg_size, 4);
+      args_size += arg_size;
    }
    va_end(ap);
 
@@ -275,7 +257,7 @@ nir_vprintf_fmt(nir_builder *b, unsigned ptr_bit_size, const char *fmt, va_list 
 
    uint32_t total_size = sizeof(uint32_t); /* identifier */
    for (unsigned a = 0; a < info.num_args; a++)
-      total_size = align(total_size + info.arg_sizes[a], 4);
+      total_size += info.arg_sizes[a];
 
    nir_push_if(b, nir_ilt(b, nir_iadd_imm(b, buffer_offset, total_size),
                           nir_load_printf_buffer_size(b)));
@@ -294,7 +276,7 @@ nir_vprintf_fmt(nir_builder *b, unsigned ptr_bit_size, const char *fmt, va_list 
          nir_store_global(b, def, nir_iadd_imm(b, store_addr, store_offset),
                           .align_mul = 4);
 
-         store_offset = align(store_offset + info.arg_sizes[a], 4);
+         store_offset += info.arg_sizes[a];
       }
       va_end(ap);
    }
@@ -330,7 +312,7 @@ void nir_printf_fmt_at_px(nir_builder *b, unsigned ptr_bit_size, unsigned x_px, 
    va_list ap;
 
    nir_def *xy_px = b->shader->options->has_pixel_coord ?
-      nir_load_pixel_coord(b) : nir_f2u32(b, nir_build_frag_coord(b, 2));
+      nir_load_pixel_coord(b) : nir_f2u32(b, nir_load_frag_coord(b));
    nir_def *is_at_px = b->shader->options->has_pixel_coord ?
       nir_ball_iequal(b, nir_imm_uvec2_intN(b, x_px, y_px, 16), xy_px) :
       nir_ball_iequal(b, nir_imm_ivec2(b, x_px, y_px), xy_px);

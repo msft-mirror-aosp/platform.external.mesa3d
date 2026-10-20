@@ -6,7 +6,6 @@
  */
 
 #include "util/u_thread.h"
-#include "util/perf/u_perfetto.h"
 
 #include "macros.h"
 
@@ -45,34 +44,9 @@ util_get_current_cpu(void)
 #endif
 }
 
-struct u_thread_param {
-   int (*routine)(void *);
-   void *arg;
-};
-
-static int
-thread_routine(void *arg)
-{
-   struct u_thread_param *paramp = arg;
-   struct u_thread_param param = *paramp;
-
-   free(paramp);
-
-   int ret = param.routine(param.arg);
-
-   util_perfetto_thread_flush();
-
-   return ret;
-}
-
 int u_thread_create(thrd_t *thrd, int (*routine)(void *), void *param)
 {
-   struct u_thread_param *paramp = malloc(sizeof(*paramp));
    int ret = thrd_error;
-
-   paramp->routine = routine;
-   paramp->arg = param;
-
 #if defined(HAVE_PTHREAD) && !DETECT_OS_FUCHIA
    sigset_t saved_set, new_set;
 
@@ -85,10 +59,10 @@ int u_thread_create(thrd_t *thrd, int (*routine)(void *), void *param)
     */
    sigdelset(&new_set, SIGSEGV);
    pthread_sigmask(SIG_BLOCK, &new_set, &saved_set);
-   ret = thrd_create(thrd, thread_routine, paramp);
+   ret = thrd_create(thrd, routine, param);
    pthread_sigmask(SIG_SETMASK, &saved_set, NULL);
 #else
-   ret = thrd_create(thrd, thread_routine, paramp);
+   ret = thrd_create(thrd, routine, param);
 #endif
 
    return ret;

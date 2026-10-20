@@ -1333,17 +1333,17 @@ do {                                                            \
          /* Copy the new attr values to the already copied      \
           * vertices.                                           \
           */                                                    \
-         for (int nr = 0; nr < save->copied.nr; nr++) {         \
+         for (int i = 0; i < save->copied.nr; i++) {            \
             GLbitfield64 enabled = save->enabled;               \
             while (enabled) {                                   \
-               const int enabled_bit = u_bit_scan64(&enabled);  \
-               if (enabled_bit == A) {                          \
+               const int j = u_bit_scan64(&enabled);            \
+               if (j == A) {                                    \
                   if (N>0) ((C*) dest)[0] = V0;                 \
                   if (N>1) ((C*) dest)[1] = V1;                 \
                   if (N>2) ((C*) dest)[2] = V2;                 \
                   if (N>3) ((C*) dest)[3] = V3;                 \
                }                                                \
-               dest += save->attrsz[enabled_bit];               \
+               dest += save->attrsz[j];                         \
             }                                                   \
          }                                                      \
          save->dangling_attr_ref = false;                       \
@@ -1363,8 +1363,8 @@ do {                                                            \
       fi_type *buffer_ptr = save->vertex_store->buffer_in_ram + \
                             save->vertex_store->used;           \
                                                                 \
-      for (int vi = 0; vi < save->vertex_size; vi++)            \
-        buffer_ptr[vi] = save->vertex[vi];                      \
+      for (int i = 0; i < save->vertex_size; i++)               \
+        buffer_ptr[i] = save->vertex[i];                        \
                                                                 \
       save->vertex_store->used += save->vertex_size;            \
       unsigned used_next = (save->vertex_store->used +          \
