@@ -88,7 +88,12 @@ struct anv_shader_data {
 
    union brw_any_prog_data prog_data;
 
-   uint32_t source_hash;
+   uint64_t source_hash;
+
+   /* Per-shader workaround from source_hash (NULL if none), for compile-time
+    * options read before shader->workaround exists.
+    */
+   const struct anv_shader_workaround *workaround;
 
    const nir_xfb_info *xfb_info;
 
@@ -112,7 +117,9 @@ struct anv_shader_data {
 
    bool uses_bt_for_push_descs;
 
-   unsigned *code;
+   const struct vk_color_attachment_location_state *fs_color_map;
+
+   const unsigned *code;
 
    debug_archiver *archiver;
 };

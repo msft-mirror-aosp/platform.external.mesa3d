@@ -113,7 +113,7 @@ ir3_const_add_imm(struct ir3_shader_variant *v, uint32_t imm)
    return ir3_const_imm_index_to_reg(const_state, imm_state->count++);
 }
 
-int
+unsigned
 ir3_glsl_type_size(const struct glsl_type *type, bool bindless)
 {
    return glsl_count_attribute_slots(type, false);
@@ -267,15 +267,15 @@ disasm_collect(struct ir3_shader_variant *v, uint8_t *mismatch_array,
    return stream_data;
 }
 
-static uint16_t
+static uint32_t
 variant_unpadded_binary_size(struct ir3_shader_variant *v)
 {
    /* This helper returns the size (in dwords) of variant's binary after
     * the padding nops at the end are ignored.
     */
-   uint16_t size = v->info.sizedwords;
+   uint32_t size = v->info.sizedwords;
 
-   for (uint16_t i = 0; i < v->info.sizedwords; i += 2) {
+   for (uint32_t i = 0; i < v->info.sizedwords; i += 2) {
       uint32_t *dword = &v->bin[v->info.sizedwords - 2 - i];
       if (!!dword[0] || !!dword[1])
          break;
@@ -302,8 +302,8 @@ validate_roundtrip_variant_binary(struct ir3_shader_variant *rt_v, struct ir3_sh
     * If there's a mismatch, print both disassemblies with highlighted
     * points of difference.
     */
-   uint16_t v_sizedwords = variant_unpadded_binary_size(v);
-   uint16_t rt_v_sizedwords = variant_unpadded_binary_size(rt_v);
+   uint32_t v_sizedwords = variant_unpadded_binary_size(v);
+   uint32_t rt_v_sizedwords = variant_unpadded_binary_size(rt_v);
    if (v_sizedwords == rt_v_sizedwords &&
        !memcmp(v->bin, rt_v->bin, v_sizedwords * 4))
       return true;
@@ -408,7 +408,7 @@ assemble_variant(struct ir3_shader_variant *v, bool internal)
       bool shader_overridden =
          ir3_shader_override_path && try_override_shader_variant(v, v->blake3_str);
 
-      if (v->disasm_info.write_disasm) {
+      if (v->disasm_info.write_disasm || dbg_enabled || shader_overridden) {
          char *stream_data = NULL;
          size_t stream_size = 0;
          FILE *stream = open_memstream(&stream_data, &stream_size);
@@ -421,27 +421,15 @@ assemble_variant(struct ir3_shader_variant *v, bool internal)
 
          fclose(stream);
 
-         v->disasm_info.disasm = ralloc_size(v, stream_size + 1);
-         memcpy(v->disasm_info.disasm, stream_data, stream_size);
-         v->disasm_info.disasm[stream_size] = 0;
-         free(stream_data);
-      }
+         if (v->disasm_info.write_disasm) {
+            v->disasm_info.disasm = ralloc_size(v, stream_size + 1);
+            memcpy(v->disasm_info.disasm, stream_data, stream_size);
+            v->disasm_info.disasm[stream_size] = 0;
+         }
+         if (dbg_enabled || shader_overridden) {
+            mesa_log_multiline(MESA_LOG_INFO, stream_data);
+         }
 
-      if (dbg_enabled || shader_overridden) {
-         char *stream_data = NULL;
-         size_t stream_size = 0;
-         FILE *stream = open_memstream(&stream_data, &stream_size);
-
-         fprintf(stream,
-                 "Native code%s for unnamed %s shader %s with blake3 %s:\n",
-                 shader_overridden ? " (overridden)" : "", ir3_shader_stage(v),
-                 v->name, v->blake3_str);
-         if (v->type == MESA_SHADER_FRAGMENT)
-            fprintf(stream, "SIMD0\n");
-         ir3_shader_disasm(v, v->bin, stream);
-         fclose(stream);
-
-         mesa_log_multiline(MESA_LOG_INFO, stream_data);
          free(stream_data);
       }
    }
@@ -542,6 +530,7 @@ alloc_variant(struct ir3_shader *shader, const struct ir3_shader_key *key,
       v->fs.color_is_dual_source = info->fs.color_is_dual_source;
       v->fs.uses_fbfetch_output  = info->fs.uses_fbfetch_output;
       v->fs.fbfetch_coherent     = info->fs.fbfetch_coherent;
+      v->fs.yuv_color            = info->fs.yuv_color;
       break;
 
    case MESA_SHADER_COMPUTE:
@@ -616,6 +605,7 @@ create_variant(struct ir3_shader *shader, const struct ir3_shader_key *key,
 
    if (ir3_shader_compute(v)) {
       v->cs.force_linear_dispatch = shader->cs.force_linear_dispatch;
+      v->cs.round_robin_mode = shader->nir->info.occupancy_bounded_workgroup_fairness;
 
       v->local_size[0] = shader->nir->info.workgroup_size[0];
       v->local_size[1] = shader->nir->info.workgroup_size[1];
@@ -1025,6 +1015,8 @@ ir3_const_alloc_type_to_string(enum ir3_const_alloc_type type)
       return "dyn_descriptor_offset";
    case IR3_CONST_ALLOC_INLINE_UNIFORM_ADDRS:
       return "inline_uniform_addresses";
+   case IR3_CONST_ALLOC_BINDLESS_BASE_ADDRS:
+      return "bindless_base_addresses";
    case IR3_CONST_ALLOC_DRIVER_PARAMS:
       return "driver_params";
    case IR3_CONST_ALLOC_UBO_RANGES:

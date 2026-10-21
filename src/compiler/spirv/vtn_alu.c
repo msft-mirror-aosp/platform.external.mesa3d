@@ -83,9 +83,9 @@ matrix_multiply(struct vtn_builder *b,
                   nir_channel(&b->nb, src1->elems[i]->def, src0_columns - 1));
       for (int j = src0_columns - 2; j >= 0; j--) {
          dest->elems[i]->def =
-            nir_ffma(&b->nb, src0->elems[j]->def,
-                             nir_channel(&b->nb, src1->elems[i]->def, j),
-                             dest->elems[i]->def);
+            nir_ffma_weak(&b->nb, src0->elems[j]->def,
+                                  nir_channel(&b->nb, src1->elems[i]->def, j),
+                                  dest->elems[i]->def);
       }
    }
 
@@ -281,6 +281,7 @@ vtn_nir_alu_op_for_spirv_opcode(struct vtn_builder *b,
    case SpvOpFSub:               return nir_op_fsub;
    case SpvOpIMul:               return nir_op_imul;
    case SpvOpFMul:               return nir_op_fmul;
+   case SpvOpFmaKHR:             return nir_op_ffma;
    case SpvOpUDiv:               return nir_op_udiv;
    case SpvOpSDiv:               return nir_op_idiv;
    case SpvOpFDiv:               return nir_op_fdiv;
@@ -538,6 +539,12 @@ vtn_alu_op_mediump_16bit(struct vtn_builder *b, SpvOp opcode, struct vtn_value *
    case SpvOpBitFieldInsert:
    case SpvOpBitFieldSExtract:
    case SpvOpBitFieldUExtract:
+      return false;
+   /* These have struct results, which can't be RelaxedPrecision. */
+   case SpvOpIAddCarry:
+   case SpvOpISubBorrow:
+   case SpvOpUMulExtended:
+   case SpvOpSMulExtended:
       return false;
    default:
       return true;
@@ -1134,7 +1141,7 @@ vtn_handle_alu(struct vtn_builder *b, SpvOp opcode,
          break;
       }
 
-      const bool save_fp_math_ctrl = b->nb.fp_math_ctrl;
+      const unsigned save_fp_math_ctrl = b->nb.fp_math_ctrl;
 
       b->nb.fp_math_ctrl |= extra_fp_math_ctrl;
 

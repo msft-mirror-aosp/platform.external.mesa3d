@@ -30,7 +30,7 @@ const SPIRV_SUPPORT: [cl_name_version; 7] = [
     mk_cl_version_ext(1, 5, 0, "SPIR-V"),
     mk_cl_version_ext(1, 6, 0, "SPIR-V"),
 ];
-type ClDevIdpAccelProps = cl_device_integer_dot_product_acceleration_properties_khr;
+type ClDevIdpAccelProps = cl_device_integer_dot_product_acceleration_properties;
 
 #[cl_info_entrypoint(clGetDeviceInfo)]
 unsafe impl CLInfo<cl_device_info> for cl_device_id {
@@ -64,6 +64,10 @@ unsafe impl CLInfo<cl_device_info> for cl_device_id {
             CL_DEVICE_DEVICE_MEM_CAPABILITIES_INTEL => {
                 v.write::<cl_device_unified_shared_memory_capabilities_intel>(0)
             }
+            // Provided by cl_ext_float_atomics
+            CL_DEVICE_DOUBLE_FP_ATOMIC_CAPABILITIES_EXT if dev.has_atomic_float() => {
+                v.write::<cl_device_fp_atomic_capabilities_ext>(0)
+            }
             CL_DEVICE_DOUBLE_FP_CONFIG => v.write::<cl_device_fp_config>(
                 if dev.fp64_supported() {
                     let mut fp64_config = CL_FP_FMA
@@ -94,6 +98,10 @@ unsafe impl CLInfo<cl_device_info> for cl_device_id {
             CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE => v.write::<cl_uint>(0),
             CL_DEVICE_GLOBAL_MEM_SIZE => v.write::<cl_ulong>(dev.global_mem_size()),
             CL_DEVICE_GLOBAL_VARIABLE_PREFERRED_TOTAL_SIZE => v.write::<usize>(0),
+            // Provided by cl_ext_float_atomics
+            CL_DEVICE_HALF_FP_ATOMIC_CAPABILITIES_EXT if dev.has_atomic_float() => {
+                v.write::<cl_device_fp_atomic_capabilities_ext>(0)
+            }
             // Provided by the cl_khr_fp16 extension.
             CL_DEVICE_HALF_FP_CONFIG if dev.fp16_supported() => {
                 v.write::<cl_device_fp_config>((CL_FP_ROUND_TO_NEAREST | CL_FP_INF_NAN).into())
@@ -116,14 +124,14 @@ unsafe impl CLInfo<cl_device_info> for cl_device_id {
             CL_DEVICE_IMAGE3D_MAX_HEIGHT => v.write::<usize>(dev.image_3d_size()),
             CL_DEVICE_IMAGE3D_MAX_WIDTH => v.write::<usize>(dev.image_3d_size()),
             CL_DEVICE_IMAGE3D_MAX_DEPTH => v.write::<usize>(dev.image_3d_size()),
-            CL_DEVICE_INTEGER_DOT_PRODUCT_CAPABILITIES_KHR => {
-                v.write::<cl_device_integer_dot_product_capabilities_khr>(
-                    (CL_DEVICE_INTEGER_DOT_PRODUCT_INPUT_4x8BIT_PACKED_KHR
-                        | CL_DEVICE_INTEGER_DOT_PRODUCT_INPUT_4x8BIT_KHR)
+            CL_DEVICE_INTEGER_DOT_PRODUCT_CAPABILITIES => {
+                v.write::<cl_device_integer_dot_product_capabilities>(
+                    (CL_DEVICE_INTEGER_DOT_PRODUCT_INPUT_4x8BIT_PACKED
+                        | CL_DEVICE_INTEGER_DOT_PRODUCT_INPUT_4x8BIT)
                         .into(),
                 )
             }
-            CL_DEVICE_INTEGER_DOT_PRODUCT_ACCELERATION_PROPERTIES_8BIT_KHR => v
+            CL_DEVICE_INTEGER_DOT_PRODUCT_ACCELERATION_PROPERTIES_8BIT => v
                 .write::<ClDevIdpAccelProps>({
                     let pack = dev.pack_32_4x8_supported();
                     let sdot = dev.sdot_4x8_supported() && pack;
@@ -141,7 +149,7 @@ unsafe impl CLInfo<cl_device_info> for cl_device_id {
                         sudot_sat.into(),
                     )
                 }),
-            CL_DEVICE_INTEGER_DOT_PRODUCT_ACCELERATION_PROPERTIES_4x8BIT_PACKED_KHR => {
+            CL_DEVICE_INTEGER_DOT_PRODUCT_ACCELERATION_PROPERTIES_4x8BIT_PACKED => {
                 v.write::<ClDevIdpAccelProps>({
                     IdpAccelProps::new(
                         dev.sdot_4x8_supported().into(),
@@ -167,12 +175,10 @@ unsafe impl CLInfo<cl_device_info> for cl_device_id {
             CL_DEVICE_LOCAL_MEM_SIZE => v.write::<cl_ulong>(dev.local_mem_size()),
             // TODO add query for CL_LOCAL vs CL_GLOBAL
             CL_DEVICE_LOCAL_MEM_TYPE => v.write::<cl_device_local_mem_type>(CL_GLOBAL),
-            CL_DEVICE_LUID_KHR => v.write::<[cl_uchar; CL_LUID_SIZE_KHR as usize]>(
+            CL_DEVICE_LUID => v.write::<[cl_uchar; CL_LUID_SIZE as usize]>(
                 dev.screen().device_luid().unwrap_or_default(),
             ),
-            CL_DEVICE_LUID_VALID_KHR => {
-                v.write::<cl_bool>(dev.screen().device_luid().is_some().into())
-            }
+            CL_DEVICE_LUID_VALID => v.write::<cl_bool>(dev.screen().device_luid().is_some().into()),
             CL_DEVICE_MAX_CLOCK_FREQUENCY => v.write::<cl_uint>(dev.max_clock_freq()),
             CL_DEVICE_MAX_COMPUTE_UNITS => v.write::<cl_uint>(dev.max_compute_units()),
             // TODO atm implemented as mem_const
@@ -197,8 +203,8 @@ unsafe impl CLInfo<cl_device_info> for cl_device_id {
             }),
             CL_DEVICE_MAX_SAMPLERS => v.write::<cl_uint>(dev.max_samplers()),
             CL_DEVICE_MAX_WORK_GROUP_SIZE => v.write::<usize>(dev.max_threads_per_block()),
+            CL_DEVICE_MAX_WORK_GROUP_SIZES => v.write::<&[usize]>(&dev.max_block_sizes()),
             CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS => v.write::<cl_uint>(dev.max_grid_dimensions()),
-            CL_DEVICE_MAX_WORK_ITEM_SIZES => v.write::<&[usize]>(&dev.max_block_sizes()),
             CL_DEVICE_MAX_WRITE_IMAGE_ARGS => v.write::<cl_uint>(dev.caps.max_write_images),
             CL_DEVICE_MEM_BASE_ADDR_ALIGN => v.write::<cl_uint>(dev.mem_base_addr_align_bits()),
             CL_DEVICE_MIN_DATA_TYPE_ALIGN_SIZE => {
@@ -210,9 +216,11 @@ unsafe impl CLInfo<cl_device_info> for cl_device_id {
             CL_DEVICE_NATIVE_VECTOR_WIDTH_FLOAT => v.write::<cl_uint>(1),
             CL_DEVICE_NATIVE_VECTOR_WIDTH_HALF => v.write::<cl_uint>(dev.fp16_supported().into()),
             CL_DEVICE_NATIVE_VECTOR_WIDTH_INT => v.write::<cl_uint>(1),
-            CL_DEVICE_NATIVE_VECTOR_WIDTH_LONG => v.write::<cl_uint>(1),
+            CL_DEVICE_NATIVE_VECTOR_WIDTH_LONG => {
+                v.write::<cl_uint>(if dev.int64_supported() { 1 } else { 0 })
+            }
             CL_DEVICE_NATIVE_VECTOR_WIDTH_SHORT => v.write::<cl_uint>(1),
-            CL_DEVICE_NODE_MASK_KHR => {
+            CL_DEVICE_NODE_MASK => {
                 v.write::<cl_uint>(dev.screen().device_node_mask().unwrap_or_default())
             }
             CL_DEVICE_NON_UNIFORM_WORK_GROUP_SUPPORT => v.write::<bool>(false),
@@ -251,7 +259,9 @@ unsafe impl CLInfo<cl_device_info> for cl_device_id {
                 v.write::<cl_uint>(dev.fp16_supported().into())
             }
             CL_DEVICE_PREFERRED_VECTOR_WIDTH_INT => v.write::<cl_uint>(1),
-            CL_DEVICE_PREFERRED_VECTOR_WIDTH_LONG => v.write::<cl_uint>(1),
+            CL_DEVICE_PREFERRED_VECTOR_WIDTH_LONG => {
+                v.write::<cl_uint>(if dev.int64_supported() { 1 } else { 0 })
+            }
             CL_DEVICE_PREFERRED_VECTOR_WIDTH_SHORT => v.write::<cl_uint>(1),
             CL_DEVICE_PREFERRED_WORK_GROUP_SIZE_MULTIPLE => {
                 v.write::<usize>(dev.subgroup_sizes().next().unwrap())
@@ -295,18 +305,35 @@ unsafe impl CLInfo<cl_device_info> for cl_device_id {
             CL_DEVICE_SINGLE_DEVICE_SHARED_MEM_CAPABILITIES_INTEL => {
                 v.write::<cl_device_unified_shared_memory_capabilities_intel>(0)
             }
+            // Provided by cl_ext_float_atomics
+            CL_DEVICE_SINGLE_FP_ATOMIC_CAPABILITIES_EXT if dev.has_atomic_float() => {
+                // Always supported
+                let mut flags = CL_DEVICE_GLOBAL_FP_ATOMIC_LOAD_STORE_EXT
+                    | CL_DEVICE_LOCAL_FP_ATOMIC_LOAD_STORE_EXT;
+
+                if dev.has_atomic_float_add() {
+                    flags |= CL_DEVICE_GLOBAL_FP_ATOMIC_ADD_EXT | CL_DEVICE_LOCAL_FP_ATOMIC_ADD_EXT;
+                }
+
+                if dev.has_atomic_float_minmax() {
+                    flags |= CL_DEVICE_GLOBAL_FP_ATOMIC_MIN_MAX_EXT
+                        | CL_DEVICE_LOCAL_FP_ATOMIC_MIN_MAX_EXT;
+                }
+
+                v.write::<cl_device_fp_atomic_capabilities_ext>(flags.into())
+            }
             CL_DEVICE_SINGLE_FP_CONFIG => v.write::<cl_device_fp_config>(
                 (CL_FP_ROUND_TO_NEAREST | CL_FP_INF_NAN) as cl_device_fp_config,
             ),
-            CL_DEVICE_SPIRV_CAPABILITIES_KHR => {
+            CL_DEVICE_SPIRV_CAPABILITIES => {
                 v.write_iter::<cl_uint>(dev.spirv_caps_vec.iter().map(|&cap| cap as _))
             }
-            CL_DEVICE_SPIRV_EXTENDED_INSTRUCTION_SETS_KHR => {
+            CL_DEVICE_SPIRV_EXTENDED_INSTRUCTION_SETS => {
                 // use static memory as we hand out pointers to the values here.
                 static instr_sets: [&CStr; 1] = [c"OpenCL.std"];
                 v.write_iter::<*const c_char>(instr_sets.iter().map(|str| str.as_ptr()))
             }
-            CL_DEVICE_SPIRV_EXTENSIONS_KHR => {
+            CL_DEVICE_SPIRV_EXTENSIONS => {
                 v.write_iter::<*const c_char>(dev.spirv_extensions.iter().map(|str| str.as_ptr()))
             }
             CL_DEVICE_SUB_GROUP_INDEPENDENT_FORWARD_PROGRESS => v.write::<bool>(false),
@@ -335,13 +362,13 @@ unsafe impl CLInfo<cl_device_info> for cl_device_id {
                 // OpenCL device.
                 v.write::<cl_device_type>((dev.device_type & !CL_DEVICE_TYPE_DEFAULT).into())
             }
-            CL_DEVICE_UUID_KHR => v.write::<[cl_uchar; CL_UUID_SIZE_KHR as usize]>(
+            CL_DEVICE_UUID => v.write::<[cl_uchar; CL_UUID_SIZE as usize]>(
                 dev.screen().device_uuid().unwrap_or_default(),
             ),
             CL_DEVICE_VENDOR => v.write::<&CStr>(dev.screen().device_vendor()),
             CL_DEVICE_VENDOR_ID => v.write::<cl_uint>(dev.vendor_id()),
             CL_DEVICE_VERSION => v.write::<&str>(&format!("OpenCL {} ", dev.cl_version.api_str())),
-            CL_DRIVER_UUID_KHR => v.write::<[cl_char; CL_UUID_SIZE_KHR as usize]>(
+            CL_DRIVER_UUID => v.write::<[cl_char; CL_UUID_SIZE as usize]>(
                 dev.screen().driver_uuid().unwrap_or_default(),
             ),
             CL_DRIVER_VERSION => v.write::<&CStr>(unsafe { CStr::from_ptr(mesa_version_string()) }),

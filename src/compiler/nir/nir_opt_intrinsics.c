@@ -290,10 +290,10 @@ try_opt_exclusive_scan_to_inclusive(nir_builder *b, nir_intrinsic_instr *intrin)
    nir_op reduction_op = nir_intrinsic_reduction_op(intrin);
 
    nir_foreach_use_including_if(src, &intrin->def) {
-      if (nir_src_is_if(src) || nir_src_parent_instr(src)->type != nir_instr_type_alu)
+      if (nir_src_is_if(src) || nir_src_use_instr(src)->type != nir_instr_type_alu)
          return false;
 
-      nir_alu_instr *alu = nir_instr_as_alu(nir_src_parent_instr(src));
+      nir_alu_instr *alu = nir_instr_as_alu(nir_src_use_instr(src));
 
       if (alu->op != reduction_op)
          return false;
@@ -338,7 +338,7 @@ try_opt_exclusive_scan_to_inclusive(nir_builder *b, nir_intrinsic_instr *intrin)
 
    nir_foreach_use_including_if_safe(src, &intrin->def) {
       /* Remove alu. */
-      nir_alu_instr *alu = nir_instr_as_alu(nir_src_parent_instr(src));
+      nir_alu_instr *alu = nir_instr_as_alu(nir_src_use_instr(src));
       nir_def_replace(&alu->def, incl_scan);
    }
 
@@ -437,16 +437,18 @@ try_opt_atomic_exchange_to_store(nir_builder *b, nir_intrinsic_instr *intrin)
    }
    case nir_intrinsic_shared_atomic:
       nir_store_shared(b, intrin->src[1].ssa, intrin->src[0].ssa,
-                       .access = ACCESS_ATOMIC,
+                       .access = nir_intrinsic_access(intrin) | ACCESS_ATOMIC,
                        .base = nir_intrinsic_base(intrin));
       break;
    case nir_intrinsic_global_atomic:
       nir_store_global(b, intrin->src[1].ssa, intrin->src[0].ssa,
-                       .access = ACCESS_ATOMIC | ACCESS_COHERENT);
+                       .access = nir_intrinsic_access(intrin) |
+                                 ACCESS_ATOMIC | ACCESS_COHERENT);
       break;
    case nir_intrinsic_global_atomic_amd:
       nir_store_global_amd(b, intrin->src[1].ssa, intrin->src[0].ssa, intrin->src[2].ssa,
-                           .access = ACCESS_ATOMIC | ACCESS_COHERENT,
+                           .access = nir_intrinsic_access(intrin) |
+                                     ACCESS_ATOMIC | ACCESS_COHERENT,
                            .base = nir_intrinsic_base(intrin));
       break;
    case nir_intrinsic_ssbo_atomic:
@@ -564,16 +566,18 @@ try_opt_atomic_to_load(nir_builder *b, nir_intrinsic_instr *intrin)
    }
    case nir_intrinsic_shared_atomic:
       def = nir_load_shared(b, 1, bit_size, intrin->src[0].ssa,
-                            .access = ACCESS_ATOMIC,
+                            .access = nir_intrinsic_access(intrin) | ACCESS_ATOMIC,
                             .base = nir_intrinsic_base(intrin));
       break;
    case nir_intrinsic_global_atomic:
       def = nir_load_global(b, 1, bit_size, intrin->src[0].ssa,
-                            .access = ACCESS_ATOMIC | ACCESS_COHERENT);
+                            .access = nir_intrinsic_access(intrin) |
+                                      ACCESS_ATOMIC | ACCESS_COHERENT);
       break;
    case nir_intrinsic_global_atomic_amd:
       def = nir_load_global_amd(b, 1, bit_size, intrin->src[0].ssa, intrin->src[2].ssa,
-                                .access = ACCESS_ATOMIC | ACCESS_COHERENT,
+                                .access = nir_intrinsic_access(intrin) |
+                                          ACCESS_ATOMIC | ACCESS_COHERENT,
                                 .base = nir_intrinsic_base(intrin));
       break;
    case nir_intrinsic_ssbo_atomic:
@@ -653,8 +657,8 @@ opt_intrinsics_intrin(nir_builder *b, nir_intrinsic_instr *intrin)
 
       bool progress = false;
       nir_foreach_use_safe(use_src, &intrin->def) {
-         if (nir_src_parent_instr(use_src)->type == nir_instr_type_alu) {
-            nir_alu_instr *alu = nir_instr_as_alu(nir_src_parent_instr(use_src));
+         if (nir_src_use_instr(use_src)->type == nir_instr_type_alu) {
+            nir_alu_instr *alu = nir_instr_as_alu(nir_src_use_instr(use_src));
 
             if ((alu->op != nir_op_ieq && alu->op != nir_op_ine) || alu->def.num_components != 1)
                continue;

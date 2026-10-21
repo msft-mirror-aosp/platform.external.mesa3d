@@ -34,7 +34,21 @@ struct partial_update_state {
         struct qinst *inst;
         /* Instruction that set the flags for the conditional write */
         struct qinst *flags_inst;
+        /* Track unconditional pack writes (D.l / D.h) within the block.
+         * When both halves have been written, the register is fully defined.
+         */
+        bool has_pack_l;
+        bool has_pack_h;
 };
+
+/* Per-temp flags indicating which register halves are read across the
+ * entire program. Used to determine when a partial pack write is
+ * effectively a full definition (the unwritten half is never read).
+ * A full 32-bit read needs both halves, so it sets both bits.
+ */
+#define TEMP_READ_LO   (1 << 0)                       /* Read via UNPACK_L */
+#define TEMP_READ_HI   (1 << 1)                       /* Read via UNPACK_H */
+#define TEMP_READ_FULL (TEMP_READ_LO | TEMP_READ_HI)  /* Read as full 32-bit */
 
 static int
 vir_reg_to_var(struct qreg reg)
@@ -43,6 +57,46 @@ vir_reg_to_var(struct qreg reg)
                 return reg.index;
 
         return -1;
+}
+
+/* Pre-scan all instructions to build per-temp read-access flags indicating
+ * which halves of each register are actually read by consumers.
+ *
+ * This lets us treat a PACK_L write as a full definition when no consumer
+ * ever reads the high half (and vice versa for PACK_H).
+ */
+static uint8_t *
+vir_compute_temp_read_flags(struct v3d_compile *c)
+{
+        uint8_t *flags = rzalloc_array(c, uint8_t, c->num_temps);
+
+        vir_for_each_block(block, c) {
+                vir_for_each_inst(inst, block) {
+                        int nsrc = vir_get_nsrc(inst);
+                        for (int i = 0; i < nsrc; i++) {
+                                if (inst->src[i].file != QFILE_TEMP)
+                                        continue;
+
+                                int var = inst->src[i].index;
+                                enum v3d_qpu_input_unpack unpack =
+                                        vir_get_unpack(inst, i);
+
+                                switch (unpack) {
+                                case V3D_QPU_UNPACK_L:
+                                        flags[var] |= TEMP_READ_LO;
+                                        break;
+                                case V3D_QPU_UNPACK_H:
+                                        flags[var] |= TEMP_READ_HI;
+                                        break;
+                                default:
+                                        flags[var] |= TEMP_READ_FULL;
+                                        break;
+                                }
+                        }
+                }
+        }
+
+        return flags;
 }
 
 static void
@@ -88,7 +142,8 @@ vir_setup_use(struct v3d_compile *c, struct qblock *block, int ip,
  */
 static void
 vir_setup_def(struct v3d_compile *c, struct qblock *block, int ip,
-              struct partial_update_state *partial_update, struct qinst *inst,
+              struct partial_update_state *partial_update,
+              const uint8_t *temp_read_flags, struct qinst *inst,
               struct qinst *flags_inst)
 {
         if (inst->qpu.type != V3D_QPU_INSTR_TYPE_ALU)
@@ -110,27 +165,75 @@ vir_setup_def(struct v3d_compile *c, struct qblock *block, int ip,
         if (BITSET_TEST(block->use, var) || BITSET_TEST(block->def, var))
                 return;
 
-        /* Easy, common case: unconditional full register update.*/
-        if ((inst->qpu.flags.ac == V3D_QPU_COND_NONE &&
-             inst->qpu.flags.mc == V3D_QPU_COND_NONE) &&
+        bool is_unconditional = (inst->qpu.flags.ac == V3D_QPU_COND_NONE &&
+                                 inst->qpu.flags.mc == V3D_QPU_COND_NONE);
+
+        /* Easy, common case: unconditional full register update. */
+        if (is_unconditional &&
             inst->qpu.alu.add.output_pack == V3D_QPU_PACK_NONE &&
             inst->qpu.alu.mul.output_pack == V3D_QPU_PACK_NONE) {
                 BITSET_SET(block->def, var);
                 return;
         }
 
-        /* Keep track of conditional writes.
+        /* Track partial updates from output packs and conditional writes.
          *
-         * Notice that the dst's live range for a conditional or partial writes
-         * will get extended up the control flow to the top of the program until
-         * we find a full write, making register allocation more difficult, so
-         * we should try our best to keep track of these and figure out if a
-         * combination of them actually writes the entire register so we can
-         * stop that process early and reduce liveness.
+         * The dst's live range for partial writes gets extended up the
+         * control flow to the top of the program until we find a full
+         * write, making register allocation more difficult. We track
+         * these to figure out if a combination actually writes the entire
+         * register so we can stop that process early and reduce liveness.
          *
-         * FIXME: Track partial updates via pack/unpack.
+         * For unconditional pack writes (D.l / D.h), the hardware only
+         * writes the targeted half and leaves the other half untouched.
+         * We can treat these as full definitions when:
+         *
+         *  (a) Both halves have been unconditionally written in this block
+         *      (PACK_L + PACK_H = full register), or
+         *
+         *  (b) Only one half is ever read by any consumer across the entire
+         *      program, and the matching pack writes that half. In this
+         *      case the unwritten half is never read, so the pack write
+         *      is an effective full definition for liveness purposes.
          */
         struct partial_update_state *state = &partial_update[var];
+
+        if (is_unconditional) {
+                enum v3d_qpu_output_pack pack = vir_get_pack(inst);
+
+                if (pack == V3D_QPU_PACK_L)
+                        state->has_pack_l = true;
+                if (pack == V3D_QPU_PACK_H)
+                        state->has_pack_h = true;
+
+                /* Case (a): both halves written in this block. */
+                if (state->has_pack_l && state->has_pack_h) {
+                        BITSET_SET(block->def, var);
+                        return;
+                }
+
+                /* Case (b): the written half covers all reads.
+                 * A full-32-bit read sets both LO and HI in temp_read_flags,
+                 * so checking the single bit captures both "explicit HI
+                 * unpack" and "full read implies HI needed".
+                 */
+                uint8_t rflags = temp_read_flags[var];
+                bool needs_hi = rflags & TEMP_READ_HI;
+                bool needs_lo = rflags & TEMP_READ_LO;
+
+                if (pack == V3D_QPU_PACK_L && !needs_hi) {
+                        BITSET_SET(block->def, var);
+                        return;
+                }
+                if (pack == V3D_QPU_PACK_H && !needs_lo) {
+                        BITSET_SET(block->def, var);
+                        return;
+                }
+        }
+
+        /* Track conditional writes for the existing condition-matching
+         * logic in vir_setup_use.
+         */
         if (inst->qpu.flags.ac != V3D_QPU_COND_NONE ||
             inst->qpu.flags.mc != V3D_QPU_COND_NONE) {
                 state->inst = inst;
@@ -150,6 +253,13 @@ vir_setup_def_use(struct v3d_compile *c)
 {
         struct partial_update_state *partial_update =
                 rzalloc_array(c, struct partial_update_state, c->num_temps);
+
+        /* Pre-compute which halves of each temp are actually read, so we
+         * can treat single-half pack writes as full definitions when the
+         * unwritten half is never read.
+         */
+        uint8_t *temp_read_flags = vir_compute_temp_read_flags(c);
+
         int ip = 0;
 
         vir_for_each_block(block, c) {
@@ -167,7 +277,7 @@ vir_setup_def_use(struct v3d_compile *c)
                         }
 
                         vir_setup_def(c, block, ip, partial_update,
-                                      inst, flags_inst);
+                                      temp_read_flags, inst, flags_inst);
 
                         if (inst->qpu.flags.apf != V3D_QPU_PF_NONE ||
                             inst->qpu.flags.mpf != V3D_QPU_PF_NONE) {
@@ -192,7 +302,7 @@ vir_setup_def_use(struct v3d_compile *c)
                         if (inst->src[0].file == QFILE_REG) {
                                 uint32_t min_payload_r = c->devinfo->ver >= 71 ? 1 : 0;
                                 uint32_t max_payload_r = c->devinfo->ver >= 71 ? 3 : 2;
-                                if (inst->src[0].index >= min_payload_r ||
+                                if (inst->src[0].index >= min_payload_r &&
                                     inst->src[0].index <= max_payload_r) {
                                         c->temp_start[inst->dst.index] = 0;
                                 }
@@ -203,6 +313,7 @@ vir_setup_def_use(struct v3d_compile *c)
                 block->end_ip = ip;
         }
 
+        ralloc_free(temp_read_flags);
         ralloc_free(partial_update);
 }
 
@@ -278,6 +389,13 @@ vir_compute_start_end(struct v3d_compile *c, int num_vars)
 {
         vir_for_each_block(block, c) {
                 for (int i = 0; i < num_vars; i++) {
+                        /* We should've computed valid ranges for any temps used by
+                         * the program by the time we get here. If a temp doesn't
+                         *  have a valid range it means  it is not used at all.
+                         */
+                        if (c->temp_end[i] == -1)
+                                continue;
+
                         if (BITSET_TEST(block->live_in, i) &&
                             BITSET_TEST(block->defin, i)) {
                                 c->temp_start[i] = MIN2(c->temp_start[i],
@@ -295,6 +413,139 @@ vir_compute_start_end(struct v3d_compile *c, int num_vars)
                         }
                 }
         }
+}
+
+/* spill_base is defined once at program entry and never redefined, so
+ * we conservatively set its interval start to zero. Direct uses establish its
+ * lifetime within their blocks, but the value may also need to remain live
+ * across block boundaries, for example through a loop back edge.
+ *
+ * Find blocks that use spill_base and walk their predecessors, extending
+ * the interval across every reachable path back to the entry block.
+ */
+static void
+vir_extend_spill_base_live_interval(struct v3d_compile *c, uint32_t sb_temp)
+{
+        bool *live_in = rzalloc_array(c, bool, c->next_block_index);
+        struct qblock **worklist =
+                ralloc_array(c, struct qblock *, c->next_block_index);
+        unsigned count = 0;
+        struct qblock *entry = vir_entry_block(c);
+
+        c->temp_start[sb_temp] = 0;
+
+        vir_for_each_block(block, c) {
+                if (block == entry)
+                        continue;
+
+                vir_for_each_inst(inst, block) {
+                        for (int s = 0; s < vir_get_nsrc(inst); s++) {
+                                if (inst->src[s].file == QFILE_TEMP &&
+                                    inst->src[s].index == sb_temp) {
+                                        live_in[block->index] = true;
+                                        break;
+                                }
+                        }
+
+                        if (live_in[block->index]) {
+                                worklist[count++] = block;
+                                break;
+                        }
+                }
+        }
+
+        while (count) {
+                struct qblock *block = worklist[--count];
+                set_foreach(block->predecessors, pred_entry) {
+                        struct qblock *pred = (struct qblock *)pred_entry->key;
+                        c->temp_end[sb_temp] =
+                                MAX2(c->temp_end[sb_temp], pred->end_ip);
+
+                        if (pred != entry && !live_in[pred->index]) {
+                                live_in[pred->index] = true;
+                                worklist[count++] = pred;
+                        }
+                }
+        }
+
+        ralloc_free(worklist);
+        ralloc_free(live_in);
+}
+
+/* This updates liveness information after RA decided to spill any registers
+ * instead of computing it entirely from scratch, which can be expensive.
+ *
+ * When we spill, most of the liveness information we had computed for temps
+ * that existed before the spill (num_temps_before_spills) is still valid.
+ * Particularly, livein, defin, liveout and defout are still valid since these
+ * track liveness across blocks and spilling doesn't move any temps to different
+ * blocks.
+ *
+ * We still need to recompute program ips since new instructions have been
+ * added and then recompute the new start and end ranges for each temp
+ * accordingly, including new, unspillable temps that still need registers.
+ * New spill/fill temps are local to their blocks, except for spill_base, whose
+ * interval is extended separately by vir_extend_spill_base_live_interval.
+ */
+void
+vir_update_live_intervals_after_spill(struct v3d_compile *c,
+                                      uint32_t num_temps_before_spills)
+{
+        c->temp_start = reralloc(c, c->temp_start, int, c->num_temps);
+        c->temp_end = reralloc(c, c->temp_end, int, c->num_temps);
+
+        for (uint32_t i = 0; i < c->num_temps; i++) {
+                c->temp_start[i] = MAX_INSTRUCTION;
+                c->temp_end[i] = -1;
+        }
+
+        /* Compute new IP ranges for all temps */
+        int32_t ip = 0;
+        vir_for_each_block(block, c) {
+                block->start_ip = ip;
+
+                vir_for_each_inst(inst, block) {
+                        inst->ip = ip;
+                        for (int s = 0; s < vir_get_nsrc(inst); s++) {
+                                if (inst->src[s].file != QFILE_TEMP)
+                                        continue;
+
+                                uint32_t t = inst->src[s].index;
+                                c->temp_start[t] = MIN2(c->temp_start[t], ip);
+                                c->temp_end[t] = MAX2(c->temp_end[t], ip);
+                        }
+                        if (inst->qpu.type == V3D_QPU_INSTR_TYPE_ALU &&
+                            inst->dst.file == QFILE_TEMP) {
+                                uint32_t t = inst->dst.index;
+                                c->temp_start[t] = MIN2(c->temp_start[t], ip);
+                                c->temp_end[t] = MAX2(c->temp_end[t], ip);
+                        }
+
+                        if (inst->src[0].file == QFILE_REG) {
+                                uint32_t min_payload_r = c->devinfo->ver >= 71 ? 1 : 0;
+                                uint32_t max_payload_r = c->devinfo->ver >= 71 ? 3 : 2;
+                                if (inst->src[0].index >= min_payload_r &&
+                                    inst->src[0].index <= max_payload_r) {
+                                        c->temp_start[inst->dst.index] = 0;
+                                }
+                        }
+
+                        ip++;
+                }
+
+                block->end_ip = ip;
+        }
+
+        /* Now expand live ranges based on control flow info */
+        vir_compute_start_end(c, num_temps_before_spills);
+
+        /* Rebuilding the intervals above also resets spill_base's extent
+         * even when this batch did not add any new TMU spills.
+         */
+        if (c->spill_base.file == QFILE_TEMP)
+                vir_extend_spill_base_live_interval(c, c->spill_base.index);
+
+        c->live_intervals_valid = true;
 }
 
 void

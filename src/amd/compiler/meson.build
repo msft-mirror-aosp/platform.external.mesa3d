@@ -44,6 +44,7 @@ libaco_files = files(
   'instruction_selection/aco_select_vs_prolog.cpp',
   'aco_dead_code_analysis.cpp',
   'aco_dominance.cpp',
+  'aco_elf.cpp',
   'aco_interface.cpp',
   'aco_interface.h',
   'aco_ir.cpp',
@@ -92,7 +93,7 @@ _libaco = static_library(
     dep_llvm, dep_thread, dep_valgrind, idep_nir_headers, idep_amd_generated_headers, idep_mesautil,
   ],
   gnu_symbol_visibility : 'hidden',
-  build_by_default : true,
+  build_by_default : false,
   cpp_args : [cpp_args_aco, cpp_msvc_compat_args],
 )
 

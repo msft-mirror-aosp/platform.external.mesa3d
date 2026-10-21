@@ -107,9 +107,10 @@
 #define MAX_VIEWS 6
 #define MAX_HW_SCALED_VIEWS 6
 #define MAX_BIND_POINTS 2 /* compute + graphics */
-/* match the latest Qualcomm driver which is also a hw limit on later gens */
-#define MAX_STORAGE_BUFFER_RANGE (1u << 27)
-#define MAX_TEXEL_ELEMENTS (1u << 27)
+#define TU_D3D12_MAX_TEXEL_BUFFER_ELEMENTS ((1u << 29u) - 1u)
+#define TU_TEXEL_BUFFER_MAX_WIDTH (1u << 14)
+#define TU_TEXEL_BUFFER_MAX_HEIGHT (1u << 14)
+#define TU_D3D12_MAX_STORAGE_BUFFER_RANGE_BYTES ((1u << 31u) - 1u)
 /* We use ldc for uniform buffer loads, just like the Qualcomm driver, so
  * expose the same maximum range.
  * TODO: The SIZE bitfield is 15 bits, and in 4-dword units, so the actual
@@ -155,8 +156,10 @@ enum tu_predicate_bit {
    TU_PREDICATE_VTX_STATS_RUNNING = 3,
    TU_PREDICATE_VTX_STATS_NOT_RUNNING = 4,
    TU_PREDICATE_FIRST_TILE = 5,
-   TU_PREDICATE_FAST_STORE = 6,
-   TU_PREDICATE_NO_FAST_STORE = 7,
+   TU_PREDICATE_SUBSAMPLED_FAST_STORE = 6,
+   TU_PREDICATE_SUBSAMPLED_NO_FAST_STORE = 7,
+   TU_PREDICATE_NON_SUBSAMPLED_FAST_STORE = 8,
+   TU_PREDICATE_NON_SUBSAMPLED_NO_FAST_STORE = 9,
 };
 
 /* Onchip timestamp register layout. */
@@ -171,6 +174,9 @@ enum tu_onchip_addr {
    TU_ONCHIP_CB_BV_DISABLED_TIMESTAMP,
    TU_ONCHIP_BARRIER,
    TU_ONCHIP_CB_RESLIST_OVERFLOW,
+
+   TU_ONCHIP_BR_U_TRACE_BARRIER,
+   TU_ONCHIP_BV_U_TRACE_BARRIER,
 
    /* Registers 8-15 are defined by firmware to be split between BR and BV.
     * Each has their own copy.

@@ -25,14 +25,19 @@ static const struct ac_surface_copy_region
 radv_get_surface_copy_region(struct radv_device *device, const struct radv_image *image, const void *host_ptr,
                              uint32_t memory_row_length, uint32_t memory_image_height,
                              const VkImageSubresourceLayers *subresource, VkOffset3D image_offset,
-                             VkExtent3D image_extent)
+                             VkExtent3D image_extent, VkHostImageCopyFlags flags)
 {
    const void *surf_ptr = image->bindings[0].host_ptr;
    const uint32_t texel_scale = radv_get_texel_scale(image->vk.format, subresource);
    const VkOffset3D img_offset_el = vk_image_offset_to_elements(&image->vk, image_offset);
    const VkExtent3D img_extent_el = vk_image_extent_to_elements(&image->vk, image_extent);
-   const uint32_t mem_row_pitch = memory_row_length ? memory_row_length : img_extent_el.width;
-   const uint32_t mem_slice_pitch = (memory_image_height ? memory_image_height : img_extent_el.height) * mem_row_pitch;
+   const VkExtent3D memory_extent = {
+      .width = memory_row_length ? memory_row_length : image_extent.width,
+      .height = memory_image_height ? memory_image_height : image_extent.height,
+   };
+   const VkExtent3D memory_extent_el = vk_image_extent_to_elements(&image->vk, memory_extent);
+   const uint32_t mem_row_pitch = memory_extent_el.width;
+   const uint32_t mem_slice_pitch = memory_extent_el.height * mem_row_pitch;
 
    const struct ac_surface_copy_region surf_copy_region = {
       .surf_ptr = surf_ptr,
@@ -55,6 +60,7 @@ radv_get_surface_copy_region(struct radv_device *device, const struct radv_image
       .mem_row_pitch = mem_row_pitch * texel_scale,
       .mem_slice_pitch = mem_slice_pitch * texel_scale,
       .is_stencil_only = subresource->aspectMask == VK_IMAGE_ASPECT_STENCIL_BIT,
+      .memcpy = !!(flags & VK_HOST_IMAGE_COPY_MEMCPY_BIT),
    };
 
    return surf_copy_region;
@@ -76,9 +82,9 @@ radv_CopyImageToMemoryEXT(VkDevice _device, const VkCopyImageToMemoryInfo *pCopy
    for (uint32_t i = 0; i < pCopyImageToMemoryInfo->regionCount; i++) {
       const VkImageToMemoryCopy *copy = &pCopyImageToMemoryInfo->pRegions[i];
 
-      const struct ac_surface_copy_region surf_copy_region =
-         radv_get_surface_copy_region(device, image, copy->pHostPointer, copy->memoryRowLength, copy->memoryImageHeight,
-                                      &copy->imageSubresource, copy->imageOffset, copy->imageExtent);
+      const struct ac_surface_copy_region surf_copy_region = radv_get_surface_copy_region(
+         device, image, copy->pHostPointer, copy->memoryRowLength, copy->memoryImageHeight, &copy->imageSubresource,
+         copy->imageOffset, copy->imageExtent, pCopyImageToMemoryInfo->flags);
 
       if (!ac_surface_copy_surface_to_mem(pdev->addrlib, &pdev->info, surf, &surf_info, &surf_copy_region))
          return VK_ERROR_INITIALIZATION_FAILED;
@@ -103,9 +109,9 @@ radv_CopyMemoryToImageEXT(VkDevice _device, const VkCopyMemoryToImageInfo *pCopy
    for (uint32_t i = 0; i < pCopyMemoryToImageInfo->regionCount; i++) {
       const VkMemoryToImageCopy *copy = &pCopyMemoryToImageInfo->pRegions[i];
 
-      const struct ac_surface_copy_region surf_copy_region =
-         radv_get_surface_copy_region(device, image, copy->pHostPointer, copy->memoryRowLength, copy->memoryImageHeight,
-                                      &copy->imageSubresource, copy->imageOffset, copy->imageExtent);
+      const struct ac_surface_copy_region surf_copy_region = radv_get_surface_copy_region(
+         device, image, copy->pHostPointer, copy->memoryRowLength, copy->memoryImageHeight, &copy->imageSubresource,
+         copy->imageOffset, copy->imageExtent, pCopyMemoryToImageInfo->flags);
 
       if (!ac_surface_copy_mem_to_surface(pdev->addrlib, &pdev->info, surf, &surf_info, &surf_copy_region))
          return VK_ERROR_INITIALIZATION_FAILED;

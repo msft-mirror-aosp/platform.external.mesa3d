@@ -112,9 +112,9 @@ C_TEMPLATE = Template(textwrap.dedent(u"""\
       % endif
     %endfor
 
-    size_t vk_structure_type_size(const struct VkBaseInStructure *item)
+    size_t vk_structure_type_size(VkStructureType sType)
     {
-        switch((int)item->sType) {
+        switch((int)sType) {
     % for struct in structs:
         % if struct.extension is not None and struct.extension.define is not None:
     #ifdef ${struct.extension.define}
@@ -182,7 +182,7 @@ H_TEMPLATE = Template(textwrap.dedent(u"""\
       % endif
     % endfor
 
-    size_t vk_structure_type_size(const struct VkBaseInStructure *item);
+    size_t vk_structure_type_size(VkStructureType sType);
 
     const char * vk_ObjectType_to_ObjectName(VkObjectType type);
 
@@ -296,7 +296,7 @@ def compute_max_enum_name(s):
     max_enum_name = CamelCase_to_SHOUT_CASE(s)
     last_prefix = max_enum_name.rsplit('_', 1)[-1]
     # Those special prefixes need to be always at the end
-    if last_prefix in ['AMD', 'AMDX', 'EXT', 'INTEL', 'KHR', 'NV', 'LUNARG', 'QCOM', 'MSFT', 'ARM'] :
+    if last_prefix in ['AMD', 'AMDX', 'EXT', 'INTEL', 'KHR', 'NV', 'LUNARG', 'QCOM', 'MSFT', 'ARM', 'SEC'] :
         max_enum_name = "_".join(max_enum_name.split('_')[:-1])
         max_enum_name = max_enum_name + "_MAX_ENUM_" + last_prefix
     else:

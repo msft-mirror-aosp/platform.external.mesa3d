@@ -22,12 +22,12 @@ pushd /platform/crosvm
 git checkout "$CROSVM_VERSION"
 git submodule update --init
 
-VIRGLRENDERER_VERSION=95610d57da49d76617bd6d8d21b9bfb1bf360f64
+VIRGLRENDERER_VERSION=956b034f75760fc956f0445b4559005d29619af2
 rm -rf third_party/virglrenderer
 git clone --single-branch -b main --no-checkout https://gitlab.freedesktop.org/virgl/virglrenderer.git third_party/virglrenderer
 pushd third_party/virglrenderer
 git checkout "$VIRGLRENDERER_VERSION"
-meson setup build/ -D libdir=lib -D render-server-worker=process -D venus=true ${EXTRA_MESON_ARGS:-}
+meson setup build/ -D libdir=lib -D venus=true ${EXTRA_MESON_ARGS:-}
 meson install -C build
 popd
 

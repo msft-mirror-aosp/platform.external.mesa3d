@@ -30,6 +30,15 @@ protected:
          r[i] = vgrf(a, b, type);
       return r;
    }
+
+   static brw_reg
+   vaddr(brw_builder &a, brw_builder &b, brw_reg_type type, unsigned subnr)
+   {
+      brw_reg reg_a = a.vaddr(type, subnr);
+      brw_reg reg_b = b.vaddr(type, subnr);
+      assert(brw_regs_equal(&reg_a, &reg_b));
+      return reg_a;
+   }
 };
 
 brw_inst *
@@ -58,19 +67,19 @@ emit_SEND(const brw_builder &bld, const brw_reg &dst,
    return send;
 }
 
-bool operator ==(const tgl_swsb &a, const tgl_swsb &b)
+bool operator ==(const gen_swsb &a, const gen_swsb &b)
 {
    return a.mode == b.mode &&
           a.pipe == b.pipe &&
           a.regdist == b.regdist &&
-          (a.mode == TGL_SBID_NULL || a.sbid == b.sbid);
+          (a.mode == GEN_SBID_NULL || a.sbid == b.sbid);
 }
 
 /* Parse SWSB for setting test expected results. */
-static tgl_swsb
+static gen_swsb
 SWSB(const char *input)
 {
-   struct tgl_swsb swsb = {};
+   struct gen_swsb swsb = {};
 
    bool seen_sbid    = false;
    bool seen_regdist = false;
@@ -106,16 +115,16 @@ SWSB(const char *input)
          if (*s == '.') {
             s++;
             if (!strncmp(s, "src", 3)) {
-               swsb.mode = TGL_SBID_SRC;
+               swsb.mode = GEN_SBID_SRC;
                s += 3;
             } else if (!strncmp(s, "dst", 3)) {
-               swsb.mode = TGL_SBID_DST;
+               swsb.mode = GEN_SBID_DST;
                s += 3;
             } else {
                goto invalid;
             }
          } else {
-            swsb.mode = TGL_SBID_SET;
+            swsb.mode = GEN_SBID_SET;
          }
 
          seen_sbid = true;
@@ -126,17 +135,17 @@ SWSB(const char *input)
 
          if (*s != '@') {
             switch (*s) {
-            case 'F': swsb.pipe = TGL_PIPE_FLOAT;  break;
-            case 'I': swsb.pipe = TGL_PIPE_INT;    break;
-            case 'L': swsb.pipe = TGL_PIPE_LONG;   break;
-            case 'A': swsb.pipe = TGL_PIPE_ALL;    break;
-            case 'M': swsb.pipe = TGL_PIPE_MATH;   break;
-            case 'S': swsb.pipe = TGL_PIPE_SCALAR; break;
+            case 'F': swsb.pipe = GEN_PIPE_FLOAT;  break;
+            case 'I': swsb.pipe = GEN_PIPE_INT;    break;
+            case 'L': swsb.pipe = GEN_PIPE_LONG;   break;
+            case 'A': swsb.pipe = GEN_PIPE_ALL;    break;
+            case 'M': swsb.pipe = GEN_PIPE_MATH;   break;
+            case 'S': swsb.pipe = GEN_PIPE_SCALAR; break;
             default: goto invalid;
             }
             s++;
          } else {
-            swsb.pipe = TGL_PIPE_NONE;
+            swsb.pipe = GEN_PIPE_NONE;
          }
          if (*s != '@')
             goto invalid;
@@ -161,19 +170,19 @@ TEST_F(scoreboard_test, parse_swsb)
 {
    struct {
       const char *input;
-      tgl_swsb    output;
+      gen_swsb    output;
    } tests[] = {
       { "",            {                                                                         } },
       { "@1",          { .regdist = 1                                                            } },
-      { "A@6",         { .regdist = 6, .pipe = TGL_PIPE_ALL                                      } },
-      { "$3",          {                                        .sbid = 3,  .mode = TGL_SBID_SET } },
-      { "$0.src",      {                                        .sbid = 0,  .mode = TGL_SBID_SRC } },
-      { "@1 $4.dst",   { .regdist = 1,                          .sbid = 4,  .mode = TGL_SBID_DST } },
-      { "F@2 $11.src", { .regdist = 2, .pipe = TGL_PIPE_FLOAT,  .sbid = 11, .mode = TGL_SBID_SRC } },
-      { "S@5 $22",     { .regdist = 5, .pipe = TGL_PIPE_SCALAR, .sbid = 22, .mode = TGL_SBID_SET } },
-      { "M@1",         { .regdist = 1, .pipe = TGL_PIPE_MATH                                     } },
-      { "$1 I@1",      { .regdist = 1, .pipe = TGL_PIPE_INT,    .sbid = 1,  .mode = TGL_SBID_SET } },
-      { "$31.src L@4", { .regdist = 4, .pipe = TGL_PIPE_LONG,   .sbid = 31, .mode = TGL_SBID_SRC } },
+      { "A@6",         { .regdist = 6, .pipe = GEN_PIPE_ALL                                      } },
+      { "$3",          {                                        .sbid = 3,  .mode = GEN_SBID_SET } },
+      { "$0.src",      {                                        .sbid = 0,  .mode = GEN_SBID_SRC } },
+      { "@1 $4.dst",   { .regdist = 1,                          .sbid = 4,  .mode = GEN_SBID_DST } },
+      { "F@2 $11.src", { .regdist = 2, .pipe = GEN_PIPE_FLOAT,  .sbid = 11, .mode = GEN_SBID_SRC } },
+      { "S@5 $22",     { .regdist = 5, .pipe = GEN_PIPE_SCALAR, .sbid = 22, .mode = GEN_SBID_SET } },
+      { "M@1",         { .regdist = 1, .pipe = GEN_PIPE_MATH                                     } },
+      { "$1 I@1",      { .regdist = 1, .pipe = GEN_PIPE_INT,    .sbid = 1,  .mode = GEN_SBID_SET } },
+      { "$31.src L@4", { .regdist = 4, .pipe = GEN_PIPE_LONG,   .sbid = 31, .mode = GEN_SBID_SRC } },
    };
 
    for (auto &t : tests)
@@ -321,6 +330,106 @@ TEST_F(scoreboard_test, WAR_outoforder_inorder)
    emit_SEND(exp, g[1], g[2],    x)->sched = SWSB("$0");
    exp.MUL(       g[4], g[5], g[6]);
    exp.AND(          x, g[7], g[8])->sched = SWSB("$0.src");
+
+   EXPECT_SHADERS_MATCH(bld, exp);
+}
+
+TEST_F(scoreboard_test, WAR_send_address_register_descriptor_same_vaddr)
+{
+   brw_builder bld = make_shader();
+   brw_builder exp = make_shader();
+
+   brw_reg *g = vgrf_array(bld, exp, BRW_TYPE_UD, 6);
+   brw_reg desc_addr = vaddr(bld, exp, BRW_TYPE_UD,
+                             BRW_ADDRESS_SUBREG_INDIRECT_DESC);
+   brw_reg zero = brw_imm_ud(0);
+
+   {
+      bld.uniform().MOV(desc_addr, g[1]);
+      auto *send = emit_SEND(bld, g[2], zero, g[3]);
+      send->src[SEND_SRC_DESC] = component(desc_addr, 0);
+      bld.uniform().MOV(desc_addr, g[4]);
+   }
+
+   EXPECT_PROGRESS(brw_lower_scoreboard, bld);
+
+   {
+      exp.uniform().MOV(desc_addr, g[1]);
+      SYNC_NOP(exp)->sched = SWSB("@1");
+      auto *send = emit_SEND(exp, g[2], zero, g[3]);
+      send->src[SEND_SRC_DESC] = component(desc_addr, 0);
+      send->sched = SWSB("$0");
+      exp.uniform().MOV(desc_addr, g[4])->sched = SWSB("$0.src");
+   }
+
+   EXPECT_SHADERS_MATCH(bld, exp);
+}
+
+TEST_F(scoreboard_test, WAR_send_address_register_ex_desc_different_vaddr)
+{
+   brw_builder bld = make_shader();
+   brw_builder exp = make_shader();
+
+   brw_reg *g = vgrf_array(bld, exp, BRW_TYPE_UD, 6);
+   brw_reg ex_desc_addr = vaddr(bld, exp, BRW_TYPE_UD,
+                                BRW_ADDRESS_SUBREG_INDIRECT_EX_DESC);
+   brw_reg zero = brw_imm_ud(0);
+   /* Different virtual address registers and subregisters still alias the
+    * same concrete address register after register allocation.
+    */
+   brw_reg other_addr = vaddr(bld, exp, BRW_TYPE_UD, 8);
+
+   {
+      bld.uniform().MOV(ex_desc_addr, g[1]);
+      auto *send = emit_SEND(bld, g[2], zero, g[3]);
+      send->src[SEND_SRC_EX_DESC] = component(ex_desc_addr, 0);
+      bld.uniform().MOV(other_addr, g[4]);
+   }
+
+   EXPECT_PROGRESS(brw_lower_scoreboard, bld);
+
+   {
+      exp.uniform().MOV(ex_desc_addr, g[1]);
+      SYNC_NOP(exp)->sched = SWSB("@1");
+      auto *send = emit_SEND(exp, g[2], zero, g[3]);
+      send->src[SEND_SRC_EX_DESC] = component(ex_desc_addr, 0);
+      send->sched = SWSB("$0");
+      exp.uniform().MOV(other_addr, g[4])->sched = SWSB("$0.src");
+   }
+
+   EXPECT_SHADERS_MATCH(bld, exp);
+}
+
+TEST_F(scoreboard_test, WAR_send_address_register_descriptor_implicit_clobber)
+{
+   brw_builder bld = make_shader();
+   brw_builder exp = make_shader();
+
+   brw_reg *g = vgrf_array(bld, exp, BRW_TYPE_UD, 16);
+   brw_reg ex_desc_addr = vaddr(bld, exp, BRW_TYPE_UD,
+                                BRW_ADDRESS_SUBREG_INDIRECT_EX_DESC);
+   brw_reg other_addr = vaddr(bld, exp, BRW_TYPE_UD, 8);
+   brw_reg zero = brw_imm_ud(0);
+
+   {
+      bld.uniform().MOV(ex_desc_addr, g[1]);
+      auto *send = emit_SEND(bld, g[2], zero, g[3]);
+      send->src[SEND_SRC_EX_DESC] = component(ex_desc_addr, 0);
+      bld.emit(SHADER_OPCODE_SHUFFLE, g[10], g[11], g[12]);
+      bld.uniform().MOV(other_addr, g[4]);
+   }
+
+   EXPECT_PROGRESS(brw_lower_scoreboard, bld);
+
+   {
+      exp.uniform().MOV(ex_desc_addr, g[1]);
+      SYNC_NOP(exp)->sched = SWSB("@1");
+      auto *send = emit_SEND(exp, g[2], zero, g[3]);
+      send->src[SEND_SRC_EX_DESC] = component(ex_desc_addr, 0);
+      send->sched = SWSB("$0");
+      exp.emit(SHADER_OPCODE_SHUFFLE, g[10], g[11], g[12])->sched = SWSB("$0.src");
+      exp.uniform().MOV(other_addr, g[4]);
+   }
 
    EXPECT_SHADERS_MATCH(bld, exp);
 }
@@ -1125,8 +1234,7 @@ TEST_F(scoreboard_test, scalar_register_mov_immediate_is_in_scalar_pipe)
    EXPECT_PROGRESS(brw_lower_scoreboard, bld);
 
    exp.uniform().MOV(scalar, imm);
-                 SYNC_NOP(exp   )->sched = SWSB("S@1");
-   exp          .MOV(r20, scalar);
+   exp          .MOV(r20, scalar)->sched = SWSB("S@1");
 
    EXPECT_SHADERS_MATCH(bld, exp);
 }
@@ -1148,8 +1256,7 @@ TEST_F(scoreboard_test, scalar_register_mov_grf_is_not_in_scalar_pipe)
    EXPECT_PROGRESS(brw_lower_scoreboard, bld);
 
    exp.uniform().MOV     (scalar, r10);
-                 SYNC_NOP(exp       )->sched = SWSB("I@1");
-   exp          .MOV     (r20, scalar);
+   exp          .MOV     (r20, scalar)->sched = SWSB("I@1");
 
    EXPECT_SHADERS_MATCH(bld, exp);
 }
@@ -1283,6 +1390,49 @@ TEST_F(scoreboard_test, implicit_dependency_inside_if)
    exp.ELSE();
    exp.NOP();
    exp.ENDIF();
+
+   EXPECT_SHADERS_MATCH(bld, exp);
+}
+
+TEST_F(scoreboard_test, xe2_uniform_writer_baked_into_masked_consumer)
+{
+   set_gfx_verx10(200);
+
+   brw_builder bld = make_shader();
+   brw_builder exp = make_shader();
+
+   brw_reg *g = vgrf_array(bld, exp, BRW_TYPE_D, 8);
+   brw_reg  x = vgrf(bld, exp, BRW_TYPE_D);
+
+   bld.uniform().ADD(   x, g[1], g[2]);
+   bld          .ADD(g[3],    x, g[4]);
+
+   EXPECT_PROGRESS(brw_lower_scoreboard, bld);
+
+   exp.uniform().ADD(   x, g[1], g[2]);
+   exp          .ADD(g[3],    x, g[4])->sched = SWSB("I@1");
+
+   EXPECT_SHADERS_MATCH(bld, exp);
+}
+
+TEST_F(scoreboard_test, xe2_uniform_writer_baked_into_masked_send)
+{
+   set_gfx_verx10(200);
+
+   brw_builder bld = make_shader();
+   brw_builder exp = make_shader();
+
+   brw_reg a = brw_ud8_grf(10, 0);
+   brw_reg b = brw_ud8_grf(20, 0);
+   brw_reg x = brw_ud8_grf(30, 0);
+
+   bld.uniform().ADD(a, a, a);
+   emit_SEND   (bld, x, a, b);
+
+   EXPECT_PROGRESS(brw_lower_scoreboard, bld);
+
+   exp.uniform().ADD(a, a, a);
+   emit_SEND   (exp, x, a, b)->sched = SWSB("I@1 $0");
 
    EXPECT_SHADERS_MATCH(bld, exp);
 }

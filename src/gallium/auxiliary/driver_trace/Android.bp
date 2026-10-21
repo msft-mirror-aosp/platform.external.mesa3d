@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium_4",
+    name: "files_libgallium_6",
     srcs: [
         "tr_context.c",
         "tr_dump.c",

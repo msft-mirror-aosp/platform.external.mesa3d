@@ -51,7 +51,7 @@ struct pan_image_view {
    enum pipe_format format;
    enum mali_texture_dimension dim;
    unsigned first_level, last_level;
-   unsigned first_layer, last_layer;
+   unsigned first_layer_or_z_slice, last_layer_or_z_slice;
    float min_lod;
    unsigned char swizzle[4];
 
@@ -66,6 +66,12 @@ struct pan_image_view {
       unsigned narrow;
       unsigned hdr;
    } astc;
+
+   /* VkChromaLocation must be strictly honored. */
+   struct {
+      bool override_cr_siting;
+      unsigned cr_siting;
+   } yuv;
 };
 
 static inline struct pan_image_plane_ref
@@ -117,20 +123,57 @@ pan_image_view_get_nr_samples(const struct pan_image_view *iview)
    return pref.image->props.nr_samples;
 }
 
-static inline uint32_t
-pan_image_view_get_layer_count(const struct pan_image_view *iview)
+static inline unsigned
+pan_image_view_first_layer(const struct pan_image_view *iview)
 {
-   const struct pan_image_plane_ref pref = pan_image_view_get_first_plane(iview);
-
-   if (!pref.image)
-      return 0;
-
-   return iview->dim == MALI_TEXTURE_DIMENSION_3D
-                        ? pref.image->props.extent_px.depth
-                        : iview->last_layer - iview->first_layer + 1;
+   return iview->dim != MALI_TEXTURE_DIMENSION_3D
+             ? iview->first_layer_or_z_slice
+             : 0;
 }
 
-static inline const struct pan_image_plane_ref
+static inline unsigned
+pan_image_view_last_layer(const struct pan_image_view *iview)
+{
+   return iview->dim != MALI_TEXTURE_DIMENSION_3D ? iview->last_layer_or_z_slice
+                                                  : 0;
+}
+
+static inline unsigned
+pan_image_view_layer_count(const struct pan_image_view *iview)
+{
+   return pan_image_view_last_layer(iview) - pan_image_view_first_layer(iview) +
+          1;
+}
+
+static inline unsigned
+pan_image_view_first_z_slice(const struct pan_image_view *iview)
+{
+   return iview->dim == MALI_TEXTURE_DIMENSION_3D
+             ? iview->first_layer_or_z_slice
+             : 0;
+}
+
+static inline unsigned
+pan_image_view_last_z_slice(const struct pan_image_view *iview)
+{
+   return iview->dim == MALI_TEXTURE_DIMENSION_3D ? iview->last_layer_or_z_slice
+                                                  : 0;
+}
+
+static inline unsigned
+pan_image_view_3d_slice_count(const struct pan_image_view *iview)
+{
+   return pan_image_view_last_z_slice(iview) -
+          pan_image_view_first_z_slice(iview) + 1;
+}
+
+static inline unsigned
+pan_image_view_layer_or_3d_slice_count(const struct pan_image_view *iview)
+{
+   return iview->last_layer_or_z_slice - iview->first_layer_or_z_slice + 1;
+}
+
+static inline struct pan_image_plane_ref
 pan_image_view_get_color_plane(const struct pan_image_view *iview)
 {
    /* We only support rendering to plane 0 */
@@ -146,7 +189,8 @@ pan_image_view_has_crc(const struct pan_image_view *iview)
    if (!p.image)
       return false;
 
-   return p.image->props.crc;
+   /* Only mip level 0 gets a CRC buffer allocated. */
+   return p.image->props.crc && iview->first_level == 0;
 }
 
 static inline struct pan_image_plane_ref
@@ -209,9 +253,13 @@ pan_image_view_check(const struct pan_image_view *iview)
          util_format_get_plane_format(pref.image->props.format, pref.plane_idx);
 
       /* View-based pixel re-interpretation only allowed if the formats
-       * blocksize match. */
-      assert(util_format_get_blocksize(view_format) ==
-             util_format_get_blocksize(img_format));
+       * blocksize match. Exception is for Z24X8 with AFBC enabled since then
+       * we can lower it to Z24 packed format internally. */
+      assert((util_format_get_blocksize(view_format) ==
+              util_format_get_blocksize(img_format)) ||
+             (view_format == PIPE_FORMAT_Z24X8_UNORM &&
+              img_format == PIPE_FORMAT_Z24_UNORM_PACKED &&
+              drm_is_afbc(pref.image->props.modifier)));
    }
 #endif
 }
@@ -296,13 +344,49 @@ pan_image_test_props(const struct pan_kmod_dev_props *dprops,
       .mod_handler = pan_mod_get_handler(arch, iprops->modifier),
    };
 
-   if (!image.mod_handler)
+   if (!image.mod_handler || !image.mod_handler->get_format_caps)
       return PAN_MOD_NOT_SUPPORTED;
 
-   enum pan_mod_support ret =
-      image.mod_handler->test_props(dprops, &image.props, iusage);
-   if (ret == PAN_MOD_NOT_SUPPORTED)
-      return ret;
+   uint32_t caps =
+      image.mod_handler->get_format_caps(dprops, iprops->format, iprops->modifier);
+   if (!caps)
+      return PAN_MOD_NOT_SUPPORTED;
+
+   if (iprops->dim == MALI_TEXTURE_DIMENSION_1D &&
+       !(caps & PAN_MOD_FORMAT_CAP_DIM_1D))
+      return PAN_MOD_NOT_SUPPORTED;
+   if (iprops->dim == MALI_TEXTURE_DIMENSION_2D &&
+       !(caps & PAN_MOD_FORMAT_CAP_DIM_2D))
+      return PAN_MOD_NOT_SUPPORTED;
+   if (iprops->dim == MALI_TEXTURE_DIMENSION_3D &&
+       !(caps & PAN_MOD_FORMAT_CAP_DIM_3D))
+      return PAN_MOD_NOT_SUPPORTED;
+
+   if (iprops->nr_samples > 1 && !(caps & PAN_MOD_FORMAT_CAP_MSAA))
+      return PAN_MOD_NOT_SUPPORTED;
+
+   if (iusage) {
+      if ((iusage->bind & PAN_BIND_STORAGE_IMAGE) &&
+          !(caps & PAN_MOD_FORMAT_CAP_STORAGE_IMAGE))
+         return PAN_MOD_NOT_SUPPORTED;
+      if ((iusage->bind & PAN_BIND_DEPTH_STENCIL) &&
+          !(caps & PAN_MOD_FORMAT_CAP_DEPTH_STENCIL))
+         return PAN_MOD_NOT_SUPPORTED;
+      if (iusage->standard_sparse_mapping_granularity &&
+          !(caps & PAN_MOD_FORMAT_CAP_SPARSE_MAP))
+         return PAN_MOD_NOT_SUPPORTED;
+      if (iusage->host_copy && !(caps & PAN_MOD_FORMAT_CAP_HOST_COPY))
+         return PAN_MOD_NOT_SUPPORTED;
+      if (iusage->wsi && !(caps & PAN_MOD_FORMAT_CAP_WSI))
+         return PAN_MOD_NOT_SUPPORTED;
+   }
+
+   enum pan_mod_support ret = PAN_MOD_OPTIMAL;
+   if (image.mod_handler->test_props) {
+      ret = image.mod_handler->test_props(dprops, &image.props, iusage);
+      if (ret == PAN_MOD_NOT_SUPPORTED)
+         return ret;
+   }
 
    /* Now make sure the layout can be properly initialized on all planes. */
    uint32_t plane_count = util_format_get_num_planes(image.props.format);
@@ -323,24 +407,12 @@ static inline bool
 pan_image_test_modifier_with_format(const struct pan_kmod_dev_props *dprops,
                                     uint64_t modifier, enum pipe_format format)
 {
-   /* To check if a <modifier,format> pair is supported, we define the smallest
-    * possible 2D image (or 3D image if this is a 3D compressed format). */
-   const struct pan_image_props iprops = {
-      .modifier = modifier,
-      .format = format,
-      .extent_px = {
-            .width = util_format_get_blockwidth(format),
-            .height = util_format_get_blockheight(format),
-            .depth = util_format_get_blockdepth(format),
-      },
-      .nr_samples = 1,
-      .dim = util_format_get_blockdepth(format) > 1 ? MALI_TEXTURE_DIMENSION_3D
-                                                    : MALI_TEXTURE_DIMENSION_2D,
-      .nr_slices = 1,
-      .array_size = 1,
-   };
+   const unsigned arch = pan_arch(dprops->gpu_id);
+   const struct pan_mod_handler *handler = pan_mod_get_handler(arch, modifier);
+   if (!handler || !handler->get_format_caps)
+      return false;
 
-   return pan_image_test_props(dprops, &iprops, NULL) != PAN_MOD_NOT_SUPPORTED;
+   return handler->get_format_caps(dprops, format, modifier) != 0;
 }
 
 #ifdef __cplusplus

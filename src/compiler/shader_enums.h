@@ -805,8 +805,10 @@ typedef enum
    /*@{*/
    SYSTEM_VALUE_FRAG_COORD,
    SYSTEM_VALUE_PIXEL_COORD,
+   SYSTEM_VALUE_FRAG_COORD_XY,
    SYSTEM_VALUE_FRAG_COORD_Z,
    SYSTEM_VALUE_FRAG_COORD_W,
+   SYSTEM_VALUE_FRAG_COORD_W_RCP,
    SYSTEM_VALUE_POINT_COORD,
    SYSTEM_VALUE_LINE_COORD, /**< Coord along axis perpendicular to line */
    SYSTEM_VALUE_FRONT_FACE,
@@ -1663,9 +1665,16 @@ enum glsl_sampler_dim {
    GLSL_SAMPLER_DIM_RECT,
    GLSL_SAMPLER_DIM_BUF,
    GLSL_SAMPLER_DIM_EXTERNAL,
+   GLSL_SAMPLER_DIM_EXTERNAL_2D_Y2Y,
    GLSL_SAMPLER_DIM_MS,
    GLSL_SAMPLER_DIM_SUBPASS, /* for vulkan input attachments */
    GLSL_SAMPLER_DIM_SUBPASS_MS, /* for multisampled vulkan input attachments */
+};
+
+enum yuv_csc_standard {
+   YUV_CSC_STANDARD_601,
+   YUV_CSC_STANDARD_601_FULL_RANGE,
+   YUV_CSC_STANDARD_709,
 };
 
 #ifdef __cplusplus

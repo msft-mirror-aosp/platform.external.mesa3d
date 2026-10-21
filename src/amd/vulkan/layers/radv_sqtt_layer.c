@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "tools/radv_spm.h"
+#include "tools/radv_sqtt.h"
 #include "ac_shader_util.h"
 #include "radv_cmd_buffer.h"
 #include "radv_cs.h"
@@ -11,7 +13,6 @@
 #include "radv_pipeline_rt.h"
 #include "radv_queue.h"
 #include "radv_shader.h"
-#include "radv_sqtt.h"
 #include "vk_semaphore.h"
 
 #include "ac_rgp.h"
@@ -165,6 +166,11 @@ static void
 radv_write_begin_general_api_marker(struct radv_cmd_buffer *cmd_buffer, enum rgp_sqtt_marker_general_api_type api_type)
 {
    struct rgp_sqtt_marker_general_api marker = {0};
+
+   /* Flush any delayed RGP barrier-end marker before writing the next general API marker
+    * so no-op barriers cannot incorrectly cover subsequent draw or dispatch events.
+    */
+   radv_describe_barrier_end_delayed(cmd_buffer);
 
    marker.identifier = RGP_SQTT_MARKER_IDENTIFIER_GENERAL_API;
    marker.api_type = api_type;
@@ -411,38 +417,7 @@ radv_describe_barrier_end_delayed(struct radv_cmd_buffer *cmd_buffer)
 
    marker.num_layout_transitions = cmd_buffer->state.num_layout_transitions;
 
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_WAIT_ON_EOP_TS)
-      marker.wait_on_eop_ts = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_VS_PARTIAL_FLUSH)
-      marker.vs_partial_flush = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_PS_PARTIAL_FLUSH)
-      marker.ps_partial_flush = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_CS_PARTIAL_FLUSH)
-      marker.cs_partial_flush = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_PFP_SYNC_ME)
-      marker.pfp_sync_me = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_SYNC_CP_DMA)
-      marker.sync_cp_dma = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_INVAL_VMEM_L0)
-      marker.inval_tcp = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_INVAL_ICACHE)
-      marker.inval_sqI = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_INVAL_SMEM_L0)
-      marker.inval_sqK = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_FLUSH_L2)
-      marker.flush_tcc = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_INVAL_L2)
-      marker.inval_tcc = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_FLUSH_CB)
-      marker.flush_cb = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_INVAL_CB)
-      marker.inval_cb = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_FLUSH_DB)
-      marker.flush_db = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_INVAL_DB)
-      marker.inval_db = true;
-   if (cmd_buffer->state.sqtt_flush_bits & RGP_FLUSH_INVAL_L1)
-      marker.inval_gl1 = true;
+   ac_rgp_flush_bits_to_barrier_marker(cmd_buffer->state.rgp_flush_bits, &marker);
 
    radv_emit_sqtt_userdata(cmd_buffer, &marker, sizeof(marker) / 4, RADV_SQTT_USERDATA_MAIN_CS);
 
@@ -464,7 +439,7 @@ radv_describe_barrier_start(struct radv_cmd_buffer *cmd_buffer, enum rgp_barrier
    }
 
    radv_describe_barrier_end_delayed(cmd_buffer);
-   cmd_buffer->state.sqtt_flush_bits = 0;
+   cmd_buffer->state.rgp_flush_bits = 0;
    cmd_buffer->state.in_barrier = true;
 
    marker.identifier = RGP_SQTT_MARKER_IDENTIFIER_BARRIER_START;
@@ -647,7 +622,8 @@ radv_handle_sqtt(VkQueue _queue)
    if (device->sqtt_enabled) {
       if (!radv_sqtt_stop_capturing(queue)) {
          /* Try to capture the next frame if the buffer was too small initially. */
-         trigger = true;
+         if (!device->sqtt.capture_cancelled)
+            trigger = true;
       }
    }
 
@@ -751,8 +727,6 @@ radv_sqtt_wsi_submit(VkQueue _queue, uint32_t submitCount, const VkSubmitInfo2 *
       FREE(new_cmdbufs);
    }
 
-   if (submitCount == 0 && _fence != VK_NULL_HANDLE)
-      result = device->layer_dispatch.rgp.QueueSubmit2(_queue, 0, NULL, _fence);
 
    return result;
 
@@ -772,6 +746,14 @@ sqtt_QueueSubmit2(VkQueue _queue, uint32_t submitCount, const VkSubmitInfo2 *pSu
    struct util_dynarray gpu_timestamps, timed_cmdbufs;
    VkCommandBufferSubmitInfo *new_cmdbufs = NULL;
    VkResult result = VK_SUCCESS;
+
+   /* Vulkan apps use vkQueueSubmit2(submitCount=0, fence) to signal per-image
+    * throttle fences. During SQTT capture, our wrap loop iterates 0 times
+    * and would never forward this call, leaving the fence unsignaled and
+    * hanging the next frame's vkWaitForFences. Always forward such calls.
+    */
+   if (submitCount == 0 && _fence != VK_NULL_HANDLE)
+      return device->layer_dispatch.rgp.QueueSubmit2(_queue, 0, NULL, _fence);
 
    /* Only consider queue events on graphics/compute when enabled. */
    if (((!device->sqtt_enabled || !radv_sqtt_queue_events_enabled()) && !instance->vk.trace_per_submit) ||

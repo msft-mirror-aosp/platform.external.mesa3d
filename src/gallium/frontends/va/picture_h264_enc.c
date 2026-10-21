@@ -67,7 +67,8 @@ vlVaHandleVAEncPictureParameterBufferTypeH264(vlVaDriver *drv, vlVaContext *cont
          if (dpb->evict) {
             surf = handle_table_get(drv->htab, dpb->id);
             assert(surf);
-            surf->is_dpb = false;
+            surf->dpb_id = NULL;
+            surf->dpb_buffer = NULL;
             surf->buffer = NULL;
             /* Keep the buffer for reuse later */
             dpb->id = 0;
@@ -82,11 +83,10 @@ vlVaHandleVAEncPictureParameterBufferTypeH264(vlVaDriver *drv, vlVaContext *cont
 
    for (i = 0; i < ARRAY_SIZE(context->desc.h264enc.dpb); i++) {
       if (context->desc.h264enc.dpb[i].id == h264->CurrPic.picture_id) {
-         assert(surf->is_dpb);
+         assert(surf->dpb_id);
          break;
       }
-      if (!surf->is_dpb && !context->desc.h264enc.dpb[i].id) {
-         surf->is_dpb = true;
+      if (!surf->dpb_id && !context->desc.h264enc.dpb[i].id) {
          if (surf->buffer) {
             surf->buffer->destroy(surf->buffer);
             surf->buffer = NULL;
@@ -108,7 +108,8 @@ vlVaHandleVAEncPictureParameterBufferTypeH264(vlVaDriver *drv, vlVaContext *cont
                buffer = context->decoder->create_dpb_buffer(context->decoder, &context->desc.base, &surf->templat);
             surf->buffer = buffer;
          }
-         vlVaSetSurfaceContext(drv, surf, context);
+         surf->dpb_id = &context->desc.h264enc.dpb[i].id;
+         surf->dpb_buffer = &context->desc.h264enc.dpb[i].buffer;
          if (i == context->desc.h264enc.dpb_size)
             context->desc.h264enc.dpb_size++;
          break;
@@ -132,7 +133,7 @@ vlVaHandleVAEncPictureParameterBufferTypeH264(vlVaDriver *drv, vlVaContext *cont
 
    if (!coded_buf->derived_surface.resource)
       coded_buf->derived_surface.resource = pipe_buffer_create(drv->pipe->screen, PIPE_BIND_VERTEX_BUFFER,
-                                            PIPE_USAGE_STAGING, coded_buf->size);
+                                            PIPE_USAGE_STAGING, MAX2(1024 * 1024, coded_buf->size));
    context->coded_buf = coded_buf;
 
    if (context->desc.h264enc.is_ltr)
@@ -202,6 +203,7 @@ vlVaHandleVAEncSliceParameterBufferTypeH264(vlVaDriver *drv, vlVaContext *contex
    slice_descriptor.slice_type = h264->slice_type;
    assert(slice_descriptor.slice_type <= PIPE_H264_SLICE_TYPE_I);
 
+#ifndef NDEBUG
    /* Assert that the slices are coming in order */
    if (context->desc.h264enc.num_slice_descriptors == 0) {
       assert(slice_descriptor.macroblock_address == 0);
@@ -211,6 +213,7 @@ vlVaHandleVAEncSliceParameterBufferTypeH264(vlVaDriver *drv, vlVaContext *contex
       assert(last_slice_descriptor->macroblock_address +
              last_slice_descriptor->num_macroblocks == slice_descriptor.macroblock_address);
    }
+#endif
 
    if (context->desc.h264enc.num_slice_descriptors < ARRAY_SIZE(context->desc.h264enc.slices_descriptors))
       context->desc.h264enc.slices_descriptors[context->desc.h264enc.num_slice_descriptors++] = slice_descriptor;

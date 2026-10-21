@@ -12,6 +12,7 @@
 #include "nir_builder.h"
 #include "radv_device.h"
 #include "radv_meta_nir.h"
+#include "radv_nir_rt_stage_cps.h"
 #include "radv_physical_device.h"
 
 struct radv_nir_sbt_data
@@ -265,31 +266,35 @@ radv_build_rt_prolog(const struct radv_compiler_info *compiler_info, struct radv
    stage->nir = b.shader;
    stage->info.stage = MESA_SHADER_COMPUTE;
    stage->info.loads_push_constants = true;
-   stage->info.loads_dynamic_offsets = true;
+   stage->info.loads_dynamic_offsets = !uses_descriptor_heap;
    stage->info.force_indirect_descriptors = true;
    stage->info.descriptor_heap = uses_descriptor_heap;
-   stage->info.wave_size = compiler_info->rt_wave_size;
+   stage->info.wave_size = compiler_info->key.rt_wave_size;
    stage->info.workgroup_size = stage->info.wave_size;
    stage->info.user_data_0 = R_00B900_COMPUTE_USER_DATA_0;
    stage->info.type = RADV_SHADER_TYPE_RT_PROLOG;
-   stage->info.cs.block_size[0] = compiler_info->rt_wave_size;
+   stage->info.cs.block_size[0] = compiler_info->key.rt_wave_size;
    stage->info.cs.block_size[1] = 1;
    stage->info.cs.block_size[2] = 1;
    stage->info.cs.uses_thread_id[0] = true;
    for (unsigned i = 0; i < 3; i++)
       stage->info.cs.uses_block_id[i] = true;
 
-   radv_declare_shader_args(compiler_info, NULL, &stage->info, MESA_SHADER_COMPUTE, MESA_SHADER_NONE, &stage->args,
-                            debug);
+   radv_declare_shader_args(compiler_info, NULL, stage, MESA_SHADER_NONE, debug);
    stage->info.user_sgprs_locs = stage->args.user_sgprs_locs;
 
-   b.shader->info.workgroup_size[0] = compiler_info->rt_wave_size;
-   b.shader->info.api_subgroup_size = compiler_info->rt_wave_size;
-   b.shader->info.max_subgroup_size = compiler_info->rt_wave_size;
-   b.shader->info.min_subgroup_size = compiler_info->rt_wave_size;
+   b.shader->info.workgroup_size[0] = compiler_info->key.rt_wave_size;
+   b.shader->info.api_subgroup_size = compiler_info->key.rt_wave_size;
+   b.shader->info.max_subgroup_size = compiler_info->key.rt_wave_size;
+   b.shader->info.min_subgroup_size = compiler_info->key.rt_wave_size;
 
    nir_function *raygen_function = nir_function_create(b.shader, "raygen_func");
-   radv_nir_init_rt_function_params(raygen_function, MESA_SHADER_RAYGEN, 0, 0, uses_descriptor_heap);
+   if (compiler_info->key.rt_cps) {
+      radv_nir_init_cps_function(raygen_function, uses_descriptor_heap);
+      raygen_function->driver_attributes &= ~ACO_NIR_FUNCTION_ATTRIB_DIVERGENT_CALL;
+   } else {
+      radv_nir_init_rt_function_params(raygen_function, MESA_SHADER_RAYGEN, 0, 0, uses_descriptor_heap);
+   }
 
    nir_def *descriptors, *dynamic_descriptors, *heap_resource, *heap_sampler;
    if (uses_descriptor_heap) {
@@ -306,6 +311,9 @@ radv_build_rt_prolog(const struct radv_compiler_info *compiler_info, struct radv
    nir_def *traversal_addr =
       nir_pack_64_2x32_split(&b, ac_nir_load_arg(&b, &stage->args.ac, stage->args.ac.rt.traversal_shader_addr),
                              nir_imm_int(&b, compiler_info->hw.address32_hi));
+   nir_def *is_compute_queue =
+      ac_nir_unpack_arg(&b, &stage->args.ac, stage->args.cs_state, CS_STATE_IS_COMPUTE_QUEUE__SHIFT,
+                        util_bitcount(CS_STATE_IS_COMPUTE_QUEUE__MASK));
 
    nir_def *raygen_sbt = nir_pack_64_2x32(&b, ac_nir_load_smem(&b, 2, sbt_desc, nir_imm_int(&b, 0), 4, 0));
    nir_def *launch_sizes = ac_nir_load_smem(&b, 3, launch_size_addr, nir_imm_int(&b, 0), 4, 0);
@@ -319,7 +327,7 @@ radv_build_rt_prolog(const struct radv_compiler_info *compiler_info, struct radv
 
    nir_def *local_id = nir_channel(&b, nir_load_local_invocation_id(&b), 0);
 
-   nir_def *unswizzled_id_x = nir_iadd(&b, nir_imul_imm(&b, wg_ids[0], compiler_info->rt_wave_size), local_id);
+   nir_def *unswizzled_id_x = nir_iadd(&b, nir_imul_imm(&b, wg_ids[0], compiler_info->key.rt_wave_size), local_id);
    nir_def *unswizzled_id_y = wg_ids[1];
 
    /* Swizzle ray launch IDs. We dispatch a 1D 32x1/64x1 workgroup natively. Many games dispatch
@@ -365,7 +373,7 @@ radv_build_rt_prolog(const struct radv_compiler_info *compiler_info, struct radv
    swizzled_id_y = nir_bitfield_select(&b, nir_imm_int(&b, 0x3), swizzled_id_y, swizzled_id_shifted_y);
 
    uint32_t workgroup_width = 8;
-   uint32_t workgroup_height = compiler_info->rt_wave_size == 32 ? 4 : 8;
+   uint32_t workgroup_height = compiler_info->key.rt_wave_size == 32 ? 4 : 8;
    uint32_t workgroup_height_mask = workgroup_height - 1;
 
    /* Fix up the workgroup IDs after converting from 32x1/64x1 to 8x4/8x8. The X dimension of the
@@ -375,7 +383,7 @@ radv_build_rt_prolog(const struct radv_compiler_info *compiler_info, struct radv
     * the fact we divided the X component of the ID.
     */
    nir_def *wg_id_y_rem = nir_iand_imm(&b, wg_ids[1], workgroup_height_mask);
-   nir_def *new_wg_start_x = nir_imul_imm(&b, wg_ids[0], compiler_info->rt_wave_size);
+   nir_def *new_wg_start_x = nir_imul_imm(&b, wg_ids[0], compiler_info->key.rt_wave_size);
    new_wg_start_x = nir_iadd(&b, new_wg_start_x, nir_imul_imm(&b, wg_id_y_rem, workgroup_width));
 
    nir_def *new_wg_start_y = nir_iand_imm(&b, wg_ids[1], ~workgroup_height_mask);
@@ -392,7 +400,7 @@ radv_build_rt_prolog(const struct radv_compiler_info *compiler_info, struct radv
    /* If parts of this wave would've exceeded the launch size in the X dimension, their threads will be masked out and
     * exec won't equal -1. In that case, using swizzled IDs is invalid.
     */
-   nir_def *partial_oob_x = nir_ine_imm(&b, nir_ballot(&b, 1, compiler_info->rt_wave_size, nir_imm_true(&b)), -1);
+   nir_def *partial_oob_x = nir_ine_imm(&b, nir_ballot(&b, 1, compiler_info->key.rt_wave_size, nir_imm_true(&b)), -1);
    nir_def *partial_oob_y = nir_uge(&b, wg_ids[1], y_wg_bound);
 
    nir_def *partial_oob = nir_ior(&b, partial_oob_x, partial_oob_y);
@@ -404,20 +412,57 @@ radv_build_rt_prolog(const struct radv_compiler_info *compiler_info, struct radv
    nir_def *raygen_addr = nir_pack_64_2x32(&b, ac_nir_load_smem(&b, 2, raygen_sbt, nir_imm_int(&b, 0), RADV_RT_HANDLE_SIZE, 0));
    nir_def *shader_record_ptr = nir_iadd_imm(&b, raygen_sbt, RADV_RT_HANDLE_SIZE);
 
-   nir_def *params[RAYGEN_ARG_COUNT];
-   params[RT_ARG_LAUNCH_ID] = nir_vec3(&b, id_x, id_y, wg_ids[2]);
-   params[RT_ARG_LAUNCH_SIZE] = launch_sizes;
-   if (uses_descriptor_heap) {
-      params[RT_ARG_HEAP_RESOURCE] = heap_resource;
-      params[RT_ARG_HEAP_SAMPLER] = heap_sampler;
-   } else {
-      params[RT_ARG_DESCRIPTORS] = descriptors;
-      params[RT_ARG_DYNAMIC_DESCRIPTORS] = dynamic_descriptors;
-   }
-   params[RT_ARG_PUSH_CONSTANTS] = push_constants;
-   params[RT_ARG_SBT_DESCRIPTORS] = sbt_desc;
-   params[RAYGEN_ARG_SHADER_RECORD_PTR] = shader_record_ptr;
-   params[RAYGEN_ARG_TRAVERSAL_ADDR] = traversal_addr;
+   if (compiler_info->key.rt_cps) {
+      nir_def *params[CPS_ARG_COUNT];
+      params[RT_ARG_LAUNCH_ID] = nir_vec3(&b, id_x, id_y, wg_ids[2]);
+      params[RT_ARG_LAUNCH_SIZE] = launch_sizes;
+      if (uses_descriptor_heap) {
+         params[RT_ARG_HEAP_RESOURCE] = heap_resource;
+         params[RT_ARG_HEAP_SAMPLER] = heap_sampler;
+      } else {
+         params[RT_ARG_DESCRIPTORS] = descriptors;
+         params[RT_ARG_DYNAMIC_DESCRIPTORS] = dynamic_descriptors;
+      }
+      params[RT_ARG_PUSH_CONSTANTS] = push_constants;
+      params[RT_ARG_SBT_DESCRIPTORS] = sbt_desc;
+      params[RT_ARG_IS_COMPUTE_QUEUE] = is_compute_queue;
+      params[RAYGEN_ARG_SHADER_RECORD_PTR] = shader_record_ptr;
+      params[RAYGEN_ARG_TRAVERSAL_ADDR] = traversal_addr;
+      params[CPS_ARG_PAYLOAD_SCRATCH_OFFSET] = nir_undef(&b, 1, 32);
+      params[CPS_ARG_STACK_PTR] = nir_imm_int(&b, 0);
+      params[CPS_ARG_ACCEL_STRUCT] = nir_undef(&b, 1, 64);
+      params[CPS_ARG_CULL_MASK_AND_FLAGS] = nir_undef(&b, 1, 32);
+      params[CPS_ARG_SBT_OFFSET] = nir_undef(&b, 1, 32);
+      params[CPS_ARG_SBT_STRIDE] = nir_undef(&b, 1, 32);
+      params[CPS_ARG_MISS_INDEX] = nir_undef(&b, 1, 32);
+      params[CPS_ARG_RAY_ORIGIN] = nir_undef(&b, 3, 32);
+      params[CPS_ARG_RAY_TMIN] = nir_undef(&b, 1, 32);
+      params[CPS_ARG_RAY_DIRECTION] = nir_undef(&b, 3, 32);
+      params[CPS_ARG_RAY_TMAX] = nir_undef(&b, 1, 32);
+      params[CPS_ARG_PRIMITIVE_ID] = nir_undef(&b, 1, 32);
+      params[CPS_ARG_INSTANCE_ADDR] = nir_undef(&b, 1, 64);
+      params[CPS_ARG_GEOMETRY_ID_AND_FLAGS] = nir_undef(&b, 1, 32);
+      params[CPS_ARG_HIT_KIND] = nir_undef(&b, 1, 32);
+      params[CPS_ARG_PRIMITIVE_ADDR] = nir_undef(&b, 1, 64);
 
-   nir_build_indirect_call(&b, raygen_function, raygen_addr, RAYGEN_ARG_COUNT, params);
+      nir_build_indirect_call(&b, raygen_function, raygen_addr, CPS_ARG_COUNT, params);
+   } else {
+      nir_def *params[RAYGEN_ARG_COUNT];
+      params[RT_ARG_LAUNCH_ID] = nir_vec3(&b, id_x, id_y, wg_ids[2]);
+      params[RT_ARG_LAUNCH_SIZE] = launch_sizes;
+      if (uses_descriptor_heap) {
+         params[RT_ARG_HEAP_RESOURCE] = heap_resource;
+         params[RT_ARG_HEAP_SAMPLER] = heap_sampler;
+      } else {
+         params[RT_ARG_DESCRIPTORS] = descriptors;
+         params[RT_ARG_DYNAMIC_DESCRIPTORS] = dynamic_descriptors;
+      }
+      params[RT_ARG_PUSH_CONSTANTS] = push_constants;
+      params[RT_ARG_SBT_DESCRIPTORS] = sbt_desc;
+      params[RT_ARG_IS_COMPUTE_QUEUE] = is_compute_queue;
+      params[RAYGEN_ARG_SHADER_RECORD_PTR] = shader_record_ptr;
+      params[RAYGEN_ARG_TRAVERSAL_ADDR] = traversal_addr;
+
+      nir_build_indirect_call(&b, raygen_function, raygen_addr, RAYGEN_ARG_COUNT, params);
+   }
 }

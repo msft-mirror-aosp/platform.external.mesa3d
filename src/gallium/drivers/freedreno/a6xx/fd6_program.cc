@@ -230,6 +230,7 @@ emit_shader_regs(struct fd_screen *screen, fd_cs &cs, const struct ir3_shader_va
          .fullregfootprint = so->info.max_reg + 1,
          .branchstack = ir3_shader_branchstack_hw(so),
          .threadsize = thrsz,
+         .computerrmodeen = so->cs.round_robin_mode,
          .earlypreamble = so->early_preamble,
          .mergedregs = so->mergedregs,
       ));
@@ -1178,7 +1179,9 @@ emit_fs_inputs(fd_crb &crb, const struct program_builder *b)
       .varyings = enable_varyings,
    ));
 
-   bool need_size = fs->frag_face || fs->fragcoord_compmask != 0;
+   bool need_size =
+      !b->ctx->screen->info->props.has_implicit_fragface_fragcoord_ij_linear &&
+      (fs->frag_face || fs->fragcoord_compmask != 0);
    bool need_size_persamp = false;
    if (VALIDREG(ij_regid[IJ_PERSP_CENTER_RHW])) {
       if (sample_shading)
@@ -1195,6 +1198,8 @@ emit_fs_inputs(fd_crb &crb, const struct program_builder *b)
       .ij_linear_centroid    = VALIDREG(ij_regid[IJ_LINEAR_CENTROID]),
       .ij_linear_sample      = VALIDREG(ij_regid[IJ_LINEAR_SAMPLE]) || need_size_persamp,
       .coord_mask            = fs->fragcoord_compmask,
+      .faceness              = fs->frag_face,
+      .centerrhw             = VALIDREG(ij_regid[IJ_PERSP_CENTER_RHW]),
    ));
    crb.add(A6XX_RB_INTERP_CNTL(
       .ij_persp_pixel        = VALIDREG(ij_regid[IJ_PERSP_PIXEL]),
@@ -1272,15 +1277,26 @@ emit_fs_outputs(fd_crb &crb, const struct program_builder *b)
       .stencilref_regid = stencilref_regid,
    ));
 
-   for (uint32_t i = 0; i < output_reg_count; i++) {
-      crb.add(A6XX_SP_PS_OUTPUT_REG(i,
-         .regid          = fragdata_regid[i] & ~HALF_REG_ID,
-         .half_precision = fragdata_regid[i] & HALF_REG_ID,
-      ));
+   if (fs->fs.yuv_color) {
+      uint32_t regid = fragdata_regid[0] & ~HALF_REG_ID;
+      bool half = !!(fragdata_regid[0] & HALF_REG_ID);
 
-      if (VALIDREG(fragdata_regid[i]) ||
-          (fragdata_aliased_components & (0xf << (i * 4)))) {
-         b->state->mrt_components |= 0xf << (i * 4);
+      crb.add(A6XX_SP_PS_OUTPUT_REG(0, .regid = regid, .half_precision = half));
+      crb.add(A6XX_SP_PS_OUTPUT_REG(1, .regid = regid, .half_precision = half));
+
+      b->state->mrt_components |= 0xf;
+      b->state->mrt_components |= 0xf << 4;
+   } else {
+      for (uint32_t i = 0; i < output_reg_count; i++) {
+         crb.add(A6XX_SP_PS_OUTPUT_REG(i,
+            .regid          = fragdata_regid[i] & ~HALF_REG_ID,
+            .half_precision = fragdata_regid[i] & HALF_REG_ID,
+         ));
+
+         if (VALIDREG(fragdata_regid[i]) ||
+             (fragdata_aliased_components & (0xf << (i * 4)))) {
+            b->state->mrt_components |= 0xf << (i * 4);
+         }
       }
    }
 
@@ -1669,10 +1685,14 @@ fd6_program_create(void *data, const struct ir3_shader_variant *bs,
       /* On a6xx all shader stages use driver params pushed in cmdstream: */
       num_dp += num_ubo_dp;
       num_ubo_dp = 0;
+   } else {
+      /* On later gens, VS dp's are split into push const + ubo: */
+      num_ubo_dp += num_dp;
    }
 
    state->num_driver_params = num_dp;
    state->num_ubo_driver_params = num_ubo_dp;
+   state->needs_driver_params = (num_dp + num_ubo_dp) > 0;
 
    /* dual source blending has an extra fs output in the 2nd slot */
    if (fs->fs.color_is_dual_source) {

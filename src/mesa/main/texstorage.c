@@ -390,6 +390,24 @@ tex_storage_error_check(struct gl_context *ctx,
       return GL_TRUE;
    }
 
+   /* From EXT_texture_storage, "Dependencies on OES_texture_npot":
+    *
+    *  "If OpenGL ES 2.0 or APPLE_texture_2D_limited_npot is present but
+    *  OES_texture_npot is not present, then INVALID_OPERATION is generated
+    *  by TexStorage* and TexStorage3DEXT if <levels> is not one and <width>,
+    *  <height> or <depth> is not a power of two."
+    */
+   if (_mesa_is_gles2(ctx) && !_mesa_has_OES_texture_npot(ctx) &&
+       levels > 1 &&
+       (!util_is_power_of_two_nonzero(width) ||
+        !util_is_power_of_two_nonzero(height) ||
+        !util_is_power_of_two_nonzero(depth))) {
+      _mesa_error(ctx, GL_INVALID_OPERATION,
+                  "glTex%sStorage%uD(NPOT dimensions with multiple levels)",
+                  suffix, dims);
+      return GL_TRUE;
+   }
+
    /* check levels against maximum (note different error than above) */
    if (levels > (GLint) _mesa_max_texture_levels(ctx, target)) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
@@ -692,12 +710,6 @@ texstorage_error(GLuint dims, GLenum target, GLsizei levels,
       return;
    }
 
-   if (MESA_VERBOSE & (VERBOSE_API|VERBOSE_TEXTURE))
-      _mesa_debug(ctx, "%s %s %d %s %d %d %d\n", caller,
-                  _mesa_enum_to_string(target), levels,
-                  _mesa_enum_to_string(internalformat),
-                  width, height, depth);
-
    /* Check the format to make sure it is sized. */
    if (!_mesa_is_legal_tex_storage_format(ctx, internalformat)) {
       _mesa_error(ctx, GL_INVALID_ENUM,
@@ -738,12 +750,6 @@ texturestorage_error(GLuint dims, GLuint texture, GLsizei levels,
 {
    struct gl_texture_object *texObj;
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & (VERBOSE_API|VERBOSE_TEXTURE))
-      _mesa_debug(ctx, "%s %d %d %s %d %d %d\n",
-                  caller, texture, levels,
-                  _mesa_enum_to_string(internalformat),
-                  width, height, depth);
 
    /* Check the format to make sure it is sized. */
    if (!_mesa_is_legal_tex_storage_format(ctx, internalformat)) {

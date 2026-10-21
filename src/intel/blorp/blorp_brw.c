@@ -40,6 +40,12 @@ blorp_nir_options_brw(struct blorp_context *blorp,
    return &compiler->nir_options[stage];
 }
 
+static nir_def *
+blorp_nir_rt_write(nir_builder *b, signed rt, void *data)
+{
+   return nir_load_push_data_intel(b, 1, 64, nir_imm_int(b, 0), .base = 0, .range = 8);
+}
+
 static struct blorp_program
 blorp_compile_fs_brw(struct blorp_context *blorp, void *mem_ctx,
                      struct nir_shader *nir,
@@ -52,20 +58,32 @@ blorp_compile_fs_brw(struct blorp_context *blorp, void *mem_ctx,
 
    struct brw_fs_prog_data *fs_prog_data = rzalloc(mem_ctx, struct brw_fs_prog_data);
 
+   if (blorp->config.use_efficient_64bit)
+      fs_prog_data->base.push_sizes[0] = 32;
+
+   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+
    struct brw_nir_compiler_opts opts = {
-      .softfp64 = blorp->get_fp64_nir ? blorp->get_fp64_nir(blorp) : NULL,
+      .softfp64 = ((nir->info.bit_sizes_float & 64) &&
+                   !compiler->devinfo->has_64bit_float) ?
+                  blorp->get_fp64_nir(blorp) : NULL,
    };
    brw_preprocess_nir(compiler, nir, &opts);
    nir_remove_dead_variables(nir, nir_var_shader_in, NULL);
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
    if (is_fast_clear || use_repclear) {
-      nir->info.api_subgroup_size = 16;
-      nir->info.max_subgroup_size = 16;
+      /* BSpec 57340, Gfx35+:
+       *
+       *    "SIMD32 mode is supported for Clearing shader"
+       */
+      nir->info.api_subgroup_size = compiler->devinfo->ver >= 35 ? 32 : 16;
+      nir->info.max_subgroup_size = compiler->devinfo->ver >= 35 ? 32 : 16;
       nir->info.min_subgroup_size = 16;
    }
 
    struct brw_fs_prog_key wm_key;
    memset(&wm_key, 0, sizeof(wm_key));
+   wm_key.base.use_efficient_64bit = blorp->config.use_efficient_64bit;
    wm_key.multisample_fbo = multisample_fbo ? INTEL_ALWAYS : INTEL_NEVER;
    wm_key.nr_color_regions = 1;
 
@@ -76,18 +94,20 @@ blorp_compile_fs_brw(struct blorp_context *blorp, void *mem_ctx,
       .base = {
          .mem_ctx = mem_ctx,
          .nir = nir,
+         .key = &wm_key.base,
+         .prog_data = (struct brw_stage_prog_data *)fs_prog_data,
          .log_data = blorp->driver_ctx,
          .debug_flag = DEBUG_BLORP,
          .archiver = archiver,
       },
-      .key = &wm_key,
-      .prog_data = fs_prog_data,
+
+      .rt_write_cb = blorp->config.use_efficient_64bit ? blorp_nir_rt_write : NULL,
 
       .use_rep_send = use_repclear,
       .max_polygons = 1,
    };
 
-   const unsigned *kernel = brw_compile_fs(compiler, &params);
+   const unsigned *kernel = brw_compile(compiler, &params.base);
 
    debug_archiver_close(archiver);
 
@@ -106,22 +126,17 @@ blorp_compile_vs_brw(struct blorp_context *blorp, void *mem_ctx,
 {
    const struct brw_compiler *compiler = blorp->compiler->brw;
 
-   struct brw_nir_compiler_opts opts = {
-      .softfp64 = blorp->get_fp64_nir ? blorp->get_fp64_nir(blorp) : NULL,
-   };
+   struct brw_nir_compiler_opts opts = {};
    brw_preprocess_nir(compiler, nir, &opts);
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
    struct brw_vs_prog_data *vs_prog_data = rzalloc(mem_ctx, struct brw_vs_prog_data);
-   vs_prog_data->inputs_read = nir->info.inputs_read;
 
-   brw_compute_vue_map(compiler->devinfo,
-                       &vs_prog_data->base.vue_map,
-                       nir->info.outputs_written,
-                       nir->info.separate_shader,
-                       1);
-
-   struct brw_vs_prog_key vs_key = { 0, };
+   struct brw_vs_prog_key vs_key = {
+      .base = {
+         .use_efficient_64bit = blorp->config.use_efficient_64bit,
+      },
+   };
 
    debug_archiver *archiver =
       blorp_debug_archiver_open(mem_ctx, nir, key, key_size);
@@ -130,15 +145,15 @@ blorp_compile_vs_brw(struct blorp_context *blorp, void *mem_ctx,
       .base = {
          .mem_ctx = mem_ctx,
          .nir = nir,
+         .key = &vs_key.base,
+         .prog_data = (struct brw_stage_prog_data *)vs_prog_data,
          .log_data = blorp->driver_ctx,
          .debug_flag = DEBUG_BLORP,
          .archiver = archiver,
       },
-      .key = &vs_key,
-      .prog_data = vs_prog_data,
    };
 
-   const unsigned *kernel = brw_compile_vs(compiler, &params);
+   const unsigned *kernel = brw_compile(compiler, &params.base);
 
    debug_archiver_close(archiver);
 
@@ -174,13 +189,19 @@ lower_load_uniform(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
    nir_def *value;
    if (b->shader->info.stage == MESA_SHADER_COMPUTE &&
        devinfo->verx10 >= 125) {
-      value = nir_load_shader_indirect_data_intel(
+      nir_def *push_addr =
+         nir_load_inline_data_intel(b, 1, 64, nir_imm_int(b, 0),
+                                    .base = 0, .range = 8);
+      value = nir_load_global_constant_uniform_block_intel(
          b,
          intrin->def.num_components,
          intrin->def.bit_size,
-         nir_iadd(b, nir_load_indirect_address_intel(b), intrin->src[0].ssa),
-         .base = nir_intrinsic_base(intrin),
-         .range = nir_intrinsic_range(intrin));
+         nir_iadd(b, push_addr,
+                  nir_iadd_imm(b,
+                               nir_u2u64(b, intrin->src[0].ssa),
+                               nir_intrinsic_base(intrin))),
+         .access = ACCESS_CAN_REORDER | ACCESS_NON_WRITEABLE,
+         .align_mul = 64);
    } else {
       value = nir_load_push_data_intel(b,
                                        intrin->def.num_components,
@@ -200,9 +221,7 @@ blorp_compile_cs_brw(struct blorp_context *blorp, void *mem_ctx,
 {
    const struct brw_compiler *compiler = blorp->compiler->brw;
 
-   struct brw_nir_compiler_opts opts = {
-      .softfp64 = blorp->get_fp64_nir ? blorp->get_fp64_nir(blorp) : NULL,
-   };
+   struct brw_nir_compiler_opts opts = {};
    brw_preprocess_nir(compiler, nir, &opts);
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
@@ -232,6 +251,8 @@ blorp_compile_cs_brw(struct blorp_context *blorp, void *mem_ctx,
    struct brw_cs_prog_key cs_key;
    memset(&cs_key, 0, sizeof(cs_key));
 
+   cs_key.base.use_efficient_64bit = blorp->config.use_efficient_64bit;
+
    debug_archiver *archiver =
       blorp_debug_archiver_open(mem_ctx, nir, key, key_size);
 
@@ -239,15 +260,15 @@ blorp_compile_cs_brw(struct blorp_context *blorp, void *mem_ctx,
       .base = {
          .mem_ctx = mem_ctx,
          .nir = nir,
+         .key = &cs_key.base,
+         .prog_data = (struct brw_stage_prog_data *)cs_prog_data,
          .log_data = blorp->driver_ctx,
          .debug_flag = DEBUG_BLORP,
          .archiver = archiver,
       },
-      .key = &cs_key,
-      .prog_data = cs_prog_data,
    };
 
-   const unsigned *kernel = brw_compile_cs(compiler, &params);
+   const unsigned *kernel = brw_compile(compiler, &params.base);
 
    debug_archiver_close(archiver);
 
@@ -278,9 +299,10 @@ blorp_params_get_layer_offset_vs_brw(struct blorp_batch *batch,
                                      struct blorp_params *params)
 {
    struct blorp_context *blorp = batch->blorp;
-   struct layer_offset_vs_key blorp_key = {
-      .base = BLORP_BASE_KEY_INIT(BLORP_SHADER_TYPE_LAYER_OFFSET_VS),
-   };
+   struct layer_offset_vs_key blorp_key;
+   BLORP_KEY_INIT(blorp_key, blorp,
+                  BLORP_SHADER_TYPE_LAYER_OFFSET_VS,
+                  BLORP_SHADER_PIPELINE_RENDER);
 
    struct brw_fs_prog_data *fs_prog_data = params->fs_prog_data;
    if (fs_prog_data)
