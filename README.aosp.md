@@ -70,19 +70,54 @@ Integrating Mesa3D with the Soong build system is a major challenge. Each new gr
    intermediate representation (Ninja) before trying to reconstruct the rules, which leads to a loss
    of precision.
 
-Due to a small number of reviewers, meson2hermetic is not yet upstream. Until it is, please follow
-this workflow:
+Due to a small number of reviewers, meson2hermetic is not yet upstream.
 
-- *Transpilation Workflow*:
+### 2.4 Current workflow
+
+- - *Merge upstream*
+  ```sh
+    cd main/external/mesa3d
+    git fetch goog
+    git merge goog/upstream-main
+  ```
+
+For a shallow clone of `external/mesa3d`, the merge step may take ~30 minutes as git re-builds the
+commit history. Do something else while that happens in another terminal. Subsequent merges will be
+faster.
+
+Power users may just create a Mesa3D checkout outside of the full Android tree to enable merging.
+
+```sh
+    glogin
+    git clone --origin goog sso://googleplex-android/platform/external/mesa3d external_mesa3d
+```
+
+Enable change IDs:
+
+```sh
+   cd external_mesa3d
+   curl -Lo .git/hooks/commit-msg https://gerrit-review.googlesource.com/tools/hooks/commit-msg && chmod +x .git/hooks/commit-msg
+```
+
+This would avoid churn for those who often re-create full Android trees.
+
+- *Transpilation commit*:
+
   ```sh
   git clone -b meson2hermetic https://github.com/magma-gpu/mesonbuild.git
   cd main/external/mesa3d
   python3 ~/meson/meson.py convert android aosp_mesa3d
   ```
 
+- *Push commits*:
+
+```sh
+    git push goog HEAD:refs/for/main
+```
+
 Currently, we are updating Mesa every 2 weeks.
 
-### 2.3 Future Goal: Full Update Automation
+### 2.5 Future Goal: Full Update Automation
 
 In the future, ideally upstream Mesa will be continuously tracked and synchronized into
 `external/mesa3d` using automated rolling pipelines (such as the

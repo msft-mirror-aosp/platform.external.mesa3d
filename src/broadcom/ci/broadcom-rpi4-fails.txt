@@ -94,11 +94,6 @@ spec@ext_packed_depth_stencil@texwrap formats offset,Fail
 spec@ext_packed_depth_stencil@texwrap formats offset@GL_DEPTH24_STENCIL8- NPOT,Fail
 spec@ext_packed_depth_stencil@texwrap formats,Fail
 spec@ext_packed_depth_stencil@texwrap formats@GL_DEPTH24_STENCIL8- NPOT,Fail
-spec@ext_texture_integer@fbo-blending,Fail
-spec@ext_texture_integer@getteximage-clamping gl_arb_texture_rg,Fail
-spec@ext_texture_integer@getteximage-clamping,Fail
-spec@ext_texture_integer@multisample-formats 2 gl_ext_texture_integer,Fail
-spec@ext_texture_integer@multisample-formats 4 gl_ext_texture_integer,Fail
 spec@ext_texture_integer@texwrap formats bordercolor,Fail
 spec@ext_texture_integer@texwrap formats bordercolor-swizzled,Fail
 spec@ext_texture_integer@texwrap formats bordercolor-swizzled@GL_ALPHA16I_EXT- swizzled- border color only,Fail
@@ -113,14 +108,6 @@ spec@ext_texture_integer@texwrap formats bordercolor@GL_ALPHA32I_EXT- border col
 spec@ext_texture_integer@texwrap formats bordercolor@GL_ALPHA32UI_EXT- border color only,Fail
 spec@ext_texture_integer@texwrap formats bordercolor@GL_ALPHA8I_EXT- border color only,Fail
 spec@ext_texture_integer@texwrap formats bordercolor@GL_ALPHA8UI_EXT- border color only,Fail
-spec@ext_texture_integer@texwrap formats offset,Fail
-spec@ext_texture_integer@texwrap formats offset@GL_ALPHA8I_EXT,Fail
-spec@ext_texture_integer@texwrap formats offset@GL_ALPHA8I_EXT- NPOT,Fail
-spec@ext_texture_integer@texwrap formats offset@GL_ALPHA8I_EXT- swizzled,Fail
-spec@ext_texture_integer@texwrap formats,Fail
-spec@ext_texture_integer@texwrap formats@GL_ALPHA8I_EXT,Fail
-spec@ext_texture_integer@texwrap formats@GL_ALPHA8I_EXT- NPOT,Fail
-spec@ext_texture_integer@texwrap formats@GL_ALPHA8I_EXT- swizzled,Fail
 spec@ext_texture_snorm@texwrap formats bordercolor,Fail
 spec@ext_texture_snorm@texwrap formats bordercolor-swizzled,Fail
 spec@ext_texture_snorm@texwrap formats bordercolor-swizzled@GL_ALPHA16_SNORM- swizzled- border color only,Fail
@@ -139,8 +126,6 @@ spec@ext_texture_snorm@texwrap formats bordercolor@GL_R16_SNORM- border color on
 spec@ext_texture_snorm@texwrap formats bordercolor@GL_RG16_SNORM- border color only,Fail
 spec@ext_texture_snorm@texwrap formats bordercolor@GL_RGB16_SNORM- border color only,Fail
 spec@ext_texture_snorm@texwrap formats bordercolor@GL_RGBA16_SNORM- border color only,Fail
-spec@ext_transform_feedback@tessellation triangle_fan flat_first,Fail
-spec@ext_transform_feedback@tessellation triangle_strip flat_first,Fail
 spec@glsl-1.10@execution@glsl-fs-inline-explosion,Crash
 spec@glsl-1.10@execution@glsl-vs-inline-explosion,Crash
 spec@glsl-1.10@execution@loops@glsl-fs-unroll-explosion,Crash
@@ -150,9 +135,6 @@ spec@khr_texture_compression_astc@miptree-gles srgb-fp@sRGB decode full precisio
 spec@khr_texture_compression_astc@sliced-3d-miptree-gles srgb-fp,Fail
 spec@khr_texture_compression_astc@sliced-3d-miptree-gles srgb-fp@sRGB decode full precision,Fail
 spec@oes_shader_io_blocks@compiler@layout-location-aliasing.vert,Fail
-
-# https://gitlab.freedesktop.org/mesa/piglit/-/merge_requests/1206
-spec@egl_mesa_configless_context@basic,Fail
 
 # This fails due TMU precision: implicit LOD is wrong for the huge
 # texcoords this test needs at large LOD bias. We could fix it by
@@ -172,10 +154,6 @@ spec@arb_texture_rg@texwrap formats bordercolor-swizzled@GL_R16- swizzled- borde
 spec@arb_texture_rg@texwrap formats bordercolor-swizzled@GL_RG16- swizzled- border color only,Fail
 spec@arb_texture_rg@texwrap formats bordercolor@GL_R16- border color only,Fail
 spec@arb_texture_rg@texwrap formats bordercolor@GL_RG16- border color only,Fail
-
-# A sub-case involving polygon stipple fails because driver doesn't implement
-# stipple
-spec@!opengl 1.0@gl-1.0-no-op-paths,Fail
 
 # Driver is not handling VERT_{ATTRIB,BIT}_EDGEFLAG at all
 spec@!opengl 1.0@gl-1.0-edgeflag,Fail
@@ -267,7 +245,7 @@ spec@oes_texture_view@rendering-formats@clear GL_RGB10_A2 as GL_RGBA8I,Fail
 spec@!opengl 2.0@max-samplers,Fail
 spec@!opengl 2.0@max-samplers border,Fail
 
-# Hardware do not support line/polygon stipple. In fact, this feature
+# Hardware do not support line stipple. In fact, this feature
 # was deprecated/removed in newer OpenGL spec versions. It could be
 # emulated using shaders.
 spec@!opengl 1.1@line-smooth-stipple,Fail
@@ -277,9 +255,6 @@ spec@!opengl 1.1@linestipple@Factor 3x,Fail
 spec@!opengl 1.1@linestipple@Line loop,Fail
 spec@!opengl 1.1@linestipple@Line strip,Fail
 spec@!opengl 1.1@linestipple@Restarting lines within a single Begin-End block,Fail
-spec@!opengl 2.1@pbo,Fail
-spec@!opengl 2.1@pbo@test_polygon_stip,Fail
-spec@!opengl 2.1@polygon-stipple-fs,Fail
 
 # Piglit OpenCL tests
 api@clgetextensionfunctionaddressforplatform,Fail
