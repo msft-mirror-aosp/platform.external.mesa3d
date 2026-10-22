@@ -22,7 +22,6 @@
 #include "util/mesa-blake3.h"
 #include "util/bfloat.h"
 #include "util/float8.h"
-#include "util/stack_array.h"
 
 #include <stdio.h>
 
@@ -1488,7 +1487,8 @@ vtn_type_get_nir_type(struct vtn_builder *b, struct vtn_type *type,
       case vtn_base_type_struct: {
          bool need_new_struct = false;
          const uint32_t num_fields = type->length;
-         STACK_ARRAY(struct glsl_struct_field, fields, num_fields);
+         struct glsl_struct_field *fields =
+            vtn_zalloc_array(b, struct glsl_struct_field, num_fields);
          for (unsigned i = 0; i < num_fields; i++) {
             fields[i] = *glsl_get_struct_field_data(type->type, i);
             const struct glsl_type *field_nir_type =
@@ -1515,7 +1515,6 @@ vtn_type_get_nir_type(struct vtn_builder *b, struct vtn_type *type,
             result = type->type;
          }
 
-         STACK_ARRAY_FINISH(fields);
          return result;
       }
 
@@ -2180,13 +2179,17 @@ vtn_handle_type(struct vtn_builder *b, SpvOp opcode,
 
    case SpvOpTypeStruct: {
       unsigned num_fields = count - 2;
+      vtn_fail_if(num_fields > 4096,
+                  "OpTypeStruct with %u members exceeds implementation limit",
+                  num_fields);
       val->type->base_type = vtn_base_type_struct;
       val->type->length = num_fields;
       val->type->members = vtn_alloc_array(b, struct vtn_type *, num_fields);
       val->type->offsets = vtn_alloc_array(b, unsigned, num_fields);
       val->type->packed = false;
 
-      STACK_ARRAY(struct glsl_struct_field, fields, count);
+      struct glsl_struct_field *fields =
+         vtn_zalloc_array(b, struct glsl_struct_field, num_fields);
       for (unsigned i = 0; i < num_fields; i++) {
          val->type->members[i] = vtn_get_type(b, w[i + 2]);
          const char *name = NULL;
@@ -2243,7 +2246,6 @@ vtn_handle_type(struct vtn_builder *b, SpvOp opcode,
                                             val->type->packed);
       }
 
-      STACK_ARRAY_FINISH(fields);
       break;
    }
 
