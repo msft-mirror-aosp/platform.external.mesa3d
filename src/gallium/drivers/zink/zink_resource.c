@@ -243,7 +243,7 @@ zink_destroy_resource_object(struct zink_screen *screen, struct zink_resource_ob
       FREE(obj->bo); //this is a dummy struct
    } else
       zink_bo_unref(screen, obj->bo);
-   FREE(obj);
+   FREE_CL(obj);
 }
 
 static void
@@ -1715,7 +1715,7 @@ static struct zink_resource_object *
 resource_object_create(struct zink_screen *screen, const struct pipe_resource *templ, struct winsys_handle *whandle, bool *linear,
                        uint64_t *modifiers, int modifiers_count, const void *loader_private, const void *user_mem)
 {
-   struct zink_resource_object *obj = CALLOC_STRUCT(zink_resource_object);
+   struct zink_resource_object *obj = CALLOC_STRUCT_CL(zink_resource_object);
    unsigned max_level = 0;
    if (!obj)
       return NULL;
@@ -1790,7 +1790,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
          VKSCR(DestroyImage)(screen->dev, obj->image, NULL);
       FALLTHROUGH;
    case roc_fail_and_free_object:
-      FREE(obj);
+      FREE_CL(obj);
       return NULL;
    default:
       UNREACHABLE("Invalid create object result code");
@@ -1822,6 +1822,8 @@ resource_create(struct pipe_screen *pscreen,
    }
 
    res->base.b = *templ;
+   res->size = templ->width0;
+   res->is_sparse = !!(templ->flags & PIPE_RESOURCE_FLAG_SPARSE);
 
    bool allow_cpu_storage = (templ->target == PIPE_BUFFER) &&
                             (templ->usage != PIPE_USAGE_STREAM) &&
@@ -1971,7 +1973,7 @@ resource_create(struct pipe_screen *pscreen,
    return &res->base.b;
 
 fail_obj:
-   FREE(res->obj);
+   FREE_CL(res->obj);
 fail:
 #ifdef HAVE_LIBDRM
    if (res->ro_scanout)

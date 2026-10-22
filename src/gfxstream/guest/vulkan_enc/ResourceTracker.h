@@ -19,7 +19,6 @@
 #include "HostVisibleMemoryVirtualization.h"
 #include "Sync.h"
 #include "VirtGpu.h"
-#include "VulkanHandleMapping.h"
 #include "VulkanHandles.h"
 #include "goldfish_vk_transform_guest.h"
 #include "util/detect_os.h"
@@ -126,9 +125,6 @@ class ResourceTracker {
     ~ResourceTracker();
     static ResourceTracker* get();
 
-    VulkanHandleMapping* createMapping();
-    VulkanHandleMapping* destroyMapping();
-
     using HostConnectionGetFunc = GfxStreamConnectionManager* (*)();
     using VkEncoderGetFunc = VkEncoder* (*)(GfxStreamConnectionManager*);
     using CleanupCallback = std::function<void()>;
@@ -217,11 +213,23 @@ class ResourceTracker {
     VkResult on_vkGetImageDrmFormatModifierPropertiesEXT(
         void* context, VkResult input_result, VkDevice device, VkImage image,
         VkImageDrmFormatModifierPropertiesEXT* pProperties);
+    void on_vkGetImageSubresourceLayout(void* context, VkDevice device, VkImage image,
+                                        const VkImageSubresource* pSubresource,
+                                        VkSubresourceLayout* pLayout);
 
     VkResult on_vkBindImageMemory(void* context, VkResult input_result, VkDevice device,
                                   VkImage image, VkDeviceMemory memory, VkDeviceSize memoryOffset);
     VkResult on_vkBindImageMemory2(void* context, VkResult input_result, VkDevice device,
                                    uint32_t bindingCount, const VkBindImageMemoryInfo* pBindInfos);
+    VkResult on_vkBindImageMemory2KHR(void* context, VkResult input_result, VkDevice device,
+                                      uint32_t bindingCount,
+                                      const VkBindImageMemoryInfo* pBindInfos);
+    VkResult on_vkBindBufferMemory2(void* context, VkResult input_result, VkDevice device,
+                                    uint32_t bindInfoCount,
+                                    const VkBindBufferMemoryInfo* pBindInfos);
+    VkResult on_vkBindBufferMemory2KHR(void* context, VkResult input_result, VkDevice device,
+                                       uint32_t bindInfoCount,
+                                       const VkBindBufferMemoryInfo* pBindInfos);
 
     VkResult on_vkCreateBuffer(void* context, VkResult input_result, VkDevice device,
                                const VkBufferCreateInfo* pCreateInfo,
@@ -441,6 +449,9 @@ class ResourceTracker {
     void on_vkGetPhysicalDeviceFormatProperties2(void* context, VkPhysicalDevice physicalDevice,
                                                  VkFormat format,
                                                  VkFormatProperties2* pFormatProperties);
+    void on_vkGetPhysicalDeviceFormatProperties2KHR(void* context, VkPhysicalDevice physicalDevice,
+                                                    VkFormat format,
+                                                    VkFormatProperties2* pFormatProperties);
 
     VkResult on_vkGetPhysicalDeviceImageFormatProperties2(
         void* context, VkResult input_result, VkPhysicalDevice physicalDevice,
@@ -490,6 +501,10 @@ class ResourceTracker {
                                     uint32_t firstSet, uint32_t descriptorSetCount,
                                     const VkDescriptorSet* pDescriptorSets,
                                     uint32_t dynamicOffsetCount, const uint32_t* pDynamicOffsets);
+    void on_vkCmdBindDescriptorSets2(void* context, VkCommandBuffer commandBuffer,
+                                     const VkBindDescriptorSetsInfo* pBindDescriptorSetsInfo);
+    void on_vkCmdBindDescriptorSets2KHR(void* context, VkCommandBuffer commandBuffer,
+                                        const VkBindDescriptorSetsInfo* pBindDescriptorSetsInfo);
 
     void on_vkCmdPipelineBarrier(
         void* context, VkCommandBuffer commandBuffer, VkPipelineStageFlags srcStageMask,
@@ -587,9 +602,6 @@ class ResourceTracker {
     LIST_TRIVIAL_TRANSFORMED_TYPES(DEFINE_TRANSFORMED_TYPE_PROTOTYPE)
 
    private:
-    VulkanHandleMapping* mCreateMapping = nullptr;
-    VulkanHandleMapping* mDestroyMapping = nullptr;
-
     uint32_t getColorBufferMemoryIndex(void* context, VkDevice device);
     const VkPhysicalDeviceMemoryProperties& getPhysicalDeviceMemoryProperties(
         void* context, VkDevice device, VkPhysicalDevice physicalDevice);
@@ -780,6 +792,11 @@ class ResourceTracker {
 #endif
 #ifdef VK_USE_PLATFORM_FUCHSIA
         bool isSysmemBackedMemory = false;
+#endif
+#ifdef LINUX_GUEST_BUILD
+        bool emulatedDrmFormatModifier = false;
+        bool hasExplicitDrmModifier = false;
+        VkSubresourceLayout explicitPlaneLayout = {};
 #endif
     };
 
