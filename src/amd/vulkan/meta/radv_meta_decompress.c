@@ -109,14 +109,6 @@ get_pipeline_gfx(struct radv_device *device, struct radv_image *image, VkPipelin
             .attachmentCount = 0,
             .pAttachments = NULL,
          },
-      .pDepthStencilState =
-         &(VkPipelineDepthStencilStateCreateInfo){
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-            .depthTestEnable = false,
-            .depthWriteEnable = false,
-            .depthBoundsTestEnable = false,
-            .stencilTestEnable = false,
-         },
       .pDynamicState =
          &(VkPipelineDynamicStateCreateInfo){
             .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
@@ -466,11 +458,11 @@ radv_expand_depth_stencil(struct radv_cmd_buffer *cmd_buffer, struct radv_image 
       radv_process_depth_stencil(cmd_buffer, image, subresourceRange, sample_locs);
 
       cmd_buffer->state.flush_bits |=
-         RADV_CMD_FLAG_FLUSH_AND_INV_DB | (pdev->info.gfx_level < GFX10 ? RADV_CMD_FLAG_FLUSH_AND_INV_DB_META : 0);
+         AC_BARRIER_SYNC_AND_INV_DB | (pdev->info.gfx_level < GFX10 ? AC_BARRIER_SYNC_AND_INV_DB_META : 0);
    } else {
       radv_expand_depth_stencil_compute(cmd_buffer, image, subresourceRange);
 
-      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_CS_PARTIAL_FLUSH | RADV_CMD_FLAG_INV_VCACHE |
+      cmd_buffer->state.flush_bits |= AC_BARRIER_SYNC_CS | AC_BARRIER_INV_VMEM |
                                       radv_src_access_flush(cmd_buffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                                             VK_ACCESS_2_SHADER_WRITE_BIT, 0, image, subresourceRange);
 

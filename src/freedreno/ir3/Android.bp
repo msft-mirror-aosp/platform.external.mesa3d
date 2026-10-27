@@ -256,7 +256,9 @@ cc_library_static {
     c_std: "c11",
     cpp_std: "c++17",
     defaults: [
+        "_trial_c",
         "_trial_soong_c",
+        "_trial_soong_cpp",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
@@ -316,7 +318,7 @@ cc_library_static {
             "ir3_cse.c",
             "ir3_dce.c",
             "ir3_delay.c",
-            "ir3_disk_cache.c",
+            "ir3_disk_cache.cpp",
             "ir3_dominance.c",
             "ir3_image.c",
             "ir3_legalize.c",

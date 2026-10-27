@@ -337,6 +337,8 @@ enum pipe_flush_flags
    PIPE_FLUSH_HINT_FINISH = (1 << 4),
    PIPE_FLUSH_TOP_OF_PIPE = (1 << 5),
    PIPE_FLUSH_BOTTOM_OF_PIPE = (1 << 6),
+   /* this is triggered internally and does not signal the end of commands */
+   PIPE_FLUSH_INTERMEDIATE = (1 << 7),
 };
 
 /**
@@ -1035,7 +1037,6 @@ struct pipe_caps {
    bool viewport_mask;
    bool alpha_to_coverage_dither_control;
    bool map_unsynchronized_thread_safe;
-   bool blend_equation_advanced;
    bool nir_atomics_as_deref;
    bool no_clip_on_copy_tex;
    bool shader_atomic_int64;
@@ -1074,6 +1075,7 @@ struct pipe_caps {
    bool prefer_persp;
    bool blit_3d;
    bool glsl_bindless_handles_are_32bit;
+   bool polygon_stipple;
 
    int accelerated;
    int min_texel_offset;
@@ -1124,6 +1126,7 @@ struct pipe_caps {
    unsigned rasterizer_subpixel_bits;
    unsigned mixed_color_depth_bits;
    unsigned fbfetch;
+   unsigned blend_equation_advanced;
    unsigned sparse_buffer_page_size;
    unsigned max_combined_shader_output_resources;
    unsigned framebuffer_msaa_constraints;

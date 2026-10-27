@@ -944,6 +944,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .EXT_ycbcr_2plane_444_formats = true,
       .EXT_ycbcr_image_arrays = true,
       .EXT_zero_initialize_device_memory = true,
+      .AMD_anti_lag = true,
       .AMD_buffer_marker = true,
       .AMD_device_coherent_memory = radv_device_coherent_memory_enabled(pdev),
       .AMD_draw_indirect_count = true,
@@ -1684,6 +1685,9 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
 
       /* VK_KHR_extended_flags */
       .extendedFlags = true,
+
+      /* VK_AMD_anti_lag */
+      .antiLag = true,
    };
 }
 
@@ -2802,9 +2806,11 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
             pdev->gfx12_hiz_wa = RADV_GFX12_HIZ_WA_PARTIAL;
          } else if (!strcmp(gfx12_hiz_wa_str, "full")) {
             pdev->gfx12_hiz_wa = RADV_GFX12_HIZ_WA_FULL;
+         } else if (!strcmp(gfx12_hiz_wa_str, "full_rez")) {
+            pdev->gfx12_hiz_wa = RADV_GFX12_HIZ_WA_FULL_REZ;
          } else {
             fprintf(stderr, "radv: Invalid value found for radv_gfx12_hiz_wa. "
-                            "Accepted values are: disabled, partial or full.\n");
+                            "Accepted values are: disabled, partial, full or full_rez.\n");
          }
       }
    }
